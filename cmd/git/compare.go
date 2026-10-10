@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/grounded"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -34,8 +36,7 @@ type compareOptions struct {
 	mermaid        bool
 	markdown       bool
 	verbose        bool
-	radius         uint32
-	depth          uint32
+	plain          bool
 	maxNodes       int
 	maxBytes       int
 	dataDir        string
@@ -43,6 +44,8 @@ type compareOptions struct {
 	maxConnectors  int
 	reportJSON     string
 	prepareCommand string
+	view           string
+	allEdges       bool
 }
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
@@ -54,24 +57,26 @@ func newCompareCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "compare [repository] <base> <head>",
 		Short: "Compare two revisions of a repository",
-		Long: `Compare two Git revisions and emit the repository impact scene.
+		Long: `Compare two Git revisions and emit the grounded bundle.
 
 The repository may be omitted to use the current checkout, or given as a
 repository id, a local path, or a remote URL (github.com/owner/repo,
 owner/repo, or a Git URL). Missing snapshots are indexed on demand.
 
-The default output is the protojson encoding of the impact scene: exactly the
-payload the canvas loads, and self-contained, so it renders offline without the
-repository, its index, or its snapshots. Each placement carries a change overlay
-with the file's line counts and structured symbol changes, and the scene names
-what it compared. Pass --mermaid to emit the Mermaid change diagram, which is
-drawn from the comparison's file-level dependency graph.
+The default output is the grounded bundle: the user-authored diagram stays
+canonical, each linked element is verified against the pinned snapshots, and
+the generated map contributes collapsed context only. The payload is
+self-contained, so it renders offline without the repository, its index, or
+its snapshots. Pass --mermaid to emit the same change scene the canvas
+draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
+and added/removed/modified arrows on connectors.
 
---depth controls how many dependency hops of unchanged context are included
-(0 = direct changes only). An explicit --radius narrows the displayed scope
-without shrinking the computed neighbourhood. When the output exceeds the node
-or byte budget it is progressively narrowed by blast radius and a warning is
-written to stderr.
+--view restricts the bundle to one authored view (id or name substring).
+Context is always computed three dependency hops out and displayed in full;
+when the output exceeds the node or byte budget it is progressively narrowed
+by blast radius and a warning is written to stderr. High fan-out nodes are
+rolled up by target prefix (7 groups + "+N more"); pass --all-edges to
+disable the roll-up summary.
 
 Indexing progress is quiet by default so scripted runs only emit the payload
 and budget warnings; pass --verbose to follow the base and head scans on
@@ -87,9 +92,8 @@ stderr.`,
 	}
 	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of the scene")
 	c.Flags().BoolVar(&opts.markdown, "markdown", false, "wrap the Mermaid diagram in a Markdown code fence")
+	c.Flags().BoolVar(&opts.plain, "plain", false, "hide placements without change impact from the Mermaid diagram")
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
-	c.Flags().Uint32Var(&opts.radius, "radius", 0, "blast radius to display; defaults to --depth")
-	c.Flags().Uint32Var(&opts.depth, "depth", impact.DefaultContextDepth, "dependency hops of unchanged context to include (0 = direct changes only)")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
@@ -97,6 +101,8 @@ stderr.`,
 	c.Flags().IntVar(&opts.maxConnectors, "max-connectors", 0, "skip output when the requested diagram exceeds this connector count (0 disables)")
 	c.Flags().StringVar(&opts.reportJSON, "report-json", "", "write comparison status, counts, revisions, and index warnings to this JSON file")
 	c.Flags().StringVar(&opts.prepareCommand, "prepare-command", "", "run this Bash command in each uncached revision before indexing; requires Bash")
+	c.Flags().StringVar(&opts.view, "view", "", "restrict the grounded bundle to one authored view (id or name substring)")
+	c.Flags().BoolVar(&opts.allEdges, "all-edges", false, "disable fan-out roll-up in the grounded summary")
 	return c
 }
 
@@ -158,12 +164,13 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	lastStage := indexcmd.DisplayStage("discover")
 	revisions := map[string]string{impact.TargetBase: base, impact.TargetHead: head}
 	shownTarget := ""
-	display, depth := compareScope(opts, cmd.Flags().Changed("radius"))
+	// Context depth is fixed: comparisons always compute three dependency
+	// hops out and display everything, narrowing only on node/byte budgets.
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
 		RepositoryID:    repositoryID,
 		Base:            &pb.Revision{GitRevision: base},
 		Head:            &pb.Revision{GitRevision: head},
-		ContextDepth:    depth,
+		ContextDepth:    impact.DefaultContextDepth,
 		PrepareCheckout: prepare,
 		Progress: func(update indexer.Progress) {
 			if tracker == nil {
@@ -194,8 +201,23 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// Commit the trailing stage before reporting on the output so the notices
 	// land below the work they describe.
 	tracker.Complete(lastStage)
-	requested := min(display, depth, diagram.GetMaxRadius())
+	requested := uint32(impact.DefaultContextDepth)
 	report := comparisonReport(impact.Scope(diagram, requested), opts)
+	// The grounded summary intersects the change with the authored workspace so
+	// the payload pins the user's diagram and rolls up fan-out. Neighbourhood
+	// comes from the head snapshot's file pairs so unlinked-but-indexed edits
+	// still resolve to the linked neighbours they may disturb.
+	var summary grounded.Summary
+	explore, exploreErr := sq.Explore(ctx)
+	if exploreErr != nil {
+		return exploreErr
+	}
+	neighbours := groundedNeighbours(ctx, store, diagram)
+	summary = grounded.Summarize(diagram, explore, opts.view, opts.allEdges, neighbours)
+	report.Grounded = &summary
+	if summary.FallbackToRaw && opts.verbose {
+		notice("notice: no authored views intersect this change; grounded bundle falls back to raw impact context")
+	}
 	if opts.reportJSON != "" {
 		for _, id := range []string{diagram.GetDiff().GetFromSnapshotId(), diagram.GetDiff().GetToSnapshotId()} {
 			snapshot, loadErr := store.Snapshot(ctx, id)
@@ -214,15 +236,15 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		notice("warning: " + report.Reason)
 		return writeCompareReport(opts.reportJSON, report)
 	}
-	render := compareRenderer{ctx: ctx, service: service, opts: opts}
+	render := compareRenderer{ctx: ctx, service: service, opts: opts, summary: &summary}
 	result, err := scopeToBudget(diagram, requested, opts, render.build)
 	if err != nil {
 		return err
 	}
 	if result.limited {
 		notice(fmt.Sprintf(
-			"warning: output limited to blast radius %d of %d (%d nodes); pass --radius %d or raise --max-nodes to include more",
-			result.radius, requested, len(result.diagram.GetNodes()), requested))
+			"warning: output limited to blast radius %d of %d (%d nodes); raise --max-nodes to include more",
+			result.radius, requested, len(result.diagram.GetNodes())))
 	}
 	if result.overBudget {
 		notice(fmt.Sprintf("warning: output is %s even with direct changes only; --max-bytes %s cannot be met",
@@ -245,14 +267,15 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 
 // CompareReport counts the requested scope, before the shrinking output budgets.
 type CompareReport struct {
-	Status     string       `json:"status"`
-	Elements   int          `json:"elements"`
-	Connectors int          `json:"connectors"`
-	Stats      CompareStats `json:"stats"`
-	Base       string       `json:"base"`
-	Head       string       `json:"head"`
-	Warnings   []string     `json:"warnings"`
-	Reason     string       `json:"reason,omitempty"`
+	Status     string            `json:"status"`
+	Elements   int               `json:"elements"`
+	Connectors int               `json:"connectors"`
+	Stats      CompareStats      `json:"stats"`
+	Base       string            `json:"base"`
+	Head       string            `json:"head"`
+	Warnings   []string          `json:"warnings"`
+	Reason     string            `json:"reason,omitempty"`
+	Grounded   *grounded.Summary `json:"grounded,omitempty"`
 }
 
 // CompareStats summarizes the change itself: its scope, churn, and symbol
@@ -269,6 +292,9 @@ type CompareStats struct {
 	SymbolsAdded    int      `json:"symbolsAdded"`
 	SymbolsModified int      `json:"symbolsModified"`
 	SymbolsRemoved  int      `json:"symbolsRemoved"`
+	EdgesAdded      int      `json:"edgesAdded"`
+	EdgesRemoved    int      `json:"edgesRemoved"`
+	EdgesModified   int      `json:"edgesModified"`
 	Paths           []string `json:"paths"`
 	PathsTruncated  bool     `json:"pathsTruncated,omitempty"`
 }
@@ -305,6 +331,16 @@ func comparisonStats(diagram *pb.ImpactDiagram) CompareStats {
 	stats.SymbolsAdded = countSymbols(diff.GetFacts().GetAdded())
 	stats.SymbolsModified = countSymbols(diff.GetFacts().GetModified())
 	stats.SymbolsRemoved = countSymbols(diff.GetFacts().GetRemoved())
+	for _, edge := range diagram.GetEdges() {
+		switch edge.GetChange() {
+		case pb.ChangeKind_CHANGE_KIND_ADDED:
+			stats.EdgesAdded++
+		case pb.ChangeKind_CHANGE_KIND_REMOVED:
+			stats.EdgesRemoved++
+		case pb.ChangeKind_CHANGE_KIND_MODIFIED:
+			stats.EdgesModified++
+		}
+	}
 	return stats
 }
 
@@ -344,22 +380,85 @@ func writeCompareReport(path string, report CompareReport) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o600)
 }
 
-// compareRenderer builds the payload for one blast radius. The default output is
-// the portable impact scene — exactly what the canvas loads — so a reader needs
-// no repository, index, or snapshot. Mermaid keeps the diagram as its source
-// because it draws the file-level dependency graph, which a scene does not
-// carry for files that already have workspace placements.
+// compareRenderer builds the payload for one blast radius. The output is
+// always the grounded bundle — the portable impact scene plus the authored
+// overlay — so a reader needs no repository, index, or snapshot.
 type compareRenderer struct {
 	ctx     context.Context
 	service impact.Service
 	opts    compareOptions
+	summary *grounded.Summary
+}
+
+// groundedNeighbours builds the undirected file adjacency of the head
+// snapshot so the summary can name linked neighbours of a change. Failures
+// degrade to no proximity (file-based statuses still hold), never to an error.
+func groundedNeighbours(ctx context.Context, store *cstore.Store, diagram *pb.ImpactDiagram) map[string][]string {
+	if store == nil || diagram == nil || diagram.GetDiff().GetToSnapshotId() == "" {
+		return nil
+	}
+	counts, err := store.FilePairCounts(ctx, diagram.GetDiff().GetToSnapshotId())
+	if err != nil || len(counts) == 0 {
+		return nil
+	}
+	sets := map[string]map[string]bool{}
+	link := func(a, b string) {
+		if a == "" || b == "" || a == b {
+			return
+		}
+		if sets[a] == nil {
+			sets[a] = map[string]bool{}
+		}
+		sets[a][b] = true
+	}
+	for pair := range counts {
+		link(pair[0], pair[1])
+		link(pair[1], pair[0])
+	}
+	out := make(map[string][]string, len(sets))
+	for path, peers := range sets {
+		list := make([]string, 0, len(peers))
+		for peer := range peers {
+			list = append(list, peer)
+		}
+		out[path] = list
+	}
+	return out
+}
+
+// groundedBundle is the default protojson payload: the scene the canvas loads
+// plus the authored overlay that pins the user's diagram.
+type groundedBundle struct {
+	Mode     string            `json:"mode"`
+	Scene    json.RawMessage   `json:"scene"`
+	Grounded *grounded.Summary `json:"grounded,omitempty"`
 }
 
 // build renders a scoped diagram at radius, returning the text to write and its
 // size in bytes so --max-bytes describes the payload the caller receives.
 func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
 	if r.opts.mermaid || r.opts.markdown {
-		code := mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
+		scene, err := r.service.Scene(r.ctx, diagram)
+		if err != nil {
+			return "", 0, err
+		}
+		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: r.opts.plain})
+		// An empty scene render means neither authored nor mapped views
+		// survived: fall through to the file-level fact graph so the change
+		// still visualizes instead of printing a blank diagram.
+		if !strings.Contains(code, "subgraph") {
+			code = mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
+		}
+		if r.summary != nil {
+			// Stats comments go directly after the flowchart directive:
+			// some strict renderers reject comments before the diagram
+			// type, and both renderers always lead with it.
+			if i := strings.Index(code, "\n"); i >= 0 {
+				code = code[:i+1] + groundedMermaidHeader(*r.summary, radius) + code[i+1:]
+			} else {
+				code = groundedMermaidHeader(*r.summary, radius) + code
+			}
+		}
 		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
 		}
@@ -373,8 +472,44 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	if err != nil {
 		return "", 0, err
 	}
-	// The protojson payload is written with a trailing newline.
-	return string(payload), len(payload) + 1, nil
+	bundle, err := json.Marshal(groundedBundle{Mode: "grounded", Scene: payload, Grounded: r.summary})
+	if err != nil {
+		return "", 0, err
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, bundle, "", "  "); err != nil {
+		return "", 0, err
+	}
+	pretty.WriteByte('\n')
+	return pretty.String(), pretty.Len(), nil
+}
+
+// groundedMermaidHeader prepends the authored overlay to the file-level diagram
+// so humans see which of their elements the change touches before the fan-out.
+func groundedMermaidHeader(summary grounded.Summary, radius uint32) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%%%% grounded mode=%s radius=%d affected=%d context=%d ungrounded=%d\n",
+		summary.Mode, radius, summary.Affected, summary.Context, summary.Ungrounded)
+	for _, view := range summary.Views {
+		name := view.ViewName
+		if name == "" {
+			name = fmt.Sprintf("view %d", view.ViewID)
+		}
+		fmt.Fprintf(&sb, "%%%% grounded view %q affected=%d total=%d\n", name, view.Affected, view.Total)
+	}
+	for _, fan := range summary.Fanout {
+		fmt.Fprintf(&sb, "%%%% fanout %q edges=%d groups=", fan.Source, fan.Total)
+		parts := make([]string, 0, len(fan.Groups))
+		for _, group := range fan.Groups {
+			parts = append(parts, fmt.Sprintf("%s×%d", group.Prefix, group.Count))
+		}
+		sb.WriteString(strings.Join(parts, ","))
+		if fan.Hidden > 0 {
+			fmt.Fprintf(&sb, " +%d more", fan.Hidden)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // compareTargetLabel titles the stage run of one comparison side, naming the
@@ -385,19 +520,6 @@ func compareTargetLabel(out io.Writer, target, revision string) string {
 		return label
 	}
 	return label + " " + revision
-}
-
-// compareScope resolves the blast radius to display and the dependency depth to
-// compute. The display defaults to --depth so passing --depth alone widens the
-// output; an explicit --radius narrows the display without shrinking the
-// computed neighbourhood.
-func compareScope(opts compareOptions, radiusSet bool) (display, depth uint32) {
-	display = opts.depth
-	if radiusSet {
-		display = opts.radius
-	}
-	depth = max(opts.depth, display)
-	return display, depth
 }
 
 // scopedDiagram is the outcome of applying the CLI size budgets.

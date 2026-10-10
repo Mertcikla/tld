@@ -13,7 +13,11 @@ import (
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
 func TestCompareHardLimits(t *testing.T) {
@@ -58,6 +62,12 @@ func TestComparisonStats(t *testing.T) {
 				Removed:  []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_FILE}},
 			},
 		},
+		Edges: []*pb.ImpactEdge{
+			{FromKey: "file|a.go", ToKey: "file|b.go", Change: pb.ChangeKind_CHANGE_KIND_ADDED},
+			{FromKey: "file|b.go", ToKey: "file|c.go", Change: pb.ChangeKind_CHANGE_KIND_REMOVED},
+			{FromKey: "file|c.go", ToKey: "file|a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
+			{FromKey: "file|a.go", ToKey: "file|c.go"},
+		},
 	}
 	stats := comparisonStats(diagram)
 	if stats.Files != 3 || stats.Directories != 2 || stats.Subsystems != 2 {
@@ -68,6 +78,9 @@ func TestComparisonStats(t *testing.T) {
 	}
 	if stats.SymbolsAdded != 1 || stats.SymbolsModified != 1 || stats.SymbolsRemoved != 0 {
 		t.Fatalf("symbols = %+v", stats)
+	}
+	if stats.EdgesAdded != 1 || stats.EdgesRemoved != 1 || stats.EdgesModified != 1 {
+		t.Fatalf("edge churn = %+v", stats)
 	}
 	if len(stats.Paths) != 3 || stats.PathsTruncated {
 		t.Fatalf("paths = %+v", stats)
@@ -202,6 +215,26 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if !strings.Contains(mermaid, "flowchart LR") || !strings.Contains(mermaid, "a.go") {
 		t.Fatalf("mermaid output = %q", mermaid)
 	}
+	if !strings.Contains(mermaid, "%% grounded") {
+		t.Fatalf("grounded mermaid header missing: %q", mermaid)
+	}
+	// Stats comments must follow the flowchart directive: strict renderers
+	// reject comments before the diagram type.
+	if flowchartAt := strings.Index(mermaid, "flowchart LR"); flowchartAt < 0 || strings.Index(mermaid, "%% grounded") < flowchartAt {
+		t.Fatalf("mermaid comments must follow the flowchart directive: %q", mermaid)
+	}
+	// The default mermaid render is the change scene: the uncovered file
+	// surfaces as a transient placement in the fallback Changes view, exactly
+	// as the canvas draws it.
+	for _, want := range []string{
+		"%% tld-scene",
+		`subgraph view_neg1["Changes"]`,
+		`el_neg1_neg1["◇ a.go`,
+	} {
+		if !strings.Contains(mermaid, want) {
+			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
+		}
+	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)
 	}
@@ -219,9 +252,17 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("protojson compare: %v\n%s", err, stderr)
 	}
-	var scene map[string]any
-	if err := json.Unmarshal([]byte(out), &scene); err != nil {
+	var bundle map[string]any
+	if err := json.Unmarshal([]byte(out), &bundle); err != nil {
 		t.Fatalf("protojson output: %v\n%s", err, out)
+	}
+	if bundle["mode"] != "grounded" {
+		t.Fatalf("bundle mode = %v, want grounded", bundle["mode"])
+	}
+	sceneRaw, _ := json.Marshal(bundle["scene"])
+	var scene map[string]any
+	if err := json.Unmarshal(sceneRaw, &scene); err != nil {
+		t.Fatalf("bundle scene: %v\n%s", err, out)
 	}
 	if scene["comparisonKey"] == nil || scene["repositoryId"] == nil || scene["schemaVersion"] != impact.SceneSchemaVersion {
 		t.Fatalf("scene is not self-identifying: %v", scene)
@@ -327,21 +368,6 @@ func compareRepo(t *testing.T) string {
 	return dir
 }
 
-func TestCompareScopeResolvesDepthAndRadius(t *testing.T) {
-	if display, depth := compareScope(compareOptions{depth: 2}, false); display != 2 || depth != 2 {
-		t.Fatalf("depth only: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: 3, radius: 1}, true); display != 1 || depth != 3 {
-		t.Fatalf("radius override: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: 1, radius: 2}, true); display != 2 || depth != 2 {
-		t.Fatalf("radius deeper: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: impact.DefaultContextDepth}, false); display != impact.DefaultContextDepth || depth != impact.DefaultContextDepth {
-		t.Fatalf("defaults: display=%d depth=%d", display, depth)
-	}
-}
-
 func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
 		Nodes: []*pb.ImpactNode{
@@ -382,14 +408,32 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	}
 }
 
-// Mermaid renders straight from the diagram, so its size never depends on a
-// scene build.
+// The scene render feeds the size accounting, so its byte size always
+// describes the payload the caller receives.
 func TestCompareRendererMermaidSizes(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &pb.Snapshot{Id: "head", RepositoryId: "repo", GitRevision: "head", Provenance: "commit", IngestionStatus: "complete"}
+	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", "head")); err != nil {
+		t.Fatal(err)
+	}
+	service := impact.Service{Workspace: ws, Index: idx}
 	diagram := &pb.ImpactDiagram{
+		RepositoryId:  "repo",
+		ComparisonKey: "key",
+		Diff: &pb.SnapshotDiff{
+			ToSnapshotId: "head",
+			Sources:      []*pb.SourceChange{{Path: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
+		},
 		Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
 	}
 	for _, opts := range []compareOptions{{mermaid: true}, {markdown: true}} {
-		text, size, err := compareRenderer{opts: opts}.build(diagram, 0)
+		text, size, err := compareRenderer{ctx: ctx, service: service, opts: opts}.build(diagram, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -399,6 +443,39 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") {
 			t.Fatalf("unexpected mermaid payload for %+v: %q", opts, text)
 		}
+		// The scene render carries the uncovered file as a transient, exactly
+		// as the canvas draws it.
+		if !strings.Contains(text, `subgraph view_neg1["Changes"]`) {
+			t.Fatalf("scene mermaid missing fallback view for %+v:\n%s", opts, text)
+		}
+	}
+}
+
+func TestCompareRendererFallsBackToFactGraph(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &pb.Snapshot{Id: "head", RepositoryId: "repo", GitRevision: "head", Provenance: "commit", IngestionStatus: "complete"}
+	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", "head")); err != nil {
+		t.Fatal(err)
+	}
+	service := impact.Service{Workspace: ws, Index: idx}
+	diagram := &pb.ImpactDiagram{
+		RepositoryId:  "repo",
+		ComparisonKey: "key",
+		Diff:          &pb.SnapshotDiff{ToSnapshotId: "head"},
+	}
+	text, _, err := compareRenderer{ctx: ctx, service: service, opts: compareOptions{mermaid: true}}.build(diagram, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No view survived: the file-level fact graph renders instead of a blank diagram.
+	if !strings.Contains(text, "%% tld-impact") {
+		t.Fatalf("empty scene must fall through to the fact graph:\n%s", text)
 	}
 }
 
@@ -409,6 +486,24 @@ func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {
 	}
 	if got := compareTargetLabel(out, impact.TargetHead, ""); got != "head" {
 		t.Fatalf("label without revision = %q", got)
+	}
+}
+
+func TestCompareHasNoScopeOrRawFlags(t *testing.T) {
+	cmd := NewGitCmd()
+	commands := cmd.Commands()
+	if len(commands) == 0 {
+		t.Fatal("compare subcommand not found")
+	}
+	found := commands[0]
+	if found.Flags().Lookup("raw-impact") != nil {
+		t.Fatal("--raw-impact flag must be gone; grounded is the only diagram")
+	}
+	if found.Flags().Lookup("scope") != nil {
+		t.Fatal("--scope flag must be gone; grounded is the only diagram")
+	}
+	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
+		t.Fatal("--view and --all-edges flags are required")
 	}
 }
 

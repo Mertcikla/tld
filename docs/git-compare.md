@@ -42,34 +42,41 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 |---|---|---|
 | `--mermaid` | off | Emit the Mermaid change diagram instead of the scene |
 | `--markdown` | off | Wrap the Mermaid diagram in a Markdown code fence |
+| `--plain` | off | Hide placements without change impact from the Mermaid diagram (mirrors the canvas plain toggle) |
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
-| `--depth N` | `3` | Dependency hops of unchanged context (`0` = direct changes only) |
-| `--radius N` | `--depth` | Blast radius to display; narrows the view without shrinking the computed neighbourhood |
-| `--max-nodes N` | `400` | Node budget; blast radius is narrowed when exceeded (`0` disables) |
-| `--max-bytes N` | `2097152` | Output byte budget; blast radius is narrowed when exceeded (`0` disables) |
+| `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
+| `--max-bytes N` | `2097152` | Output byte budget; output is narrowed when exceeded (`0` disables) |
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
-| `--report-json PATH` | unset | Write status, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, and skip reason to JSON |
+| `--view REF` | unset | Restrict the grounded bundle to one authored view (id or name substring) |
+| `--all-edges` | off | Disable fan-out roll-up in the grounded summary |
+| `--report-json PATH` | unset | Write status, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, grounded overlay, and skip reason to JSON |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
 
-- **Default:** protojson encoding of the **impact scene** — the same payload the
-  web canvas loads from `GetImpactScene`. It is portable: the emitted document
-  is all a viewer needs, with no repository, index, or snapshot on the other
-  end. Each placement carries a change overlay with the file's line counts and
-  structured symbol changes (name, kind, anchor, body fingerprint), and the
-  scene names what it compared (`schemaVersion`, `repositoryId`,
-  `comparisonKey`, `fromGitRevision`, `toGitRevision`, `maxRadius`).
-- **`--mermaid` / `--markdown`:** the Mermaid change diagram. It is drawn from
-  the comparison's file-level dependency graph rather than the scene, because a
-  scene carries workspace connectors, not the dependency weights between changed
-  files.
+- **Default:** protojson encoding of the **grounded bundle** — the portable impact
+  scene plus the authored overlay (`mode: "grounded"`, `grounded: {affected,
+  context, ungrounded, views, elements, fanout, uncovered}`). The user-authored diagram
+  stays canonical while each linked element is verified against the pinned
+  snapshots; the generated map contributes collapsed context only. High fan-out
+  nodes roll up by target prefix (7 groups + "+N more"). When no authored view
+  intersects the change, the bundle notes the fallback and carries the mapped
+  context instead.
+- **`--mermaid` / `--markdown`:** the change scene rendered as Mermaid — the same
+  payload the canvas draws, node for node: `flowchart LR`, then a `%% tld-scene`
+  header and the CLI-only `%% grounded` stats lines, one subgraph per retained
+  view, change badges (`modified +8 −0`, `(context)`) on nodes, provenance
+  glyphs (`◇` graph-augmented, `▦` map-generated) on non-authored nodes, and
+  connector arrows with `linkStyle` colors for added/removed/modified edges.
+  Grounded is the only diagram: with no authored views it degrades to the
+  mapped views, and with no views at all it falls through to the file-level
+  fact graph — the same fallback chain as the canvas.
 
 Progress is written to stderr only with `--verbose`; budget warnings always go
 to stderr. If the payload exceeds a budget, a warning tells you to raise
-`--radius` or `--max-nodes`.
+`--max-nodes`.
 
 Hard element and connector limits are checked **before** the shrinking budgets
 and rendering. Either limit being exceeded suppresses stdout and exits
@@ -78,7 +85,8 @@ limit are allowed. The optional JSON report uses `ready`, `skipped`, or `empty`
 status and reports the requested scope, even if the shrinking budgets later
 narrow the rendered output. It also carries a `stats` object derived from the
 snapshot diff — `files`, `directories`, `subsystems`, `linesAdded`,
-`linesRemoved`, `symbolsAdded`, `symbolsModified`, `symbolsRemoved`, and the
+`linesRemoved`, `symbolsAdded`, `symbolsModified`, `symbolsRemoved`,
+`edgesAdded`, `edgesRemoved`, `edgesModified`, and the
 changed `paths` (capped at 500, with `pathsTruncated` set beyond that). Stats
 describe the change itself, so they are present even when the diagram is
 skipped or empty. Command failures still return a nonzero exit code.
@@ -94,6 +102,5 @@ See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached
 
 ## Tips
 
-- Pass `--depth` alone to widen both the computed neighbourhood and the output.
-- Pass `--radius` to narrow the display only.
-- `--depth 0` gives a fast, direct-changes-only view.
+- Context is always computed three dependency hops out and displayed in full;
+  node and byte budgets narrow oversized output automatically.

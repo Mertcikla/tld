@@ -648,9 +648,9 @@ export default function Inventory() {
           {/* Left filter panel */}
           <Box w={{ base: '0', lg: '220px' }} display={{ base: 'none', lg: 'flex' }} flexDir="column" borderRight="1px solid" borderColor="whiteAlpha.100" overflowY="auto" flexShrink={0}>
             {/* Type selector */}
-            <Box px={3} pt={3} pb={2} borderBottom="1px solid" borderColor="whiteAlpha.100">
-              <Text fontSize="10px" color="gray.600" fontWeight="bold" textTransform="uppercase" mb={2}>Object type</Text>
-              <VStack align="stretch" spacing={0.5}>
+            <Box px={3} pt={3} pb={3} borderBottom="1px solid" borderColor="whiteAlpha.100">
+              <Text fontSize="10px" color="gray.600" fontWeight="bold" textTransform="uppercase" mb={3}>Object type</Text>
+              <VStack align="stretch" spacing={0.5} >
                 {TYPE_OPTIONS.map((option) => {
                   const isActive = selectedType === option.value
                   const count = typeCounts[option.value]
@@ -697,7 +697,7 @@ export default function Inventory() {
 
             <FilterSection title="Tags" collapsed={collapsedSections.has('tags')} onToggle={() => toggleSection('tags')}>
               {availableTags.length > 5 && (
-                <InputGroup size="xs" mb={2}>
+                <InputGroup size="xs" mb={2} mt={2}>
                   <InputLeftElement pointerEvents="none" color="gray.600"><SearchIcon boxSize={3} /></InputLeftElement>
                   <Input
                     value={tagSearch}
@@ -840,7 +840,7 @@ export default function Inventory() {
             </FilterSection>
 
             <FilterSection title="Kind" collapsed={collapsedSections.has('kind')} onToggle={() => toggleSection('kind')}>
-              <VStack align="stretch" spacing={0.5}>
+              <VStack align="stretch" spacing={0.5} mt={2}>
                 <Flex
                   data-testid="inventory-kind-filter-any"
                   align="center"
@@ -918,7 +918,7 @@ export default function Inventory() {
 
             {/* Sort section */}
             <FilterSection title="Sort" collapsed={collapsedSections.has('sort')} onToggle={() => toggleSection('sort')}>
-              <VStack align="stretch" spacing={0.5}>
+              <VStack align="stretch" spacing={0.5} mt={2}>
                 {([
                   { key: 'name', label: 'Name' },
                   { key: 'type', label: 'Type' },
@@ -1665,8 +1665,8 @@ function FilterSection({
         userSelect="none"
       >
         <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1}>{title}</Text>
-        <Box color="gray.600" transform={collapsed ? 'rotate(0deg)' : 'rotate(90deg)'} transition="transform 0.15s">
-          <ChevronRightIcon boxSize={3} />
+        <Box color="gray.600" transform={collapsed ? 'rotate(0deg)' : 'rotate(180deg)'} transition="transform 0.15s">
+          <ChevronDownIcon boxSize={3} />
         </Box>
       </Flex>
       {!collapsed && <Box px={3} pb={3}>{children}</Box>}

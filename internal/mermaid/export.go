@@ -263,6 +263,12 @@ func sanitizeMermaidID(value string) string {
 	return "node_" + sanitized
 }
 
+// SanitizeID exposes the node-id sanitizer so grounded overlays can reference
+// the exact node ids ExportImpactDiagram generates for diagram keys.
+func SanitizeID(value string) string {
+	return sanitizeMermaidID(value)
+}
+
 func EscapeMermaidLabel(value string) string {
 	return escapeMermaidLabel(value)
 }

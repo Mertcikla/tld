@@ -12,9 +12,8 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 )
 
-// DefaultContextDepth is the maximum number of dependency hops of unchanged
-// context a comparison computes. It is the upper bound of the UI blast-radius
-// slider; display scoping itself happens client-side.
+// DefaultContextDepth is the number of dependency hops of unchanged context
+// every comparison computes and displays.
 const DefaultContextDepth = 3
 
 // DefaultMaxNodes is the size budget used when a client does not pick one. A

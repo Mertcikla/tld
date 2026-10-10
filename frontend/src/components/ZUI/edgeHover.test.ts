@@ -107,4 +107,26 @@ describe('ZUI edge hover index', () => {
 
     expect(hovered.data.id).toBe(2)
   })
+
+  it('carries edge change state into the hover payload', () => {
+    const source = node('source', 1, 0, 0)
+    const target = node('target', 2, 320, 120)
+    const edge = {
+      id: 10,
+      sourceId: source.id,
+      targetId: target.id,
+      label: 'new edge',
+      direction: 'forward',
+      sourceHandle: null,
+      targetHandle: null,
+      type: 'straight',
+      change: 'added' as const,
+    }
+    const route = buildEdgeRoutePoints(source, target, edge)
+    const index = buildEdgeSpatialIndex([group([source, target], [edge])])
+
+    const hovered = expectHoveredEdge(findHoveredEdge(route.midX, route.midY, index, view))
+
+    expect(hovered.data.change).toBe('added')
+  })
 })

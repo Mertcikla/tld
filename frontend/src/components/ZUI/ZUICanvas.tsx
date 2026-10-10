@@ -15,7 +15,8 @@ import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
 import { applyChangeOverlays } from './changeOverlay'
-import type { ZUIChangeOverlay } from './types'
+import { applyProvenanceOverlays } from './provenance'
+import type { ZUIChangeOverlay, ZUINodeProvenance } from './types'
 
 declare global {
   interface Window {
@@ -42,6 +43,7 @@ export interface ZUICameraFrame {
 interface Props {
   preserveCameraOnUpdate?: boolean
   changeOverlays?: Record<number, ZUIChangeOverlay>
+  provenanceOverlays?: Record<number, ZUINodeProvenance>
   data: ExploreData
   onReady?: () => void
   onZoom?: () => void
@@ -58,6 +60,7 @@ interface Props {
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   preserveCameraOnUpdate = false,
   changeOverlays,
+  provenanceOverlays,
   data,
   onReady,
   onZoom,
@@ -83,8 +86,9 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
   const layout = useMemo(() => {
     const base = computeLayout(data)
-    return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
-  }, [data, changeOverlays])
+    const withChanges = changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
+    return provenanceOverlays ? applyProvenanceOverlays(withChanges, provenanceOverlays) : withChanges
+  }, [data, changeOverlays, provenanceOverlays])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
 

@@ -11,6 +11,7 @@ import type {
   ViewConnector,
 } from '../../types'
 import { resolveElementIconUrl } from '../../utils/elementIcon'
+import { connectorChangeFromTags } from './edgeChange'
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -166,6 +167,7 @@ function buildNodes(
         sourceHandle: e.source_handle ?? null,
         targetHandle: e.target_handle ?? null,
         type: e.style || 'bezier',
+        change: connectorChangeFromTags(e.tags),
       }))
 
     return {
@@ -256,6 +258,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
       sourceHandle: e.source_handle ?? null,
       targetHandle: e.target_handle ?? null,
       type: e.style || 'bezier',
+      change: connectorChangeFromTags(e.tags),
     }))
 
     groups.push({

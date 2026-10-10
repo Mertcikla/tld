@@ -79,8 +79,8 @@ unstaged, and nonignored untracked files are the Head. Git changes trigger
 incremental indexing after a debounce. Each new commit gets an immutable
 snapshot from its committed contents. Watch always saves an affected-file
 change overlay, available in Repositories > Live changes. Compare maps can
-compare commits or saved snapshots. The blast-radius slider adds existing
-unchanged elements by dependency hops.`,
+compare commits or saved snapshots, always showing the full computed
+neighbourhood of unchanged elements by dependency hops.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."

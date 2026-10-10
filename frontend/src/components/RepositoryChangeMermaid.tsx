@@ -14,10 +14,12 @@ type MermaidPaneState =
   | { status: 'ready'; markdown: string; warnings: string[]; error: '' }
   | { status: 'error'; markdown: string; warnings: string[]; error: string }
 
+// The pane stays thin on purpose: the backend renders the same change scene
+// the canvas draws, and this only fetches and displays the markdown.
 export default function RepositoryChangeMermaid({
   repositoryId,
   comparisonKey,
-  radius,
+  plain,
   open,
   collapsed = false,
   overlay = false,
@@ -26,7 +28,8 @@ export default function RepositoryChangeMermaid({
 }: {
   repositoryId: string
   comparisonKey: string
-  radius: number
+  /** Mirrors the canvas plain toggle so the pane never disagrees with it. */
+  plain: boolean
   open: boolean
   /** Rail form: show only the Markdown expand button. */
   collapsed?: boolean
@@ -43,7 +46,7 @@ export default function RepositoryChangeMermaid({
     const controller = new AbortController()
     setState({ status: 'loading', markdown: '', warnings: [], error: '' })
     void api.repositories
-      .impactMermaid(repositoryId, comparisonKey, { radius, markdown: true, signal: controller.signal })
+      .impactMermaid(repositoryId, comparisonKey, { plain, markdown: true, signal: controller.signal })
       .then((result) => {
         if (!controller.signal.aborted) setState({ status: 'ready', markdown: result.markdown, warnings: result.warnings, error: '' })
       })
@@ -52,7 +55,7 @@ export default function RepositoryChangeMermaid({
         setState({ status: 'error', markdown: '', warnings: [], error: err instanceof Error ? err.message : 'Could not load the change diagram' })
       })
     return () => controller.abort()
-  }, [open, repositoryId, comparisonKey, radius])
+  }, [open, repositoryId, comparisonKey, plain])
 
   useEffect(() => {
     setCopied(false)

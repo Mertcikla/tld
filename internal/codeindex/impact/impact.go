@@ -131,7 +131,6 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		if _, present := toSources[path]; !present {
 			continue
 		}
-		diagram.MaxRadius = max(diagram.MaxRadius, hops)
 		seenResources[element.ID] = true
 		if hops > contextDepth {
 			continue

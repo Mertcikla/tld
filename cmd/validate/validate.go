@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	"github.com/mertcikla/tld/v2/internal/codeindex/linkcheck"
 	mappingcheck "github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	"github.com/mertcikla/tld/v2/internal/term"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
@@ -114,11 +115,17 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			rules := ws.IgnoreRulesForRepository(repoCtx.Name)
 
 			// Identify codeindex-materialized elements live against the local
-			// database so ARC205 scores only user-authored diagrams.
+			// database so ARC205 scores only user-authored diagrams, and load
+			// the indexed file inventory so ARC206 can measure link coverage.
+			// The workspace exclude rules keep excluded files out of that
+			// denominator.
 			var scoreOpts []archwarnings.Option
 			if resolvedDir, dirErr := workspace.ResolveDataDir(&ws.Config, dataDir); dirErr == nil {
 				if classify := mappingcheck.Classifier(cmd.Context(), resolvedDir); classify != nil {
 					scoreOpts = append(scoreOpts, archwarnings.WithCodeindexElementClassifier(classify))
+				}
+				if targets, ok := linkcheck.Index(cmd.Context(), resolvedDir); ok {
+					scoreOpts = append(scoreOpts, archwarnings.WithLinkTargets(targets), archwarnings.WithIgnoreRules(rules))
 				}
 			}
 
@@ -157,12 +164,16 @@ rule runs regardless of the configured strictness level or exclude list.`,
 
 			warnings := archwarnings.Analyze(ws, scoreOpts...)
 
-			if len(args) == 1 {
-				if normalizeRuleCode(args[0]) == "ARC205" {
-					return printGrounding(cmd, ws, scoreOpts...)
-				}
-				return printRuleViolations(cmd, args[0], warnings)
+		if len(args) == 1 {
+			code := normalizeRuleCode(args[0])
+			switch code {
+			case "ARC205":
+				return printGrounding(cmd, ws, scoreOpts...)
+			case "ARC206":
+				return printLinkCoverage(cmd, ws, scoreOpts...)
 			}
+			return printRuleViolations(cmd, args[0], warnings)
+		}
 
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
 				viewCount := cmdutil.CountViews(ws)
@@ -332,6 +343,48 @@ func printGrounding(cmd *cobra.Command, ws *workspace.Workspace, opts ...archwar
 
 	_, _ = fmt.Fprintln(out, "\nHow to improve:")
 	if rule, ok := archwarnings.RuleByCode("ARC205"); ok {
+		_, _ = fmt.Fprintf(out, "  %s\n", rule.Mediation)
+	}
+	return nil
+}
+
+// printLinkCoverage renders the ARC206 report: how much of each indexed
+// repository's directories the workspace's source-linked elements cover, and
+// which directories are still unlinked.
+func printLinkCoverage(cmd *cobra.Command, ws *workspace.Workspace, opts ...archwarnings.Option) error {
+	out := cmd.OutOrStdout()
+	report := archwarnings.LinkCoverage(ws, opts...)
+	threshold := archwarnings.LinkCoverageThreshold(ws)
+
+	_, _ = fmt.Fprintln(out, "[ARC206] Low Link Coverage")
+	_, _ = fmt.Fprintln(out, "Description: Linked elements do not cover the indexed code directories")
+	if report.Eligible == 0 {
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "No indexed repository is linked into; link coverage does not apply.")
+		_, _ = fmt.Fprintln(out, "ARC206 needs the local codeindex database (`tld index`) and at least one source-linked element.")
+		return nil
+	}
+	percent := report.Grounded * 100 / report.Eligible
+	_, _ = fmt.Fprintf(out, "Workspace link coverage: %d%% (%d/%d directories, threshold %d%%)\n\n", percent, report.Grounded, report.Eligible, threshold)
+
+	_, _ = fmt.Fprintln(out, "Reasoning:")
+	for _, reason := range report.Reasoning {
+		_, _ = fmt.Fprintf(out, "  - %s\n", reason)
+	}
+
+	_, _ = fmt.Fprintln(out, "\nPer-repository coverage:")
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "  REPOSITORY\tCOVERAGE\tLINKED\tEXCLUDED\tUNLINKED DIRECTORIES")
+	for _, repo := range report.Repos {
+		if repo.Total == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(tw, "  %s\t%d%%\t%d/%d\t%d\t%s\n", repo.Name, repo.Percent, repo.Covered, repo.Total, repo.Excluded, strings.Join(repo.Unlinked, ", "))
+	}
+	_ = tw.Flush()
+
+	_, _ = fmt.Fprintln(out, "\nHow to improve:")
+	if rule, ok := archwarnings.RuleByCode("ARC206"); ok {
 		_, _ = fmt.Fprintf(out, "  %s\n", rule.Mediation)
 	}
 	return nil

@@ -75,7 +75,6 @@ function hoveredNode(): HoveredItem {
     absH: 80,
   }
 }
-
 function renderPopover(open: boolean, onHoverLock: (locked: boolean) => void) {
   return (
     <ZUIHoverPopover
@@ -104,5 +103,76 @@ describe('ZUIHoverPopover hover lock', () => {
     })
 
     expect(onHoverLock).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('ZUIHoverPopover provenance', () => {
+  it('names non-authored provenance under the change details', () => {
+    const item = hoveredNode()
+    item.data = {
+      ...item.data,
+      provenance: 'augmented',
+      changeOverlay: { change: 'modified', path: 'new.go', symbols: [], reason: 'direct' },
+    }
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={item}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-provenance-details' }).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('stays quiet for authored nodes', () => {
+    const item = hoveredNode()
+    item.data = { ...item.data, provenance: 'authored' }
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={item}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-provenance-details' })).toHaveLength(0)
+  })
+})
+
+describe('ZUIHoverPopover edge change', () => {
+  it('badges edges new in the diff', () => {
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={{
+          type: 'edge',
+          data: {
+            sourceId: 'a', targetId: 'b', label: 'calls', diagramId: 1,
+            change: 'added',
+          },
+          absX: 0, absY: 0,
+        }}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-edge-change' }).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows no badge for unchanged edges', () => {
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={{
+          type: 'edge',
+          data: { sourceId: 'a', targetId: 'b', label: 'calls', diagramId: 1 },
+          absX: 0, absY: 0,
+        }}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-edge-change' })).toHaveLength(0)
   })
 })

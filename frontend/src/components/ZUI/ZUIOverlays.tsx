@@ -24,6 +24,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
+import { PROVENANCE_META } from './provenance'
+import { EDGE_CHANGE_META } from './edgeChange'
 
 const MAX_PROXY_HOVER_VIEW_LINKS = 5
 const BREADCRUMB_MAX_LABEL_WIDTH = 200
@@ -320,6 +322,14 @@ export function ZUIHoverPopover({
                       {hoveredItem.data.changeOverlay.symbols.length > 6 && <Text fontSize="11px" color="gray.400">+{hoveredItem.data.changeOverlay.symbols.length - 6} more changed symbols</Text>}
                     </Box>
                   )}
+                  {hoveredItem.data.provenance && hoveredItem.data.provenance !== 'authored' && (
+                    <Box data-testid="zui-provenance-details">
+                      <HStack spacing={1.5} fontSize="11px">
+                        <Box boxSize="8px" borderRadius="full" bg={PROVENANCE_META[hoveredItem.data.provenance].color} flexShrink={0} />
+                        <Text color="gray.300">{PROVENANCE_META[hoveredItem.data.provenance].label} · {PROVENANCE_META[hoveredItem.data.provenance].blurb}</Text>
+                      </HStack>
+                    </Box>
+                  )}
                   {hoveredItem.data.technology && (
                     <Box>
                       <Text fontSize="11px" color="gray.300" noOfLines={1}>
@@ -469,6 +479,17 @@ export function ZUIHoverPopover({
                   <Badge colorScheme={hoveredItem.data.isPortalConn ? 'purple' : 'orange'} variant="subtle" fontSize="2xs">
                     {hoveredItem.data.isPortalConn ? 'Portal Connection' : 'Connection'}
                   </Badge>
+                  {hoveredItem.data.change && (
+                    <Badge
+                      data-testid="zui-edge-change"
+                      bg={EDGE_CHANGE_META[hoveredItem.data.change].color}
+                      color="black"
+                      variant="solid"
+                      fontSize="2xs"
+                    >
+                      {EDGE_CHANGE_META[hoveredItem.data.change].label}
+                    </Badge>
+                  )}
                 </VStack>
               </PopoverHeader>
               <PopoverBody px={4} py={3}>

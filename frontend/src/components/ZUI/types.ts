@@ -1,6 +1,7 @@
 // src/components/ZUI/types.ts
 
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
+import type { ZUIEdgeChange } from './edgeChange'
 
 /** Pan + zoom state for the canvas viewport. */
 export interface ZUIViewState {
@@ -41,6 +42,8 @@ export interface ZUITestInteraction {
  */
 export interface LayoutNode {
   changeOverlay?: ZUIChangeOverlay
+  /** Where this node comes from: workspace-authored, graph-augmented transient, or map-generated. */
+  provenance?: ZUINodeProvenance
   // ── Identity ────────────────────────────────────────────────────
   /** Unique stable id: "d{diagramId}-o{elementId}" */
   id: string
@@ -98,8 +101,18 @@ export interface LayoutNode {
     sourceHandle: string | null
     targetHandle: string | null
     type: string
+    /** New/removed/modified in the compared revisions, when known. */
+    change?: ZUIEdgeChange
   }>
 }
+
+/**
+ * Where a canvas node comes from.
+ * - authored: drawn by a user in the workspace (the baseline, no extra chrome).
+ * - augmented: transient placement synthesized from graph facts (unlinked change).
+ * - generated: materialized by the code map pipeline.
+ */
+export type ZUINodeProvenance = 'authored' | 'augmented' | 'generated'
 
 /** Transient repository comparison annotations; never workspace resources. */
 export interface ZUIChangeOverlay {
@@ -108,6 +121,8 @@ export interface ZUIChangeOverlay {
   linesAdded?: number
   linesRemoved?: number
   symbols: string[]
+  /** Why the element carries an overlay; roll-ups render softer. */
+  reason: 'direct' | 'contained'
 }
 
 /** Top-level group wrapping one root diagram. */
@@ -140,6 +155,8 @@ export interface DiagramGroupLayout {
     sourceHandle: string | null
     targetHandle: string | null
     type: string
+    /** New/removed/modified in the compared revisions, when known. */
+    change?: ZUIEdgeChange
   }>
 }
 
@@ -174,6 +191,7 @@ export type HoveredItem =
       isPortalConn?: boolean;
       isProxy?: boolean;
       details?: ProxyConnectorDetails;
+      change?: ZUIEdgeChange;
     };
     absX: number;
     absY: number

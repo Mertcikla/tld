@@ -10,7 +10,6 @@ func scopeDiagram() *pb.ImpactDiagram {
 	return &pb.ImpactDiagram{
 		RepositoryId:  "repo",
 		ComparisonKey: "key",
-		MaxRadius:     3,
 		Nodes: []*pb.ImpactNode{
 			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
 			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},

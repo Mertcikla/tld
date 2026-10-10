@@ -33,10 +33,10 @@ vi.mock('@chakra-ui/react', async () => {
   }
 })
 
-const markdown = '```mermaid\nflowchart LR\n  a --> b\n```\n'
+const markdown = '```mermaid\nflowchart LR\n```\n'
 
 function renderPane(overrides: Partial<React.ComponentProps<typeof RepositoryChangeMermaid>> = {}) {
-  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" radius={0} open {...overrides} />)
+  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" plain={false} open {...overrides} />)
 }
 
 /** Counts only rendered DOM nodes, ignoring the mocked Chakra components themselves. */
@@ -52,15 +52,30 @@ describe('RepositoryChangeMermaid', () => {
     vi.mocked(copyTextToClipboard).mockClear()
   })
 
-  it('loads and previews the change diagram markdown', async () => {
-    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
+  it('fetches the backend-rendered scene diagram and previews it', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({
+      code: 'flowchart LR',
+      markdown,
+      warnings: [],
+    })
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = renderPane()
     })
 
-    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ markdown: true, radius: 0 }))
+    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ markdown: true, plain: false }))
     expect(renderer.root.findByProps({ 'data-testid': 'mock-markdown' }).props.children).toContain('flowchart LR')
+  })
+
+  it('forwards plain mode so the pane mirrors the canvas toggle', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = renderPane({ plain: true })
+    })
+
+    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ plain: true }))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-markdown' })).toBeTruthy()
   })
 
   it('copies the change diagram as markdown', async () => {
@@ -141,5 +156,6 @@ describe('RepositoryChangeMermaid', () => {
     })
 
     expect(hostNodes(renderer, 'repository-change-mermaid-dock')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repository-change-mermaid')).toHaveLength(1)
   })
 })
