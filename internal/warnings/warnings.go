@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/ignore"
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
@@ -39,6 +40,24 @@ type WarningScore struct {
 	Ignored   int
 	Reasoning []string
 	Views     []ViewScore
+	// Repos is populated by ARC206 with the per-repository coverage of the
+	// indexed directories by source-linked elements.
+	Repos []RepoCoverage
+	// Excluded is populated by ARC206 with the number of indexed files the
+	// workspace exclude rules drop from the coverage denominator.
+	Excluded int
+}
+
+// LinkedRepository describes an indexed codeindex repository that workspace
+// elements can link to, together with the files it contains.
+type LinkedRepository struct {
+	ID        string
+	Name      string
+	Root      string
+	RemoteURL string
+	// Paths are the repository's indexed files, relative to its root and
+	// slash-separated.
+	Paths []string
 }
 
 // GroundingElement is a per-element view of the source grounding state. It is
@@ -427,6 +446,26 @@ var warningRules = []warningRule{
 			}
 		},
 	},
+	{
+		Code:        "ARC206",
+		Name:        "Low Link Coverage",
+		Description: "Linked elements do not cover the indexed code directories",
+		Mediation: "Link elements to files in the uncovered directories, e.g. `tld link <element> --file <path>`, so change tracking reaches the whole codebase.",
+		Level:       3,
+		Check: func(ctx *warningContext, rule warningRule) {
+			report := ctx.linkCoverageReport()
+			if report.Eligible == 0 {
+				return
+			}
+			ctx.scores[rule.Code] = &report
+			for _, repo := range report.Repos {
+				if repo.Total == 0 || repo.Percent >= ctx.linkCoverageMin {
+					continue
+				}
+				ctx.addWarning(rule.Code, linkCoverageViolation(repo))
+			}
+		},
+	},
 }
 
 // externalTag marks an element whose source is documented externally, e.g. a
@@ -756,6 +795,9 @@ type warningContext struct {
 	viewConnectors      map[string]int
 	maxDepth            int
 	codeindexClassifier func(*workspace.Element) bool
+	linkTargets         []LinkedRepository
+	linkCoverageMin     int
+	ignoreRules         *ignore.Rules
 }
 
 // isCodeindexElement reports whether the element was materialized from the
@@ -834,6 +876,7 @@ func newWarningContext(ws *workspace.Workspace, opts ...Option) *warningContext 
 		viewElements:    make(map[string][]string),
 		elementViews:    make(map[string]map[string]int),
 		viewConnectors:  make(map[string]int),
+		linkCoverageMin: linkCoverageThreshold(ws),
 	}
 	for _, opt := range opts {
 		if opt != nil {

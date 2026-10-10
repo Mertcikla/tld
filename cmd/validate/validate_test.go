@@ -1,13 +1,19 @@
 package validate_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
 func TestValidateCmd_AbortsWhenCacheOutOfSync(t *testing.T) {
@@ -240,6 +246,7 @@ func TestValidateCmd_RulesListsByLevel(t *testing.T) {
 		"ARC001", "High Density",
 		"ARC102", "Missing Tech",
 		"ARC203", "Missing Label",
+		"ARC206", "Low Link Coverage",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout %q does not contain %q", stdout, want)
@@ -276,6 +283,99 @@ func TestValidateCmd_ShowsSuppressionGuidance(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "validation.exclude_rules") {
 		t.Fatalf("expected suppression guidance in output, got:\n%s", stdout)
+	}
+}
+
+func TestValidateCmd_LinkCoverageReport(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+api:
+  name: API
+  kind: service
+  file_path: A/B/C.go
+  placements: [ { parent: root } ]
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	dataDir := t.TempDir()
+	seedLinkCoverageIndex(t, dataDir, dir, []string{"A/B/C.go", "A/D/E.go"})
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC206", "--data-dir", dataDir)
+	if err != nil {
+		t.Fatalf("validate ARC206: %v", err)
+	}
+	for _, want := range []string{
+		"[ARC206]", "Low Link Coverage",
+		"Workspace link coverage: 50% (1/2 directories, threshold 75%)",
+		"unlinked: A/D", "Reasoning:", "How to improve:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not contain %q", stdout, want)
+		}
+	}
+
+	// A workspace that pins a lower threshold in .tld.yaml passes with the same links.
+	if err := os.WriteFile(filepath.Join(dir, ".tld.yaml"), []byte("validation:\n  link_coverage_percent: 50\n"), 0600); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
+	stdout, _, err = cmd.RunCmd(t, dir, "validate", "ARC206", "--data-dir", dataDir)
+	if err != nil {
+		t.Fatalf("validate ARC206 with lowered threshold: %v", err)
+	}
+	if !strings.Contains(stdout, "threshold 50%") || strings.Contains(stdout, "unlinked: A/D") {
+		t.Errorf("stdout should show no unlinked directories at a 50%% threshold, got:\n%s", stdout)
+	}
+}
+
+// seedLinkCoverageIndex publishes a codeindex snapshot for root so the ARC206
+// link coverage check has an indexed repository to measure against.
+func seedLinkCoverageIndex(t *testing.T, dataDir, root string, paths []string) {
+	t.Helper()
+	ctx := context.Background()
+	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{
+		SQLitePath: filepath.Join(dataDir, "tld.db"),
+		Migrations: assets.FS,
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = handle.Close() }()
+
+	snapshot := &pb.Snapshot{Id: "snapshot-1", RepositoryId: "repo-1", IngestionStatus: "complete"}
+	for _, path := range paths {
+		snapshot.Sources = append(snapshot.Sources, &pb.SourceFile{Path: path, Hash: "hash-" + path, Size: 1})
+	}
+	g := graph.NewGraph("repo-1", snapshot.Id)
+	for _, path := range paths {
+		g.Sources[path] = &graph.Source{Path: path}
+	}
+	idx := cstore.NewStoreFromHandle(handle)
+	if err := idx.Publish(ctx, root, snapshot, g); err != nil {
+		t.Fatalf("publish snapshot: %v", err)
+	}
+}
+
+func TestValidateCmd_LinkCoverageWithoutIndex(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+api:
+  name: API
+  kind: service
+  file_path: A/B/C.go
+  placements: [ { parent: root } ]
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC206", "--data-dir", t.TempDir())
+	if err != nil {
+		t.Fatalf("validate ARC206: %v", err)
+	}
+	if !strings.Contains(stdout, "link coverage does not apply") {
+		t.Errorf("stdout %q should explain link coverage does not apply", stdout)
 	}
 }
 

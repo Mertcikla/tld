@@ -44,6 +44,16 @@ func Load(dir string) (*Workspace, error) {
 		}
 		ws.WorkspaceConfig = cfg
 		ws.IgnoreRules = &ignore.Rules{Exclude: append([]string{}, cfg.Exclude...)}
+		// Workspace-local validation settings override the global config for
+		// fields the workspace pins; zero-valued fields stay global.
+		if override := cfg.Validation; override != nil {
+			if override.Level != nil {
+				ws.Config.Validation.Level = *override.Level
+			}
+			if override.LinkCoveragePercent != nil {
+				ws.Config.Validation.LinkCoveragePercent = *override.LinkCoveragePercent
+			}
+		}
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("read .tld.yaml: %w", err)
 	}
