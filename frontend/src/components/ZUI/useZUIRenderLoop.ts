@@ -19,6 +19,7 @@ import {
   setHighlightColor as setRendererHighlightColor,
   setHighlightedTags as setRendererHighlightedTags,
   setHiddenTags as setRendererHiddenTags,
+  setTagColors as setRendererTagColors,
   setOnImageLoadCallback,
   getThemeVars,
   type RenderContext,
@@ -90,6 +91,7 @@ interface UseZUIRenderLoopArgs {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  tagColors?: Record<string, { color?: string } | string>
   groupLayers: ViewLayer[]
 }
 
@@ -109,6 +111,7 @@ export function useZUIRenderLoop({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  tagColors,
   groupLayers,
 }: UseZUIRenderLoopArgs): ZUIRenderInvalidator {
   const needsRedrawRef = useRef(true)
@@ -367,12 +370,18 @@ export function useZUIRenderLoop({
     invalidate()
   }, [hiddenTags, invalidate])
 
+  useEffect(() => {
+    setRendererTagColors(tagColors ?? {})
+    invalidate()
+  }, [tagColors, invalidate])
+
 
   useEffect(() => {
     return () => {
       setRendererHighlightedTags(new Set())
       setRendererHighlightColor('')
       setRendererHiddenTags(new Set())
+      setRendererTagColors({})
     }
   }, [])
 

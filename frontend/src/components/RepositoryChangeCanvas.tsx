@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { api, type RepositoryImpact as ImpactDiagram, type RepositoryImpactScene } from '../api/client'
+import type { Tag } from '../types'
+import { CHANGE_OVERLAY_TAG } from './ZUI/changeOverlay'
+import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { ZUICanvas, type ZUICanvasHandle } from './ZUI'
-import { repositoryChangeScene, REPOSITORY_CHANGE_TAG } from '../utils/repositoryChangeScene'
+import { repositoryChangeScene } from '../utils/repositoryChangeScene'
 import {
   PANEL_COLLAPSE_SNAP,
   PANEL_OVERLAY_SNAP,
@@ -13,7 +17,6 @@ import RepositoryChangeMenu from './RepositoryChangeMenu'
 import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const MERMAID_PANE_DEFAULT_WIDTH = 380
-const colors = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }
 const crossBranchSettings = { enabled: false, depth: 1, connectorBudget: 50, connectorPriority: 'external' as const }
 export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false }: {
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
@@ -24,6 +27,9 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [scene, setScene] = useState<RepositoryImpactScene | null>(null)
   const [error, setError] = useState('')
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
+  const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
+  const [highlightedTags, setHighlightedTags] = useState<string[]>([])
+  const [hiddenTags, setHiddenTags] = useState<string[]>([])
   const mermaidPane = useResizableColumn({
     storageKey: 'tld:repositories:mermaidPaneWidth',
     defaultWidth: MERMAID_PANE_DEFAULT_WIDTH,
@@ -47,6 +53,43 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     return () => { active = false }
   }, [repositoryId, comparisonKey, version])
   const view = useMemo(() => scene ? repositoryChangeScene(scene, { plain: displayMode === 'plain' }) : null, [scene, displayMode])
+  useEffect(() => {
+    if (!diagram) return
+    let cancelled = false
+    try {
+      const pending = api.workspace?.orgs?.tagColors?.list?.()
+      if (pending && typeof (pending as Promise<Record<string, Tag>>).then === 'function') {
+        void (pending as Promise<Record<string, Tag>>)
+          .then((colors) => { if (!cancelled) setTagColors(colors) })
+          .catch(() => { if (!cancelled) setTagColors({}) })
+      }
+    } catch {
+      if (!cancelled) setTagColors({})
+    }
+    return () => { cancelled = true }
+  }, [diagram])
+  const tagMetrics = useMemo(() => {
+    const tagSet = new Set<string>()
+    const tagCounts: Record<string, number> = {}
+    if (view) {
+      for (const data of Object.values(view.data.views)) {
+        for (const placement of data?.placements ?? []) {
+          for (const tag of placement.tags ?? []) {
+            if (tag === CHANGE_OVERLAY_TAG || isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) continue
+            tagSet.add(tag)
+            tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
+          }
+        }
+      }
+    }
+    return { allTags: Array.from(tagSet).sort(), tagCounts }
+  }, [view])
+  const handleHoverTag = useCallback((tag: string | null) => {
+    setHighlightedTags(tag ? [tag] : [])
+  }, [])
+  const handleToggleTagVisibility = useCallback((tag: string) => {
+    setHiddenTags((prev) => prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag])
+  }, [])
   const focusSelected = useCallback(() => {    if (!view || !selectedPath) return
     for (const [viewId, data] of Object.entries(view.data.views)) {
       const element = data.placements.find((item) => item.file_path === selectedPath && view.overlays[item.element_id])
@@ -61,12 +104,18 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} provenanceOverlays={view.provenance} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} provenanceOverlays={view.provenance} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
               showProvenanceLegend
+              allTags={tagMetrics.allTags}
+              tagCounts={tagMetrics.tagCounts}
+              tagColors={tagColors}
+              hiddenTags={hiddenTags}
+              onHoverTag={handleHoverTag}
+              onToggleTagVisibility={handleToggleTagVisibility}
             />
           </Box>
           {/* The change diagram is always docked beside the canvas; shrinking it

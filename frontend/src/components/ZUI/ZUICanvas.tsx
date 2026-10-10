@@ -52,6 +52,7 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  tagColors?: Record<string, { color?: string } | string>
   groupLayers?: ViewLayer[]
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
@@ -69,6 +70,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  tagColors,
   groupLayers = [],
   crossBranchSettings,
   hoverLocked = false,
@@ -176,6 +178,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     highlightedTags,
     highlightColor,
     hiddenTags,
+    tagColors,
     groupLayers,
   })
 

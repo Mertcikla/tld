@@ -151,6 +151,7 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
             highlightedTags={tags.highlightedTags}
             highlightColor={tags.highlightColor}
             hiddenTags={tags.hiddenTags}
+            tagColors={tags.tagColors}
             groupLayers={tags.layers}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen || isCrossBranchControlsOpen}
