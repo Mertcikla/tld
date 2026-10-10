@@ -1,0 +1,358 @@
+package mermaid
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+)
+
+// Scene scopes mirror the canvas scope filter in
+// frontend/src/utils/repositoryChangeScene.ts. The renderer ports its
+// membership rules so the text diagram shows exactly what the canvas draws.
+const (
+	SceneScopeGrounded = "grounded"
+	SceneScopeAuthored = "authored"
+	SceneScopeMapped   = "mapped"
+)
+
+// SceneExportOptions controls how ExportImpactScene renders a portable change
+// scene. Scope and Radius match the canvas menu: grounded pins the authored
+// views and keeps every directly changed file, authored shows only authored
+// views, mapped shows the generated map. Radius bounds the change overlays.
+type SceneExportOptions struct {
+	// IncludeMetadata prepends a %% tld-scene comment naming the repository,
+	// comparison key, scope, and radius so the block can be round-tripped.
+	IncludeMetadata bool
+	Radius          uint32
+	Scope           string
+}
+
+// ExportImpactScene renders a repository change scene — the exact payload the
+// canvas loads — as a Mermaid flowchart, one subgraph per retained view. Node
+// ids, labels, connector arrows, and change link styles follow the same rules
+// as the canvas overlay, so the text diagram matches the UI node for node.
+// It is deliberately independent of any index or snapshot state.
+func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
+	if scene == nil {
+		return "flowchart LR\n"
+	}
+	scope := opts.Scope
+	switch scope {
+	case SceneScopeAuthored, SceneScopeMapped:
+	default:
+		scope = SceneScopeGrounded
+	}
+	view := sceneViewer{scene: scene, radius: opts.Radius, scope: scope}
+	view.index()
+
+	lines := []string{"flowchart LR"}
+	if opts.IncludeMetadata {
+		parts := []string{"%% tld-scene"}
+		appendEntry := func(key, value string) {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				parts = append(parts, key+"="+EscapeMetadataValue(trimmed))
+			}
+		}
+		appendEntry("repo", scene.GetRepositoryId())
+		appendEntry("key", scene.GetComparisonKey())
+		parts = append(parts, "scope="+scope)
+		parts = append(parts, fmt.Sprintf("radius=%d", opts.Radius))
+		lines = append(lines, strings.Join(parts, " "))
+	}
+
+	for _, id := range view.retainedOrder {
+		lines = append(lines, view.renderView(id)...)
+	}
+	if len(view.linkStyles) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, view.linkStyles...)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// sceneViewer carries the canvas membership rules over one scene render.
+type sceneViewer struct {
+	scene  *codeindexv1.ImpactScene
+	radius uint32
+	scope  string
+
+	authored   map[int32]bool
+	overlayOf  map[int32]*codeindexv1.ImpactSceneOverlay
+	linkIndex  int
+	linkStyles []string
+
+	retained      map[int32]bool
+	retainedOrder []int32
+}
+
+func (v *sceneViewer) index() {
+	v.authored = map[int32]bool{}
+	for _, id := range v.scene.GetAuthoredViewIds() {
+		v.authored[int32(id)] = true
+	}
+	v.overlayOf = map[int32]*codeindexv1.ImpactSceneOverlay{}
+	for _, content := range v.scene.GetViews() {
+		for _, placement := range content.GetPlacements() {
+			if placement == nil || placement.GetOverlay() == nil {
+				continue
+			}
+			v.overlayOf[placement.GetElement().GetElementId()] = placement.GetOverlay()
+		}
+	}
+	v.retained = map[int32]bool{}
+	v.retainedOrder = nil
+	v.keep(v.scene.GetTree())
+}
+
+func (v *sceneViewer) impacted(elementID int32) bool {
+	overlay, ok := v.overlayOf[elementID]
+	return ok && overlay.GetDistance() <= v.radius
+}
+
+func (v *sceneViewer) isTransient(elementID int32) bool {
+	return elementID < 0
+}
+
+func (v *sceneViewer) isFallback(view *diagv1.View) bool {
+	return view.GetId() != 0 && int64(view.GetId()) == v.scene.GetFallbackViewId()
+}
+
+func (v *sceneViewer) viewHasTransient(viewID int32) bool {
+	for _, placement := range v.scene.GetViews()[strconv.FormatInt(int64(viewID), 10)].GetPlacements() {
+		if placement != nil && v.isTransient(placement.GetElement().GetElementId()) {
+			return true
+		}
+	}
+	return false
+}
+
+// keep ports the canvas tree filter: retired impact views always drop;
+// authored keeps authored views and ancestors; grounded additionally retains
+// the fallback Changes view and transient carriers pruned to change evidence;
+// mapped keeps any view with children or shown placements.
+func (v *sceneViewer) keep(tree []*diagv1.View) []int32 {
+	var kept []int32
+	for _, view := range tree {
+		if view == nil {
+			continue
+		}
+		if strings.Contains(view.GetName(), " impact · ") {
+			continue
+		}
+		children := v.keep(view.GetChildren())
+		id := view.GetId()
+		switch v.scope {
+		case SceneScopeAuthored:
+			if v.isFallback(view) {
+				continue
+			}
+			if !v.authored[id] && len(children) == 0 {
+				continue
+			}
+		case SceneScopeGrounded:
+			if !v.isFallback(view) && !v.authored[id] && len(children) == 0 && !v.viewHasTransient(id) {
+				continue
+			}
+		default: // mapped
+			placements := v.scene.GetViews()[strconv.FormatInt(int64(id), 10)].GetPlacements()
+			if len(children) == 0 && len(placements) == 0 {
+				continue
+			}
+		}
+		v.retained[id] = true
+		v.retainedOrder = append(v.retainedOrder, id)
+		kept = append(kept, id)
+		_ = children
+	}
+	return kept
+}
+
+// sceneNodeRef names a placement node. Negative (transient) ids render as
+// neg<N> so refs stay valid identifiers on both renderers.
+func sceneNodeRef(viewID, elementID int32) string {
+	return "el_" + sceneNum(viewID) + "_" + sceneNum(elementID)
+}
+
+func sceneNum(id int32) string {
+	if id < 0 {
+		return "neg" + strconv.FormatInt(int64(-id), 10)
+	}
+	return strconv.FormatInt(int64(id), 10)
+}
+
+func sceneViewRef(viewID int32) string {
+	return "view_" + sceneNum(viewID)
+}
+
+// sceneChangeWord mirrors the canvas overlay vocabulary.
+func sceneChangeWord(change codeindexv1.ChangeKind) string {
+	switch change {
+	case codeindexv1.ChangeKind_CHANGE_KIND_ADDED:
+		return "added"
+	case codeindexv1.ChangeKind_CHANGE_KIND_REMOVED:
+		return "removed"
+	case codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED:
+		return "modified"
+	default:
+		return "unchanged"
+	}
+}
+
+// sceneProvenanceGlyph mirrors the canvas provenance chips: graph-augmented
+// transients and map-generated nodes are marked, authored nodes are plain.
+func (v *sceneViewer) sceneProvenanceGlyph(viewID, elementID int32) string {
+	if v.isTransient(elementID) {
+		return "◇ "
+	}
+	if v.authored[viewID] {
+		return ""
+	}
+	return "▦ "
+}
+
+func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement) string {
+	label := strings.TrimSpace(element.GetName())
+	if label == "" {
+		label = fmt.Sprintf("element %d", element.GetElementId())
+	}
+	label = v.sceneProvenanceGlyph(viewID, element.GetElementId()) + label
+	if overlay, ok := v.overlayOf[element.GetElementId()]; ok && overlay.GetDistance() <= v.radius {
+		if word := sceneChangeWord(overlay.GetChange()); word != "unchanged" {
+			label += fmt.Sprintf("<br/>%s +%d \u2212%d", word, overlay.GetLinesAdded(), overlay.GetLinesRemoved())
+		} else {
+			label += "<br/>(context)"
+		}
+	}
+	return label
+}
+
+// renderView emits one retained view: its placements (pruned to change
+// evidence in non-authored grounded views, exactly like the canvas) and its
+// connectors filtered to rendered endpoints, with change arrows and link
+// styles for new/removed/modified edges.
+func (v *sceneViewer) renderView(viewID int32) []string {
+	content := v.scene.GetViews()[strconv.FormatInt(int64(viewID), 10)]
+	if content == nil {
+		return nil
+	}
+	pruned := v.scope == SceneScopeGrounded && !v.authored[viewID]
+	name := v.viewName(viewID)
+	lines := []string{"", fmt.Sprintf(`subgraph %s["%s"]`, sceneViewRef(viewID), escapeMermaidLabel(name))}
+	rendered := map[int32]bool{}
+	for _, placement := range content.GetPlacements() {
+		if placement == nil || placement.GetElement() == nil {
+			continue
+		}
+		elementID := placement.GetElement().GetElementId()
+		if pruned && !v.isTransient(elementID) && !v.impacted(elementID) {
+			continue
+		}
+		rendered[elementID] = true
+		lines = append(lines, fmt.Sprintf(`  %s["%s"]`, sceneNodeRef(viewID, elementID),
+			escapeMermaidLabel(v.sceneNodeLabel(viewID, placement.GetElement()))))
+	}
+	for _, connector := range content.GetConnectors() {
+		if connector == nil {
+			continue
+		}
+		source, target := connector.GetSourceElementId(), connector.GetTargetElementId()
+		if !rendered[source] || !rendered[target] {
+			continue
+		}
+		lines = append(lines, "  "+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
+	}
+	lines = append(lines, "end")
+	return lines
+}
+
+func (v *sceneViewer) viewName(viewID int32) string {
+	name := v.viewNameIn(v.scene.GetTree(), viewID)
+	if name == "" {
+		name = fmt.Sprintf("view %d", viewID)
+	}
+	return name
+}
+
+func (v *sceneViewer) viewNameIn(tree []*diagv1.View, viewID int32) string {
+	for _, view := range tree {
+		if view == nil {
+			continue
+		}
+		if view.GetId() == viewID {
+			return view.GetName()
+		}
+		if name := v.viewNameIn(view.GetChildren(), viewID); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// sceneConnectorLine mirrors the canvas edge language: user labels verbatim,
+// thick arrows for added edges, crossed arrows for removed ones, and link
+// styles carrying the change palette (modified keeps its arrow, color does
+// the talking).
+func (v *sceneViewer) sceneConnectorLine(viewID, source, target int32, label string, tags []string) string {
+	from, to := sceneNodeRef(viewID, source), sceneNodeRef(viewID, target)
+	change := edgeChangeFromTags(tags)
+	text := strings.TrimSpace(label)
+	switch change {
+	case "added":
+		line := fmt.Sprintf(`%s ==> %s`, from, to)
+		if text != "" {
+			line = fmt.Sprintf(`%s ==>|"%s"| %s`, from, escapeMermaidLabel(text), to)
+		}
+		v.styleLink("#48bb78", "")
+		return line
+	case "removed":
+		line := fmt.Sprintf(`%s--x%s`, from, to)
+		if text != "" {
+			line = fmt.Sprintf(`%s--x|"%s"|%s`, from, escapeMermaidLabel(text), to)
+		}
+		v.styleLink("#fc8181", "5 5")
+		return line
+	case "modified":
+		v.styleLink("#ecc94b", "")
+		if text != "" {
+			return fmt.Sprintf(`%s -- "%s" --> %s`, from, escapeMermaidLabel(text), to)
+		}
+		return fmt.Sprintf("%s --> %s", from, to)
+	default:
+		if text != "" {
+			return fmt.Sprintf(`%s -- "%s" --> %s`, from, escapeMermaidLabel(text), to)
+		}
+		return fmt.Sprintf("%s --> %s", from, to)
+	}
+}
+
+// styleLink records a linkStyle statement for the connector line just
+// emitted. Indices count emitted connector lines across views, in order. No
+// trailing semicolon: the mermaid grammar rejects it (and its own error
+// message mangles the line beyond recognition).
+func (v *sceneViewer) styleLink(color, dash string) {
+	line := fmt.Sprintf("linkStyle %d stroke:%s", v.linkIndex, color)
+	if dash != "" {
+		line += ",stroke-dasharray:" + dash
+	}
+	v.linkStyles = append(v.linkStyles, line)
+	v.linkIndex++
+}
+
+// edgeChangeFromTags reads the scene connector change tag written at scene
+// build time. Anything else carries no claim.
+func edgeChangeFromTags(tags []string) string {
+	for _, tag := range tags {
+		switch tag {
+		case "change:added":
+			return "added"
+		case "change:removed":
+			return "removed"
+		case "change:modified":
+			return "modified"
+		}
+	}
+	return ""
+}

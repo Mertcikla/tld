@@ -38,6 +38,7 @@ type compareOptions struct {
 	verbose        bool
 	radius         uint32
 	depth          uint32
+	scope          string
 	maxNodes       int
 	maxBytes       int
 	dataDir        string
@@ -69,9 +70,13 @@ The default output is the grounded bundle: the user-authored diagram stays
 canonical, each linked element is verified against the pinned snapshots, and
 the generated map contributes collapsed context only. The payload is
 self-contained, so it renders offline without the repository, its index, or
-its snapshots. Pass --mermaid to emit the grounded Mermaid change diagram.
+its snapshots. Pass --mermaid to emit the same change scene the canvas
+draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
+and added/removed/modified arrows on connectors.
 
 --view restricts the bundle to one authored view (id or name substring).
+--scope selects the diagram scope the canvas menu offers: grounded (default),
+authored, or mapped.
 --depth controls how many dependency hops of unchanged context are included
 (0 = direct changes only). An explicit --radius narrows the displayed scope
 without shrinking the computed neighbourhood. When the output exceeds the node
@@ -96,6 +101,7 @@ stderr.`,
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().Uint32Var(&opts.radius, "radius", 0, "blast radius to display; defaults to --depth")
 	c.Flags().Uint32Var(&opts.depth, "depth", impact.DefaultContextDepth, "dependency hops of unchanged context to include (0 = direct changes only)")
+	c.Flags().StringVar(&opts.scope, "scope", mermaid.SceneScopeGrounded, "diagram scope for --mermaid: grounded, authored, or mapped")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
@@ -113,6 +119,14 @@ stderr.`,
 func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head string) error {
 	if opts.maxElements < 0 || opts.maxConnectors < 0 {
 		return fmt.Errorf("--max-elements and --max-connectors must be nonnegative")
+	}
+	switch opts.scope {
+	case "", mermaid.SceneScopeGrounded, mermaid.SceneScopeAuthored, mermaid.SceneScopeMapped:
+	default:
+		return fmt.Errorf("--scope must be grounded, authored, or mapped")
+	}
+	if opts.scope == "" {
+		opts.scope = mermaid.SceneScopeGrounded
 	}
 	ctx := cmd.Context()
 	global, err := workspace.LoadGlobalConfig()
@@ -210,6 +224,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		report.Mode = "raw-impact"
 	} else {
 		report.Mode = "grounded"
+		report.Scope = opts.scope
 	}
 	// The grounded summary intersects the change with the authored workspace so
 	// the default payload pins the user's diagram and rolls up fan-out. The raw
@@ -280,6 +295,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 type CompareReport struct {
 	Status     string            `json:"status"`
 	Mode       string            `json:"mode"`
+	Scope      string            `json:"scope,omitempty"`
 	Elements   int               `json:"elements"`
 	Connectors int               `json:"connectors"`
 	Stats      CompareStats      `json:"stats"`
@@ -304,6 +320,9 @@ type CompareStats struct {
 	SymbolsAdded    int      `json:"symbolsAdded"`
 	SymbolsModified int      `json:"symbolsModified"`
 	SymbolsRemoved  int      `json:"symbolsRemoved"`
+	EdgesAdded      int      `json:"edgesAdded"`
+	EdgesRemoved    int      `json:"edgesRemoved"`
+	EdgesModified   int      `json:"edgesModified"`
 	Paths           []string `json:"paths"`
 	PathsTruncated  bool     `json:"pathsTruncated,omitempty"`
 }
@@ -340,6 +359,16 @@ func comparisonStats(diagram *pb.ImpactDiagram) CompareStats {
 	stats.SymbolsAdded = countSymbols(diff.GetFacts().GetAdded())
 	stats.SymbolsModified = countSymbols(diff.GetFacts().GetModified())
 	stats.SymbolsRemoved = countSymbols(diff.GetFacts().GetRemoved())
+	for _, edge := range diagram.GetEdges() {
+		switch edge.GetChange() {
+		case pb.ChangeKind_CHANGE_KIND_ADDED:
+			stats.EdgesAdded++
+		case pb.ChangeKind_CHANGE_KIND_REMOVED:
+			stats.EdgesRemoved++
+		case pb.ChangeKind_CHANGE_KIND_MODIFIED:
+			stats.EdgesModified++
+		}
+	}
 	return stats
 }
 
@@ -443,13 +472,29 @@ type groundedBundle struct {
 // size in bytes so --max-bytes describes the payload the caller receives.
 func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
 	if r.opts.mermaid || r.opts.markdown {
-		code := mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
-		if !r.opts.rawImpact && r.summary != nil {
-			code = groundedMermaidHeader(*r.summary, radius) + code
-			// The authored overlay carries the same elements and connectors
-			// the canvas shows, so the text diagram matches the UI.
-			if section := grounded.MermaidAuthoredSection(diagram, *r.summary); section != "" {
-				code += section
+		var code string
+		if r.opts.rawImpact {
+			// Legacy path: the file-level dependency graph.
+			code = mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
+		} else {
+			scene, err := r.service.Scene(r.ctx, diagram)
+			if err != nil {
+				return "", 0, err
+			}
+			scope := r.opts.scope
+			if scope == "" {
+				scope = mermaid.SceneScopeGrounded
+			}
+			code = mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Radius: radius, Scope: scope})
+			if r.summary != nil {
+				// Stats comments go directly after the flowchart directive:
+				// some strict renderers reject comments before the diagram
+				// type, and ExportImpactScene always leads with it.
+				if i := strings.Index(code, "\n"); i >= 0 {
+					code = code[:i+1] + groundedMermaidHeader(*r.summary, radius) + code[i+1:]
+				} else {
+					code = groundedMermaidHeader(*r.summary, radius) + code
+				}
 			}
 		}
 		if r.opts.markdown {

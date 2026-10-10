@@ -10,6 +10,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
+	"github.com/mertcikla/tld/v2/internal/sourcelink"
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -29,6 +30,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		kind        string
 		parent      string
 		viewLabel   string
+		linkTarget  string
 		target      string
 		dataDir     string
 		tags        string
@@ -92,6 +94,10 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				placementParent = resolvedParent
 			}
+			linkFilePath, err := resolveLinkTarget(linkTarget)
+			if err != nil {
+				return err
+			}
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			parsedTags := workspace.ParseTagList(tags)
 			spec := &workspace.Element{
@@ -101,6 +107,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Technology:  normalizedTechnology,
 				URL:         url,
 				LogoURL:     logoURL,
+				FilePath:    linkFilePath,
 				Tags:        parsedTags,
 				ViewLabel:   viewLabel,
 				Placements: []workspace.ViewPlacement{{
@@ -126,12 +133,15 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				term.Successf(cmd.OutOrStdout(), "dry-run: add: %s", r)
 				term.Infof(cmd.OutOrStdout(), "kind=%s parent=%s", kind, placementParent)
+				if strings.TrimSpace(linkTarget) != "" {
+					term.Infof(cmd.OutOrStdout(), "link=%s", strings.TrimSpace(linkTarget))
+				}
 				if wasNormalized {
 					term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
 				}
 				return nil
 			}
-			return runAdd(cmd, sess, ws, *format, *compact, r, spec, placementParent, wasNormalized, technology, normalizedTechnology)
+			return runAdd(cmd, sess, ws, *format, *compact, r, spec, placementParent, linkFilePath, wasNormalized, technology, normalizedTechnology)
 		},
 	}
 
@@ -147,6 +157,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&viewLabel, "view-label", "", "label for the diagram created when this element becomes a parent")
+	c.Flags().StringVar(&linkTarget, "link", "", "source link target using 'tld link' file syntax: file path, file#symbol, file#Lline, or folder/ (URLs: use --url or 'tld link --external')")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 
@@ -161,7 +172,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 // runAdd writes the element to the server synchronously, then refreshes the
 // local YAML cache. Every invocation gets immediate server feedback.
-func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, ref string, spec *workspace.Element, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
+func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, ref string, spec *workspace.Element, placementParent, linkFilePath string, wasNormalized bool, technology, normalizedTechnology string) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "add", err)
@@ -196,6 +207,7 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 		URL:             strptr(spec.URL),
 		LogoURL:         strptr(spec.LogoURL),
 		Tags:            tags,
+		FilePath:        strptr(spec.FilePath),
 		TechLinks:       tech.TechnologyLinksForElement(spec.Technology, ""),
 		BypassNoiseGate: &bypass,
 		HasView:         spec.HasView,
@@ -229,6 +241,14 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 	if sess.HasWorkspace() {
 		if err := workspace.UpsertElement(sess.Wdir, ref, spec); err != nil {
 			return fail(fmt.Errorf("update YAML cache: %w", err))
+		}
+		// UpsertElement merges fill-empty-only, but an explicit --link flag
+		// must overwrite (matching `tld link`) so the cache does not diverge
+		// from the server when relinking an existing element.
+		if linkFilePath != "" {
+			if err := workspace.UpdateElementField(sess.Wdir, ref, "file_path", linkFilePath); err != nil {
+				return fail(fmt.Errorf("update YAML cache: %w", err))
+			}
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
 			return fail(fmt.Errorf("update cache metadata: %w", err))
@@ -308,6 +328,60 @@ func strptr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// resolveLinkTarget maps a `--link` value using the file-target subset of the
+// `tld link <ref> [target]` positional syntax: a file path, file#symbol,
+// file#Lline, or folder (trailing slash). It returns the file_path value.
+// URLs are rejected: the element's `url` field is a separate attribute owned
+// by `--url`, and external source links stay in `tld link --external`.
+func resolveLinkTarget(target string) (string, error) {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return "", nil
+	}
+	if isLinkURL(trimmed) {
+		return "", fmt.Errorf("invalid --link %q: URLs are not source links; use --url for the element URL or 'tld link --external' for an external source link", target)
+	}
+	parsed := sourcelink.Parse(trimmed)
+	switch parsed.Anchor.Kind {
+	case sourcelink.AnchorSymbol:
+		base := strings.TrimSpace(parsed.BasePath)
+		if base == "" {
+			return "", fmt.Errorf("invalid --link %q: a file path is required before the symbol anchor (use 'tld link' for advanced usage)", target)
+		}
+		nodeType := strings.TrimSpace(parsed.Anchor.NodeType)
+		if nodeType == "" {
+			nodeType = "symbol"
+		}
+		return sourcelink.FormatSymbol(base, nodeType, parsed.Anchor.Symbol), nil
+	case sourcelink.AnchorLine:
+		base := strings.TrimSpace(parsed.BasePath)
+		if base == "" {
+			return "", fmt.Errorf("invalid --link %q: a file path is required before the line anchor (use 'tld link' for advanced usage)", target)
+		}
+		return sourcelink.FormatLine(base, parsed.Anchor.StartLine), nil
+	}
+	if strings.TrimSpace(parsed.BasePath) == "" {
+		return "", fmt.Errorf("invalid --link %q: a file path or folder/ is required", target)
+	}
+	if strings.HasSuffix(trimmed, "/") {
+		return ensureLinkTrailingSlash(trimmed), nil
+	}
+	return trimmed, nil
+}
+
+func isLinkURL(target string) bool {
+	lower := strings.ToLower(strings.TrimSpace(target))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func ensureLinkTrailingSlash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasSuffix(value, "/") {
+		return value
+	}
+	return value + "/"
 }
 
 func validateKind(kind string) (string, error) {

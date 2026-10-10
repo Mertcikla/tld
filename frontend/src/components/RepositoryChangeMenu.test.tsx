@@ -26,6 +26,9 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof RepositoryCha
       onRadiusChange={vi.fn()}
       viewMode="standard"
       onViewModeChange={vi.fn()}
+      scope="grounded"
+      onScopeChange={vi.fn()}
+      authoredCount={0}
       {...overrides}
     />,
   )
@@ -60,5 +63,18 @@ describe('RepositoryChangeMenu', () => {
     const renderer = renderMenu()
 
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-change-mermaid-toggle' })).toHaveLength(0)
+  })
+
+  it('hides the provenance legend unless asked', () => {
+    expect(renderMenu().root.findAllByProps({ 'data-testid': 'repositories-provenance-legend' })).toHaveLength(0)
+
+    const renderer = renderMenu({ showProvenanceLegend: true })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-provenance-legend' }).length).toBeGreaterThanOrEqual(1)
+    for (const kind of ['authored', 'augmented', 'generated']) {
+      expect(renderer.root.findAllByProps({ 'data-testid': `repositories-provenance-${kind}` }).length).toBeGreaterThanOrEqual(1)
+    }
+    for (const kind of ['added', 'removed', 'modified']) {
+      expect(renderer.root.findAllByProps({ 'data-testid': `repositories-edge-${kind}` }).length).toBeGreaterThanOrEqual(1)
+    }
   })
 })

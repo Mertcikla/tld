@@ -50,6 +50,7 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
 | `--view REF` | unset | Restrict the grounded bundle to one authored view (id or name substring) |
+| `--scope SCOPE` | `grounded` | Diagram scope for `--mermaid`: grounded, authored, or mapped (mirrors the canvas menu) |
 | `--all-edges` | off | Disable fan-out roll-up in the grounded summary |
 | `--report-json PATH` | unset | Write status, mode, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, grounded overlay, and skip reason to JSON |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
@@ -59,15 +60,22 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 
 - **Default:** protojson encoding of the **grounded bundle** — the portable impact
   scene plus the authored overlay (`mode: "grounded"`, `grounded: {affected,
-  context, ungrounded, views, elements, fanout}`). The user-authored diagram
+  context, ungrounded, views, elements, fanout, uncovered}`). The user-authored diagram
   stays canonical while each linked element is verified against the pinned
   snapshots; the generated map contributes collapsed context only. High fan-out
   nodes roll up by target prefix (7 groups + "+N more"). When no authored view
   intersects the change, the bundle notes the fallback and carries raw impact
   context. The legacy bare scene remains behind the hidden `--raw-impact` flag.
-- **`--mermaid` / `--markdown`:** the grounded Mermaid change diagram: a `%% grounded`
-  header (affected/context/ungrounded counts, matched views, fan-out groups)
-  followed by the file-level dependency graph.
+- **`--mermaid` / `--markdown`:** the change scene rendered as Mermaid — the same
+  payload the canvas draws, node for node: a `%% tld-scene` header, one subgraph
+  per retained view, change badges (`modified +8 −0`, `(context)`) on nodes,
+  provenance glyphs (`◇` graph-augmented, `▦` map-generated) on non-authored
+  nodes, and connector arrows with `linkStyle` colors for added/removed/modified
+  edges (`--scope` selects grounded/authored/mapped, like the canvas menu; the
+  CLI-only `%% grounded` stats lines precede the diagram). The legacy
+  file-level dependency graph remains behind the hidden `--raw-impact` flag
+  (there, new dependencies render as thick `==>` arrows, removed ones as
+  `A--x|"-N"|B`, modified ones keep `-->` with a `~N` label).
 
 Progress is written to stderr only with `--verbose`; budget warnings always go
 to stderr. If the payload exceeds a budget, a warning tells you to raise
@@ -80,7 +88,8 @@ limit are allowed. The optional JSON report uses `ready`, `skipped`, or `empty`
 status and reports the requested scope, even if the shrinking budgets later
 narrow the rendered output. It also carries a `stats` object derived from the
 snapshot diff — `files`, `directories`, `subsystems`, `linesAdded`,
-`linesRemoved`, `symbolsAdded`, `symbolsModified`, `symbolsRemoved`, and the
+`linesRemoved`, `symbolsAdded`, `symbolsModified`, `symbolsRemoved`,
+`edgesAdded`, `edgesRemoved`, `edgesModified`, and the
 changed `paths` (capped at 500, with `pathsTruncated` set beyond that). Stats
 describe the change itself, so they are present even when the diagram is
 skipped or empty. Command failures still return a nonzero exit code.

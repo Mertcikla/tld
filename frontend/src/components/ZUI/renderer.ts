@@ -1,6 +1,8 @@
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer } from '../../utils/elementGroups'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import { PROVENANCE_META } from './provenance'
+import { EDGE_CHANGE_META } from './edgeChange'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
@@ -1112,6 +1114,44 @@ function drawSceneNode(
     ctx.restore()
   }
 
+  // Provenance reads as a second ring so it composes with the change overlay:
+  // authored nodes (the baseline) carry no extra chrome, graph-augmented
+  // transients get a violet dash, map-generated nodes a teal dotted ring.
+  // A glyph chip at the top-left names the kind once the node is legible.
+  if (layout.provenance && layout.provenance !== 'authored' && parentAlpha > 0.05) {
+    const meta = PROVENANCE_META[layout.provenance]
+    ctx.save()
+    ctx.globalAlpha = parentAlpha
+    ctx.strokeStyle = meta.color
+    ctx.lineWidth = 2 / drawZoom
+    ctx.setLineDash(meta.dash.map((segment) => segment / drawZoom))
+    traceShape()
+    ctx.stroke()
+    ctx.setLineDash([])
+    if (drawScreenW > 90 && !renderCtx.lowDetail) {
+      const glyph = meta.glyph
+      const chipPad = 5 / drawZoom
+      const chipH = 15 / drawZoom
+      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
+      const glyphW = ctx.measureText(glyph).width
+      const chipW = glyphW + chipPad * 2
+      const chipX = x + chipPad
+      const chipY = y + chipPad
+      ctx.beginPath()
+      ctx.roundRect(chipX, chipY, chipW, chipH, 4 / drawZoom)
+      ctx.fillStyle = portalTintColor(meta.color, 0.28)
+      ctx.fill()
+      ctx.strokeStyle = meta.color
+      ctx.lineWidth = 1.25 / drawZoom
+      ctx.stroke()
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = meta.color
+      ctx.fillText(glyph, chipX + chipPad, chipY + chipH / 2 + 0.5 / drawZoom)
+    }
+    ctx.restore()
+  }
+
   if (state.isLeafCapped) {
     ctx.restore()
   }
@@ -1327,6 +1367,16 @@ function drawEdges(
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
       ctx.lineWidth = CONNECTOR_LINE_PX / zoom
+      // Edges new, removed, or modified in the compared revisions keep their
+      // routing but take the change palette over the layer color, so connector
+      // churn reads at a glance. Removed edges additionally dash.
+      if (edge.change) {
+        const edgeMeta = EDGE_CHANGE_META[edge.change]
+        ctx.strokeStyle = edgeMeta.color
+        if (edgeMeta.dash.length > 0) {
+          ctx.setLineDash(edgeMeta.dash.map((segment) => segment / zoom))
+        }
+      }
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2

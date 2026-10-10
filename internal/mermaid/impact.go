@@ -263,7 +263,26 @@ func impactEdgeLine(edge *codeindexv1.ImpactEdge, nodeIDs map[string]string) (st
 	if !ok {
 		return "", false
 	}
+	// New, removed, and modified dependencies read as distinct arrows so
+	// connector churn is visible without opening the canvas: thick for added,
+	// crossed for removed, plain for modified and unchanged. The added and
+	// removed forms below are parser-validated against the bundled mermaid
+	// version; unchanged output keeps its historical format.
 	label := impactEdgeLabel(edge.GetWeight())
+	switch edge.GetChange() {
+	case codeindexv1.ChangeKind_CHANGE_KIND_ADDED:
+		label = "+" + label
+		return fmt.Sprintf(`%s ==>|"%s"| %s`, sourceID, escapeMermaidLabel(label), targetID), true
+	case codeindexv1.ChangeKind_CHANGE_KIND_REMOVED:
+		label = "-" + label
+		return fmt.Sprintf(`%s--x|"%s"|%s`, sourceID, escapeMermaidLabel(label), targetID), true
+	case codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED:
+		if label != "" {
+			label = "~" + label
+			return fmt.Sprintf(`%s -- "%s" --> %s`, sourceID, escapeMermaidLabel(label), targetID), true
+		}
+		return fmt.Sprintf(`%s -- "~" --> %s`, sourceID, targetID), true
+	}
 	if label != "" {
 		return fmt.Sprintf(`%s -- "%s" --> %s`, sourceID, escapeMermaidLabel(label), targetID), true
 	}

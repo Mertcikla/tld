@@ -42,7 +42,7 @@ func TestExportImpactDiagram(t *testing.T) {
 		"node_file_src_api_go[\"api.go<br/>+4 \u22121\"]",
 		"node_file_src_new_go[\"new.go<br/>+7 \u22120\"]",
 		`node_context_42["db.go<br/>(context)"]`,
-		`node_file_src_api_go -- "2 dependencies" --> node_file_src_new_go`,
+		`node_file_src_api_go ==>|"+2 dependencies"| node_file_src_new_go`,
 		`node_file_src_new_go -- "1 dependency" --> node_context_42`,
 		"classDef modified",
 		"classDef added",
@@ -88,6 +88,32 @@ func TestExportImpactDiagramNilIsEmptyFlowchart(t *testing.T) {
 
 	if got := ExportImpactDiagram(nil, ImpactExportOptions{}); got != "flowchart LR\n" {
 		t.Fatalf("ExportImpactDiagram(nil) = %q", got)
+	}
+}
+
+func TestExportImpactDiagramMarksEdgeChurn(t *testing.T) {
+	t.Parallel()
+
+	diagram := &codeindexv1.ImpactDiagram{
+		Nodes: []*codeindexv1.ImpactNode{
+			{Key: "file|a.go", Path: "a.go", Name: "a.go"},
+			{Key: "file|b.go", Path: "b.go", Name: "b.go"},
+			{Key: "file|c.go", Path: "c.go", Name: "c.go"},
+			{Key: "file|d.go", Path: "d.go", Name: "d.go"},
+		},
+		Edges: []*codeindexv1.ImpactEdge{
+			{FromKey: "file|a.go", ToKey: "file|b.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_REMOVED, Weight: 2},
+			{FromKey: "file|c.go", ToKey: "file|d.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED, Weight: 3},
+		},
+	}
+	got := ExportImpactDiagram(diagram, ImpactExportOptions{})
+	for _, want := range []string{
+		`node_file_a_go--x|"-2 dependencies"|node_file_b_go`,
+		`node_file_c_go -- "~3 dependencies" --> node_file_d_go`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ExportImpactDiagram() missing %q in:\n%s", want, got)
+		}
 	}
 }
 

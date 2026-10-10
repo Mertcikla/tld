@@ -6,13 +6,11 @@
 package grounded
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/mermaid"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -43,7 +41,7 @@ type ElementStatus struct {
 }
 
 // GroundedConnector is a user-authored connector inside a matched view,
-// carried so text renders (mermaid) show the same edges as the canvas.
+// carried so bundle consumers see the same edges as the canvas.
 type GroundedConnector struct {
 	ViewID   int64  `json:"viewId"`
 	ViewName string `json:"viewName,omitempty"`
@@ -81,16 +79,21 @@ type ViewMatch struct {
 // Summary is the grounded overlay: which authored elements the change
 // touches, which views they live in, and where fan-out was collapsed.
 type Summary struct {
-	Mode          string              `json:"mode"`
-	ViewFilter    string              `json:"viewFilter,omitempty"`
-	Affected      int                 `json:"affected"`
-	Context       int                 `json:"context"`
-	Ungrounded    int                 `json:"ungrounded"`
-	Views         []ViewMatch         `json:"views"`
-	Elements      []ElementStatus     `json:"elements"`
-	Connectors    []GroundedConnector `json:"connectors,omitempty"`
-	Fanout        []Fanout            `json:"fanout,omitempty"`
-	FallbackToRaw bool                `json:"fallbackToRaw,omitempty"`
+	Mode       string              `json:"mode"`
+	ViewFilter string              `json:"viewFilter,omitempty"`
+	Affected   int                 `json:"affected"`
+	Context    int                 `json:"context"`
+	Ungrounded int                 `json:"ungrounded"`
+	Views      []ViewMatch         `json:"views"`
+	Elements   []ElementStatus     `json:"elements"`
+	Connectors []GroundedConnector `json:"connectors,omitempty"`
+	Fanout     []Fanout            `json:"fanout,omitempty"`
+	// Uncovered lists changed paths no workspace element covers (no file,
+	// symbol, or folder link resolves to them). The canvas renders these as
+	// transient placements augmented from the graph facts, so an empty list
+	// means the user workspace fully captures the change.
+	Uncovered     []string `json:"uncovered,omitempty"`
+	FallbackToRaw bool     `json:"fallbackToRaw,omitempty"`
 }
 
 // Summarize intersects the impact diagram's changed paths with the
@@ -240,10 +243,49 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 	if len(sum.Views) == 0 {
 		sum.FallbackToRaw = true
 	}
+	// Uncovered changed paths are the ones no workspace placement resolves
+	// to — the same files the canvas renders as transient placements. Links
+	// are collected workspace-wide (including generated map elements, which
+	// also cover files on the canvas), independent of any view filter.
+	var links []string
+	for _, content := range explore.Views {
+		for _, el := range content.Placements {
+			if el.FilePath == nil {
+				continue
+			}
+			if link := strings.TrimSpace(*el.FilePath); link != "" {
+				links = append(links, link)
+			}
+		}
+	}
+	for path := range changed {
+		if !coveredBy(path, links) {
+			sum.Uncovered = append(sum.Uncovered, path)
+		}
+	}
+	sort.Strings(sum.Uncovered)
 	if !allEdges {
 		sum.Fanout = RollupFanout(diagram, MaxFanoutShown)
 	}
 	return sum
+}
+
+// coveredBy reports whether any workspace link resolves to the changed path:
+// an exact file/symbol link, or a folder link whose prefix contains it.
+func coveredBy(path string, links []string) bool {
+	for _, link := range links {
+		base := strings.TrimSpace(basePath(link))
+		if base == "" {
+			continue
+		}
+		if base == path || strings.TrimSuffix(base, "/") == path {
+			return true
+		}
+		if strings.HasPrefix(path, strings.TrimSuffix(base, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // RollupFanout collapses high out-degree change nodes by target prefix so a
@@ -415,151 +457,4 @@ func targetPrefix(target string) string {
 		return "(external)"
 	}
 	return cleaned
-}
-
-// statusBadge marks an authored node the way the canvas overlay does:
-// affected nodes glow, context neighbours keep their outline, unlinked nodes
-// stay hollow.
-func statusBadge(status string) string {
-	switch status {
-	case StatusAffected:
-		return "✓ affected"
-	case StatusContext:
-		return "· context"
-	default:
-		return "○ unlinked"
-	}
-}
-
-// MermaidAuthoredSection renders the user-authored overlay — the same elements
-// and connectors the canvas shows in the grounded scope — as mermaid subgraphs
-// appended after the file-level diagram. Each linked element carries a dashed
-// grounding edge to the changed-file node it resolves to, using the exact node
-// ids ExportImpactDiagram generates. Views without affected elements, and
-// grounding targets pruned from the scoped diagram, are skipped. An empty
-// summary renders nothing.
-func MermaidAuthoredSection(diagram *pb.ImpactDiagram, summary Summary) string {
-	if len(summary.Views) == 0 || len(summary.Elements) == 0 {
-		return ""
-	}
-	// Rebuild the exporter's node ids in order so grounding edges reference
-	// real file nodes. Scheme mirrors uniqueImpactNodeID: sanitize
-	// ("node_"+key) with numeric dedup on collision.
-	nodeIDs := map[string]string{}
-	used := map[string]bool{}
-	if diagram != nil {
-		for _, node := range diagram.GetNodes() {
-			if node == nil {
-				continue
-			}
-			key := node.GetKey()
-			if key == "" {
-				key = node.GetPath()
-			}
-			if key == "" {
-				continue
-			}
-			if _, ok := nodeIDs[key]; ok {
-				continue
-			}
-			ref := mermaid.SanitizeID("node_" + key)
-			if used[ref] {
-				for index := 2; ; index++ {
-					candidate := fmt.Sprintf("%s_%d", ref, index)
-					if !used[candidate] {
-						ref = candidate
-						break
-					}
-				}
-			}
-			used[ref] = true
-			nodeIDs[key] = ref
-		}
-	}
-	byView := map[int64][]ElementStatus{}
-	for _, el := range summary.Elements {
-		byView[el.ViewID] = append(byView[el.ViewID], el)
-	}
-	byViewConns := map[int64][]GroundedConnector{}
-	for _, conn := range summary.Connectors {
-		byViewConns[conn.ViewID] = append(byViewConns[conn.ViewID], conn)
-	}
-	var sb strings.Builder
-	for _, view := range summary.Views {
-		elements := byView[view.ViewID]
-		if len(elements) == 0 {
-			continue
-		}
-		name := view.ViewName
-		if name == "" {
-			name = fmt.Sprintf("view %d", view.ViewID)
-		}
-		fmt.Fprintf(&sb, "\nsubgraph authored_%d[\"✎ %s — yours\"]\n", view.ViewID, mermaid.EscapeMermaidLabel(name))
-		refs := map[string]string{}
-		for _, el := range elements {
-			ref := fmt.Sprintf("el_%d_%d", el.ViewID, el.ElementID)
-			refs[el.Name] = ref
-			label := el.Name
-			if el.Link != "" {
-				label += "<br/>" + el.Link
-			}
-			badge := statusBadge(el.Status)
-			if el.Status == StatusContext && len(el.Near) > 0 {
-				badge += " · near " + el.Near[0]
-				if len(el.Near) > 1 {
-					badge += fmt.Sprintf(" +%d", len(el.Near)-1)
-				}
-			}
-			label += "<br/>" + badge
-			fmt.Fprintf(&sb, "  %s[\"%s\"]\n", ref, mermaid.EscapeMermaidLabel(label))
-		}
-		for _, conn := range byViewConns[view.ViewID] {
-			source, okSource := refs[conn.Source]
-			target, okTarget := refs[conn.Target]
-			if !okSource || !okTarget {
-				continue
-			}
-			if conn.Label != "" {
-				fmt.Fprintf(&sb, "  %s -- \"%s\" --> %s\n", source, mermaid.EscapeMermaidLabel(conn.Label), target)
-			} else {
-				fmt.Fprintf(&sb, "  %s --> %s\n", source, target)
-			}
-		}
-		for _, el := range elements {
-			targets := []string{}
-			// Context neighbours point at the nearby change, not their own
-			// (unchanged, unscoped) file — that edge is the "why listed".
-			targets = append(targets, el.Near...)
-			if base := strings.TrimSpace(basePath(el.Link)); base != "" {
-				trimmed := strings.TrimSuffix(base, "/")
-				targets = append(targets, trimmed)
-				// Folder links ground to every changed file under their
-				// prefix that survived scoping.
-				if strings.HasSuffix(base, "/") {
-					for _, node := range diagram.GetNodes() {
-						if node == nil || node.GetDistance() != 0 {
-							continue
-						}
-						if strings.HasPrefix(node.GetPath(), base) {
-							targets = append(targets, strings.TrimSuffix(node.GetPath(), "/"))
-						}
-					}
-				}
-			}
-			seen := map[string]bool{}
-			for _, target := range targets {
-				if seen[target] {
-					continue
-				}
-				seen[target] = true
-				fileRef, ok := nodeIDs["file|"+target]
-				if !ok {
-					continue
-				}
-				fmt.Fprintf(&sb, "  %s -.-> %s\n", refs[el.Name], fileRef)
-			}
-		}
-		sb.WriteString("end\n")
-	}
-	return sb.String()
 }

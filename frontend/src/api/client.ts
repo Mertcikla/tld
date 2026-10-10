@@ -1007,7 +1007,7 @@ export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
     repo: (p.repo ?? null) as string | null,
     repository_id: (p.repository_id ?? p.repositoryId ?? null) as string | null,
     branch: (p.branch ?? null) as string | null,
-    file_path: (p.file_path ?? null) as string | null,
+    file_path: (p.file_path ?? p.filePath ?? null) as string | null,
     language: (p.language ?? null) as string | null,
     has_view: Boolean(p.has_view ?? p.hasView ?? false),
     view_label: (p.view_label ?? p.viewLabel ?? null) as string | null,

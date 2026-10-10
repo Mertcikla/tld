@@ -85,7 +85,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} provenanceOverlays={view.provenance} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               radius={radius}
               maxRadius={effectiveMaxRadius}
@@ -96,6 +96,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
               scope={scope}
               onScopeChange={handleScopeChange}
               authoredCount={authoredCount}
+              showProvenanceLegend
             />
           </Box>
           {/* The change diagram is always docked beside the canvas; shrinking it
@@ -127,6 +128,8 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             repositoryId={diagram.repositoryId}
             comparisonKey={diagram.comparisonKey}
             radius={radius}
+            scope={scope}
+            view={view}
             open
             collapsed={mermaidPane.isCollapsed}
             overlay={mermaidPane.isOverlay}

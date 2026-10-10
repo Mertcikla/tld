@@ -137,9 +137,94 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[1]?.change).toBe('modified')
   })
 
+  it('marks provenance: transients augmented, authored views authored, the rest generated', () => {
+    const withOrphan: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
+      views: {
+        10: { placements: [placement(100, 'top.go')], connectors: [] },
+        11: { placements: [placement(1, 'a.go')], connectors: [] },
+        51: { placements: [placement(7, 'svc/auth')], connectors: [] },
+        '-1': { placements: [placement(-1, 'new.go')], connectors: [] },
+      },
+      overlays: {
+        1: overlay('modified', 'a.go', 0),
+        7: overlay('modified', 'svc/auth', 0),
+        [-1]: overlay('added', 'new.go', 0),
+      },
+      authoredViewIds: [51],
+    }
+    const grounded = repositoryChangeScene(withOrphan, { radius: 0, scope: 'grounded' })
+    expect(grounded.provenance[7]).toBe('authored')
+    expect(grounded.provenance[-1]).toBe('augmented')
+    const mapped = repositoryChangeScene(
+      { ...withOrphan, authoredViewIds: [51], tree: [view(11, 'repo map')] },
+      { radius: 0, scope: 'mapped' },
+    )
+    expect(mapped.provenance[1]).toBe('generated')
+  })
+
   it('grounded scope falls back to mapped when no authored view matched', () => {
     const rendered = repositoryChangeScene(scene, { radius: 0, scope: 'grounded' })
     expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
+  })
+
+  it('grounded scope keeps the fallback Changes view so unlinked files stay visible', () => {
+    const withOrphan: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
+      views: {
+        10: { placements: [placement(100, 'top.go')], connectors: [] },
+        11: { placements: [placement(1, 'a.go')], connectors: [] },
+        51: { placements: [placement(7, 'svc/auth')], connectors: [] },
+        '-1': { placements: [placement(-1, 'new.go')], connectors: [] },
+      },
+      overlays: {
+        1: overlay('modified', 'a.go', 0),
+        7: overlay('modified', 'svc/auth', 0),
+        [-1]: overlay('added', 'new.go', 0),
+      },
+      authoredViewIds: [51],
+    }
+    const rendered = repositoryChangeScene(withOrphan, { radius: 0, scope: 'grounded' })
+    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([10])
+    expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51, -1])
+    expect(rendered.data.views[11]).toBeUndefined()
+    expect(rendered.data.views[51].placements.map((element) => element.element_id)).toEqual([7])
+    expect(rendered.data.views[-1].placements.map((element) => element.element_id)).toEqual([-1])
+    expect(rendered.overlays[7]?.change).toBe('modified')
+    expect(rendered.overlays[-1]?.change).toBe('added')
+    expect(rendered.overlays[1]).toBeUndefined()
+  })
+
+  it('grounded scope rescues transients from mapped views while pruning mapped context', () => {
+    const transient1 = placement(-5, 'new.go')
+    const transient2 = placement(-6, 'new2.go')
+    const rescued: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services')])],
+      views: {
+        10: { placements: [], connectors: [] },
+        11: {
+          placements: [placement(2, 'b.go'), transient1, transient2],
+          connectors: [connector(21, -5, -6), connector(22, -5, 2)],
+        },
+        51: { placements: [placement(7, 'svc/auth')], connectors: [] },
+      },
+      overlays: {
+        2: overlay('unchanged', 'b.go', 1),
+        7: overlay('modified', 'svc/auth', 0),
+        [-5]: overlay('added', 'new.go', 0),
+        [-6]: overlay('added', 'new2.go', 0),
+      },
+      authoredViewIds: [51],
+    }
+    const rendered = repositoryChangeScene(rescued, { radius: 0, scope: 'grounded' })
+    expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([11, 51])
+    expect(rendered.data.views[11].placements.map((element) => element.element_id)).toEqual([-5, -6])
+    expect(rendered.data.views[11].connectors?.map((item) => item.id)).toEqual([21])
+    expect(rendered.overlays[-5]?.change).toBe('added')
+    expect(rendered.overlays[2]).toBeUndefined()
   })
 
   it('grounded scope pins authored views like authored scope', () => {

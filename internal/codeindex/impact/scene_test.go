@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -282,5 +283,216 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 	}
 	if seen["new.go"] != 1 {
 		t.Fatalf("uncovered change missing its transient placement: %+v", seen)
+	}
+}
+
+// TestSceneTagsConnectorsSpanningChangedFilePairs proves workspace
+// connectors whose endpoint files share a new dependency carry a change tag,
+// while connectors over unchanged pairs stay untagged.
+func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	mine, err := ws.CreateView(ctx, "mine", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := func(name, filePath string) int64 {
+		t.Helper()
+		element, err := ws.CreateElement(ctx, core.LibraryElement{Name: name, FilePath: stringPtr(filePath), RepositoryID: stringPtr("repo")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ws.AddPlacement(ctx, mine.ID, element.ID, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		return element.ID
+	}
+	aID := link("a", "a.go")
+	bID := link("b", "b.go")
+	cID := link("c", "c.go")
+	dID := link("d", "d.go")
+	connect := func(sourceID, targetID int64) {
+		t.Helper()
+		if _, err := ws.CreateConnector(ctx, core.Connector{ViewID: mine.ID, SourceElementID: sourceID, TargetElementID: targetID, Label: stringPtr("calls")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect(aID, bID)
+	connect(cID, dID)
+	publish := func(id string, files map[string]string, edges [][2]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range files {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		for _, edge := range edges {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", map[string]string{
+		"a.go": "func A() { return 1 }",
+		"b.go": "func B() {}",
+		"c.go": "func C() { return 1 }",
+		"d.go": "func D() {}",
+	}, nil)
+	publish("head", map[string]string{
+		"a.go": "func A() { return 2 }",
+		"b.go": "func B2() {}",
+		"c.go": "func C() { return 2 }",
+		"d.go": "func D2() {}",
+	}, [][2]string{{"a.go", "b.go"}})
+	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := scene.GetViews()[strconv.FormatInt(mine.ID, 10)]
+	if content == nil {
+		t.Fatalf("scene missing authored view content: %+v", scene.GetViews())
+	}
+	tagsOf := map[[2]int32][]string{}
+	for _, connector := range content.GetConnectors() {
+		tagsOf[[2]int32{connector.GetSourceElementId(), connector.GetTargetElementId()}] = connector.GetTags()
+	}
+	if tags := tagsOf[[2]int32{int32(aID), int32(bID)}]; !hasTag(tags, "change:added") {
+		t.Fatalf("connector over a new file edge is untagged: %+v", tags)
+	}
+	if tags := tagsOf[[2]int32{int32(cID), int32(dID)}]; hasChangeTag(tags) {
+		t.Fatalf("connector over an unchanged pair carries a change tag: %+v", tags)
+	}
+}
+
+func hasTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasChangeTag(tags []string) bool {
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, "change:") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSceneAttachesOrphansToAuthoredNeighbourViews proves a directly changed
+// file with no workspace placement is attached to the authored view whose
+// linked files it borders in the head file graph, wired to the covering
+// elements — instead of falling into the synthetic Changes view. Files with
+// no authored neighbour still fall back.
+func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	mine, err := ws.CreateView(ctx, "mine", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cover, err := ws.CreateElement(ctx, core.LibraryElement{Name: "cover", FilePath: stringPtr("a.go"), RepositoryID: stringPtr("repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, mine.ID, cover.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, files map[string]string, edges [][2]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range files {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		for _, edge := range edges {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", map[string]string{"a.go": "func A() { return 1 }"}, nil)
+	publish("head", map[string]string{
+		"a.go":    "func A() { return 2 }",
+		"new.go":  "func New() {}",
+		"lone.go": "func Lone() {}",
+	}, [][2]string{{"new.go", "a.go"}})
+	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := scene.GetViews()[strconv.FormatInt(mine.ID, 10)]
+	if content == nil {
+		t.Fatalf("scene missing authored view content: %+v", scene.GetViews())
+	}
+	var transientID int32
+	foundCover := false
+	for _, placement := range content.GetPlacements() {
+		switch placement.GetElement().GetFilePath() {
+		case "a.go":
+			foundCover = true
+		case "new.go":
+			transientID = placement.GetElement().GetElementId()
+			if transientID >= 0 {
+				t.Fatalf("attached orphan is not transient: %+v", placement.GetElement())
+			}
+			if overlay := placement.GetOverlay(); overlay == nil || overlay.GetDistance() != 0 {
+				t.Fatalf("attached orphan lost its change overlay: %+v", overlay)
+			}
+		case "lone.go":
+			t.Fatalf("unrelated orphan leaked into the authored view: %+v", placement.GetElement())
+		}
+	}
+	if !foundCover || transientID == 0 {
+		t.Fatalf("authored view missing cover or attached orphan: %+v", content.GetPlacements())
+	}
+	wired := false
+	for _, connector := range content.GetConnectors() {
+		if connector.GetSourceElementId() == int32(cover.ID) && connector.GetTargetElementId() == transientID {
+			wired = true
+			if label := connector.GetLabel(); !strings.Contains(label, "dependencies") {
+				t.Fatalf("attachment connector lost its weight label: %q", label)
+			}
+		}
+	}
+	if !wired {
+		t.Fatalf("orphan not wired to its covering element: %+v", content.GetConnectors())
+	}
+	// The file with no authored neighbour still falls back to Changes.
+	if scene.GetFallbackViewId() == 0 {
+		t.Fatalf("expected a fallback view for the unrelated orphan")
+	}
+	fallback := scene.GetViews()[strconv.FormatInt(scene.GetFallbackViewId(), 10)]
+	if fallback == nil || len(fallback.GetPlacements()) != 1 || fallback.GetPlacements()[0].GetElement().GetFilePath() != "lone.go" {
+		t.Fatalf("fallback view = %+v", fallback)
 	}
 }

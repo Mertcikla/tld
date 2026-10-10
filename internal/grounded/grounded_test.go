@@ -1,7 +1,6 @@
 package grounded
 
 import (
-	"strings"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -111,43 +110,6 @@ func TestSummarizeListsContextAndConnectorsInMatchedView(t *testing.T) {
 	}
 }
 
-func TestMermaidAuthoredSectionMirrorsCanvas(t *testing.T) {
-	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{
-			{Key: "file|a.go", Path: "a.go", Name: "a.go"},
-			{Key: "file|b.go", Path: "b.go", Name: "b.go"},
-		},
-	}
-	summary := Summary{
-		Mode:     "grounded",
-		Affected: 1, Context: 1,
-		Views: []ViewMatch{{ViewID: 7, ViewName: "Flow", Affected: 1, Total: 2}},
-		Elements: []ElementStatus{
-			{ViewID: 7, ElementID: 1, Name: "entry", Link: "a.go", Status: StatusAffected},
-			{ViewID: 7, ElementID: 2, Name: "neighbour", Link: "b.go", Status: StatusContext},
-		},
-		Connectors: []GroundedConnector{
-			{ViewID: 7, Source: "entry", Target: "neighbour", Label: "calls"},
-		},
-	}
-	section := MermaidAuthoredSection(diagram, summary)
-	for _, want := range []string{
-		`subgraph authored_7`,
-		`el_7_1[`,
-		`el_7_2[`,
-		`-- "calls" -->`,
-		`el_7_1 -.-> node_file_a_go`,
-		`el_7_2 -.-> node_file_b_go`,
-	} {
-		if !strings.Contains(section, want) {
-			t.Fatalf("section missing %q:\n%s", want, section)
-		}
-	}
-	if got := MermaidAuthoredSection(diagram, Summary{Mode: "grounded"}); got != "" {
-		t.Fatalf("empty summary must render nothing, got %q", got)
-	}
-}
-
 func TestSummarizeIndirectNeighbourChange(t *testing.T) {
 	// validate.py changed; nothing linked changed, but build.py (linked)
 	// imports it, so the owning view still matches via proximity.
@@ -183,36 +145,27 @@ func TestSummarizeIndirectNeighbourChange(t *testing.T) {
 	if build == nil || build.Status != StatusContext || len(build.Near) != 1 || build.Near[0] != "validate.py" {
 		t.Fatalf("build element = %+v", build)
 	}
-	section := MermaidAuthoredSection(diagram, sum)
-	for _, want := range []string{"· context · near validate.py", "el_7_1 -.-> node_file_validate_py"} {
-		if !strings.Contains(section, want) {
-			t.Fatalf("section missing %q:\n%s", want, section)
-		}
+	if len(sum.Views) != 1 || sum.Views[0].Indirect != 1 || sum.FallbackToRaw {
+		t.Fatalf("indirect view = %+v", sum.Views)
 	}
 }
 
-func TestMermaidAuthoredSectionGroundsFolderLinks(t *testing.T) {
+func TestSummarizeUncoveredListsWorkspaceGaps(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{
-			{Key: "file|plugin/generate.py", Path: "plugin/generate.py", Name: "generate.py"},
-			{Key: "file|plugin/__init__.py", Path: "plugin/__init__.py", Name: "__init__.py"},
-		},
+		Diff: &pb.SnapshotDiff{Sources: []*pb.SourceChange{
+			{Path: "a.go"},
+			{Path: "sub/b.go"},
+			{Path: "orphan.go"},
+		}},
 	}
-	summary := Summary{
-		Mode:     "grounded",
-		Affected: 1,
-		Views:    []ViewMatch{{ViewID: 1, ViewName: "Workspace", Affected: 1, Total: 1}},
-		Elements: []ElementStatus{
-			{ViewID: 1, ElementID: 8, Name: "Plugin Package", Link: "plugin/", Status: StatusAffected},
-		},
-	}
-	section := MermaidAuthoredSection(diagram, summary)
-	for _, want := range []string{
-		"el_1_8 -.-> node_file_plugin_generate_py",
-		"el_1_8 -.-> node_file_plugin___init___py",
-	} {
-		if !strings.Contains(section, want) {
-			t.Fatalf("section missing %q:\n%s", want, section)
-		}
+	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
+		"7": {Placements: []app.PlacedElement{
+			{ElementID: 1, Name: "a", FilePath: strPtr("a.go")},
+			{ElementID: 2, Name: "folder", FilePath: strPtr("sub/")},
+		}},
+	}}
+	sum := Summarize(diagram, explore, "", false, nil)
+	if len(sum.Uncovered) != 1 || sum.Uncovered[0] != "orphan.go" {
+		t.Fatalf("uncovered = %+v", sum.Uncovered)
 	}
 }

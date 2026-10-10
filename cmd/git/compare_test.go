@@ -13,7 +13,11 @@ import (
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
 func TestCompareHardLimits(t *testing.T) {
@@ -58,6 +62,12 @@ func TestComparisonStats(t *testing.T) {
 				Removed:  []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_FILE}},
 			},
 		},
+		Edges: []*pb.ImpactEdge{
+			{FromKey: "file|a.go", ToKey: "file|b.go", Change: pb.ChangeKind_CHANGE_KIND_ADDED},
+			{FromKey: "file|b.go", ToKey: "file|c.go", Change: pb.ChangeKind_CHANGE_KIND_REMOVED},
+			{FromKey: "file|c.go", ToKey: "file|a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
+			{FromKey: "file|a.go", ToKey: "file|c.go"},
+		},
 	}
 	stats := comparisonStats(diagram)
 	if stats.Files != 3 || stats.Directories != 2 || stats.Subsystems != 2 {
@@ -68,6 +78,9 @@ func TestComparisonStats(t *testing.T) {
 	}
 	if stats.SymbolsAdded != 1 || stats.SymbolsModified != 1 || stats.SymbolsRemoved != 0 {
 		t.Fatalf("symbols = %+v", stats)
+	}
+	if stats.EdgesAdded != 1 || stats.EdgesRemoved != 1 || stats.EdgesModified != 1 {
+		t.Fatalf("edge churn = %+v", stats)
 	}
 	if len(stats.Paths) != 3 || stats.PathsTruncated {
 		t.Fatalf("paths = %+v", stats)
@@ -204,6 +217,33 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	}
 	if !strings.Contains(mermaid, "%% grounded") {
 		t.Fatalf("grounded mermaid header missing: %q", mermaid)
+	}
+	// Stats comments must follow the flowchart directive: strict renderers
+	// reject comments before the diagram type.
+	if flowchartAt := strings.Index(mermaid, "flowchart LR"); flowchartAt < 0 || strings.Index(mermaid, "%% grounded") < flowchartAt {
+		t.Fatalf("mermaid comments must follow the flowchart directive: %q", mermaid)
+	}
+	// The default mermaid render is the change scene: the uncovered file
+	// surfaces as a transient placement in the fallback Changes view, exactly
+	// as the canvas draws it.
+	for _, want := range []string{
+		"%% tld-scene", "scope=grounded",
+		`subgraph view_neg1["Changes"]`,
+		`el_neg1_neg1["◇ a.go`,
+	} {
+		if !strings.Contains(mermaid, want) {
+			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
+		}
+	}
+	authored, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid", "--scope", "authored")
+	if err != nil {
+		t.Fatalf("authored mermaid compare: %v", err)
+	}
+	if strings.Contains(authored, "view_neg1") {
+		t.Fatalf("authored scope must drop the fallback view:\n%s", authored)
+	}
+	if _, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid", "--scope", "bogus"); err == nil {
+		t.Fatalf("bogus scope accepted")
 	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)
@@ -407,20 +447,50 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 // Mermaid renders straight from the diagram, so its size never depends on a
 // scene build.
 func TestCompareRendererMermaidSizes(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &pb.Snapshot{Id: "head", RepositoryId: "repo", GitRevision: "head", Provenance: "commit", IngestionStatus: "complete"}
+	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", "head")); err != nil {
+		t.Fatal(err)
+	}
+	service := impact.Service{Workspace: ws, Index: idx}
 	diagram := &pb.ImpactDiagram{
+		RepositoryId:  "repo",
+		ComparisonKey: "key",
+		Diff: &pb.SnapshotDiff{
+			ToSnapshotId: "head",
+			Sources:      []*pb.SourceChange{{Path: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
+		},
 		Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
 	}
 	for _, opts := range []compareOptions{{mermaid: true}, {markdown: true}} {
-		text, size, err := compareRenderer{opts: opts}.build(diagram, 0)
+		text, size, err := compareRenderer{ctx: ctx, service: service, opts: opts}.build(diagram, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if size != len(text) {
 			t.Fatalf("size %d vs %d bytes for %+v", size, len(text), opts)
 		}
-		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") {
+		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") && !strings.HasPrefix(text, "%%") {
 			t.Fatalf("unexpected mermaid payload for %+v: %q", opts, text)
 		}
+		// The scene render carries the uncovered file as a transient, exactly
+		// as the canvas draws it.
+		if !strings.Contains(text, `subgraph view_neg1["Changes"]`) {
+			t.Fatalf("scene mermaid missing fallback view for %+v:\n%s", opts, text)
+		}
+	}
+	authored, _, err := compareRenderer{ctx: ctx, service: service, opts: compareOptions{mermaid: true, scope: "authored"}}.build(diagram, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(authored, "view_neg1") {
+		t.Fatalf("authored scope must drop the fallback view:\n%s", authored)
 	}
 }
 
@@ -463,6 +533,9 @@ func TestCompareRawImpactFlagIsHidden(t *testing.T) {
 	}
 	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
 		t.Fatal("--view and --all-edges flags are required")
+	}
+	if found.Flags().Lookup("scope") == nil {
+		t.Fatal("--scope flag is required")
 	}
 }
 

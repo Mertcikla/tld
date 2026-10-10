@@ -47,7 +47,7 @@ func (s Service) Scene(ctx context.Context, diagram *pb.ImpactDiagram) (*pb.Impa
 	if err != nil {
 		return nil, err
 	}
-	builder := sceneBuilder{diagram: diagram, workspace: workspace, root: repo.Root, mappings: mappings}
+	builder := sceneBuilder{diagram: diagram, workspace: workspace, root: repo.Root, mappings: mappings, store: s.Index, ctx: ctx}
 	return builder.build(), nil
 }
 
@@ -56,6 +56,8 @@ type sceneBuilder struct {
 	workspace core.ExploreData
 	root      string
 	mappings  []cstore.ResourceMapping
+	store     *cstore.Store
+	ctx       context.Context
 
 	nodes      map[string]*pb.ImpactNode
 	sources    map[string]*pb.SourceChange
@@ -69,6 +71,10 @@ type sceneBuilder struct {
 	mappedElements map[int64]bool
 	mappedViews    map[int64]bool
 	authored       map[int64]bool
+	// edgeChange records file-pair change kinds between diagram nodes, keyed
+	// by normalized repo-relative paths, so workspace connectors spanning a
+	// changed file relationship can be marked without a proto change.
+	edgeChange map[[2]string]pb.ChangeKind
 	// authoredOverlays memoizes the overlay match per element. An absent key
 	// means the element hasn't been checked; a nil value means it has no
 	// authored overlay.
@@ -144,6 +150,7 @@ func (b *sceneBuilder) index() {
 	b.authored = map[int64]bool{}
 	b.authoredOverlays = map[int64]*pb.ImpactSceneOverlay{}
 	b.prefixes = map[string]bool{}
+	b.edgeChange = map[[2]string]pb.ChangeKind{}
 	for _, mapping := range b.mappings {
 		// The retired impact materializer's resources are never treated as
 		// owned by the map pipeline.
@@ -184,6 +191,102 @@ func (b *sceneBuilder) index() {
 			b.sources[source.GetPath()] = source
 		}
 	}
+	// Index file-pair change kinds by repo-relative path so connectors whose
+	// endpoint files share a new, removed, or modified dependency can carry
+	// the change as a tag. Node keys are file-scoped ("file|path") or
+	// element-scoped ("context|<id>"); both resolve through the node path.
+	pathByKey := map[string]string{}
+	for _, node := range b.diagram.GetNodes() {
+		if node == nil || node.GetKey() == "" {
+			continue
+		}
+		pathByKey[node.GetKey()] = strings.TrimSuffix(normalizeScenePath(node.GetPath()), "/")
+	}
+	for _, edge := range b.diagram.GetEdges() {
+		if edge == nil || edge.GetChange() == pb.ChangeKind_CHANGE_KIND_UNSPECIFIED {
+			continue
+		}
+		from, okFrom := pathByKey[edge.GetFromKey()]
+		to, okTo := pathByKey[edge.GetToKey()]
+		if !okFrom || !okTo || from == "" || to == "" || from == to {
+			continue
+		}
+		key := [2]string{from, to}
+		if changeRank(edge.GetChange()) > changeRank(b.edgeChange[key]) {
+			b.edgeChange[key] = edge.GetChange()
+		}
+	}
+}
+
+// changeRank orders file-pair change kinds so a conflicting pair keeps the
+// strongest signal: additions first, then removals, then modifications.
+func changeRank(change pb.ChangeKind) int {
+	switch change {
+	case pb.ChangeKind_CHANGE_KIND_ADDED:
+		return 3
+	case pb.ChangeKind_CHANGE_KIND_REMOVED:
+		return 2
+	case pb.ChangeKind_CHANGE_KIND_MODIFIED:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// pairChange returns the file-pair change kind for two repo-relative paths,
+// consulting both edge directions and keeping the stronger signal.
+func (b *sceneBuilder) pairChange(first, second string) pb.ChangeKind {
+	forward := b.edgeChange[[2]string{first, second}]
+	backward := b.edgeChange[[2]string{second, first}]
+	if changeRank(backward) > changeRank(forward) {
+		return backward
+	}
+	return forward
+}
+
+// connectorChangeTag names the workspace-external change state of a scene
+// connector. The tag rides the existing connector payload, so the canvas can
+// style new/changed edges with no proto change. Empty for unchanged pairs.
+func connectorChangeTag(change pb.ChangeKind) string {
+	switch change {
+	case pb.ChangeKind_CHANGE_KIND_ADDED:
+		return "change:added"
+	case pb.ChangeKind_CHANGE_KIND_REMOVED:
+		return "change:removed"
+	case pb.ChangeKind_CHANGE_KIND_MODIFIED:
+		return "change:modified"
+	default:
+		return ""
+	}
+}
+
+func appendTagUnique(tags []string, tag string) []string {
+	if tag == "" {
+		return tags
+	}
+	for _, existing := range tags {
+		if existing == tag {
+			return tags
+		}
+	}
+	return append(tags, tag)
+}
+
+// linkBase parses a source link into its repo-relative base path and whether
+// it addresses a folder (trailing slash) rather than a file. Absolute
+// checkout paths are relativized against the repository root.
+func (b *sceneBuilder) linkBase(link string) (base string, isFolder bool, ok bool) {
+	parsed := sourcelink.Parse(strings.TrimSpace(link))
+	raw := strings.ReplaceAll(strings.TrimSpace(parsed.BasePath), "\\", "/")
+	if raw == "" {
+		return "", false, false
+	}
+	isFolder = strings.HasSuffix(raw, "/")
+	rel, relOK := b.repoRelativePath(raw)
+	if !relOK || rel == "" {
+		return "", false, false
+	}
+	return strings.TrimSuffix(rel, "/"), isFolder, true
 }
 
 func (b *sceneBuilder) retainedIDs() []int64 {
@@ -280,16 +383,69 @@ func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 	if carriesOverlay && !b.mappedViews[viewID] {
 		b.authored[viewID] = true
 	}
+	// Endpoint file paths resolve workspace connectors to file-pair changes:
+	// a connector spanning a new, removed, or modified dependency carries the
+	// change as a tag so readers can style it without a proto change.
+	endpointBase := map[int64]string{}
+	for _, placement := range content.Placements {
+		if placement.FilePath == nil {
+			continue
+		}
+		if base, _, ok := b.linkBase(*placement.FilePath); ok {
+			if _, exists := endpointBase[placement.ElementID]; !exists {
+				endpointBase[placement.ElementID] = base
+			}
+		}
+	}
 	connectors := make([]*diagv1.Connector, 0, len(content.Connectors))
 	for _, connector := range content.Connectors {
-		connectors = append(connectors, sceneConnector(connector))
+		item := sceneConnector(connector)
+		item.Tags = appendTagUnique(item.Tags, connectorChangeTag(
+			b.connectorPairChange(connector.SourceElementID, connector.TargetElementID, endpointBase)))
+		connectors = append(connectors, item)
 	}
 	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.SceneViewContent{Placements: placements, Connectors: connectors}
 }
 
+// connectorPairChange resolves a workspace connector's endpoint files to the
+// file-pair change kind, matching folder endpoints by prefix in either edge
+// direction and keeping the stronger signal.
+func (b *sceneBuilder) connectorPairChange(sourceID, targetID int64, endpointBase map[int64]string) pb.ChangeKind {
+	source, okSource := endpointBase[sourceID]
+	target, okTarget := endpointBase[targetID]
+	if !okSource || !okTarget || source == "" || target == "" {
+		return pb.ChangeKind_CHANGE_KIND_UNSPECIFIED
+	}
+	best := pb.ChangeKind_CHANGE_KIND_UNSPECIFIED
+	consider := func(first, second string) {
+		if change := b.pairChange(first, second); changeRank(change) > changeRank(best) {
+			best = change
+		}
+	}
+	consider(source, target)
+	for pair := range b.edgeChange {
+		if underPrefix(pair[0], source) && underPrefix(pair[1], target) {
+			consider(pair[0], pair[1])
+		} else if underPrefix(pair[0], target) && underPrefix(pair[1], source) {
+			consider(pair[0], pair[1])
+		}
+	}
+	return best
+}
+
+// underPrefix reports whether path equals base or lives under it, so folder
+// endpoints match every file pair they contain.
+func underPrefix(path, base string) bool {
+	return path == base || strings.HasPrefix(path, base+"/")
+}
+
 // placeMissing appends transient placements for directly changed files that
-// have no workspace placement, either to the diagram's closest view or to a
-// synthetic "Changes" view when no view was resolved.
+// have no workspace placement. A file adjacent in the head snapshot's file
+// graph to files the user's own elements cover is attached to the covering
+// authored view, wired to the covering elements, so the canvas shows it where
+// the user already looks. Anything without an authored neighbour keeps the
+// previous behaviour: the diagram's closest view, or a synthetic "Changes"
+// view when no view was resolved.
 func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	missing := make([]*pb.ImpactNode, 0)
 	for _, node := range b.diagram.GetNodes() {
@@ -301,6 +457,14 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	if len(missing) == 0 {
 		return
 	}
+	ids := make(map[string]int64, len(missing))
+	for index, node := range missing {
+		ids[node.GetKey()] = -int64(index + 1)
+	}
+	remaining := b.attachCovered(scene, missing, ids)
+	if len(remaining) == 0 {
+		return
+	}
 	targetID := b.diagram.GetViewId()
 	target := scene.Views[strconv.FormatInt(targetID, 10)]
 	useTarget := target != nil && b.retained[targetID]
@@ -308,12 +472,12 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	if useTarget {
 		viewID = targetID
 	}
-	ids := make(map[string]int64, len(missing))
-	for index, node := range missing {
-		ids[node.GetKey()] = -int64(index + 1)
+	placements := make([]*pb.ScenePlacement, 0, len(remaining))
+	keep := make(map[string]bool, len(remaining))
+	for _, node := range remaining {
+		keep[node.GetKey()] = true
 	}
-	placements := make([]*pb.ScenePlacement, 0, len(missing))
-	for index, node := range missing {
+	for index, node := range remaining {
 		id := ids[node.GetKey()]
 		x, y := float64((index%3)*240), float64((index/3)*150)
 		if useTarget {
@@ -333,6 +497,9 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	}
 	connectors := make([]*diagv1.Connector, 0)
 	for _, edge := range b.diagram.GetEdges() {
+		if !keep[edge.GetFromKey()] || !keep[edge.GetToKey()] {
+			continue
+		}
 		source, sourceOK := ids[edge.GetFromKey()]
 		target, targetOK := ids[edge.GetToKey()]
 		if !sourceOK || !targetOK {
@@ -343,6 +510,7 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 			SourceElementId: int32(source), TargetElementId: int32(target),
 			Label:     proto.String(strconv.FormatFloat(edge.GetWeight(), 'f', -1, 64) + " dependencies"),
 			Direction: "forward", Style: "bezier",
+			Tags: appendTagUnique(nil, connectorChangeTag(edge.GetChange())),
 		})
 	}
 	if useTarget {
@@ -353,6 +521,171 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	scene.FallbackViewId = viewID
 	scene.Tree = append(scene.Tree, &diagv1.View{Id: int32(viewID), Name: "Changes", Children: []*diagv1.View{}})
 	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.SceneViewContent{Placements: placements, Connectors: connectors}
+}
+
+// authoredCover is a user-owned placement whose linked file borders a missing
+// change in the file graph.
+type authoredCover struct {
+	viewID    int64
+	elementID int64
+	weight    float64
+	// pair is the file-pair change kind behind the cover, if the comparison
+	// diagram carries it; otherwise the attachment is simply new evidence.
+	pair pb.ChangeKind
+}
+
+// attachCovered places missing changes adjacent to user-covered files into
+// the covering authored view, wired to the covering elements, and returns
+// the nodes it did not place. Coverage comes from user-owned placements
+// (file, symbol, line, or folder links) in non-generated views; adjacency
+// comes from the head snapshot's file pairs, so this is one cheap aggregate
+// query, never a path search. A view wins by covering-neighbour count with
+// ties broken by view id, keeping the choice deterministic. Files with no
+// authored neighbour fall through untouched.
+func (b *sceneBuilder) attachCovered(scene *pb.ImpactScene, missing []*pb.ImpactNode, ids map[string]int64) []*pb.ImpactNode {
+	pairs := b.filePairs()
+	if len(pairs) == 0 {
+		return missing
+	}
+	byPath := map[string][]authoredCover{}
+	for viewIDStr, content := range b.workspace.Views {
+		viewID, err := strconv.ParseInt(viewIDStr, 10, 64)
+		if err != nil || b.mappedViews[viewID] {
+			continue
+		}
+		for _, placement := range content.Placements {
+			if placement.FilePath == nil || b.mappedElements[placement.ElementID] {
+				continue
+			}
+			base, _, ok := b.linkBase(*placement.FilePath)
+			if !ok {
+				continue
+			}
+			byPath[base] = append(byPath[base], authoredCover{viewID: viewID, elementID: placement.ElementID})
+		}
+	}
+	if len(byPath) == 0 {
+		return missing
+	}
+	covers := func(neighbour string) []authoredCover {
+		var out []authoredCover
+		out = append(out, byPath[neighbour]...)
+		for _, base := range sortedKeys(byPath) {
+			if strings.HasPrefix(neighbour, base+"/") {
+				out = append(out, byPath[base]...)
+			}
+		}
+		return out
+	}
+	weight := func(a, c string) float64 {
+		if w := pairs[[2]string{a, c}]; w > pairs[[2]string{c, a}] {
+			return w
+		}
+		return pairs[[2]string{c, a}]
+	}
+	remaining := make([]*pb.ImpactNode, 0, len(missing))
+	for _, node := range missing {
+		path := node.GetPath()
+		byView := map[int64][]authoredCover{}
+		for _, neighbour := range sortedKeys(neighboursOf(pairs, path)) {
+			for _, cover := range covers(neighbour) {
+				cover.weight = weight(path, neighbour)
+				cover.pair = b.pairChange(path, neighbour)
+				byView[cover.viewID] = append(byView[cover.viewID], cover)
+			}
+		}
+		best := int64(0)
+		bestCount := 0
+		for viewID, found := range byView {
+			if len(found) > bestCount || (len(found) == bestCount && (best == 0 || viewID < best)) {
+				best, bestCount = viewID, len(found)
+			}
+		}
+		content := scene.Views[strconv.FormatInt(best, 10)]
+		if bestCount == 0 || content == nil {
+			remaining = append(remaining, node)
+			continue
+		}
+		id := ids[node.GetKey()]
+		index := len(content.GetPlacements())
+		content.Placements = append(content.Placements, &pb.ScenePlacement{
+			Element: &diagv1.PlacedElement{
+				Id: int32(id), ElementId: int32(id), ViewId: int32(best),
+				PositionX: float64((index % 3) * 240), PositionY: float64((index / 3) * 150),
+				Name: node.GetName(), Kind: proto.String("component"),
+				Description: proto.String(node.GetPath()), Repo: proto.String(b.root),
+				FilePath: proto.String(node.GetPath()),
+				Tags:     []string{},
+			},
+			Overlay: b.overlay(node),
+		})
+		seen := map[int64]bool{}
+		ordered := append([]authoredCover(nil), byView[best]...)
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i].elementID < ordered[j].elementID })
+		for _, cover := range ordered {
+			if seen[cover.elementID] {
+				continue
+			}
+			seen[cover.elementID] = true
+			// The attachment is new scene evidence; when the underlying file
+			// pair itself changed, its kind is the more precise signal.
+			change := cover.pair
+			if change == pb.ChangeKind_CHANGE_KIND_UNSPECIFIED {
+				change = pb.ChangeKind_CHANGE_KIND_ADDED
+			}
+			content.Connectors = append(content.Connectors, &diagv1.Connector{
+				Id: int32(-(len(content.GetConnectors()) + 1)), ViewId: int32(best),
+				SourceElementId: int32(cover.elementID), TargetElementId: int32(id),
+				Label:     proto.String(strconv.FormatFloat(cover.weight, 'f', -1, 64) + " dependencies"),
+				Direction: "forward", Style: "bezier",
+				Tags: appendTagUnique(nil, connectorChangeTag(change)),
+			})
+		}
+	}
+	return remaining
+}
+
+// neighboursOf yields every path sharing a file pair with path. The pairs
+// map is undirected: FilePairCounts stores ordered pairs, so both directions
+// are consulted.
+func neighboursOf(pairs map[[2]string]float64, path string) map[string]bool {
+	out := map[string]bool{}
+	for pair := range pairs {
+		if pair[0] == path {
+			out[pair[1]] = true
+		} else if pair[1] == path {
+			out[pair[0]] = true
+		}
+	}
+	return out
+}
+
+// sortedKeys returns the sorted keys of a string-keyed set or index, keeping
+// scene assembly deterministic across runs.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for key := range m {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// filePairs loads the head snapshot's file adjacency. Any failure degrades to
+// the previous fallback behaviour, never to an error.
+func (b *sceneBuilder) filePairs() map[[2]string]float64 {
+	if b.ctx == nil || b.store == nil {
+		return nil
+	}
+	snapshotID := b.diagram.GetDiff().GetToSnapshotId()
+	if snapshotID == "" {
+		return nil
+	}
+	pairs, err := b.store.FilePairCounts(b.ctx, snapshotID)
+	if err != nil {
+		return nil
+	}
+	return pairs
 }
 
 // matchAuthoredOverlay resolves a change overlay for a placement the
