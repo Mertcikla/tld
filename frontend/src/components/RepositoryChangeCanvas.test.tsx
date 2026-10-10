@@ -217,14 +217,16 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     expect(hostNodes(atOverlay, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
   })
 
-  it('toggles between mapped and authored scopes and disables authored without authored views', async () => {
+  it('toggles between grounded, mapped and authored scopes and disables authored without authored views', async () => {
     stubEnvironment()
     const renderer = await renderCanvas()
     const menu = () => renderer.root.findByType(RepositoryChangeMenu)
-    expect(menu().props.scope).toBe('mapped')
+    expect(menu().props.scope).toBe('grounded')
     expect(menu().props.authoredCount).toBe(0)
-    // No scene has loaded yet, so the authored option stays disabled.
+    // No scene has loaded yet, so the authored option stays disabled while
+    // grounded degrades to the mapped diagram.
     expect(hostNodes(renderer, 'repositories-diagram-scope-authored')[0].props.isDisabled).toBe(true)
+    expect(hostNodes(renderer, 'repositories-diagram-scope-grounded')[0].props.isDisabled).toBe(false)
     expect(hostNodes(renderer, 'repositories-diagram-scope-mapped')[0].props.isDisabled).toBe(false)
 
     await act(async () => { menu().props.onRadiusChange(2) })
@@ -239,7 +241,7 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     await act(async () => {
       renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'next' }} selectedPath="" />)
     })
-    expect(menu().props.scope).toBe('mapped')
+    expect(menu().props.scope).toBe('grounded')
     renderer.unmount()
   })
 

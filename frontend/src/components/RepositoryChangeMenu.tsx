@@ -71,7 +71,7 @@ export default function RepositoryChangeMenu({
         <Box w="1px" h="16px" bg="whiteAlpha.200" flexShrink={0}/>
 
         <HStack spacing={1} align="center" data-testid="repositories-diagram-scope" px={1}>
-          {(['mapped', 'authored'] as const).map((option) => {
+          {(['grounded', 'mapped', 'authored'] as const).map((option) => {
             const disabled = busy || (option === 'authored' && authoredCount === 0)
             return (
               <Button
@@ -87,7 +87,7 @@ export default function RepositoryChangeMenu({
                   if (option !== scope) onScopeChange(option)
                 }}
               >
-                {option === 'mapped' ? 'Mapped' : 'Authored'}
+                {option === 'grounded' ? 'Grounded' : option === 'mapped' ? 'Mapped' : 'Authored'}
               </Button>
             )
           })}

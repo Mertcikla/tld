@@ -131,9 +131,36 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[-1]).toBeUndefined()
   })
 
-  it('mapped scope is the default and ignores authored view ids', () => {
+  it('grounded scope is the default and pins authored views', () => {
     const rendered = repositoryChangeScene(scene, { radius: 0 })
     expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
     expect(rendered.overlays[1]?.change).toBe('modified')
+  })
+
+  it('grounded scope falls back to mapped when no authored view matched', () => {
+    const rendered = repositoryChangeScene(scene, { radius: 0, scope: 'grounded' })
+    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
+  })
+
+  it('grounded scope pins authored views like authored scope', () => {
+    const authored: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services')])],
+      views: {
+        10: { placements: [placement(100, 'top.go')], connectors: [] },
+        11: { placements: [placement(1, 'a.go')], connectors: [] },
+        51: { placements: [placement(7, 'svc/auth')], connectors: [] },
+      },
+      overlays: {
+        1: overlay('modified', 'a.go', 0),
+        7: overlay('modified', 'svc/auth', 0),
+      },
+      authoredViewIds: [51],
+    }
+    const rendered = repositoryChangeScene(authored, { radius: 0, scope: 'grounded' })
+    expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51])
+    expect(rendered.data.views[11]).toBeUndefined()
+    expect(rendered.overlays[7]?.change).toBe('modified')
+    expect(rendered.overlays[1]).toBeUndefined()
   })
 })

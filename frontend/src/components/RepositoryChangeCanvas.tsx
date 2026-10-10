@@ -26,7 +26,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [error, setError] = useState('')
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [radius, setRadius] = useState(0)
-  const [scope, setScope] = useState<RepositoryChangeScope>('mapped')
+  const [scope, setScope] = useState<RepositoryChangeScope>('grounded')
   const mermaidPane = useResizableColumn({
     storageKey: 'tld:repositories:mermaidPaneWidth',
     defaultWidth: MERMAID_PANE_DEFAULT_WIDTH,
@@ -42,7 +42,8 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const maxRadius = diagram ? Math.max(0, Math.min(MAX_BLAST_RADIUS, diagram.maxRadius)) : 0
   const authoredCount = scene?.authoredViewIds.length ?? 0
   // Authored overlays are all direct changes (distance 0): the blast-radius
-  // slider has nothing to widen there.
+  // slider has nothing to widen there. Grounded keeps the slider so map
+  // context can widen around the pinned authored views.
   const effectiveMaxRadius = scope === 'authored' ? 0 : maxRadius
   const budgetRadius = diagram ? fitBlastRadius(diagram, maxRadius) : 0
   useEffect(() => {
@@ -57,7 +58,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   }, [repositoryId, comparisonKey, version])
   useEffect(() => {
     setRadius(0)
-    setScope('mapped')
+    setScope('grounded')
   }, [comparisonKey, version, maxRadius])
   const view = useMemo(() => scene ? repositoryChangeScene(scene, { radius, plain: displayMode === 'plain', scope }) : null, [scene, radius, displayMode, scope])
   const warning = diagram != null && radius > budgetRadius

@@ -202,6 +202,9 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if !strings.Contains(mermaid, "flowchart LR") || !strings.Contains(mermaid, "a.go") {
 		t.Fatalf("mermaid output = %q", mermaid)
 	}
+	if !strings.Contains(mermaid, "%% grounded") {
+		t.Fatalf("grounded mermaid header missing: %q", mermaid)
+	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)
 	}
@@ -219,9 +222,17 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("protojson compare: %v\n%s", err, stderr)
 	}
-	var scene map[string]any
-	if err := json.Unmarshal([]byte(out), &scene); err != nil {
+	var bundle map[string]any
+	if err := json.Unmarshal([]byte(out), &bundle); err != nil {
 		t.Fatalf("protojson output: %v\n%s", err, out)
+	}
+	if bundle["mode"] != "grounded" {
+		t.Fatalf("bundle mode = %v, want grounded", bundle["mode"])
+	}
+	sceneRaw, _ := json.Marshal(bundle["scene"])
+	var scene map[string]any
+	if err := json.Unmarshal(sceneRaw, &scene); err != nil {
+		t.Fatalf("bundle scene: %v\n%s", err, out)
 	}
 	if scene["comparisonKey"] == nil || scene["repositoryId"] == nil || scene["schemaVersion"] != impact.SceneSchemaVersion {
 		t.Fatalf("scene is not self-identifying: %v", scene)
@@ -246,6 +257,17 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	}
 	if _, ok := symbol["snapshotId"]; ok {
 		t.Fatalf("symbol detail must stay snapshot-free: %v", symbol)
+	}
+	raw, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--raw-impact")
+	if err != nil {
+		t.Fatalf("raw-impact compare: %v", err)
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		t.Fatalf("raw-impact output: %v", err)
+	}
+	if legacy["comparisonKey"] == nil || legacy["mode"] != nil {
+		t.Fatalf("raw-impact must emit the bare scene: %v", legacy)
 	}
 }
 
@@ -409,6 +431,38 @@ func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {
 	}
 	if got := compareTargetLabel(out, impact.TargetHead, ""); got != "head" {
 		t.Fatalf("label without revision = %q", got)
+	}
+}
+
+func TestCompareReportModeDefaultsToGrounded(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{{Key: "a"}},
+		Edges: []*pb.ImpactEdge{{FromKey: "a", ToKey: "a"}},
+	}
+	if report := comparisonReport(diagram, compareOptions{}); report.Mode != "grounded" {
+		t.Fatalf("default mode = %q, want grounded", report.Mode)
+	}
+	if report := comparisonReport(diagram, compareOptions{rawImpact: true}); report.Mode != "raw-impact" {
+		t.Fatalf("raw mode = %q, want raw-impact", report.Mode)
+	}
+}
+
+func TestCompareRawImpactFlagIsHidden(t *testing.T) {
+	cmd := NewGitCmd()
+	commands := cmd.Commands()
+	if len(commands) == 0 {
+		t.Fatal("compare subcommand not found")
+	}
+	found := commands[0]
+	flag := found.Flags().Lookup("raw-impact")
+	if flag == nil {
+		t.Fatal("--raw-impact flag not found")
+	}
+	if !flag.Hidden {
+		t.Fatal("--raw-impact should be hidden")
+	}
+	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
+		t.Fatal("--view and --all-edges flags are required")
 	}
 }
 

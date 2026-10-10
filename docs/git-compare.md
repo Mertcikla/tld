@@ -49,23 +49,25 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--max-bytes N` | `2097152` | Output byte budget; blast radius is narrowed when exceeded (`0` disables) |
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
-| `--report-json PATH` | unset | Write status, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, and skip reason to JSON |
+| `--view REF` | unset | Restrict the grounded bundle to one authored view (id or name substring) |
+| `--all-edges` | off | Disable fan-out roll-up in the grounded summary |
+| `--report-json PATH` | unset | Write status, mode, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, grounded overlay, and skip reason to JSON |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
 
-- **Default:** protojson encoding of the **impact scene** — the same payload the
-  web canvas loads from `GetImpactScene`. It is portable: the emitted document
-  is all a viewer needs, with no repository, index, or snapshot on the other
-  end. Each placement carries a change overlay with the file's line counts and
-  structured symbol changes (name, kind, anchor, body fingerprint), and the
-  scene names what it compared (`schemaVersion`, `repositoryId`,
-  `comparisonKey`, `fromGitRevision`, `toGitRevision`, `maxRadius`).
-- **`--mermaid` / `--markdown`:** the Mermaid change diagram. It is drawn from
-  the comparison's file-level dependency graph rather than the scene, because a
-  scene carries workspace connectors, not the dependency weights between changed
-  files.
+- **Default:** protojson encoding of the **grounded bundle** — the portable impact
+  scene plus the authored overlay (`mode: "grounded"`, `grounded: {affected,
+  context, ungrounded, views, elements, fanout}`). The user-authored diagram
+  stays canonical while each linked element is verified against the pinned
+  snapshots; the generated map contributes collapsed context only. High fan-out
+  nodes roll up by target prefix (7 groups + "+N more"). When no authored view
+  intersects the change, the bundle notes the fallback and carries raw impact
+  context. The legacy bare scene remains behind the hidden `--raw-impact` flag.
+- **`--mermaid` / `--markdown`:** the grounded Mermaid change diagram: a `%% grounded`
+  header (affected/context/ungrounded counts, matched views, fan-out groups)
+  followed by the file-level dependency graph.
 
 Progress is written to stderr only with `--verbose`; budget warnings always go
 to stderr. If the payload exceeds a budget, a warning tells you to raise
