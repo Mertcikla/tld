@@ -9,7 +9,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"

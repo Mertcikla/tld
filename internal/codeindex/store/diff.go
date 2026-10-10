@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 )
 
 // LoadGraph reconstructs a published snapshot's code graph so an incremental

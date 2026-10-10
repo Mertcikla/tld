@@ -6,17 +6,31 @@
 // an absolute local worktree root (materialized elements) or a remote URL or
 // host shorthand (hand-linked elements). This package normalizes those forms
 // so all callers share one repository identity.
+//
+// Remote normalization (NormalizeRemote, RemoteKey, GitRemoteURL) delegates to
+// the codeindex module, which is the single implementation used by both
+// repository identity resolution and the keys persisted by the store.
 package repolink
 
 import (
 	"context"
-	"net/url"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/mertcikla/codeindex/remote"
 	"github.com/mertcikla/tld/v2/internal/sourcelink"
 )
+
+// NormalizeRemote delegates to codeindex/remote so every consumer derives the
+// same canonical browser URL.
+func NormalizeRemote(raw string) (string, bool) { return remote.NormalizeRemote(raw) }
+
+// RemoteKey delegates to codeindex/remote so keys written by the store and
+// keys looked up by identity resolution can never drift apart.
+func RemoteKey(value string) string { return remote.RemoteKey(value) }
+
+// GitRemoteURL delegates to codeindex/remote.
+func GitRemoteURL(ctx context.Context, root string) string { return remote.GitRemoteURL(ctx, root) }
 
 // Repository is an indexed codeindex repository reference.
 type Repository struct {
@@ -25,83 +39,6 @@ type Repository struct {
 	RemoteURL string
 	Name      string
 	Managed   bool
-}
-
-// NormalizeRemote converts common Git remote forms (https, http, ssh, git and
-// scp-like git@host:path) into a canonical browser URL such as
-// https://github.com/owner/repo. Credentials are stripped. ok is false when
-// raw does not identify a remote repository.
-func NormalizeRemote(raw string) (string, bool) {
-	cleaned := strings.TrimSpace(raw)
-	if cleaned == "" || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "~") {
-		return "", false
-	}
-	if looksLikeWindowsPath(cleaned) {
-		return "", false
-	}
-	cleaned = strings.TrimSuffix(cleaned, "/")
-	cleaned = strings.TrimSuffix(cleaned, ".git")
-
-	var host, path string
-	switch {
-	case strings.Contains(cleaned, "://"):
-		parsed, err := url.Parse(cleaned)
-		if err != nil || parsed.Hostname() == "" {
-			return "", false
-		}
-		switch strings.ToLower(parsed.Scheme) {
-		case "http", "https", "ssh", "git":
-		default:
-			return "", false
-		}
-		host = parsed.Hostname()
-		path = parsed.Path
-	case strings.Contains(cleaned, "@") && strings.Contains(cleaned, ":"):
-		at := strings.Index(cleaned, "@")
-		colon := strings.Index(cleaned[at:], ":") + at
-		host = cleaned[at+1 : colon]
-		path = cleaned[colon+1:]
-	case strings.Contains(cleaned, ":"):
-		colon := strings.Index(cleaned, ":")
-		host = cleaned[:colon]
-		path = cleaned[colon+1:]
-	default:
-		slash := strings.Index(cleaned, "/")
-		if slash < 0 {
-			return "", false
-		}
-		host = cleaned[:slash]
-		path = cleaned[slash+1:]
-	}
-	host = strings.ToLower(strings.TrimSpace(host))
-	path = strings.Trim(strings.TrimSpace(path), "/")
-	if host == "" || path == "" || (!strings.Contains(host, ".") && host != "localhost") {
-		return "", false
-	}
-	if strings.ContainsAny(host, " \t") || strings.ContainsAny(path, " \t") {
-		return "", false
-	}
-	return "https://" + host + "/" + path, true
-}
-
-// RemoteKey returns a normalized host/path identity for a remote URL or a
-// legacy element repo value, including GitHub owner/repo shorthand. It returns
-// "" when value cannot be interpreted as a repository identity. Matching is
-// case-insensitive.
-func RemoteKey(value string) string {
-	cleaned := strings.TrimSpace(value)
-	if cleaned == "" || IsLocalPath(cleaned) {
-		return ""
-	}
-	if normalized, ok := NormalizeRemote(cleaned); ok {
-		return strings.ToLower(strings.TrimPrefix(normalized, "https://"))
-	}
-	parts := strings.Split(strings.Trim(cleaned, "/"), "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] != "" &&
-		!strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") {
-		return "github.com/" + strings.ToLower(parts[0]) + "/" + strings.ToLower(parts[1])
-	}
-	return ""
 }
 
 // IsLocalPath reports whether value looks like a filesystem path rather than a
@@ -176,23 +113,6 @@ func Resolve(repositoryID, repo, filePath string, repos []Repository) (Repositor
 		}
 	}
 	return Repository{}, false
-}
-
-// GitRemoteURL reports the sanitized browser URL of the repository's origin
-// remote, or "" when there is no usable origin.
-func GitRemoteURL(ctx context.Context, root string) string {
-	if strings.TrimSpace(root) == "" {
-		return ""
-	}
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return ""
-	}
-	normalized, ok := NormalizeRemote(strings.TrimSpace(string(out)))
-	if !ok {
-		return ""
-	}
-	return normalized
 }
 
 func looksLikeWindowsPath(value string) bool {

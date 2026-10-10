@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	"github.com/mertcikla/codeindex/community"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"

@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	cgraph "github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"

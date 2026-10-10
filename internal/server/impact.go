@@ -8,9 +8,9 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 )

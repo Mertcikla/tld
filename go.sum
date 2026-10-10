@@ -1,7 +1,7 @@
-buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261009232205-97a9079ca2f2.1 h1:9GXE8VsSj1FU8WDDjIUiede67mE620MBXI6zsi/K5w0=
-buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261009232205-97a9079ca2f2.1/go.mod h1:SwCCDrHbqqr+hLt9INfN9QmwO0qDEXB+NyZ/5Lz45oo=
-buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261009232205-97a9079ca2f2.2 h1:sZZwOWNe3Tqy9dq7k8PRhRfGKPCsp5+fCaloCE7+bkI=
-buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261009232205-97a9079ca2f2.2/go.mod h1:OT+/iaTobfaK4jNHgDkQtoQBtydsJdcpQ3+/iQe22eI=
+buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261010192512-dd1ec4713d1c.1 h1:hSVbGuJDeyYsc17VGd47cIrsv8oCweZ1/E0P/zSdA/4=
+buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261010192512-dd1ec4713d1c.1/go.mod h1:4kIpf0zYBIB6kB72OoK8JTL74oZ1SX95sRJkxgYEKt4=
+buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261010192512-dd1ec4713d1c.2 h1:gQ627y10ruA+aRp6iR4/Xzi+bZOkvckXbDFOsNy1MXc=
+buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261010192512-dd1ec4713d1c.2/go.mod h1:OT+/iaTobfaK4jNHgDkQtoQBtydsJdcpQ3+/iQe22eI=
 cel.dev/expr v0.25.2 h1:K6j46C81hXtZQfuX60cVWQFBJahKSE2gfRbNuvr5bFs=
 cel.dev/expr v0.25.2/go.mod h1:hrXvqGP6G6gyx8UAHSHJ5RGk//1Oj5nXQ2NI02Nrsg4=
 charm.land/bubbles/v2 v2.1.0 h1:YSnNh5cPYlYjPxRrzs5VEn3vwhtEn3jVGRBT3M7/I0g=
@@ -249,6 +249,8 @@ github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
 github.com/mattn/go-runewidth v0.0.23 h1:7ykA0T0jkPpzSvMS5i9uoNn2Xy3R383f9HDx3RybWcw=
 github.com/mattn/go-runewidth v0.0.23/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
+github.com/mertcikla/codeindex v0.0.1 h1:h6PdR7WxztScj3b3UmyXSDpyV9MIM+9XeyzVdFLe2OA=
+github.com/mertcikla/codeindex v0.0.1/go.mod h1:qPPRAQLmotyzCYrIYTRkUGa9PHaA1o1rqNDXhOwiiQQ=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
 github.com/mitchellh/hashstructure/v2 v2.0.2 h1:vGKWl0YJqUNxE8d+h8f6NJLcCJrgbhC4NcD46KavDd4=

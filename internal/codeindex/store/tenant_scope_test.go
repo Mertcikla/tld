@@ -10,7 +10,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/proto"
 )

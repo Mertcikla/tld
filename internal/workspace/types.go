@@ -11,10 +11,10 @@ import (
 
 // WorkspaceConfig is parsed from the workspace-local .tld.yaml.
 type WorkspaceConfig struct {
-	ProjectName     string                `yaml:"project_name,omitempty"`
-	Exclude         []string              `yaml:"exclude,omitempty"`
-	Validation      *ValidationOverride   `yaml:"validation,omitempty"`
-	Repositories    map[string]Repository `yaml:"repositories,omitempty"`
+	ProjectName     string                 `yaml:"project_name,omitempty"`
+	Exclude         []string               `yaml:"exclude,omitempty"`
+	Validation      *ValidationOverride    `yaml:"validation,omitempty"`
+	Repositories    map[string]Repository  `yaml:"repositories,omitempty"`
 	WorkspaceSource *WorkspaceSourceConfig `yaml:"workspace_source,omitempty"`
 }
 

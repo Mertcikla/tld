@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	"github.com/mertcikla/codeindex/community"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"

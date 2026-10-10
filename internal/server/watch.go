@@ -12,7 +12,7 @@ import (
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"google.golang.org/protobuf/types/known/emptypb"
 )

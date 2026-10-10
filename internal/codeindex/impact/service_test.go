@@ -3,7 +3,7 @@ package impact
 import (
 	"testing"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
+	"github.com/mertcikla/codeindex/indexer"
 )
 
 func TestForTargetTagsProgressUpdates(t *testing.T) {

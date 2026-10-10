@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )

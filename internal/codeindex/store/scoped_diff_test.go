@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
+	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/indexer"
 )
 
 func TestDiffDistinguishesDeclarationScopes(t *testing.T) {

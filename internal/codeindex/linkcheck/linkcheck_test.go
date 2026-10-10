@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
@@ -73,9 +73,9 @@ func TestIndexWithoutDatabase(t *testing.T) {
 func publishSnapshot(t *testing.T, ctx context.Context, idx *cstore.Store, snapshotID, repositoryID, root string, paths []string) {
 	t.Helper()
 	snapshot := &pb.Snapshot{
-		Id:               snapshotID,
-		RepositoryId:     repositoryID,
-		IngestionStatus:  "complete",
+		Id:              snapshotID,
+		RepositoryId:    repositoryID,
+		IngestionStatus: "complete",
 	}
 	for _, path := range paths {
 		snapshot.Sources = append(snapshot.Sources, &pb.SourceFile{Path: path, Hash: "hash-" + path, Size: 1})

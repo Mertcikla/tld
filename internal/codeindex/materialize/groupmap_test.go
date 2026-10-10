@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mertcikla/codeindex/community"
 	assets "github.com/mertcikla/tld/v2"
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/store"

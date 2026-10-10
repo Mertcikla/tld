@@ -71,7 +71,7 @@ jobs:
         run: npm run test
 
       - name: Run targeted Go race tests
-        run: go test -race ./internal/server ./internal/codeindex/watch ./internal/workspace ./pkg/api
+        run: go test -race ./internal/server ./internal/workspace ./pkg/api
 
       - name: Publish Test Results
         if: ${{ !cancelled() }}

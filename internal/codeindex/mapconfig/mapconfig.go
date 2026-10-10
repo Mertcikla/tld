@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/community"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )

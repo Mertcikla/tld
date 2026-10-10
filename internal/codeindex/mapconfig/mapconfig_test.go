@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	"github.com/mertcikla/codeindex/community"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/workspace"

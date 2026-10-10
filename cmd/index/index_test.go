@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/gitstate"
+	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"

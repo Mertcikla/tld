@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 )
 
 func TestSnapshotLineCounts(t *testing.T) {

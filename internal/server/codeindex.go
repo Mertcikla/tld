@@ -16,17 +16,17 @@ import (
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/gitstate"
+	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/identity"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/ingest"
+	"github.com/mertcikla/codeindex/remote"
+	"github.com/mertcikla/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
-	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
@@ -100,7 +100,7 @@ func (s *repositoryService) AddRepository(ctx context.Context, req *connect.Requ
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
-	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "")
+	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
@@ -375,7 +375,7 @@ func (s *repositoryService) stopRepositoryWatches(ctx context.Context, repositor
 		}
 		// A second checkout may not have published its first snapshot yet.
 		if state.RepoRoot != "" {
-			resolved, err := identity.Resolve(ctx, s.store, state.RepoRoot, "", "")
+			resolved, err := identity.Resolve(ctx, s.store, state.RepoRoot, "", "", app.TenantOrgIDFromCtx(ctx))
 			if err != nil {
 				return err
 			}

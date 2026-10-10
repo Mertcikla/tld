@@ -3,18 +3,16 @@ module github.com/mertcikla/tld/v2
 go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261009232205-97a9079ca2f2.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261009232205-97a9079ca2f2.2
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261010192512-dd1ec4713d1c.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261010192512-dd1ec4713d1c.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
-	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/mertcikla/codeindex v0.0.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/sammcj/mermaid-check v0.5.1
-	github.com/scip-code/scip/bindings/go/scip v0.10.0
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.10.1
 	github.com/uptrace/bun v1.2.18
@@ -72,6 +70,7 @@ require (
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chainguard-dev/git-urls v1.0.2 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468 // indirect
@@ -91,6 +90,7 @@ require (
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -138,6 +138,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sajari/fuzzy v1.0.0 // indirect
 	github.com/samber/lo v1.49.1 // indirect
+	github.com/scip-code/scip/bindings/go/scip v0.10.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sourcegraph/beaut v0.0.0-20240611013027-627e4c25335a // indirect

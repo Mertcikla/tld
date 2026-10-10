@@ -7,10 +7,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )

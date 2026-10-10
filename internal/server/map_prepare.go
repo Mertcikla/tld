@@ -6,10 +6,10 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/gitstate"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 )
 
 func (s *codeIndexService) prepareSnapshot(ctx context.Context, req *pb.MapRepositoryRequest, send func(*pb.Progress)) (*pb.Snapshot, error) {

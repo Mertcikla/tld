@@ -164,16 +164,16 @@ rule runs regardless of the configured strictness level or exclude list.`,
 
 			warnings := archwarnings.Analyze(ws, scoreOpts...)
 
-		if len(args) == 1 {
-			code := normalizeRuleCode(args[0])
-			switch code {
-			case "ARC205":
-				return printGrounding(cmd, ws, scoreOpts...)
-			case "ARC206":
-				return printLinkCoverage(cmd, ws, scoreOpts...)
+			if len(args) == 1 {
+				code := normalizeRuleCode(args[0])
+				switch code {
+				case "ARC205":
+					return printGrounding(cmd, ws, scoreOpts...)
+				case "ARC206":
+					return printLinkCoverage(cmd, ws, scoreOpts...)
+				}
+				return printRuleViolations(cmd, args[0], warnings)
 			}
-			return printRuleViolations(cmd, args[0], warnings)
-		}
 
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
 				viewCount := cmdutil.CountViews(ws)

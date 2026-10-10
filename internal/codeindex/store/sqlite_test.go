@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 

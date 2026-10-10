@@ -17,22 +17,22 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
+	ci "github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/gitstate"
+	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/identity"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/ingest"
+	"github.com/mertcikla/codeindex/parity"
+	"github.com/mertcikla/codeindex/remote"
+	"github.com/mertcikla/codeindex/watch"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
-	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
-	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/watch"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -207,7 +207,7 @@ func run(cmd *cobra.Command, opts options) error {
 		errOut:  cmd.ErrOrStderr(),
 	}
 	_ = eng.store.BackfillRemoteKeys(ctx)
-	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "")
+	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return err
 	}

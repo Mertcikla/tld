@@ -15,19 +15,20 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
+	"github.com/mertcikla/codeindex/identity"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/remote"
 	assets "github.com/mertcikla/tld/v2"
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/grounded"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -592,7 +593,7 @@ func resolveRepository(ctx context.Context, store *cstore.Store, dataDir, target
 		if err := remote.Clone(ctx, spec, root); err != nil {
 			return "", err
 		}
-		resolved, err := identity.Apply(ctx, store, root, "", spec.WebURL, true)
+		resolved, err := identity.Apply(ctx, store, root, "", spec.WebURL, true, app.TenantOrgIDFromCtx(ctx))
 		if err != nil {
 			return "", err
 		}
@@ -606,7 +607,7 @@ func resolveRepository(ctx context.Context, store *cstore.Store, dataDir, target
 		if root, err = filepath.EvalSymlinks(root); err != nil {
 			return "", err
 		}
-		resolved, err := identity.Apply(ctx, store, root, "", "", false)
+		resolved, err := identity.Apply(ctx, store, root, "", "", false, app.TenantOrgIDFromCtx(ctx))
 		if err != nil {
 			return "", err
 		}
