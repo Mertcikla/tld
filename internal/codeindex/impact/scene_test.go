@@ -476,3 +476,103 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 		t.Fatalf("fallback view = %+v", fallback)
 	}
 }
+
+// TestSceneIncludesChildViewsOfImpactedElements proves an element on the
+// impact diagram pulls its drill-down view into the scene recursively: the
+// child view's output and navigation must be present so the canvas renders
+// nested children instead of a singular flat element.
+func TestSceneIncludesChildViewsOfImpactedElements(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	parent, err := ws.CreateView(ctx, "repo map", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ws.CreateElement(ctx, core.LibraryElement{Name: "a.go", FilePath: stringPtr("a.go"), RepositoryID: stringPtr("repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, parent.ID, changed.ID, 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	child, err := ws.CreateView(ctx, "a detail", nil, &changed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := ws.CreateElement(ctx, core.LibraryElement{Name: "inner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, child.ID, inner.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	grandchild, err := ws.CreateView(ctx, "inner detail", nil, &inner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := ws.CreateElement(ctx, core.LibraryElement{Name: "leaf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, grandchild.ID, leaf.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+		{LogicalKey: "map|view|repo", Kind: cstore.MappingView, ResourceID: parent.ID, RepositoryID: "repo", SnapshotID: "head"},
+		{LogicalKey: "map|file|a", Kind: cstore.MappingElement, ResourceID: changed.ID, RepositoryID: "repo", SnapshotID: "head"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, files map[string]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		for path, text := range files {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", map[string]string{"a.go": "func A() { return 1 }"})
+	publish("head", map[string]string{"a.go": "func A() { return 2 }"})
+	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Neither drill-down view holds a repository placement, so without the
+	// recursive expansion both would be pruned and the parent would render
+	// flat.
+	for _, id := range []int64{child.ID, grandchild.ID} {
+		content := scene.GetViews()[strconv.FormatInt(id, 10)]
+		if content == nil {
+			t.Fatalf("scene missing drill-down view %d: %+v", id, scene.GetViews())
+		}
+		if len(content.GetPlacements()) == 0 {
+			t.Fatalf("drill-down view %d has no output", id)
+		}
+	}
+	linked := map[int64]bool{}
+	for _, link := range scene.GetNavigations() {
+		if link.GetRelationType() != "child" {
+			continue
+		}
+		linked[int64(link.GetToViewId())] = true
+	}
+	for _, id := range []int64{child.ID, grandchild.ID} {
+		if !linked[id] {
+			t.Fatalf("scene missing child navigation to view %d: %+v", id, scene.GetNavigations())
+		}
+	}
+}

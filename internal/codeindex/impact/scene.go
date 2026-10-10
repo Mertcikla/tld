@@ -97,7 +97,9 @@ func (b *sceneBuilder) build() *pb.ImpactScene {
 		FromGitRevision: diff.GetFromGitRevision(),
 		ToGitRevision:   diff.GetToGitRevision(),
 	}
-	for _, view := range b.pruneTree(b.workspace.Tree) {
+	b.pruneTree(b.workspace.Tree)
+	b.expandChildViews()
+	for _, view := range b.filterTree(b.workspace.Tree) {
 		scene.Tree = append(scene.Tree, sceneView(view))
 	}
 	for _, viewID := range b.retainedIDs() {
@@ -327,6 +329,107 @@ func (b *sceneBuilder) pruneTree(nodes []core.ViewTreeNode) []core.ViewTreeNode 
 			continue
 		}
 		b.retained[view.ID] = true
+		view.Children = children
+		out = append(out, view)
+	}
+	return out
+}
+
+// expandChildViews retains the drill-down views owned by elements in retained
+// views, recursively, so the canvas can render them nested instead of as flat
+// elements. A retained placement with a child view pulls that view's full
+// output into the scene even when the child itself holds no repository
+// placement; without this the parent renders as a singular flat element.
+func (b *sceneBuilder) expandChildViews() {
+	childByElement := map[int64]int64{}
+	parentOf := map[int64]int64{}
+	names := map[int64]string{}
+	var walk func(nodes []core.ViewTreeNode)
+	walk = func(nodes []core.ViewTreeNode) {
+		for _, node := range nodes {
+			names[node.ID] = node.Name
+			if node.ParentViewID != nil {
+				if _, ok := parentOf[node.ID]; !ok {
+					parentOf[node.ID] = *node.ParentViewID
+				}
+			}
+			if node.OwnerElementID != nil {
+				if _, ok := childByElement[*node.OwnerElementID]; !ok {
+					childByElement[*node.OwnerElementID] = node.ID
+				}
+			}
+			walk(node.Children)
+		}
+	}
+	walk(b.workspace.Tree)
+	// Navigations mirror the same ownership; prefer them when present so the
+	// parent selection matches Explore, but fall back to the tree owner map
+	// when an element is placed in several views.
+	navChildByElement := map[int64]int64{}
+	for _, link := range b.workspace.Navigations {
+		if link.RelationType != "child" || link.ElementID == nil {
+			continue
+		}
+		if _, ok := navChildByElement[*link.ElementID]; !ok {
+			navChildByElement[*link.ElementID] = link.ToViewID
+		}
+	}
+	queue := b.retainedIDs()
+	for len(queue) > 0 {
+		from := queue[0]
+		queue = queue[1:]
+		content := b.workspace.Views[strconv.FormatInt(from, 10)]
+		for _, placement := range content.Placements {
+			child, ok := navChildByElement[placement.ElementID]
+			if !ok {
+				child, ok = childByElement[placement.ElementID]
+			}
+			if !ok {
+				continue
+			}
+			if b.retained[child] {
+				continue
+			}
+			b.retained[child] = true
+			if strings.Contains(names[child], retiredImpactViewMarker) {
+				delete(b.retained, child)
+				continue
+			}
+			queue = append(queue, child)
+			// Keep the tree path intact: ancestors of a newly retained
+			// view must also be present for the hierarchy to traverse.
+			for parent := parentOf[child]; parent != 0; parent = parentOf[parent] {
+				if b.retained[parent] {
+					break
+				}
+				if strings.Contains(names[parent], retiredImpactViewMarker) {
+					break
+				}
+				b.retained[parent] = true
+				queue = append(queue, parent)
+			}
+		}
+	}
+}
+
+// filterTree rebuilds the scene tree from the final retained set, preserving
+// the workspace hierarchy. Views retained via expandChildViews were pruned
+// from the initial pass, so the tree is refiltered after expansion.
+func (b *sceneBuilder) filterTree(nodes []core.ViewTreeNode) []core.ViewTreeNode {
+	out := make([]core.ViewTreeNode, 0, len(nodes))
+	for _, view := range nodes {
+		if strings.Contains(view.Name, retiredImpactViewMarker) {
+			continue
+		}
+		children := b.filterTree(view.Children)
+		if !b.retained[view.ID] && len(children) == 0 {
+			continue
+		}
+		if !b.retained[view.ID] {
+			// Structural ancestor of a retained descendant: keep it so the
+			// hierarchy traverses, and include its output below.
+			b.retained[view.ID] = true
+		}
 		view.Children = children
 		out = append(out, view)
 	}

@@ -76,6 +76,10 @@ type sceneViewer struct {
 
 	retained      map[int32]bool
 	retainedOrder []int32
+	// drilldown holds child views pulled in because a retained element owns
+	// them. They keep full output so nested nodes render instead of
+	// collapsing to singular flat elements.
+	drilldown map[int32]bool
 }
 
 func (v *sceneViewer) index() {
@@ -95,7 +99,9 @@ func (v *sceneViewer) index() {
 	v.degraded = len(v.scene.GetAuthoredViewIds()) == 0
 	v.retained = map[int32]bool{}
 	v.retainedOrder = nil
+	v.drilldown = map[int32]bool{}
 	v.keep(v.scene.GetTree())
+	v.expandDrilldown()
 	// Plain mode still needs the container elements that own retained child
 	// views; without them the hierarchy can't be traversed.
 	v.linkElements = map[int32]map[int32]bool{}
@@ -169,6 +175,57 @@ func (v *sceneViewer) keep(tree []*diagv1.View) []int32 {
 	return kept
 }
 
+// expandDrilldown retains the child views owned by retained placements,
+// recursively, so nested elements render instead of collapsing flat. It
+// mirrors the canvas tree filter's drill-down expansion.
+func (v *sceneViewer) expandDrilldown() {
+	names := map[int32]string{}
+	var walk func(tree []*diagv1.View)
+	walk = func(tree []*diagv1.View) {
+		for _, view := range tree {
+			if view == nil {
+				continue
+			}
+			names[view.GetId()] = view.GetName()
+			walk(view.GetChildren())
+		}
+	}
+	walk(v.scene.GetTree())
+	childByElement := map[int32]int32{}
+	for _, link := range v.scene.GetNavigations() {
+		if link.GetRelationType() != "child" || link.ElementId == nil {
+			continue
+		}
+		if _, ok := childByElement[link.GetElementId()]; !ok {
+			childByElement[link.GetElementId()] = link.GetToViewId()
+		}
+	}
+	queue := make([]int32, 0, len(v.retained))
+	for id := range v.retained {
+		queue = append(queue, id)
+	}
+	for len(queue) > 0 {
+		from := queue[0]
+		queue = queue[1:]
+		for _, placement := range v.scene.GetViews()[strconv.FormatInt(int64(from), 10)].GetPlacements() {
+			if placement == nil || placement.GetElement() == nil {
+				continue
+			}
+			child, ok := childByElement[placement.GetElement().GetElementId()]
+			if !ok || v.retained[child] {
+				continue
+			}
+			if strings.Contains(names[child], " impact · ") {
+				continue
+			}
+			v.retained[child] = true
+			v.drilldown[child] = true
+			v.retainedOrder = append(v.retainedOrder, child)
+			queue = append(queue, child)
+		}
+	}
+}
+
 // sceneNodeRef names a placement node. Negative (transient) ids render as
 // neg<N> so refs stay valid identifiers on both renderers.
 func sceneNodeRef(viewID, elementID int32) string {
@@ -237,7 +294,7 @@ func (v *sceneViewer) renderView(viewID int32) []string {
 	if content == nil {
 		return nil
 	}
-	pruned := !v.degraded && !v.authored[viewID]
+	pruned := !v.degraded && !v.authored[viewID] && !v.drilldown[viewID]
 	name := v.viewName(viewID)
 	lines := []string{"", fmt.Sprintf(`subgraph %s["%s"]`, sceneViewRef(viewID), escapeMermaidLabel(name))}
 	rendered := map[int32]bool{}

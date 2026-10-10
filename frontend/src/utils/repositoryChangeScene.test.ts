@@ -212,4 +212,30 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[7]?.change).toBe('modified')
     expect(rendered.overlays[1]).toBeUndefined()
   })
+
+  it('retains drill-down child views of impacted elements with full output', () => {
+    const linked = (id: number, from: number, to: number, element: number) => ({ id, element_id: element, from_view_id: from, to_view_id: to, to_view_name: `view-${to}`, relation_type: 'child' })
+    // View 51 is authored and holds the impacted element 7, which owns the
+    // non-authored child view 52. View 52 holds no impacted placements, so the
+    // plain membership filter would drop it and element 7 would render flat.
+    const nested: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(51, 'My services', [view(52, 'Detail')])],
+      views: {
+        51: { placements: [{ ...placement(7, 'svc/auth'), has_view: true }], connectors: [] },
+        52: { placements: [{ ...placement(8, 'internal'), file_path: null }], connectors: [] },
+      },
+      navigations: [linked(1, 51, 52, 7)],
+      fallbackViewId: -1,
+      overlays: { 7: overlay('modified', 'svc/auth', 0) },
+      authoredViewIds: [51],
+    }
+    const rendered = repositoryChangeScene(nested, {})
+    expect(rendered.data.views[52]?.placements.map((element) => element.element_id)).toEqual([8])
+    expect(rendered.data.navigations).toContainEqual(expect.objectContaining({ from_view_id: 51, to_view_id: 52 }))
+    const layout = computeLayout(rendered.data)
+    const parent = layout.groups.flatMap((group) => group.nodes).find((node) => node.elementId === 7)!
+    expect(parent.linkedDiagramId).toBe(52)
+    expect(parent.children.map((child) => child.elementId)).toEqual([8])
+  })
 })

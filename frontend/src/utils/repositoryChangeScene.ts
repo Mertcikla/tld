@@ -57,7 +57,38 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
     retained.add(view.id)
     return [{ ...view, children }]
   })
-  const data: ExploreData = { tree: keep(scene.tree), views: {}, navigations: [] }
+  keep(scene.tree)
+  // Elements with a child view render nested in ZUI; without the child's
+  // output they collapse to singular flat elements. Pull every drill-down
+  // view owned by a retained placement into the scene recursively, keeping
+  // its full output so the canvas can render children.
+  const drilldown = new Set<number>()
+  const childByElement = new Map<number, number>()
+  for (const link of scene.navigations ?? []) {
+    if (link.relation_type !== 'child' || link.element_id == null) continue
+    if (!childByElement.has(link.element_id)) childByElement.set(link.element_id, link.to_view_id)
+  }
+  const queue = [...retained]
+  for (let head = 0; head < queue.length; head++) {
+    const from = queue[head]
+    for (const element of scene.views[String(from)]?.placements ?? []) {
+      const child = childByElement.get(element.element_id)
+      if (child == null || retained.has(child)) continue
+      const node = findSceneView(scene.tree, child)
+      if (node?.name.includes(' impact · ')) continue
+      retained.add(child)
+      drilldown.add(child)
+      queue.push(child)
+    }
+  }
+  const withDrilldown = (tree: ViewTreeNode[]): ViewTreeNode[] => tree.flatMap((view) => {
+    if (view.name.includes(' impact · ')) return []
+    const children = withDrilldown(view.children ?? [])
+    if (!retained.has(view.id) && children.length === 0) return []
+    if (!retained.has(view.id)) retained.add(view.id)
+    return [{ ...view, children }]
+  })
+  const data: ExploreData = { tree: withDrilldown(scene.tree), views: {}, navigations: [] }
   // Plain mode still needs the container elements that own retained child views;
   // without them the hierarchy can't be traversed. They are structural only and
   // are never annotated as changes.
@@ -78,8 +109,10 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
     // change evidence only: transient orphans plus blast-radius-impacted
     // placements, with connectors filtered to visible endpoints. Authored
     // views keep their full membership so the user's diagram renders as
-    // authored. Degraded mode shows mapped views whole.
-    const pruned = !degraded && !authored.has(id)
+    // authored. Drill-down children of retained elements also keep full
+    // output so nested nodes render instead of collapsing flat. Degraded
+    // mode shows mapped views whole.
+    const pruned = !degraded && !authored.has(id) && !drilldown.has(id)
     const placements = plain
       ? view.placements.filter((element) => shown(element) || links?.has(element.element_id))
       : pruned
@@ -114,4 +147,13 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
   }
   data.navigations = (scene.navigations ?? []).filter((link) => retained.has(link.from_view_id) && retained.has(link.to_view_id))
   return { data, overlays, provenance }
+}
+
+function findSceneView(tree: ViewTreeNode[], id: number): ViewTreeNode | null {
+  for (const view of tree) {
+    if (view.id === id) return view
+    const found = findSceneView(view.children ?? [], id)
+    if (found) return found
+  }
+  return null
 }
