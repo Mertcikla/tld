@@ -1,6 +1,7 @@
 package grounded
 
 import (
+	"strings"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -20,7 +21,7 @@ func TestSummarizeAffectedContextUngrounded(t *testing.T) {
 			{Name: "db"},
 		}},
 	}}
-	sum := Summarize(diagram, explore, "", false)
+	sum := Summarize(diagram, explore, "", false, nil)
 	if sum.Mode != "grounded" || sum.Affected != 1 || sum.Context != 1 || sum.Ungrounded != 1 {
 		t.Fatalf("summary = %+v", sum)
 	}
@@ -36,13 +37,14 @@ func TestSummarizeFolderLinkMatches(t *testing.T) {
 	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
 		"9": {Placements: []app.PlacedElement{{Name: "db", FilePath: strPtr("db/")}}},
 	}}
-	sum := Summarize(diagram, explore, "", false)
+	sum := Summarize(diagram, explore, "", false, nil)
 	if sum.Affected != 1 {
 		t.Fatalf("folder link should match, got %+v", sum)
 	}
 }
 
 func TestRollupFanoutCollapsesHundredEdges(t *testing.T) {
+
 	var edges []*pb.ImpactEdge
 	for i := 0; i < 100; i++ {
 		target := "file|db/migrations/f.sql"
@@ -63,5 +65,154 @@ func TestRollupFanoutCollapsesHundredEdges(t *testing.T) {
 	}
 	if len(fanout[0].Groups) > MaxFanoutShown {
 		t.Fatalf("groups exceed budget: %+v", fanout[0])
+	}
+}
+
+func TestSummarizeListsContextAndConnectorsInMatchedView(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Diff: &pb.SnapshotDiff{Sources: []*pb.SourceChange{{Path: "a.go"}}},
+	}
+	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
+		"7": {
+			Placements: []app.PlacedElement{
+				{ElementID: 1, Name: "entry", FilePath: strPtr("a.go")},
+				{ElementID: 2, Name: "neighbour", FilePath: strPtr("b.go")},
+				{ElementID: 3, Name: "notes"},
+			},
+			Connectors: []app.Connector{
+				{SourceElementID: 1, TargetElementID: 2, Label: strPtr("calls")},
+			},
+		},
+		"8": {Placements: []app.PlacedElement{
+			{ElementID: 9, Name: "elsewhere", FilePath: strPtr("z.go")},
+		}},
+	}}
+	sum := Summarize(diagram, explore, "", false, nil)
+	if sum.Affected != 1 || sum.Context != 2 || sum.Ungrounded != 1 {
+		t.Fatalf("counts = %+v", sum)
+	}
+	// Matched view lists affected + context + unlinked; the untouched view
+	// stays counted only.
+	if len(sum.Elements) != 3 {
+		t.Fatalf("elements = %+v", sum.Elements)
+	}
+	found := map[string]string{}
+	for _, el := range sum.Elements {
+		found[el.Name] = el.Status
+		if el.ElementID == 0 {
+			t.Fatalf("element missing id: %+v", el)
+		}
+	}
+	if found["entry"] != StatusAffected || found["neighbour"] != StatusContext || found["notes"] != StatusUngrounded {
+		t.Fatalf("statuses = %v", found)
+	}
+	if len(sum.Connectors) != 1 || sum.Connectors[0].Label != "calls" {
+		t.Fatalf("connectors = %+v", sum.Connectors)
+	}
+}
+
+func TestMermaidAuthoredSectionMirrorsCanvas(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|a.go", Path: "a.go", Name: "a.go"},
+			{Key: "file|b.go", Path: "b.go", Name: "b.go"},
+		},
+	}
+	summary := Summary{
+		Mode:     "grounded",
+		Affected: 1, Context: 1,
+		Views: []ViewMatch{{ViewID: 7, ViewName: "Flow", Affected: 1, Total: 2}},
+		Elements: []ElementStatus{
+			{ViewID: 7, ElementID: 1, Name: "entry", Link: "a.go", Status: StatusAffected},
+			{ViewID: 7, ElementID: 2, Name: "neighbour", Link: "b.go", Status: StatusContext},
+		},
+		Connectors: []GroundedConnector{
+			{ViewID: 7, Source: "entry", Target: "neighbour", Label: "calls"},
+		},
+	}
+	section := MermaidAuthoredSection(diagram, summary)
+	for _, want := range []string{
+		`subgraph authored_7`,
+		`el_7_1[`,
+		`el_7_2[`,
+		`-- "calls" -->`,
+		`el_7_1 -.-> node_file_a_go`,
+		`el_7_2 -.-> node_file_b_go`,
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("section missing %q:\n%s", want, section)
+		}
+	}
+	if got := MermaidAuthoredSection(diagram, Summary{Mode: "grounded"}); got != "" {
+		t.Fatalf("empty summary must render nothing, got %q", got)
+	}
+}
+
+func TestSummarizeIndirectNeighbourChange(t *testing.T) {
+	// validate.py changed; nothing linked changed, but build.py (linked)
+	// imports it, so the owning view still matches via proximity.
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|validate.py", Path: "validate.py", Name: "validate.py"},
+		},
+		Diff: &pb.SnapshotDiff{Sources: []*pb.SourceChange{{Path: "validate.py"}}},
+	}
+	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
+		"7": {Placements: []app.PlacedElement{
+			{ElementID: 1, Name: "build", FilePath: strPtr("build.py")},
+			{ElementID: 2, Name: "unrelated", FilePath: strPtr("other.py")},
+		}},
+	}}
+	neighbours := map[string][]string{
+		"validate.py": {"build.py"},
+		"build.py":    {"validate.py"},
+	}
+	sum := Summarize(diagram, explore, "", false, neighbours)
+	if sum.Affected != 0 || sum.FallbackToRaw {
+		t.Fatalf("indirect change must not count affected nor fall back: %+v", sum)
+	}
+	if len(sum.Views) != 1 || sum.Views[0].Indirect != 1 {
+		t.Fatalf("views = %+v", sum.Views)
+	}
+	var build *ElementStatus
+	for i := range sum.Elements {
+		if sum.Elements[i].Name == "build" {
+			build = &sum.Elements[i]
+		}
+	}
+	if build == nil || build.Status != StatusContext || len(build.Near) != 1 || build.Near[0] != "validate.py" {
+		t.Fatalf("build element = %+v", build)
+	}
+	section := MermaidAuthoredSection(diagram, sum)
+	for _, want := range []string{"· context · near validate.py", "el_7_1 -.-> node_file_validate_py"} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("section missing %q:\n%s", want, section)
+		}
+	}
+}
+
+func TestMermaidAuthoredSectionGroundsFolderLinks(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|plugin/generate.py", Path: "plugin/generate.py", Name: "generate.py"},
+			{Key: "file|plugin/__init__.py", Path: "plugin/__init__.py", Name: "__init__.py"},
+		},
+	}
+	summary := Summary{
+		Mode:     "grounded",
+		Affected: 1,
+		Views:    []ViewMatch{{ViewID: 1, ViewName: "Workspace", Affected: 1, Total: 1}},
+		Elements: []ElementStatus{
+			{ViewID: 1, ElementID: 8, Name: "Plugin Package", Link: "plugin/", Status: StatusAffected},
+		},
+	}
+	section := MermaidAuthoredSection(diagram, summary)
+	for _, want := range []string{
+		"el_1_8 -.-> node_file_plugin_generate_py",
+		"el_1_8 -.-> node_file_plugin___init___py",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("section missing %q:\n%s", want, section)
+		}
 	}
 }

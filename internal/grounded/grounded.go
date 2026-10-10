@@ -6,11 +6,13 @@
 package grounded
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/mermaid"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -26,13 +28,28 @@ const (
 // It answers "100 outgoing edges" with 7 groups + "+N more", never 100 arrows.
 const MaxFanoutShown = 7
 
-// ElementStatus is one authored placement resolved against the diff.
+// ElementStatus is one authored placement resolved against the diff. Status
+// is file-based: affected means the linked file itself changed, context means
+// it did not. Near names changed paths one dependency hop away, so an
+// unlinked-but-indexed change still points at the neighbours it may disturb.
 type ElementStatus struct {
+	ViewID    int64    `json:"viewId"`
+	ViewName  string   `json:"viewName,omitempty"`
+	ElementID int64    `json:"elementId"`
+	Name      string   `json:"name"`
+	Link      string   `json:"link,omitempty"`
+	Status    string   `json:"status"`
+	Near      []string `json:"near,omitempty"`
+}
+
+// GroundedConnector is a user-authored connector inside a matched view,
+// carried so text renders (mermaid) show the same edges as the canvas.
+type GroundedConnector struct {
 	ViewID   int64  `json:"viewId"`
 	ViewName string `json:"viewName,omitempty"`
-	Name     string `json:"name"`
-	Link     string `json:"link,omitempty"`
-	Status   string `json:"status"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Label    string `json:"label,omitempty"`
 }
 
 // FanoutGroup rolls outgoing edges up by target prefix.
@@ -56,38 +73,65 @@ type ViewMatch struct {
 	ViewName string `json:"viewName,omitempty"`
 	Affected int    `json:"affected"`
 	Total    int    `json:"total"`
+	// Indirect counts elements one hop from a change (near or blast-radius
+	// context) without their own file changing.
+	Indirect int `json:"indirect,omitempty"`
 }
 
 // Summary is the grounded overlay: which authored elements the change
 // touches, which views they live in, and where fan-out was collapsed.
 type Summary struct {
-	Mode          string          `json:"mode"`
-	ViewFilter    string          `json:"viewFilter,omitempty"`
-	Affected      int             `json:"affected"`
-	Context       int             `json:"context"`
-	Ungrounded    int             `json:"ungrounded"`
-	Views         []ViewMatch     `json:"views"`
-	Elements      []ElementStatus `json:"elements"`
-	Fanout        []Fanout        `json:"fanout,omitempty"`
-	FallbackToRaw bool            `json:"fallbackToRaw,omitempty"`
+	Mode          string              `json:"mode"`
+	ViewFilter    string              `json:"viewFilter,omitempty"`
+	Affected      int                 `json:"affected"`
+	Context       int                 `json:"context"`
+	Ungrounded    int                 `json:"ungrounded"`
+	Views         []ViewMatch         `json:"views"`
+	Elements      []ElementStatus     `json:"elements"`
+	Connectors    []GroundedConnector `json:"connectors,omitempty"`
+	Fanout        []Fanout            `json:"fanout,omitempty"`
+	FallbackToRaw bool                `json:"fallbackToRaw,omitempty"`
 }
 
 // Summarize intersects the impact diagram's changed paths with the
 // workspace's authored placements. Linked elements whose file matches a
 // changed path are affected; linked elements elsewhere are context;
-// placements without a file link are ungrounded. viewFilter optionally
+// placements without a file link are ungrounded. neighbours optionally maps
+// an indexed path to its dependency-adjacent paths (undirected); linked files
+// adjacent to a change are recorded in Near so unlinked-but-indexed edits
+// still resolve to the neighbours they may disturb. viewFilter optionally
 // restricts to one view id or case-insensitive name substring.
-func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter string, allEdges bool) Summary {
+func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter string, allEdges bool, neighbours map[string][]string) Summary {
 	sum := Summary{Mode: "grounded", ViewFilter: viewFilter, Views: []ViewMatch{}, Elements: []ElementStatus{}}
 	if diagram == nil {
 		sum.FallbackToRaw = true
 		return sum
 	}
 	changed := changedPaths(diagram)
+	// reached holds workspace element ids the comparison already placed in
+	// the blast radius (context|<id> nodes), i.e. map-owned neighbours.
+	reached := map[int64]bool{}
+	if diagram != nil {
+		for _, node := range diagram.GetNodes() {
+			if node == nil || !strings.HasPrefix(node.GetKey(), "context|") || node.GetElementId() == 0 {
+				continue
+			}
+			reached[node.GetElementId()] = true
+		}
+	}
 	viewNames := map[int64]string{}
 	collectViewNames(explore.Tree, viewNames)
 	perViewAffected := map[int64]int{}
+	perViewIndirect := map[int64]int{}
 	perViewTotal := map[int64]int{}
+	type placed struct {
+		viewID int64
+		el     app.PlacedElement
+		link   string
+		status string
+		near   []string
+	}
+	var all []placed
 	for viewIDStr, content := range explore.Views {
 		viewID, err := strconv.ParseInt(viewIDStr, 10, 64)
 		if err != nil {
@@ -106,11 +150,13 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 			}
 			perViewTotal[viewID]++
 			status := StatusUngrounded
+			var near []string
 			if link != "" {
 				if intersects(link, changed) {
 					status = StatusAffected
 				} else {
 					status = StatusContext
+					near = nearChanges(link, changed, neighbours)
 				}
 			}
 			switch status {
@@ -122,15 +168,33 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 			default:
 				sum.Ungrounded++
 			}
-			// Only list elements worth a human's attention: affected first,
-			// then ungrounded. Pure context stays counted, not listed.
-			if status != StatusContext {
-				sum.Elements = append(sum.Elements, ElementStatus{
-					ViewID: viewID, ViewName: viewNames[viewID],
-					Name: el.Name, Link: link, Status: status,
-				})
+			if len(near) > 0 || reached[el.ElementID] {
+				perViewIndirect[viewID]++
 			}
+			all = append(all, placed{viewID: viewID, el: el, link: link, status: status, near: near})
 		}
+	}
+	matched := map[int64]bool{}
+	for viewID, total := range perViewTotal {
+		if perViewAffected[viewID] == 0 && perViewIndirect[viewID] == 0 {
+			continue
+		}
+		matched[viewID] = true
+		sum.Views = append(sum.Views, ViewMatch{ViewID: viewID, ViewName: viewNames[viewID], Affected: perViewAffected[viewID], Total: total, Indirect: perViewIndirect[viewID]})
+	}
+	sort.Slice(sum.Views, func(i, j int) bool { return sum.Views[i].Affected > sum.Views[j].Affected })
+	// Elements lists every placement in the matched views — affected, unlinked,
+	// and context neighbours alike — so text renders show the same authored
+	// nodes as the canvas. Pure-context views stay counted, not listed.
+	for _, item := range all {
+		if !matched[item.viewID] {
+			continue
+		}
+		sum.Elements = append(sum.Elements, ElementStatus{
+			ViewID: item.viewID, ViewName: viewNames[item.viewID],
+			ElementID: item.el.ElementID,
+			Name:      item.el.Name, Link: item.link, Status: item.status, Near: item.near,
+		})
 	}
 	sort.Slice(sum.Elements, func(i, j int) bool {
 		if sum.Elements[i].Status != sum.Elements[j].Status {
@@ -138,13 +202,41 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 		}
 		return sum.Elements[i].Name < sum.Elements[j].Name
 	})
-	for viewID, total := range perViewTotal {
-		if perViewAffected[viewID] == 0 {
+	// Connectors carries the user-authored edges inside matched views so the
+	// mermaid export draws the same connectors as the canvas overlay.
+	for viewIDStr, content := range explore.Views {
+		viewID, err := strconv.ParseInt(viewIDStr, 10, 64)
+		if err != nil || !matched[viewID] {
 			continue
 		}
-		sum.Views = append(sum.Views, ViewMatch{ViewID: viewID, ViewName: viewNames[viewID], Affected: perViewAffected[viewID], Total: total})
+		names := map[int64]string{}
+		for _, el := range content.Placements {
+			if _, ok := names[el.ElementID]; !ok {
+				names[el.ElementID] = el.Name
+			}
+		}
+		for _, conn := range content.Connectors {
+			source, okSource := names[conn.SourceElementID]
+			target, okTarget := names[conn.TargetElementID]
+			if !okSource || !okTarget {
+				continue
+			}
+			label := ""
+			if conn.Label != nil {
+				label = *conn.Label
+			}
+			sum.Connectors = append(sum.Connectors, GroundedConnector{
+				ViewID: viewID, ViewName: viewNames[viewID],
+				Source: source, Target: target, Label: label,
+			})
+		}
 	}
-	sort.Slice(sum.Views, func(i, j int) bool { return sum.Views[i].Affected > sum.Views[j].Affected })
+	sort.Slice(sum.Connectors, func(i, j int) bool {
+		if sum.Connectors[i].Source != sum.Connectors[j].Source {
+			return sum.Connectors[i].Source < sum.Connectors[j].Source
+		}
+		return sum.Connectors[i].Target < sum.Connectors[j].Target
+	})
 	if len(sum.Views) == 0 {
 		sum.FallbackToRaw = true
 	}
@@ -230,6 +322,36 @@ func changedPaths(diagram *pb.ImpactDiagram) map[string]bool {
 	return changed
 }
 
+// nearChanges returns the sorted changed paths one dependency hop from the
+// linked file: neighbours of the link base that appear in the change set.
+// Folder links resolve through every changed path under their prefix.
+func nearChanges(link string, changed map[string]bool, neighbours map[string][]string) []string {
+	base := strings.TrimSpace(basePath(link))
+	if base == "" || len(neighbours) == 0 {
+		return nil
+	}
+	bases := []string{strings.TrimSuffix(base, "/")}
+	if strings.HasSuffix(base, "/") {
+		for path := range changed {
+			if strings.HasPrefix(path, base) {
+				bases = append(bases, path)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var near []string
+	for _, from := range bases {
+		for _, to := range neighbours[from] {
+			if changed[to] && !seen[to] {
+				seen[to] = true
+				near = append(near, to)
+			}
+		}
+	}
+	sort.Strings(near)
+	return near
+}
+
 // basePath strips a #line/#symbol anchor from a source link.
 func basePath(link string) string {
 	if i := strings.IndexByte(link, '#'); i >= 0 {
@@ -293,4 +415,151 @@ func targetPrefix(target string) string {
 		return "(external)"
 	}
 	return cleaned
+}
+
+// statusBadge marks an authored node the way the canvas overlay does:
+// affected nodes glow, context neighbours keep their outline, unlinked nodes
+// stay hollow.
+func statusBadge(status string) string {
+	switch status {
+	case StatusAffected:
+		return "✓ affected"
+	case StatusContext:
+		return "· context"
+	default:
+		return "○ unlinked"
+	}
+}
+
+// MermaidAuthoredSection renders the user-authored overlay — the same elements
+// and connectors the canvas shows in the grounded scope — as mermaid subgraphs
+// appended after the file-level diagram. Each linked element carries a dashed
+// grounding edge to the changed-file node it resolves to, using the exact node
+// ids ExportImpactDiagram generates. Views without affected elements, and
+// grounding targets pruned from the scoped diagram, are skipped. An empty
+// summary renders nothing.
+func MermaidAuthoredSection(diagram *pb.ImpactDiagram, summary Summary) string {
+	if len(summary.Views) == 0 || len(summary.Elements) == 0 {
+		return ""
+	}
+	// Rebuild the exporter's node ids in order so grounding edges reference
+	// real file nodes. Scheme mirrors uniqueImpactNodeID: sanitize
+	// ("node_"+key) with numeric dedup on collision.
+	nodeIDs := map[string]string{}
+	used := map[string]bool{}
+	if diagram != nil {
+		for _, node := range diagram.GetNodes() {
+			if node == nil {
+				continue
+			}
+			key := node.GetKey()
+			if key == "" {
+				key = node.GetPath()
+			}
+			if key == "" {
+				continue
+			}
+			if _, ok := nodeIDs[key]; ok {
+				continue
+			}
+			ref := mermaid.SanitizeID("node_" + key)
+			if used[ref] {
+				for index := 2; ; index++ {
+					candidate := fmt.Sprintf("%s_%d", ref, index)
+					if !used[candidate] {
+						ref = candidate
+						break
+					}
+				}
+			}
+			used[ref] = true
+			nodeIDs[key] = ref
+		}
+	}
+	byView := map[int64][]ElementStatus{}
+	for _, el := range summary.Elements {
+		byView[el.ViewID] = append(byView[el.ViewID], el)
+	}
+	byViewConns := map[int64][]GroundedConnector{}
+	for _, conn := range summary.Connectors {
+		byViewConns[conn.ViewID] = append(byViewConns[conn.ViewID], conn)
+	}
+	var sb strings.Builder
+	for _, view := range summary.Views {
+		elements := byView[view.ViewID]
+		if len(elements) == 0 {
+			continue
+		}
+		name := view.ViewName
+		if name == "" {
+			name = fmt.Sprintf("view %d", view.ViewID)
+		}
+		fmt.Fprintf(&sb, "\nsubgraph authored_%d[\"✎ %s — yours\"]\n", view.ViewID, mermaid.EscapeMermaidLabel(name))
+		refs := map[string]string{}
+		for _, el := range elements {
+			ref := fmt.Sprintf("el_%d_%d", el.ViewID, el.ElementID)
+			refs[el.Name] = ref
+			label := el.Name
+			if el.Link != "" {
+				label += "<br/>" + el.Link
+			}
+			badge := statusBadge(el.Status)
+			if el.Status == StatusContext && len(el.Near) > 0 {
+				badge += " · near " + el.Near[0]
+				if len(el.Near) > 1 {
+					badge += fmt.Sprintf(" +%d", len(el.Near)-1)
+				}
+			}
+			label += "<br/>" + badge
+			fmt.Fprintf(&sb, "  %s[\"%s\"]\n", ref, mermaid.EscapeMermaidLabel(label))
+		}
+		for _, conn := range byViewConns[view.ViewID] {
+			source, okSource := refs[conn.Source]
+			target, okTarget := refs[conn.Target]
+			if !okSource || !okTarget {
+				continue
+			}
+			if conn.Label != "" {
+				fmt.Fprintf(&sb, "  %s -- \"%s\" --> %s\n", source, mermaid.EscapeMermaidLabel(conn.Label), target)
+			} else {
+				fmt.Fprintf(&sb, "  %s --> %s\n", source, target)
+			}
+		}
+		for _, el := range elements {
+			targets := []string{}
+			// Context neighbours point at the nearby change, not their own
+			// (unchanged, unscoped) file — that edge is the "why listed".
+			targets = append(targets, el.Near...)
+			if base := strings.TrimSpace(basePath(el.Link)); base != "" {
+				trimmed := strings.TrimSuffix(base, "/")
+				targets = append(targets, trimmed)
+				// Folder links ground to every changed file under their
+				// prefix that survived scoping.
+				if strings.HasSuffix(base, "/") {
+					for _, node := range diagram.GetNodes() {
+						if node == nil || node.GetDistance() != 0 {
+							continue
+						}
+						if strings.HasPrefix(node.GetPath(), base) {
+							targets = append(targets, strings.TrimSuffix(node.GetPath(), "/"))
+						}
+					}
+				}
+			}
+			seen := map[string]bool{}
+			for _, target := range targets {
+				if seen[target] {
+					continue
+				}
+				seen[target] = true
+				fileRef, ok := nodeIDs["file|"+target]
+				if !ok {
+					continue
+				}
+				fmt.Fprintf(&sb, "  %s -.-> %s\n", refs[el.Name], fileRef)
+			}
+		}
+		sb.WriteString("end\n")
+	}
+	return sb.String()
 }

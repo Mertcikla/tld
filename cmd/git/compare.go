@@ -213,14 +213,17 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	}
 	// The grounded summary intersects the change with the authored workspace so
 	// the default payload pins the user's diagram and rolls up fan-out. The raw
-	// impact path skips it entirely.
+	// impact path skips it entirely. Neighbourhood comes from the head
+	// snapshot's file pairs so unlinked-but-indexed edits still resolve to the
+	// linked neighbours they may disturb.
 	var summary grounded.Summary
 	if !opts.rawImpact {
 		explore, exploreErr := sq.Explore(ctx)
 		if exploreErr != nil {
 			return exploreErr
 		}
-		summary = grounded.Summarize(diagram, explore, opts.view, opts.allEdges)
+		neighbours := groundedNeighbours(ctx, store, diagram)
+		summary = grounded.Summarize(diagram, explore, opts.view, opts.allEdges, neighbours)
 		report.Grounded = &summary
 		if summary.FallbackToRaw && opts.verbose {
 			notice("notice: no authored views intersect this change; grounded bundle falls back to raw impact context")
@@ -392,6 +395,42 @@ type compareRenderer struct {
 	summary *grounded.Summary
 }
 
+// groundedNeighbours builds the undirected file adjacency of the head
+// snapshot so the summary can name linked neighbours of a change. Failures
+// degrade to no proximity (file-based statuses still hold), never to an error.
+func groundedNeighbours(ctx context.Context, store *cstore.Store, diagram *pb.ImpactDiagram) map[string][]string {
+	if store == nil || diagram == nil || diagram.GetDiff().GetToSnapshotId() == "" {
+		return nil
+	}
+	counts, err := store.FilePairCounts(ctx, diagram.GetDiff().GetToSnapshotId())
+	if err != nil || len(counts) == 0 {
+		return nil
+	}
+	sets := map[string]map[string]bool{}
+	link := func(a, b string) {
+		if a == "" || b == "" || a == b {
+			return
+		}
+		if sets[a] == nil {
+			sets[a] = map[string]bool{}
+		}
+		sets[a][b] = true
+	}
+	for pair := range counts {
+		link(pair[0], pair[1])
+		link(pair[1], pair[0])
+	}
+	out := make(map[string][]string, len(sets))
+	for path, peers := range sets {
+		list := make([]string, 0, len(peers))
+		for peer := range peers {
+			list = append(list, peer)
+		}
+		out[path] = list
+	}
+	return out
+}
+
 // groundedBundle is the default protojson payload: the scene the canvas loads
 // plus the authored overlay that pins the user's diagram.
 type groundedBundle struct {
@@ -407,6 +446,11 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 		code := mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
 		if !r.opts.rawImpact && r.summary != nil {
 			code = groundedMermaidHeader(*r.summary, radius) + code
+			// The authored overlay carries the same elements and connectors
+			// the canvas shows, so the text diagram matches the UI.
+			if section := grounded.MermaidAuthoredSection(diagram, *r.summary); section != "" {
+				code += section
+			}
 		}
 		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
