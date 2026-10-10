@@ -68,7 +68,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diagram.Nodes) != 2 || diagram.MaxRadius != 1 {
+	if len(diagram.Nodes) != 2 {
 		t.Fatalf("changed-only nodes: %+v", diagram)
 	}
 	for _, node := range diagram.Nodes {

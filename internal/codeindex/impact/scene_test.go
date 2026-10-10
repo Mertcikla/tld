@@ -115,9 +115,6 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 		scene.GetComparisonKey() != "key" || scene.GetFromGitRevision() != "base" || scene.GetToGitRevision() != "head" {
 		t.Fatalf("scene identity = %+v", scene)
 	}
-	if scene.GetMaxRadius() != 1 {
-		t.Fatalf("scene max radius = %d, want the widest distance present", scene.GetMaxRadius())
-	}
 	overlay := byPath["a.go"].GetOverlay()
 	symbols := overlay.GetSymbols()
 	if len(symbols) != 1 || symbols[0].GetName() != "Stable" || symbols[0].GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
@@ -128,23 +125,6 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	}
 	if symbols[0].GetBodyHash() == "" {
 		t.Fatalf("symbol detail has no body fingerprint: %+v", symbols[0])
-	}
-}
-
-func TestSceneMaxRadiusCountsOnlyDistancesPresent(t *testing.T) {
-	scene := &pb.ImpactScene{Views: map[string]*pb.SceneViewContent{
-		"1": {Placements: []*pb.ScenePlacement{
-			{Overlay: &pb.ImpactSceneOverlay{Change: pb.ChangeKind_CHANGE_KIND_MODIFIED, Distance: 0}},
-		}},
-	}}
-	if got := sceneMaxRadius(scene); got != 0 {
-		t.Fatalf("direct-changes-only scene max radius = %d", got)
-	}
-	scene.Views["1"].Placements = append(scene.Views["1"].Placements, &pb.ScenePlacement{
-		Overlay: &pb.ImpactSceneOverlay{Distance: 2},
-	})
-	if got := sceneMaxRadius(scene); got != 2 {
-		t.Fatalf("scene max radius = %d, want 2", got)
 	}
 }
 

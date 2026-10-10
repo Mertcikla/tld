@@ -90,7 +90,6 @@ import {
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
-import { MAX_BLAST_RADIUS } from '../utils/impactScope'
 import {
   normalizeConnectorRouteStyle,
   normalizeLogoUrl,
@@ -262,7 +261,6 @@ export interface RepositoryImpact {
   diff: SnapshotDiff
   nodes: ImpactFileNode[]
   edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
-  maxRadius: number
   version: string
 }
 export interface RepositoryImpactMermaid {
@@ -299,14 +297,13 @@ export interface RepositoryImpactOverlay {
 // It is self-contained, so the identity fields travel with it and a viewer can
 // render the scene without the repository, its index, or its snapshots.
 // authoredViewIds names the views annotated on user-authored elements rather
-// than codeindex-materialized ones, for the mapped/authored scope toggle.
+// than codeindex-materialized ones, which the grounded diagram pins.
 export interface RepositoryImpactScene extends ExploreData {
   fallbackViewId: number
   repositoryId: string
   comparisonKey: string
   version: string
   schemaVersion: string
-  maxRadius: number
   fromGitRevision: string
   toGitRevision: string
   overlays: Record<number, RepositoryImpactOverlay>
@@ -634,7 +631,7 @@ function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
   return {
     repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
     viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
-    maxRadius: diagram.maxRadius, version: diagram.version,
+    version: diagram.version,
     nodes: diagram.nodes.map((node) => ({
       key: node.key, path: node.path, name: node.name, change: change(node.change),
       distance: node.distance, elementId: Number(node.elementId), x: node.x, y: node.y,
@@ -703,7 +700,6 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
     comparisonKey: scene.comparisonKey,
     version: scene.version,
     schemaVersion: scene.schemaVersion,
-    maxRadius: scene.maxRadius,
     fromGitRevision: scene.fromGitRevision,
     toGitRevision: scene.toGitRevision,
     overlays,
@@ -2319,14 +2315,16 @@ export const api = {
       }
     },
     compare: async (repositoryId: string, options: {
-      base: RepositoryMapOptions; head: RepositoryMapOptions; contextDepth?: number
+      base: RepositoryMapOptions; head: RepositoryMapOptions
       signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
     }): Promise<RepositoryImpact> => {
       const toRevision = (o: RepositoryMapOptions) => ({
         snapshotId: o.snapshotId, gitRevision: o.gitRevision,
         workingTree: o.workingTree, gitBranch: o.gitBranch,
       })
-      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head), contextDepth: options.contextDepth ?? MAX_BLAST_RADIUS }, { signal: options.signal })
+      // Context depth is fixed backend-side (DefaultContextDepth = 3); the
+      // comparison always computes the full neighbourhood and displays it.
+      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head), contextDepth: 3 }, { signal: options.signal })
       let result: RepositoryImpact | null = null
       for await (const event of stream) {
         if (event.event.case === 'progress') options.onProgress?.(event.event.value)
@@ -2359,12 +2357,12 @@ export const api = {
       if (!response.scene) throw new Error('Impact scene unavailable')
       return mapImpactScene(response.scene)
     }),
-    impactMermaid: (repositoryId: string, comparisonKey: string, options: { radius?: number; markdown?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => rpc(async () => {
+    impactMermaid: (repositoryId: string, comparisonKey: string, options: { markdown?: boolean; plain?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => rpc(async () => {
       const response = await codeIndexClient.exportImpactMermaid({
         repositoryId,
         comparisonKey,
-        radius: options.radius ?? 0,
         markdown: options.markdown ?? false,
+        plain: options.plain ?? false,
       }, { signal: options.signal })
       return { code: response.code, markdown: response.markdown, warnings: [...response.warnings] }
     }),

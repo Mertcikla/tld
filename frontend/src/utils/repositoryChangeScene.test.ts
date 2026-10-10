@@ -15,7 +15,6 @@ const scene: RepositoryImpactScene = {
   comparisonKey: 'before..after',
   version: '1',
   schemaVersion: '1',
-  maxRadius: 2,
   fromGitRevision: 'before',
   toGitRevision: 'after',
   tree: [view(1, 'Map', [view(9, 'repo impact · Live changes')])],
@@ -34,20 +33,16 @@ const scene: RepositoryImpactScene = {
 }
 
 describe('repositoryChangeScene', () => {
-  it('retains the backend scene views and annotates only nodes within the blast radius', () => {
-    const view1 = repositoryChangeScene(scene, { radius: 0 })
-    expect(view1.data.tree.map((tree) => tree.id)).toEqual([1])
-    expect(view1.overlays[1]).toMatchObject({ change: 'modified', linesAdded: 3, linesRemoved: 2 })
-    expect(view1.overlays[2]).toBeUndefined()
-    expect(view1.overlays[3]).toBeUndefined()
-
-    const view2 = repositoryChangeScene(scene, { radius: 1 })
-    expect(view2.overlays[2]?.change).toBe('unchanged')
-    expect(view2.overlays[3]).toBeUndefined()
+  it('retains the backend scene views and annotates every overlaid node', () => {
+    const rendered = repositoryChangeScene(scene, {})
+    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
+    expect(rendered.overlays[1]).toMatchObject({ change: 'modified', linesAdded: 3, linesRemoved: 2 })
+    expect(rendered.overlays[2]?.change).toBe('unchanged')
+    expect(rendered.overlays[3]?.change).toBe('unchanged')
   })
 
   it('tags direct changes and leaves blast-radius context unhighlighted', () => {
-    const rendered = repositoryChangeScene(scene, { radius: 1 })
+    const rendered = repositoryChangeScene(scene, {})
     const annotated = applyChangeOverlays(computeLayout(rendered.data), rendered.overlays)
     const changed = annotated.groups[0].nodes.find((node) => node.elementId === 1)!
     const context = annotated.groups[0].nodes.find((node) => node.elementId === 2)!
@@ -58,12 +53,12 @@ describe('repositoryChangeScene', () => {
   })
 
   it('plain mode hides non-impacted elements and their connectors while keeping neighbours', () => {
-    const rendered = repositoryChangeScene(scene, { radius: 1, plain: true })
-    expect(rendered.data.views[1].placements.map((element) => element.file_path)).toEqual(['a.go', 'b.go'])
-    expect(rendered.data.views[1].connectors?.map((item) => item.id)).toEqual([11])
+    const rendered = repositoryChangeScene(scene, { plain: true })
+    expect(rendered.data.views[1].placements.map((element) => element.file_path)).toEqual(['a.go', 'b.go', 'c.go'])
+    expect(rendered.data.views[1].connectors?.map((item) => item.id)).toEqual([11, 12])
     expect(rendered.overlays[1]?.change).toBe('modified')
     expect(rendered.overlays[2]?.change).toBe('unchanged')
-    expect(rendered.overlays[3]).toBeUndefined()
+    expect(rendered.overlays[3]?.change).toBe('unchanged')
   })
 
   it('plain mode keeps the container elements that reach impacted nested views', () => {
@@ -80,11 +75,11 @@ describe('repositoryChangeScene', () => {
       fallbackViewId: -1,
       overlays: { 1: overlay('modified', 'a.go', 0), 3: overlay('unchanged', 'c.go', 2) },
     }
-    const rendered = repositoryChangeScene(nested, { radius: 0, plain: true })
+    const rendered = repositoryChangeScene(nested, { plain: true })
     expect(rendered.data.tree[0].children?.[0].children?.[0].id).toBe(12)
     expect(rendered.data.views[10].placements.map((element) => element.element_id)).toEqual([100])
     expect(rendered.data.views[11].placements.map((element) => element.element_id)).toEqual([200])
-    expect(rendered.data.views[12].placements.map((element) => element.file_path)).toEqual(['a.go'])
+    expect(rendered.data.views[12].placements.map((element) => element.file_path)).toEqual(['a.go', 'c.go'])
     expect(computeLayout(rendered.data).groups[0].nodes[0].elementId).toBe(100)
   })
 
@@ -95,44 +90,14 @@ describe('repositoryChangeScene', () => {
       views: { ...scene.views, 1: { placements: [...scene.views[1].placements, transient], connectors: [] } },
       overlays: { ...scene.overlays, [-1]: overlay('added', 'new.go', 0) },
     }
-    const rendered = repositoryChangeScene(withTransient, { radius: 0 })
+    const rendered = repositoryChangeScene(withTransient, {})
     const added = rendered.data.views[1].placements.find((element) => element.element_id === -1)!
     expect(added.tags).toContain(REPOSITORY_CHANGE_TAG)
     expect(rendered.overlays[-1].change).toBe('added')
   })
 
-  it('authored scope keeps only authored views with their ancestors and drops the fallback view', () => {
-    const authored: RepositoryImpactScene = {
-      ...scene,
-      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
-      views: {
-        10: { placements: [placement(100, 'top.go')], connectors: [] },
-        11: { placements: [placement(1, 'a.go')], connectors: [] },
-        51: { placements: [placement(7, 'svc/auth'), placement(8, 'svc/')], connectors: [] },
-        '-1': { placements: [placement(-1, 'new.go')], connectors: [] },
-      },
-      overlays: {
-        1: overlay('modified', 'a.go', 0),
-        7: overlay('modified', 'svc/auth', 0),
-        8: overlay('modified', 'svc/', 0, { reason: 'contained' }),
-        [-1]: overlay('added', 'new.go', 0),
-      },
-      authoredViewIds: [51],
-    }
-    const rendered = repositoryChangeScene(authored, { radius: 0, scope: 'authored' })
-    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([10])
-    expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51])
-    expect(rendered.data.views[11]).toBeUndefined()
-    expect(rendered.data.views[-1]).toBeUndefined()
-    expect(rendered.data.views[51].placements.map((element) => element.element_id)).toEqual([7, 8])
-    expect(rendered.overlays[7]?.change).toBe('modified')
-    expect(rendered.overlays[8]).toMatchObject({ change: 'modified', reason: 'contained' })
-    expect(rendered.overlays[1]).toBeUndefined()
-    expect(rendered.overlays[-1]).toBeUndefined()
-  })
-
-  it('grounded scope is the default and pins authored views', () => {
-    const rendered = repositoryChangeScene(scene, { radius: 0 })
+  it('pins authored views', () => {
+    const rendered = repositoryChangeScene(scene, {})
     expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
     expect(rendered.overlays[1]?.change).toBe('modified')
   })
@@ -154,22 +119,19 @@ describe('repositoryChangeScene', () => {
       },
       authoredViewIds: [51],
     }
-    const grounded = repositoryChangeScene(withOrphan, { radius: 0, scope: 'grounded' })
+    const grounded = repositoryChangeScene(withOrphan, {})
     expect(grounded.provenance[7]).toBe('authored')
     expect(grounded.provenance[-1]).toBe('augmented')
-    const mapped = repositoryChangeScene(
-      { ...withOrphan, authoredViewIds: [51], tree: [view(11, 'repo map')] },
-      { radius: 0, scope: 'mapped' },
-    )
-    expect(mapped.provenance[1]).toBe('generated')
+    const degraded = repositoryChangeScene({ ...withOrphan, authoredViewIds: [] }, {})
+    expect(degraded.provenance[1]).toBe('generated')
   })
 
-  it('grounded scope falls back to mapped when no authored view matched', () => {
-    const rendered = repositoryChangeScene(scene, { radius: 0, scope: 'grounded' })
+  it('falls back to mapped when no authored view matched', () => {
+    const rendered = repositoryChangeScene(scene, {})
     expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
   })
 
-  it('grounded scope keeps the fallback Changes view so unlinked files stay visible', () => {
+  it('keeps the fallback Changes view so unlinked files stay visible', () => {
     const withOrphan: RepositoryImpactScene = {
       ...scene,
       tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
@@ -186,7 +148,7 @@ describe('repositoryChangeScene', () => {
       },
       authoredViewIds: [51],
     }
-    const rendered = repositoryChangeScene(withOrphan, { radius: 0, scope: 'grounded' })
+    const rendered = repositoryChangeScene(withOrphan, {})
     expect(rendered.data.tree.map((tree) => tree.id)).toEqual([10])
     expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51, -1])
     expect(rendered.data.views[11]).toBeUndefined()
@@ -197,7 +159,7 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[1]).toBeUndefined()
   })
 
-  it('grounded scope rescues transients from mapped views while pruning mapped context', () => {
+  it('rescues transients from mapped views while pruning mapped context', () => {
     const transient1 = placement(-5, 'new.go')
     const transient2 = placement(-6, 'new2.go')
     const rescued: RepositoryImpactScene = {
@@ -206,8 +168,8 @@ describe('repositoryChangeScene', () => {
       views: {
         10: { placements: [], connectors: [] },
         11: {
-          placements: [placement(2, 'b.go'), transient1, transient2],
-          connectors: [connector(21, -5, -6), connector(22, -5, 2)],
+          placements: [placement(2, 'b.go'), transient1, transient2, placement(4, 'd.go')],
+          connectors: [connector(21, -5, -6), connector(22, -5, 2), connector(23, -5, 4)],
         },
         51: { placements: [placement(7, 'svc/auth')], connectors: [] },
       },
@@ -219,15 +181,17 @@ describe('repositoryChangeScene', () => {
       },
       authoredViewIds: [51],
     }
-    const rendered = repositoryChangeScene(rescued, { radius: 0, scope: 'grounded' })
+    const rendered = repositoryChangeScene(rescued, {})
     expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([11, 51])
-    expect(rendered.data.views[11].placements.map((element) => element.element_id)).toEqual([-5, -6])
-    expect(rendered.data.views[11].connectors?.map((item) => item.id)).toEqual([21])
+    // Overlaid members stay (element 2 has context); the unoverlaid member
+    // and its connector drop out.
+    expect(rendered.data.views[11].placements.map((element) => element.element_id)).toEqual([2, -5, -6])
+    expect(rendered.data.views[11].connectors?.map((item) => item.id)).toEqual([21, 22])
     expect(rendered.overlays[-5]?.change).toBe('added')
-    expect(rendered.overlays[2]).toBeUndefined()
+    expect(rendered.overlays[2]?.change).toBe('unchanged')
   })
 
-  it('grounded scope pins authored views like authored scope', () => {
+  it('pins authored views and drops untouched mapped views', () => {
     const authored: RepositoryImpactScene = {
       ...scene,
       tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services')])],
@@ -242,7 +206,7 @@ describe('repositoryChangeScene', () => {
       },
       authoredViewIds: [51],
     }
-    const rendered = repositoryChangeScene(authored, { radius: 0, scope: 'grounded' })
+    const rendered = repositoryChangeScene(authored, {})
     expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51])
     expect(rendered.data.views[11]).toBeUndefined()
     expect(rendered.overlays[7]?.change).toBe('modified')

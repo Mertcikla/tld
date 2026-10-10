@@ -9,43 +9,30 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 )
 
-// Scene scopes mirror the canvas scope filter in
-// frontend/src/utils/repositoryChangeScene.ts. The renderer ports its
-// membership rules so the text diagram shows exactly what the canvas draws.
-const (
-	SceneScopeGrounded = "grounded"
-	SceneScopeAuthored = "authored"
-	SceneScopeMapped   = "mapped"
-)
-
 // SceneExportOptions controls how ExportImpactScene renders a portable change
-// scene. Scope and Radius match the canvas menu: grounded pins the authored
-// views and keeps every directly changed file, authored shows only authored
-// views, mapped shows the generated map. Radius bounds the change overlays.
+// scene. Plain mirrors the canvas plain toggle: hide placements without
+// change impact, keeping only the container elements that reach impacted
+// nested views.
 type SceneExportOptions struct {
-	// IncludeMetadata prepends a %% tld-scene comment naming the repository,
-	// comparison key, scope, and radius so the block can be round-tripped.
+	// IncludeMetadata prepends a %% tld-scene comment naming the repository
+	// and comparison key so the block can be round-tripped.
 	IncludeMetadata bool
-	Radius          uint32
-	Scope           string
+	Plain           bool
 }
 
 // ExportImpactScene renders a repository change scene — the exact payload the
 // canvas loads — as a Mermaid flowchart, one subgraph per retained view. Node
 // ids, labels, connector arrows, and change link styles follow the same rules
 // as the canvas overlay, so the text diagram matches the UI node for node.
-// It is deliberately independent of any index or snapshot state.
+// Membership follows the grounded rule: authored views pinned, every directly
+// changed file kept. With no authored views in the scene it degrades to the
+// mapped views, exactly like the canvas. It is deliberately independent of
+// any index or snapshot state.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
 	if scene == nil {
 		return "flowchart LR\n"
 	}
-	scope := opts.Scope
-	switch scope {
-	case SceneScopeAuthored, SceneScopeMapped:
-	default:
-		scope = SceneScopeGrounded
-	}
-	view := sceneViewer{scene: scene, radius: opts.Radius, scope: scope}
+	view := sceneViewer{scene: scene, plain: opts.Plain}
 	view.index()
 
 	lines := []string{"flowchart LR"}
@@ -58,8 +45,6 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 		}
 		appendEntry("repo", scene.GetRepositoryId())
 		appendEntry("key", scene.GetComparisonKey())
-		parts = append(parts, "scope="+scope)
-		parts = append(parts, fmt.Sprintf("radius=%d", opts.Radius))
 		lines = append(lines, strings.Join(parts, " "))
 	}
 
@@ -75,9 +60,14 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 
 // sceneViewer carries the canvas membership rules over one scene render.
 type sceneViewer struct {
-	scene  *codeindexv1.ImpactScene
-	radius uint32
-	scope  string
+	scene *codeindexv1.ImpactScene
+	plain bool
+	// degraded mirrors the canvas fallback: with no authored views in the
+	// scene, membership follows the mapped rule instead of the grounded one.
+	degraded bool
+	// linkElements holds the container elements that own retained child views
+	// (plain mode): structural only, never annotated as changes.
+	linkElements map[int32]map[int32]bool
 
 	authored   map[int32]bool
 	overlayOf  map[int32]*codeindexv1.ImpactSceneOverlay
@@ -102,14 +92,31 @@ func (v *sceneViewer) index() {
 			v.overlayOf[placement.GetElement().GetElementId()] = placement.GetOverlay()
 		}
 	}
+	v.degraded = len(v.scene.GetAuthoredViewIds()) == 0
 	v.retained = map[int32]bool{}
 	v.retainedOrder = nil
 	v.keep(v.scene.GetTree())
+	// Plain mode still needs the container elements that own retained child
+	// views; without them the hierarchy can't be traversed.
+	v.linkElements = map[int32]map[int32]bool{}
+	if v.plain {
+		for _, link := range v.scene.GetNavigations() {
+			if link.GetRelationType() != "child" || link.ElementId == nil || !v.retained[link.GetToViewId()] {
+				continue
+			}
+			set := v.linkElements[link.GetFromViewId()]
+			if set == nil {
+				set = map[int32]bool{}
+				v.linkElements[link.GetFromViewId()] = set
+			}
+			set[link.GetElementId()] = true
+		}
+	}
 }
 
 func (v *sceneViewer) impacted(elementID int32) bool {
-	overlay, ok := v.overlayOf[elementID]
-	return ok && overlay.GetDistance() <= v.radius
+	_, ok := v.overlayOf[elementID]
+	return ok
 }
 
 func (v *sceneViewer) isTransient(elementID int32) bool {
@@ -144,23 +151,15 @@ func (v *sceneViewer) keep(tree []*diagv1.View) []int32 {
 		}
 		children := v.keep(view.GetChildren())
 		id := view.GetId()
-		switch v.scope {
-		case SceneScopeAuthored:
-			if v.isFallback(view) {
-				continue
-			}
-			if !v.authored[id] && len(children) == 0 {
-				continue
-			}
-		case SceneScopeGrounded:
-			if !v.isFallback(view) && !v.authored[id] && len(children) == 0 && !v.viewHasTransient(id) {
-				continue
-			}
-		default: // mapped
+		if v.degraded {
+			// No authored views: follow the mapped rule so the diagram still
+			// shows the generated map instead of going empty.
 			placements := v.scene.GetViews()[strconv.FormatInt(int64(id), 10)].GetPlacements()
 			if len(children) == 0 && len(placements) == 0 {
 				continue
 			}
+		} else if !v.isFallback(view) && !v.authored[id] && len(children) == 0 && !v.viewHasTransient(id) {
+			continue
 		}
 		v.retained[id] = true
 		v.retainedOrder = append(v.retainedOrder, id)
@@ -219,7 +218,7 @@ func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement
 		label = fmt.Sprintf("element %d", element.GetElementId())
 	}
 	label = v.sceneProvenanceGlyph(viewID, element.GetElementId()) + label
-	if overlay, ok := v.overlayOf[element.GetElementId()]; ok && overlay.GetDistance() <= v.radius {
+	if overlay, ok := v.overlayOf[element.GetElementId()]; ok {
 		if word := sceneChangeWord(overlay.GetChange()); word != "unchanged" {
 			label += fmt.Sprintf("<br/>%s +%d \u2212%d", word, overlay.GetLinesAdded(), overlay.GetLinesRemoved())
 		} else {
@@ -238,16 +237,25 @@ func (v *sceneViewer) renderView(viewID int32) []string {
 	if content == nil {
 		return nil
 	}
-	pruned := v.scope == SceneScopeGrounded && !v.authored[viewID]
+	pruned := !v.degraded && !v.authored[viewID]
 	name := v.viewName(viewID)
 	lines := []string{"", fmt.Sprintf(`subgraph %s["%s"]`, sceneViewRef(viewID), escapeMermaidLabel(name))}
 	rendered := map[int32]bool{}
+	links := v.linkElements[viewID]
 	for _, placement := range content.GetPlacements() {
 		if placement == nil || placement.GetElement() == nil {
 			continue
 		}
 		elementID := placement.GetElement().GetElementId()
-		if pruned && !v.isTransient(elementID) && !v.impacted(elementID) {
+		// Mirrors the canvas: plain keeps impacted placements plus the
+		// container elements that reach impacted nested views; otherwise
+		// non-authored views are pruned to change evidence, authored views
+		// keep their full membership.
+		if v.plain {
+			if !v.impacted(elementID) && !links[elementID] {
+				continue
+			}
+		} else if pruned && !v.isTransient(elementID) && !v.impacted(elementID) {
 			continue
 		}
 		rendered[elementID] = true

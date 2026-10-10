@@ -1,10 +1,11 @@
 import React from 'react'
 import { act, create } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../api/client'
 import { copyTextToClipboard } from '../utils/clipboard'
-import type { SceneMermaidView } from '../utils/sceneMermaid'
 import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
+vi.mock('../api/client', () => ({ api: { repositories: { impactMermaid: vi.fn() } } }))
 vi.mock('../utils/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => {}) }))
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('./ViewMarkdownPanel/MarkdownPreview', () => ({
@@ -32,38 +33,10 @@ vi.mock('@chakra-ui/react', async () => {
   }
 })
 
-const view: SceneMermaidView = {
-  data: {
-    tree: [{ id: 51, name: 'Mine', description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children: [] }],
-    views: {
-      51: {
-        placements: [{
-          id: 7, element_id: 7, view_id: 51, position_x: 0, position_y: 0, name: 'svc/auth',
-          description: null, kind: 'component', technology: null, url: null, logo_url: null,
-          technology_connectors: [], tags: [], repo: null, repository_id: null, branch: null,
-          file_path: 'svc/auth', language: null, bypass_noise_gate: false, has_view: false, view_label: null,
-        }],
-        connectors: [],
-      },
-    },
-    navigations: [],
-  },
-  overlays: { 7: { change: 'modified', linesAdded: 3, linesRemoved: 1 } },
-  provenance: { 7: 'authored' },
-}
+const markdown = '```mermaid\nflowchart LR\n```\n'
 
 function renderPane(overrides: Partial<React.ComponentProps<typeof RepositoryChangeMermaid>> = {}) {
-  return create(
-    <RepositoryChangeMermaid
-      repositoryId="repo-1"
-      comparisonKey="key-1"
-      radius={0}
-      scope="grounded"
-      view={view}
-      open
-      {...overrides}
-    />,
-  )
+  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" plain={false} open {...overrides} />)
 }
 
 /** Counts only rendered DOM nodes, ignoring the mocked Chakra components themselves. */
@@ -75,23 +48,38 @@ function hostNodes(renderer: ReturnType<typeof create>, testId: string) {
 
 describe('RepositoryChangeMermaid', () => {
   beforeEach(() => {
+    vi.mocked(api.repositories.impactMermaid).mockReset()
     vi.mocked(copyTextToClipboard).mockClear()
   })
 
-  it('renders the canvas view as mermaid without fetching', async () => {
+  it('fetches the backend-rendered scene diagram and previews it', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({
+      code: 'flowchart LR',
+      markdown,
+      warnings: [],
+    })
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = renderPane()
     })
 
-    const markdown = renderer.root.findByProps({ 'data-testid': 'mock-markdown' }).props.children as string
-    expect(markdown).toContain('```mermaid')
-    expect(markdown).toContain('%% tld-scene repo=repo-1 key=key-1 scope=grounded radius=0')
-    expect(markdown).toContain('subgraph view_51["Mine"]')
-    expect(markdown).toContain('svc/auth<br/>modified +3 −1')
+    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ markdown: true, plain: false }))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-markdown' }).props.children).toContain('flowchart LR')
+  })
+
+  it('forwards plain mode so the pane mirrors the canvas toggle', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = renderPane({ plain: true })
+    })
+
+    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ plain: true }))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-markdown' })).toBeTruthy()
   })
 
   it('copies the change diagram as markdown', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = renderPane()
@@ -102,19 +90,20 @@ describe('RepositoryChangeMermaid', () => {
       await Promise.resolve()
     })
 
-    expect(copyTextToClipboard).toHaveBeenCalledWith(expect.stringContaining('subgraph view_51'))
+    expect(copyTextToClipboard).toHaveBeenCalledWith(markdown)
   })
 
-  it('renders nothing while closed', async () => {
-    let renderer!: ReturnType<typeof create>
+  it('does not fetch while closed', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: '', markdown: '', warnings: [] })
     await act(async () => {
-      renderer = renderPane({ open: false })
+      renderPane({ open: false })
     })
 
-    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-markdown' })).toHaveLength(0)
+    expect(api.repositories.impactMermaid).not.toHaveBeenCalled()
   })
 
   it('renders the collapsed rail with only the Markdown expand button', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = renderPane({ collapsed: true })
@@ -125,7 +114,25 @@ describe('RepositoryChangeMermaid', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-change-mermaid-copy' })).toHaveLength(0)
   })
 
+  it('keeps the markdown loaded while collapsed and expands from the rail', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
+    const onExpand = vi.fn()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = renderPane({ collapsed: true, onExpand })
+    })
+
+    expect(api.repositories.impactMermaid).toHaveBeenCalled()
+    expect(copyTextToClipboard).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer.root.findByProps({ 'data-testid': 'repository-change-mermaid-expand' }).props.onClick()
+    })
+    expect(onExpand).toHaveBeenCalled()
+  })
+
   it('offers a way back to the docked form while covering the canvas', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
     const onDock = vi.fn()
     let renderer!: ReturnType<typeof create>
     await act(async () => {
@@ -139,5 +146,16 @@ describe('RepositoryChangeMermaid', () => {
       renderer.root.findByProps({ 'data-testid': 'repository-change-mermaid-dock' }).props.onClick()
     })
     expect(onDock).toHaveBeenCalled()
+  })
+
+  it('hides the dock control when docked beside the canvas', async () => {
+    vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = renderPane()
+    })
+
+    expect(hostNodes(renderer, 'repository-change-mermaid-dock')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repository-change-mermaid')).toHaveLength(1)
   })
 })

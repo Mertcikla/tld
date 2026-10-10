@@ -21,33 +21,14 @@ vi.mock('@chakra-ui/react', async () => {
 function renderMenu(overrides: Partial<React.ComponentProps<typeof RepositoryChangeMenu>> = {}) {
   return create(
     <RepositoryChangeMenu
-      radius={0}
-      maxRadius={2}
-      onRadiusChange={vi.fn()}
       viewMode="standard"
       onViewModeChange={vi.fn()}
-      scope="grounded"
-      onScopeChange={vi.fn()}
-      authoredCount={0}
       {...overrides}
     />,
   )
 }
 
 describe('RepositoryChangeMenu', () => {
-  it('renders the blast radius stops and reports changes', () => {
-    const onRadiusChange = vi.fn()
-    const renderer = renderMenu({ radius: 0, maxRadius: 2, onRadiusChange })
-
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-radius-2' }).length).toBeGreaterThanOrEqual(1)
-
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-radius-2' }).props.onClick()
-    })
-
-    expect(onRadiusChange).toHaveBeenCalledWith(2)
-  })
-
   it('switches between standard and plain view modes', () => {
     const onViewModeChange = vi.fn()
     const renderer = renderMenu({ viewMode: 'standard', onViewModeChange })

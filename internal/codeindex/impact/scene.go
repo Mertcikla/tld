@@ -113,9 +113,6 @@ func (b *sceneBuilder) build() *pb.ImpactScene {
 	for _, content := range scene.Views {
 		adjustSceneConnectorHandles(content.Placements, content.Connectors)
 	}
-	// The radius a reader may still select is bounded by what this scene
-	// actually carries, not by the wider neighbourhood it was scoped from.
-	scene.MaxRadius = sceneMaxRadius(scene)
 	// Authored views are sorted so the payload is deterministic.
 	scene.AuthoredViewIds = make([]int64, 0, len(b.authored))
 	for viewID := range b.authored {
@@ -123,20 +120,6 @@ func (b *sceneBuilder) build() *pb.ImpactScene {
 	}
 	sort.Slice(scene.AuthoredViewIds, func(i, j int) bool { return scene.AuthoredViewIds[i] < scene.AuthoredViewIds[j] })
 	return scene
-}
-
-// sceneMaxRadius is the highest overlay distance present in the scene. Only
-// direct changes (distance 0) means the reader has no radius left to widen.
-func sceneMaxRadius(scene *pb.ImpactScene) uint32 {
-	maxRadius := uint32(0)
-	for _, content := range scene.Views {
-		for _, placement := range content.GetPlacements() {
-			if distance := placement.GetOverlay().GetDistance(); distance > maxRadius {
-				maxRadius = distance
-			}
-		}
-	}
-	return maxRadius
 }
 
 func (b *sceneBuilder) index() {

@@ -13,7 +13,6 @@ func impactFixture() *codeindexv1.ImpactDiagram {
 	return &codeindexv1.ImpactDiagram{
 		RepositoryId:  "repo-1",
 		ComparisonKey: "key-1",
-		MaxRadius:     3,
 		Diff: &codeindexv1.SnapshotDiff{
 			Sources: []*codeindexv1.SourceChange{
 				{Path: "src/api.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED, LinesAdded: ptrUint32(4), LinesRemoved: ptrUint32(1)},

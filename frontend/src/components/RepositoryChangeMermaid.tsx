@@ -1,20 +1,25 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Box, Button, Flex, IconButton, Text, Tooltip } from '@chakra-ui/react'
+import { useCallback, useEffect, useState } from 'react'
+import { Box, Button, Flex, IconButton, Spinner, Text, Tooltip } from '@chakra-ui/react'
 import { CheckIcon, ChevronLeftIcon, CopyIcon } from '@chakra-ui/icons'
+import { api } from '../api/client'
 import { copyTextToClipboard } from '../utils/clipboard'
 import { toast } from '../utils/toast'
-import { sceneMermaid, type SceneMermaidView } from '../utils/sceneMermaid'
-import type { RepositoryChangeScope } from '../utils/repositoryChangeScene'
 import { MarkdownIcon } from './Icons'
 import { MarkdownPreview } from './ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from './ViewMarkdownPanel/styles'
 
+type MermaidPaneState =
+  | { status: 'idle'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'loading'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'ready'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'error'; markdown: string; warnings: string[]; error: string }
+
+// The pane stays thin on purpose: the backend renders the same change scene
+// the canvas draws, and this only fetches and displays the markdown.
 export default function RepositoryChangeMermaid({
   repositoryId,
   comparisonKey,
-  radius,
-  scope,
-  view,
+  plain,
   open,
   collapsed = false,
   overlay = false,
@@ -23,10 +28,8 @@ export default function RepositoryChangeMermaid({
 }: {
   repositoryId: string
   comparisonKey: string
-  radius: number
-  scope: RepositoryChangeScope
-  /** The exact filtered view the canvas draws: the diagram mirrors it node for node. */
-  view: SceneMermaidView | null
+  /** Mirrors the canvas plain toggle so the pane never disagrees with it. */
+  plain: boolean
   open: boolean
   /** Rail form: show only the Markdown expand button. */
   collapsed?: boolean
@@ -35,24 +38,39 @@ export default function RepositoryChangeMermaid({
   onExpand?: () => void
   onDock?: () => void
 }) {
+  const [state, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', warnings: [], error: '' })
   const [copied, setCopied] = useState(false)
 
-  const markdown = useMemo(() => {
-    if (!open || !view) return ''
-    const code = sceneMermaid(view, { repositoryId, comparisonKey, scope, radius })
-    return `\`\`\`mermaid\n${code}\`\`\`\n`
-  }, [open, view, repositoryId, comparisonKey, scope, radius])
+  useEffect(() => {
+    if (!open || !repositoryId || !comparisonKey) return undefined
+    const controller = new AbortController()
+    setState({ status: 'loading', markdown: '', warnings: [], error: '' })
+    void api.repositories
+      .impactMermaid(repositoryId, comparisonKey, { plain, markdown: true, signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setState({ status: 'ready', markdown: result.markdown, warnings: result.warnings, error: '' })
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return
+        setState({ status: 'error', markdown: '', warnings: [], error: err instanceof Error ? err.message : 'Could not load the change diagram' })
+      })
+    return () => controller.abort()
+  }, [open, repositoryId, comparisonKey, plain])
+
+  useEffect(() => {
+    setCopied(false)
+  }, [state.markdown])
 
   const handleCopy = useCallback(async () => {
-    if (!markdown) return
+    if (!state.markdown) return
     try {
-      await copyTextToClipboard(markdown)
+      await copyTextToClipboard(state.markdown)
       setCopied(true)
       toast({ status: 'success', title: 'Copied change diagram as Markdown' })
     } catch {
       toast({ status: 'error', title: 'Copy failed', description: 'Could not write the change diagram to the clipboard.' })
     }
-  }, [markdown])
+  }, [state.markdown])
 
   if (collapsed) {
     return (
@@ -130,7 +148,7 @@ export default function RepositoryChangeMermaid({
           variant="ghost"
           color={copied ? 'green.300' : 'gray.300'}
           leftIcon={copied ? <CheckIcon /> : <CopyIcon />}
-          isDisabled={!markdown}
+          isDisabled={!state.markdown}
           onClick={() => void handleCopy()}
           data-testid="repository-change-mermaid-copy"
           whiteSpace="nowrap"
@@ -145,9 +163,22 @@ export default function RepositoryChangeMermaid({
         sx={markdownPanelBodySx}
         data-testid="repository-change-mermaid"
       >
-        {markdown ? (
+        {state.status === 'loading' ? (
+          <Flex h="full" align="center" justify="center">
+            <Spinner size="sm" color="var(--accent)" />
+          </Flex>
+        ) : state.status === 'error' ? (
+          <Text p={4} fontSize="sm" color="red.300">
+            {state.error}
+          </Text>
+        ) : state.markdown ? (
           <Box p={4}>
-            <MarkdownPreview markdown={markdown} />
+            {state.warnings.length > 0 && (
+              <Text mb={2} fontSize="xs" color="orange.300">
+                {state.warnings.join(' ')}
+              </Text>
+            )}
+            <MarkdownPreview markdown={state.markdown} />
           </Box>
         ) : (
           <Text p={4} fontSize="sm" color="gray.500">

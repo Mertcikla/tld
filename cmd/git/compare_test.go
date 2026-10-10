@@ -227,23 +227,13 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	// surfaces as a transient placement in the fallback Changes view, exactly
 	// as the canvas draws it.
 	for _, want := range []string{
-		"%% tld-scene", "scope=grounded",
+		"%% tld-scene",
 		`subgraph view_neg1["Changes"]`,
 		`el_neg1_neg1["◇ a.go`,
 	} {
 		if !strings.Contains(mermaid, want) {
 			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
 		}
-	}
-	authored, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid", "--scope", "authored")
-	if err != nil {
-		t.Fatalf("authored mermaid compare: %v", err)
-	}
-	if strings.Contains(authored, "view_neg1") {
-		t.Fatalf("authored scope must drop the fallback view:\n%s", authored)
-	}
-	if _, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid", "--scope", "bogus"); err == nil {
-		t.Fatalf("bogus scope accepted")
 	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)
@@ -297,17 +287,6 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	}
 	if _, ok := symbol["snapshotId"]; ok {
 		t.Fatalf("symbol detail must stay snapshot-free: %v", symbol)
-	}
-	raw, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--raw-impact")
-	if err != nil {
-		t.Fatalf("raw-impact compare: %v", err)
-	}
-	var legacy map[string]any
-	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-		t.Fatalf("raw-impact output: %v", err)
-	}
-	if legacy["comparisonKey"] == nil || legacy["mode"] != nil {
-		t.Fatalf("raw-impact must emit the bare scene: %v", legacy)
 	}
 }
 
@@ -389,21 +368,6 @@ func compareRepo(t *testing.T) string {
 	return dir
 }
 
-func TestCompareScopeResolvesDepthAndRadius(t *testing.T) {
-	if display, depth := compareScope(compareOptions{depth: 2}, false); display != 2 || depth != 2 {
-		t.Fatalf("depth only: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: 3, radius: 1}, true); display != 1 || depth != 3 {
-		t.Fatalf("radius override: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: 1, radius: 2}, true); display != 2 || depth != 2 {
-		t.Fatalf("radius deeper: display=%d depth=%d", display, depth)
-	}
-	if display, depth := compareScope(compareOptions{depth: impact.DefaultContextDepth}, false); display != impact.DefaultContextDepth || depth != impact.DefaultContextDepth {
-		t.Fatalf("defaults: display=%d depth=%d", display, depth)
-	}
-}
-
 func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
 		Nodes: []*pb.ImpactNode{
@@ -444,8 +408,8 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	}
 }
 
-// Mermaid renders straight from the diagram, so its size never depends on a
-// scene build.
+// The scene render feeds the size accounting, so its byte size always
+// describes the payload the caller receives.
 func TestCompareRendererMermaidSizes(t *testing.T) {
 	ctx := context.Background()
 	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
@@ -476,7 +440,7 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 		if size != len(text) {
 			t.Fatalf("size %d vs %d bytes for %+v", size, len(text), opts)
 		}
-		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") && !strings.HasPrefix(text, "%%") {
+		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") {
 			t.Fatalf("unexpected mermaid payload for %+v: %q", opts, text)
 		}
 		// The scene render carries the uncovered file as a transient, exactly
@@ -485,12 +449,33 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 			t.Fatalf("scene mermaid missing fallback view for %+v:\n%s", opts, text)
 		}
 	}
-	authored, _, err := compareRenderer{ctx: ctx, service: service, opts: compareOptions{mermaid: true, scope: "authored"}}.build(diagram, 0)
+}
+
+func TestCompareRendererFallsBackToFactGraph(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(authored, "view_neg1") {
-		t.Fatalf("authored scope must drop the fallback view:\n%s", authored)
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &pb.Snapshot{Id: "head", RepositoryId: "repo", GitRevision: "head", Provenance: "commit", IngestionStatus: "complete"}
+	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", "head")); err != nil {
+		t.Fatal(err)
+	}
+	service := impact.Service{Workspace: ws, Index: idx}
+	diagram := &pb.ImpactDiagram{
+		RepositoryId:  "repo",
+		ComparisonKey: "key",
+		Diff:          &pb.SnapshotDiff{ToSnapshotId: "head"},
+	}
+	text, _, err := compareRenderer{ctx: ctx, service: service, opts: compareOptions{mermaid: true}}.build(diagram, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No view survived: the file-level fact graph renders instead of a blank diagram.
+	if !strings.Contains(text, "%% tld-impact") {
+		t.Fatalf("empty scene must fall through to the fact graph:\n%s", text)
 	}
 }
 
@@ -504,38 +489,21 @@ func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {
 	}
 }
 
-func TestCompareReportModeDefaultsToGrounded(t *testing.T) {
-	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{{Key: "a"}},
-		Edges: []*pb.ImpactEdge{{FromKey: "a", ToKey: "a"}},
-	}
-	if report := comparisonReport(diagram, compareOptions{}); report.Mode != "grounded" {
-		t.Fatalf("default mode = %q, want grounded", report.Mode)
-	}
-	if report := comparisonReport(diagram, compareOptions{rawImpact: true}); report.Mode != "raw-impact" {
-		t.Fatalf("raw mode = %q, want raw-impact", report.Mode)
-	}
-}
-
-func TestCompareRawImpactFlagIsHidden(t *testing.T) {
+func TestCompareHasNoScopeOrRawFlags(t *testing.T) {
 	cmd := NewGitCmd()
 	commands := cmd.Commands()
 	if len(commands) == 0 {
 		t.Fatal("compare subcommand not found")
 	}
 	found := commands[0]
-	flag := found.Flags().Lookup("raw-impact")
-	if flag == nil {
-		t.Fatal("--raw-impact flag not found")
+	if found.Flags().Lookup("raw-impact") != nil {
+		t.Fatal("--raw-impact flag must be gone; grounded is the only diagram")
 	}
-	if !flag.Hidden {
-		t.Fatal("--raw-impact should be hidden")
+	if found.Flags().Lookup("scope") != nil {
+		t.Fatal("--scope flag must be gone; grounded is the only diagram")
 	}
 	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
 		t.Fatal("--view and --all-edges flags are required")
-	}
-	if found.Flags().Lookup("scope") == nil {
-		t.Fatal("--scope flag is required")
 	}
 }
 

@@ -260,7 +260,6 @@ describe('impact scene mapping', () => {
       comparisonKey: 'key-1',
       version: 'v1',
       schemaVersion: '1',
-      maxRadius: 2,
       fromGitRevision: 'aaa',
       toGitRevision: 'bbb',
       authoredViewIds: [9n],
@@ -304,7 +303,6 @@ describe('impact scene mapping', () => {
     expect(mapped.comparisonKey).toBe('key-1')
     expect(mapped.version).toBe('v1')
     expect(mapped.schemaVersion).toBe('1')
-    expect(mapped.maxRadius).toBe(2)
     expect(mapped.fromGitRevision).toBe('aaa')
     expect(mapped.toGitRevision).toBe('bbb')
     expect(mapped.authoredViewIds).toEqual([9])

@@ -44,7 +44,6 @@ const diagram = {
   comparisonKey: 'pair',
   version: 'v1',
   viewId: 9,
-  maxRadius: 2,
   nodes: [],
   edges: [],
   diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
@@ -106,23 +105,19 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     vi.unstubAllGlobals()
   })
 
-  it('starts each comparison at radius zero and caps backend context at two', async () => {
+  it('renders the grounded diagram with view-mode toggle and legend', async () => {
     stubEnvironment()
     let renderer!: ReturnType<typeof create>
     await act(async () => {
-      renderer = create(<RepositoryChangeCanvas diagram={{ ...diagram, maxRadius: 3 }} selectedPath="" />)
+      renderer = create(<RepositoryChangeCanvas diagram={diagram} selectedPath="" />)
     })
     const menu = () => renderer.root.findByType(RepositoryChangeMenu)
-    expect(menu().props.radius).toBe(0)
-    expect(menu().props.maxRadius).toBe(2)
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-radius-3' })).toHaveLength(0)
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'repositories-view-mode-standard')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-radius')).toHaveLength(0)
 
-    await act(async () => { menu().props.onRadiusChange(2) })
-    expect(menu().props.radius).toBe(2)
-    await act(async () => {
-      renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'next', maxRadius: 3 }} selectedPath="" />)
-    })
-    expect(menu().props.radius).toBe(0)
+    await act(async () => { menu().props.onViewModeChange('plain') })
+    expect(menu().props.viewMode).toBe('plain')
     renderer.unmount()
   })
 
@@ -217,35 +212,16 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     expect(hostNodes(atOverlay, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
   })
 
-  it('toggles between grounded, mapped and authored scopes and disables authored without authored views', async () => {
+  it('renders a single grounded diagram with no scope toggle', async () => {
     stubEnvironment()
     const renderer = await renderCanvas()
     const menu = () => renderer.root.findByType(RepositoryChangeMenu)
-    expect(menu().props.scope).toBe('grounded')
-    expect(menu().props.authoredCount).toBe(0)
-    // No scene has loaded yet, so the authored option stays disabled while
-    // grounded degrades to the mapped diagram.
-    expect(hostNodes(renderer, 'repositories-diagram-scope-authored')[0].props.isDisabled).toBe(true)
-    expect(hostNodes(renderer, 'repositories-diagram-scope-grounded')[0].props.isDisabled).toBe(false)
-    expect(hostNodes(renderer, 'repositories-diagram-scope-mapped')[0].props.isDisabled).toBe(false)
-
-    await act(async () => { menu().props.onRadiusChange(2) })
-    expect(menu().props.radius).toBe(2)
-    await act(async () => { menu().props.onScopeChange('authored') })
-    expect(menu().props.scope).toBe('authored')
-    // Authored overlays are all direct changes, so the radius resets and the
-    // blast-radius stops collapse to zero.
-    expect(menu().props.radius).toBe(0)
-    expect(menu().props.maxRadius).toBe(0)
-
-    await act(async () => {
-      renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'next' }} selectedPath="" />)
-    })
-    expect(menu().props.scope).toBe('grounded')
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'repositories-diagram-scope')).toHaveLength(0)
     renderer.unmount()
   })
 
-  it('enables the authored scope once the scene names authored views', async () => {
+  it('feeds the loaded scene into the mermaid pane', async () => {
     stubEnvironment()
     const { api } = await import('../api/client')
     const impactScene = api.repositories.impactScene as unknown as ReturnType<typeof vi.fn>
@@ -261,7 +237,6 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
       comparisonKey: 'pair',
       version: 'v1',
       schemaVersion: '1',
-      maxRadius: 0,
       fromGitRevision: 'a',
       toGitRevision: 'b',
       overlays: { 7: { change: 'modified', path: 'x', symbols: [], distance: 0 } },
@@ -272,8 +247,8 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
       renderer = create(<RepositoryChangeCanvas diagram={diagram} selectedPath="" />)
     })
     const menu = () => renderer.root.findByType(RepositoryChangeMenu)
-    expect(menu().props.authoredCount).toBe(1)
-    expect(hostNodes(renderer, 'repositories-diagram-scope-authored')[0].props.isDisabled).toBe(false)
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'mock-mermaid')).toHaveLength(1)
     renderer.unmount()
   })
 })

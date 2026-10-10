@@ -55,10 +55,10 @@ func sceneFixture() *codeindexv1.ImpactScene {
 func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 	t.Parallel()
 
-	got := ExportImpactScene(sceneFixture(), SceneExportOptions{IncludeMetadata: true, Radius: 0, Scope: SceneScopeGrounded})
+	got := ExportImpactScene(sceneFixture(), SceneExportOptions{IncludeMetadata: true})
 	for _, want := range []string{
 		"flowchart LR",
-		"%% tld-scene repo=r1 key=k1 scope=grounded radius=0",
+		"%% tld-scene repo=r1 key=k1",
 		`subgraph view_51["Mine"]`,
 		"el_51_7[\"svc/auth<br/>modified +3 \u22121\"]",
 		`el_51_8["svc/db"]`,
@@ -73,15 +73,20 @@ func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 	}
 }
 
-func TestExportImpactSceneAuthoredDropsFallback(t *testing.T) {
+func TestExportImpactSceneDegradesToMappedWithoutAuthoredViews(t *testing.T) {
 	t.Parallel()
 
-	got := ExportImpactScene(sceneFixture(), SceneExportOptions{Radius: 0, Scope: SceneScopeAuthored})
-	if strings.Contains(got, "view_neg1") {
-		t.Fatalf("authored scene must drop the fallback view:\n%s", got)
-	}
-	if !strings.Contains(got, `subgraph view_51["Mine"]`) {
-		t.Fatalf("authored scene lost the authored view:\n%s", got)
+	fixture := sceneFixture()
+	fixture.AuthoredViewIds = nil
+	got := ExportImpactScene(fixture, SceneExportOptions{})
+	for _, want := range []string{
+		`subgraph view_51["Mine"]`,
+		"el_51_7[\"▦ svc/auth<br/>modified +3 −1\"]",
+		`subgraph view_neg1["Changes"]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("degraded scene missing %q in:\n%s", want, got)
+		}
 	}
 }
 
@@ -90,7 +95,7 @@ func TestExportImpactSceneRemovedConnector(t *testing.T) {
 
 	fixture := sceneFixture()
 	fixture.Views["51"].Connectors[0].Tags = []string{"change:removed"}
-	got := ExportImpactScene(fixture, SceneExportOptions{Radius: 0, Scope: SceneScopeAuthored})
+	got := ExportImpactScene(fixture, SceneExportOptions{})
 	for _, want := range []string{
 		`el_51_7--x|"calls"|el_51_8`,
 		"linkStyle 0 stroke:#fc8181,stroke-dasharray:5 5",
@@ -106,5 +111,24 @@ func TestExportImpactSceneNilIsEmptyFlowchart(t *testing.T) {
 
 	if got := ExportImpactScene(nil, SceneExportOptions{}); got != "flowchart LR\n" {
 		t.Fatalf("ExportImpactScene(nil) = %q", got)
+	}
+}
+
+func TestExportImpactScenePlainHidesUnimpacted(t *testing.T) {
+	t.Parallel()
+
+	fixture := sceneFixture()
+	got := ExportImpactScene(fixture, SceneExportOptions{Plain: true})
+	for _, want := range []string{
+		`el_51_7["svc/auth<br/>modified +3 −1"]`,
+		`el_neg1_neg1["◇ new.go<br/>added +1 −0"]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("plain scene missing %q in:\n%s", want, got)
+		}
+	}
+	// The unimpacted member drops out, taking its connector with it.
+	if strings.Contains(got, `el_51_8["svc/db"]`) || strings.Contains(got, "linkStyle") {
+		t.Fatalf("plain scene kept unimpacted content:\n%s", got)
 	}
 }

@@ -76,8 +76,15 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	if err != nil {
 		return nil, impactLookupError(err)
 	}
-	scoped := impact.Scope(diagram, req.Msg.GetRadius())
-	code := mermaid.ExportImpactDiagram(scoped, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: req.Msg.GetRadius()})
+	// The change diagram renders the same scene the canvas draws, so the
+	// docked pane and the canvas never disagree. Grounded is the only
+	// diagram; the scene carries its own fallback chain. The full computed
+	// context always renders: node and byte budgets stay CLI-side.
+	scene, err := s.impactService().Scene(ctx, diagram)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: req.Msg.GetPlain()})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
 		response.Markdown = mermaid.MermaidBlock(code)
