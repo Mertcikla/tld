@@ -23,6 +23,9 @@ func (s *Store) sourceLineStats(ctx context.Context, changes []*pb.SourceChange)
 		}
 	}()
 	for _, change := range changes {
+		if change.GetFactsUnavailable() {
+			continue
+		}
 		if change.LinesAdded != nil && change.LinesRemoved != nil {
 			continue
 		}

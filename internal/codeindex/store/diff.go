@@ -113,6 +113,12 @@ func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, skip
 	if from.RepositoryId != to.RepositoryId {
 		return nil, fmt.Errorf("snapshots must belong to the same repository")
 	}
+	if err := s.EnsureManifest(ctx, from); err != nil {
+		return nil, err
+	}
+	if err := s.EnsureManifest(ctx, to); err != nil {
+		return nil, err
+	}
 	diff := &pb.SnapshotDiff{
 		RepositoryId:    to.RepositoryId,
 		FromSnapshotId:  from.Id,
@@ -155,6 +161,9 @@ func diffSources(from, to *pb.Snapshot) []*pb.SourceChange {
 	toHashes := map[string]string{}
 	for _, src := range to.Sources {
 		toHashes[src.Path] = src.Hash
+	}
+	if from.GetManifest().GetComplete() && to.GetManifest().GetComplete() {
+		return diffManifest(from, to, fromHashes, toHashes)
 	}
 	paths := make([]string, 0, len(fromHashes)+len(toHashes))
 	seen := map[string]bool{}

@@ -150,7 +150,7 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 	for _, radius := range []uint32{0, 1, 2, 3} {
 		t.Run(fmt.Sprint(radius), func(t *testing.T) {
 			stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{
-				RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, BlastRadius: radius,
+				RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, ContextDepth: radius,
 			}))
 			var result *pb.ImpactDiagram
 			if err == nil {
@@ -173,7 +173,7 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 			if result == nil || len(result.GetNodes()) != int(radius)+1 {
 				t.Fatalf("radius %d: %+v", radius, result)
 			}
-			if result.GetComparisonKey() != impact.ComparisonKey("base", "head", radius) {
+			if result.GetComparisonKey() != impact.ComparisonKey("base", "head", radius, result.GetWorkspaceFingerprint()) {
 				t.Fatal("RPC cache key differs from CLI/service")
 			}
 			for _, node := range result.GetNodes() {
@@ -264,7 +264,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
 	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
-	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, BlastRadius: 1}))
+	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, ContextDepth: 1}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,8 +285,8 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	for _, content := range scene.Msg.GetScene().GetViews() {
 		placements += len(content.GetPlacements())
 	}
-	if placements != 2 {
-		t.Fatalf("scene must carry impacted + neighbour only, got %d placements: %+v", placements, scene.Msg.GetScene().GetViews())
+	if placements != 3 {
+		t.Fatalf("standard scene must preserve authored context, got %d placements: %+v", placements, scene.Msg.GetScene().GetViews())
 	}
 	for _, plain := range []bool{false, true} {
 		code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: key, Plain: plain}))
@@ -298,7 +298,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 				t.Fatalf("plain=%v diagram lost %q:\n%s", plain, want, code.Msg.GetCode())
 			}
 		}
-		if strings.Contains(code.Msg.GetCode(), "Far File") {
+		if strings.Contains(code.Msg.GetCode(), "Far File") != !plain {
 			t.Fatalf("plain=%v diagram kept a far unimpacted member:\n%s", plain, code.Msg.GetCode())
 		}
 	}

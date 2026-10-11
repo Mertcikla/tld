@@ -34,20 +34,22 @@ import (
 )
 
 type compareOptions struct {
-	mermaid        bool
-	markdown       bool
-	verbose        bool
-	plain          bool
-	maxNodes       int
-	maxBytes       int
-	blastRadius    int
-	dataDir        string
-	maxElements    int
-	maxConnectors  int
-	reportJSON     string
-	prepareCommand string
-	view           string
-	allEdges       bool
+	mermaid         bool
+	markdown        bool
+	verbose         bool
+	plain           bool
+	maxNodes        int
+	maxBytes        int
+	blastRadius     int
+	dataDir         string
+	maxElements     int
+	maxConnectors   int
+	reportJSON      string
+	prepareCommand  string
+	view            string
+	allEdges        bool
+	debugProvenance bool
+	provenanceJSON  string
 }
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
@@ -108,6 +110,8 @@ stderr.`,
 	c.Flags().StringVar(&opts.prepareCommand, "prepare-command", "", "run this Bash command in each uncached revision before indexing; requires Bash")
 	c.Flags().StringVar(&opts.view, "view", "", "restrict the grounded bundle to one authored view (id or name substring)")
 	c.Flags().BoolVar(&opts.allEdges, "all-edges", false, "disable fan-out roll-up in the grounded summary")
+	c.Flags().BoolVar(&opts.debugProvenance, "debug-provenance", false, "show impact pipeline decisions and coverage on stderr")
+	c.Flags().StringVar(&opts.provenanceJSON, "provenance-json", "", "write the detailed impact provenance and decision trace to JSON (implies debug capture)")
 	return c
 }
 
@@ -180,6 +184,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		Base:            &pb.Revision{GitRevision: base},
 		Head:            &pb.Revision{GitRevision: head},
 		BlastRadius:     uint32(opts.blastRadius),
+		ViewFilter:      opts.view,
 		PrepareCheckout: prepare,
 		Progress: func(update indexer.Progress) {
 			if tracker == nil {
@@ -212,22 +217,15 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	tracker.Complete(lastStage)
 	requested := uint32(opts.blastRadius)
 	scoped := impact.Scope(diagram, requested)
-	report := comparisonReport(scoped, opts)
-	// The grounded summary intersects the change with the authored workspace so
-	// the payload pins the user's diagram and rolls up fan-out. Neighbourhood
-	// comes from the head snapshot's file pairs so unlinked-but-indexed edits
-	// still resolve to the linked neighbours they may disturb. Only sections
-	// within the blast radius are listed; the rest stays counted, not carried.
-	var summary grounded.Summary
-	explore, exploreErr := sq.Explore(ctx)
-	if exploreErr != nil {
-		return exploreErr
+	if opts.plain && scoped.Scene != nil {
+		scoped.Scene = impact.SelectScene(scoped.Scene, requested, true)
 	}
-	neighbours := groundedNeighbours(ctx, store, diagram)
-	summary = grounded.SummarizeWithRadius(scoped, explore, opts.view, opts.allEdges, neighbours, opts.blastRadius)
+	report := comparisonReport(scoped, opts)
+	// Summary, report and output all project the selected frozen scene.
+	summary := grounded.FromScene(scoped.GetScene(), opts.view, opts.allEdges)
 	report.Grounded = &summary
 	if summary.FallbackToRaw && opts.verbose {
-		notice("notice: no authored views intersect this change; grounded bundle falls back to raw impact context")
+		notice("notice: no authored views intersect this change; scene uses mapped and raw coverage")
 	}
 	if opts.reportJSON != "" {
 		for _, id := range []string{diagram.GetDiff().GetFromSnapshotId(), diagram.GetDiff().GetToSnapshotId()} {
@@ -244,11 +242,14 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		}
 	}
 	if report.Status == "skipped" {
+		if err := writeProvenance(opts, scoped.GetScene(), errOut); err != nil {
+			return err
+		}
 		notice("warning: " + report.Reason)
 		return writeCompareReport(opts.reportJSON, report)
 	}
 	render := compareRenderer{ctx: ctx, service: service, opts: opts, summary: &summary}
-	result, err := scopeToBudget(diagram, requested, opts, render.build)
+	result, err := scopeToBudget(scoped, requested, opts, render.build)
 	if err != nil {
 		return err
 	}
@@ -264,6 +265,13 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// The payload shares the terminal with the progress display; close the
 	// pinned stage line before anything reaches stdout.
 	tracker.Finish()
+	if err := writeProvenance(opts, result.diagram.GetScene(), errOut); err != nil {
+		return err
+	}
+	emittedSummary := grounded.FromScene(result.diagram.GetScene(), opts.view, opts.allEdges)
+	report.Grounded = &emittedSummary
+	report.EffectiveRadius = int(result.radius)
+	report.Coverage = result.diagram.GetScene().GetCoverage()
 	if err := writeCompareReport(opts.reportJSON, report); err != nil {
 		return err
 	}
@@ -278,15 +286,19 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 
 // CompareReport counts the requested scope, before the shrinking output budgets.
 type CompareReport struct {
-	Status     string            `json:"status"`
-	Elements   int               `json:"elements"`
-	Connectors int               `json:"connectors"`
-	Stats      CompareStats      `json:"stats"`
-	Base       string            `json:"base"`
-	Head       string            `json:"head"`
-	Warnings   []string          `json:"warnings"`
-	Reason     string            `json:"reason,omitempty"`
-	Grounded   *grounded.Summary `json:"grounded,omitempty"`
+	Status           string             `json:"status"`
+	Elements         int                `json:"elements"`
+	Connectors       int                `json:"connectors"`
+	Stats            CompareStats       `json:"stats"`
+	Base             string             `json:"base"`
+	Head             string             `json:"head"`
+	Warnings         []string           `json:"warnings"`
+	Reason           string             `json:"reason,omitempty"`
+	Grounded         *grounded.Summary  `json:"grounded,omitempty"`
+	RequestedRadius  int                `json:"requestedRadius"`
+	EffectiveRadius  int                `json:"effectiveRadius"`
+	ManifestComplete bool               `json:"manifestComplete"`
+	Coverage         []*pb.SourceChange `json:"coverage,omitempty"`
 }
 
 // CompareStats summarizes the change itself: its scope, churn, and symbol
@@ -369,7 +381,14 @@ func countSymbols(facts []*pb.CodeFact) int {
 }
 
 func comparisonReport(diagram *pb.ImpactDiagram, opts compareOptions) CompareReport {
-	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Stats: comparisonStats(diagram), Warnings: []string{}}
+	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Stats: comparisonStats(diagram), Warnings: append([]string{}, diagram.GetWarnings()...), RequestedRadius: opts.blastRadius, EffectiveRadius: opts.blastRadius, ManifestComplete: diagram.GetManifestComplete(), Coverage: diagram.GetScene().GetCoverage()}
+	if diagram.Scene != nil {
+		report.Elements = impact.SceneNodeCount(diagram.Scene)
+		report.Connectors = 0
+		for _, view := range diagram.Scene.Views {
+			report.Connectors += len(view.Connectors)
+		}
+	}
 	if report.Elements == 0 {
 		report.Status = "empty"
 	}
@@ -401,42 +420,6 @@ type compareRenderer struct {
 	summary *grounded.Summary
 }
 
-// groundedNeighbours builds the undirected file adjacency of the head
-// snapshot so the summary can name linked neighbours of a change. Failures
-// degrade to no proximity (file-based statuses still hold), never to an error.
-func groundedNeighbours(ctx context.Context, store *cstore.Store, diagram *pb.ImpactDiagram) map[string][]string {
-	if store == nil || diagram == nil || diagram.GetDiff().GetToSnapshotId() == "" {
-		return nil
-	}
-	counts, err := store.FilePairCounts(ctx, diagram.GetDiff().GetToSnapshotId())
-	if err != nil || len(counts) == 0 {
-		return nil
-	}
-	sets := map[string]map[string]bool{}
-	link := func(a, b string) {
-		if a == "" || b == "" || a == b {
-			return
-		}
-		if sets[a] == nil {
-			sets[a] = map[string]bool{}
-		}
-		sets[a][b] = true
-	}
-	for pair := range counts {
-		link(pair[0], pair[1])
-		link(pair[1], pair[0])
-	}
-	out := make(map[string][]string, len(sets))
-	for path, peers := range sets {
-		list := make([]string, 0, len(peers))
-		for peer := range peers {
-			list = append(list, peer)
-		}
-		out[path] = list
-	}
-	return out
-}
-
 // groundedBundle is the default protojson payload: the scene the canvas loads
 // plus the authored overlay that pins the user's diagram.
 type groundedBundle struct {
@@ -455,22 +438,17 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 		if err != nil {
 			return "", 0, err
 		}
-		scene = impact.ScopeScene(scene, radius)
-		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: r.opts.plain})
-		// An empty scene render means neither authored nor mapped views
-		// survived: fall through to the file-level fact graph so the change
-		// still visualizes instead of printing a blank diagram.
-		if !strings.Contains(code, "subgraph") {
-			code = mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
-		}
+		scene = impact.SelectScene(scene, radius, r.opts.plain)
+		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true})
+		summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
 		if r.summary != nil {
 			// Stats comments go directly after the flowchart directive:
 			// some strict renderers reject comments before the diagram
 			// type, and both renderers always lead with it.
 			if i := strings.Index(code, "\n"); i >= 0 {
-				code = code[:i+1] + groundedMermaidHeader(*r.summary, radius) + code[i+1:]
+				code = code[:i+1] + groundedMermaidHeader(summary, radius) + code[i+1:]
 			} else {
-				code = groundedMermaidHeader(*r.summary, radius) + code
+				code = groundedMermaidHeader(summary, radius) + code
 			}
 		}
 		if r.opts.markdown {
@@ -482,12 +460,17 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	if err != nil {
 		return "", 0, err
 	}
-	scene = impact.ScopeScene(scene, radius)
+	scene = impact.SelectScene(scene, radius, r.opts.plain)
+	if err := impact.ValidateCoverage(scene); err != nil {
+		return "", 0, err
+	}
+	scene = impact.PublicScene(scene, false)
 	payload, err := protoJSONOptions.Marshal(scene)
 	if err != nil {
 		return "", 0, err
 	}
-	bundle, err := json.Marshal(groundedBundle{Mode: "grounded", Scene: payload, Grounded: r.summary})
+	summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
+	bundle, err := json.Marshal(groundedBundle{Mode: "grounded", Scene: payload, Grounded: &summary})
 	if err != nil {
 		return "", 0, err
 	}
@@ -499,7 +482,7 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	return pretty.String(), pretty.Len(), nil
 }
 
-// groundedMermaidHeader prepends the authored overlay to the file-level diagram
+// groundedMermaidHeader adds authored summary comments to the selected scene
 // so humans see which of their elements the change touches before the fan-out.
 func groundedMermaidHeader(summary grounded.Summary, radius uint32) string {
 	var sb strings.Builder
@@ -553,6 +536,10 @@ type scopedDiagram struct {
 // internal encoding. If even the direct-change payload exceeds the byte budget
 // the caller is told the budget cannot be met.
 func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions, build func(*pb.ImpactDiagram, uint32) (string, int, error)) (scopedDiagram, error) {
+	if opts.plain && diagram.GetScene() != nil {
+		diagram = impact.Scope(diagram, requested)
+		diagram.Scene = impact.SelectScene(diagram.Scene, requested, true)
+	}
 	radius, limited := impact.FitRadius(diagram, requested, opts.maxNodes)
 	result := scopedDiagram{radius: radius, limited: limited}
 	scoped := impact.Scope(diagram, radius)

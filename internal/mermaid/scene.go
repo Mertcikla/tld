@@ -2,6 +2,7 @@ package mermaid
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -9,35 +10,25 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 )
 
-// mapGeneratedTag mirrors impact.MapGeneratedTag without importing the impact
-// package: that import would close a test-only cycle (impact's tests reach
-// mermaid through store and api). Compare by value.
-const mapGeneratedTag = "map-generated"
-
-// SceneExportOptions controls how ExportImpactScene renders a portable change
-// scene. Plain mirrors the canvas plain toggle: hide placements without
-// change impact, keeping only the container elements that reach impacted
-// nested views.
+// SceneExportOptions controls portable scene output. Display selection is
+// performed by impact.SelectScene before export.
 type SceneExportOptions struct {
 	// IncludeMetadata prepends a %% tld-scene comment naming the repository
 	// and comparison key so the block can be round-tripped.
 	IncludeMetadata bool
-	Plain           bool
 }
 
 // ExportImpactScene renders a repository change scene — the exact payload the
 // canvas loads — as a Mermaid flowchart, one subgraph per retained view. Node
 // ids, labels, connector arrows, and change link styles follow the same rules
 // as the canvas overlay, so the text diagram matches the UI node for node.
-// Membership follows the grounded rule: authored views pinned, every directly
-// changed file kept. With no authored views in the scene it degrades to the
-// mapped views, exactly like the canvas. It is deliberately independent of
-// any index or snapshot state.
+// Membership is selected once by the impact pipeline. Rendering never consults
+// workspace ownership, source facts, or display policy.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
 	if scene == nil {
 		return "flowchart LR\n"
 	}
-	view := sceneViewer{scene: scene, plain: opts.Plain}
+	view := sceneViewer{scene: scene}
 	view.index()
 
 	lines := []string{"flowchart LR"}
@@ -55,13 +46,13 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 
 	seen := map[int32]bool{}
 	for _, root := range view.scene.GetTree() {
-		if root == nil || strings.Contains(root.GetName(), " impact · ") {
+		if root == nil {
 			continue
 		}
 		lines = append(lines, view.renderTree(root, 0, seen)...)
 	}
 	// Defensive: retained views absent from the tree (e.g. drill-down targets
-	// resolved only through navigations) keep their old flat top-level output.
+	// resolved only through navigations) render at the top level.
 	for _, id := range view.retainedOrder {
 		if view.retained[id] && !seen[id] {
 			seen[id] = true
@@ -75,172 +66,46 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// sceneViewer carries the canvas membership rules over one scene render.
+// sceneViewer renders the frozen membership and relationships without selection.
 type sceneViewer struct {
-	scene *codeindexv1.ImpactScene
-	plain bool
-	// degraded mirrors the canvas fallback: with no authored views in the
-	// scene, membership follows the mapped rule instead of the grounded one.
-	degraded bool
-	// linkElements holds the container elements that own retained child views
-	// (plain mode): structural only, never annotated as changes.
-	linkElements map[int32]map[int32]bool
-
-	authored   map[int32]bool
-	overlayOf  map[int32]*codeindexv1.ImpactSceneOverlay
-	linkIndex  int
-	linkStyles []string
-
+	scene         *codeindexv1.ImpactScene
+	overlayOf     map[int32]*codeindexv1.ImpactSceneOverlay
+	linkStyles    []string
+	linkIndex     int
 	retained      map[int32]bool
 	retainedOrder []int32
-	// drilldown holds child views pulled in because a retained element owns
-	// them. They keep full output so nested nodes render instead of
-	// collapsing to singular flat elements.
-	drilldown map[int32]bool
 }
 
 func (v *sceneViewer) index() {
-	v.authored = map[int32]bool{}
-	for _, id := range v.scene.GetAuthoredViewIds() {
-		v.authored[int32(id)] = true
-	}
 	v.overlayOf = map[int32]*codeindexv1.ImpactSceneOverlay{}
 	for _, content := range v.scene.GetViews() {
 		for _, placement := range content.GetPlacements() {
-			if placement == nil || placement.GetOverlay() == nil {
-				continue
+			if placement.GetOverlay() != nil {
+				v.overlayOf[placement.GetElement().GetElementId()] = placement.GetOverlay()
 			}
-			v.overlayOf[placement.GetElement().GetElementId()] = placement.GetOverlay()
 		}
 	}
-	v.degraded = len(v.scene.GetAuthoredViewIds()) == 0
 	v.retained = map[int32]bool{}
-	v.retainedOrder = nil
-	v.drilldown = map[int32]bool{}
-	v.keep(v.scene.GetTree())
-	v.expandDrilldown()
-	// Plain mode still needs the container elements that own retained child
-	// views; without them the hierarchy can't be traversed.
-	v.linkElements = map[int32]map[int32]bool{}
-	if v.plain {
-		for _, link := range v.scene.GetNavigations() {
-			if link.GetRelationType() != "child" || link.ElementId == nil || !v.retained[link.GetToViewId()] {
+	var walk func([]*diagv1.View)
+	walk = func(views []*diagv1.View) {
+		for _, view := range views {
+			if view == nil || v.retained[view.Id] {
 				continue
 			}
-			set := v.linkElements[link.GetFromViewId()]
-			if set == nil {
-				set = map[int32]bool{}
-				v.linkElements[link.GetFromViewId()] = set
-			}
-			set[link.GetElementId()] = true
+			v.retained[view.Id] = true
+			v.retainedOrder = append(v.retainedOrder, view.Id)
+			walk(view.Children)
 		}
 	}
-}
-
-func (v *sceneViewer) impacted(elementID int32) bool {
-	_, ok := v.overlayOf[elementID]
-	return ok
-}
-
-func (v *sceneViewer) isTransient(elementID int32) bool {
-	return elementID < 0
-}
-
-func (v *sceneViewer) isFallback(view *diagv1.View) bool {
-	return view.GetId() != 0 && int64(view.GetId()) == v.scene.GetFallbackViewId()
-}
-
-func (v *sceneViewer) viewHasTransient(viewID int32) bool {
-	for _, placement := range v.scene.GetViews()[strconv.FormatInt(int64(viewID), 10)].GetPlacements() {
-		if placement != nil && v.isTransient(placement.GetElement().GetElementId()) {
-			return true
+	walk(v.scene.Tree)
+	for key := range v.scene.Views {
+		id, _ := strconv.ParseInt(key, 10, 32)
+		if !v.retained[int32(id)] {
+			v.retained[int32(id)] = true
+			v.retainedOrder = append(v.retainedOrder, int32(id))
 		}
 	}
-	return false
-}
-
-// keep ports the canvas tree filter: retired impact views always drop;
-// authored keeps authored views and ancestors; grounded additionally retains
-// the fallback Changes view and transient carriers pruned to change evidence;
-// mapped keeps any view with children or shown placements.
-func (v *sceneViewer) keep(tree []*diagv1.View) []int32 {
-	var kept []int32
-	for _, view := range tree {
-		if view == nil {
-			continue
-		}
-		if strings.Contains(view.GetName(), " impact · ") {
-			continue
-		}
-		children := v.keep(view.GetChildren())
-		id := view.GetId()
-		if v.degraded {
-			// No authored views: follow the mapped rule so the diagram still
-			// shows the generated map instead of going empty.
-			placements := v.scene.GetViews()[strconv.FormatInt(int64(id), 10)].GetPlacements()
-			if len(children) == 0 && len(placements) == 0 {
-				continue
-			}
-		} else if !v.isFallback(view) && !v.authored[id] && len(children) == 0 && !v.viewHasTransient(id) {
-			continue
-		}
-		v.retained[id] = true
-		v.retainedOrder = append(v.retainedOrder, id)
-		kept = append(kept, id)
-		_ = children
-	}
-	return kept
-}
-
-// expandDrilldown retains the child views owned by retained placements,
-// recursively, so nested elements render instead of collapsing flat. It
-// mirrors the canvas tree filter's drill-down expansion.
-func (v *sceneViewer) expandDrilldown() {
-	names := map[int32]string{}
-	var walk func(tree []*diagv1.View)
-	walk = func(tree []*diagv1.View) {
-		for _, view := range tree {
-			if view == nil {
-				continue
-			}
-			names[view.GetId()] = view.GetName()
-			walk(view.GetChildren())
-		}
-	}
-	walk(v.scene.GetTree())
-	childByElement := map[int32]int32{}
-	for _, link := range v.scene.GetNavigations() {
-		if link.GetRelationType() != "child" || link.ElementId == nil {
-			continue
-		}
-		if _, ok := childByElement[link.GetElementId()]; !ok {
-			childByElement[link.GetElementId()] = link.GetToViewId()
-		}
-	}
-	queue := make([]int32, 0, len(v.retained))
-	for id := range v.retained {
-		queue = append(queue, id)
-	}
-	for len(queue) > 0 {
-		from := queue[0]
-		queue = queue[1:]
-		for _, placement := range v.scene.GetViews()[strconv.FormatInt(int64(from), 10)].GetPlacements() {
-			if placement == nil || placement.GetElement() == nil {
-				continue
-			}
-			child, ok := childByElement[placement.GetElement().GetElementId()]
-			if !ok || v.retained[child] {
-				continue
-			}
-			if strings.Contains(names[child], " impact · ") {
-				continue
-			}
-			v.retained[child] = true
-			v.drilldown[child] = true
-			v.retainedOrder = append(v.retainedOrder, child)
-			queue = append(queue, child)
-		}
-	}
+	sort.Slice(v.retainedOrder, func(i, j int) bool { return v.retainedOrder[i] < v.retainedOrder[j] })
 }
 
 // sceneNodeRef names a placement node. Negative (transient) ids render as
@@ -274,24 +139,17 @@ func sceneChangeWord(change codeindexv1.ChangeKind) string {
 	}
 }
 
-// sceneProvenanceGlyph mirrors the canvas provenance chips per element:
-// graph-augmented transients and map-generated placements are marked,
-// everything else stays plain — including user-authored placements in views
-// that carry no change overlay (degraded scenes). The map-generated tag rides
-// the placement tags, written at scene build time.
+// sceneProvenanceGlyph renders the recorded origin of a placement.
 func (v *sceneViewer) sceneProvenanceGlyph(viewID int32, element *diagv1.PlacedElement) string {
-	if v.isTransient(element.GetElementId()) {
+	p := v.scene.Provenance[fmt.Sprintf("placement|%d|%d", viewID, element.GetElementId())]
+	switch p.GetOrigin() {
+	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_RAW:
 		return "◇ "
-	}
-	if v.authored[viewID] {
+	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_MAPPED:
+		return "▦ "
+	default:
 		return ""
 	}
-	for _, tag := range element.GetTags() {
-		if tag == mapGeneratedTag {
-			return "▦ "
-		}
-	}
-	return ""
 }
 
 func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement) string {
@@ -302,7 +160,10 @@ func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement
 	label = v.sceneProvenanceGlyph(viewID, element) + label
 	if overlay, ok := v.overlayOf[element.GetElementId()]; ok {
 		if word := sceneChangeWord(overlay.GetChange()); word != "unchanged" {
-			label += fmt.Sprintf("<br/>%s +%d \u2212%d", word, overlay.GetLinesAdded(), overlay.GetLinesRemoved())
+			label += "<br/>" + word
+			if overlay.LinesAdded != nil && overlay.LinesRemoved != nil {
+				label += fmt.Sprintf(" +%d \u2212%d", overlay.GetLinesAdded(), overlay.GetLinesRemoved())
+			}
 		} else {
 			label += "<br/>(context)"
 		}
@@ -325,9 +186,6 @@ func (v *sceneViewer) renderTree(node *diagv1.View, depth int, seen map[int32]bo
 		if child == nil || seen[child.GetId()] || !v.retained[child.GetId()] {
 			continue
 		}
-		if strings.Contains(child.GetName(), " impact · ") {
-			continue
-		}
 		kids = append(kids, child)
 	}
 	if !v.retained[node.GetId()] {
@@ -340,12 +198,8 @@ func (v *sceneViewer) renderTree(node *diagv1.View, depth int, seen map[int32]bo
 	return v.renderNested(node.GetId(), depth, kids, seen)
 }
 
-// renderNested emits one retained view: its placements (pruned to change
-// evidence in non-authored grounded views, exactly like the canvas), its
-// retained children nested inside, and its connectors filtered to rendered
-// endpoints, with change arrows and link styles for new/removed/modified
-// edges. depth controls indentation; depth 0 renders exactly like the old
-// flat output.
+// renderNested emits the selected placements, nested children, and recorded
+// relationships of one view, with change arrows and link styles.
 func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View, seen map[int32]bool) []string {
 	content := v.scene.GetViews()[strconv.FormatInt(int64(viewID), 10)]
 	if content == nil {
@@ -355,29 +209,16 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		}
 		return lines
 	}
-	pruned := !v.degraded && !v.authored[viewID] && !v.drilldown[viewID]
 	name := v.viewName(viewID)
 	head := strings.Repeat("  ", depth)
 	pad := strings.Repeat("  ", depth+1)
 	lines := []string{"", fmt.Sprintf(`%ssubgraph %s["%s"]`, head, sceneViewRef(viewID), escapeMermaidLabel(name))}
 	rendered := map[int32]bool{}
-	links := v.linkElements[viewID]
 	for _, placement := range content.GetPlacements() {
 		if placement == nil || placement.GetElement() == nil {
 			continue
 		}
 		elementID := placement.GetElement().GetElementId()
-		// Mirrors the canvas: plain keeps impacted placements plus the
-		// container elements that reach impacted nested views; otherwise
-		// non-authored views are pruned to change evidence, authored views
-		// keep their full membership.
-		if v.plain {
-			if !v.impacted(elementID) && !links[elementID] {
-				continue
-			}
-		} else if pruned && !v.isTransient(elementID) && !v.impacted(elementID) {
-			continue
-		}
 		rendered[elementID] = true
 		lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, sceneNodeRef(viewID, elementID),
 			escapeMermaidLabel(v.sceneNodeLabel(viewID, placement.GetElement()))))
@@ -390,7 +231,23 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 			continue
 		}
 		source, target := connector.GetSourceElementId(), connector.GetTargetElementId()
-		if !rendered[source] || !rendered[target] {
+		if !rendered[source] {
+			continue
+		}
+		if !rendered[target] {
+			p := v.scene.Provenance[fmt.Sprintf("connector|%d|%d", viewID, connector.Id)]
+			if len(p.GetEndpointKeys()) == 2 {
+				parts := strings.Split(p.EndpointKeys[1], "|")
+				if len(parts) == 3 {
+					targetView, err := strconv.ParseInt(parts[1], 10, 32)
+					if err == nil {
+						line := v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags())
+						line = strings.ReplaceAll(line, sceneNodeRef(viewID, target), sceneNodeRef(int32(targetView), target))
+						lines = append(lines, pad+line)
+						v.linkIndex++
+					}
+				}
+			}
 			continue
 		}
 		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
@@ -409,21 +266,6 @@ func (v *sceneViewer) viewName(viewID int32) string {
 		name = fmt.Sprintf("view %d", viewID)
 	}
 	return name
-}
-
-func (v *sceneViewer) viewNameIn(tree []*diagv1.View, viewID int32) string {
-	for _, view := range tree {
-		if view == nil {
-			continue
-		}
-		if view.GetId() == viewID {
-			return view.GetName()
-		}
-		if name := v.viewNameIn(view.GetChildren(), viewID); name != "" {
-			return name
-		}
-	}
-	return ""
 }
 
 // sceneConnectorLine mirrors the canvas edge language: user labels verbatim,
@@ -475,6 +317,21 @@ func (v *sceneViewer) styleLink(color, dash string) {
 		line += ",stroke-dasharray:" + dash
 	}
 	v.linkStyles = append(v.linkStyles, line)
+}
+
+func (v *sceneViewer) viewNameIn(tree []*diagv1.View, viewID int32) string {
+	for _, view := range tree {
+		if view == nil {
+			continue
+		}
+		if view.GetId() == viewID {
+			return view.GetName()
+		}
+		if name := v.viewNameIn(view.GetChildren(), viewID); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 // edgeChangeFromTags reads the scene connector change tag written at scene

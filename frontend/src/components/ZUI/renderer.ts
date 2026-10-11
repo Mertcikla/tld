@@ -1170,9 +1170,9 @@ function drawSceneNode(
     ctx.setLineDash([])
     traceShape()
     ctx.stroke()
-    if (change.change === 'modified' && !renderCtx.lowDetail && h * BADGE_H_TO_NODE_H * drawZoom >= BADGE_MIN_SCREEN_H) {
-      const plus = `+${change.linesAdded ?? 0}`
-      const minus = `\u2212${change.linesRemoved ?? 0}`
+    if (change.change === 'modified' && change.linesAdded != null && change.linesRemoved != null && !renderCtx.lowDetail && h * BADGE_H_TO_NODE_H * drawZoom >= BADGE_MIN_SCREEN_H) {
+      const plus = `+${change.linesAdded}`
+      const minus = `\u2212${change.linesRemoved}`
       const badgePad = h * BADGE_PAD_TO_NODE_H
       const padX = h * BADGE_PAD_TO_NODE_H
       const gap = h * BADGE_GAP_TO_NODE_H

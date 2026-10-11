@@ -195,3 +195,9 @@ export type HoveredItem =
     absY: number
   }
   | { type: 'group'; data: DiagramGroupLayout }
+
+export interface ZUIObjectSelection {
+  kind: 'placement' | 'connector' | 'view'
+  viewId: number
+  resourceId: number
+}

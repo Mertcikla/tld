@@ -79,7 +79,7 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	}
 	publish("base", map[string]string{"a.go": "func A() { return 1 }", "b.go": "func B() {}"})
 	publish("head", map[string]string{"a.go": "func A() { return 2 }", "b.go": "func B() {}", "new.go": "func C() {}"})
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	// A scene is a portable artifact: it names what it compared and carries
 	// enough symbol detail to describe the change without the snapshot.
 	if scene.GetSchemaVersion() != SceneSchemaVersion || scene.GetRepositoryId() != "repo" ||
-		scene.GetComparisonKey() != "key" || scene.GetFromGitRevision() != "base" || scene.GetToGitRevision() != "head" {
+		scene.GetComparisonKey() != diagram.GetComparisonKey() || scene.GetFromGitRevision() != "base" || scene.GetToGitRevision() != "head" {
 		t.Fatalf("scene identity = %+v", scene)
 	}
 	overlay := byPath["a.go"].GetOverlay()
@@ -197,7 +197,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 	}
 	publish("base", map[string]string{"a.go": "func A() { return 1 }", "sub/deep.go": "func D() { return 1 }"})
 	publish("head", map[string]string{"a.go": "func A() { return 2 }", "sub/deep.go": "func D() { return 2 }", "new.go": "func C() {}"})
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 			seen[placement.GetElement().GetFilePath()]++
 		}
 	}
-	if seen["a.go"] != 2 || seen["sub/deep.go"] != 0 {
+	if seen["a.go"] != 1 || seen["sub/deep.go"] != 0 {
 		t.Fatalf("covered files duplicated as transients: %+v", seen)
 	}
 	if seen["new.go"] != 1 {
@@ -354,7 +354,7 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 		"pkg/i.go": "func I() { return 1 }",
 		"h.go":     "func H2() {}",
 	}, [][2]string{{"a.go", "b.go"}, {"pkg/i.go", "h.go"}})
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 		"new.go":  "func New() {}",
 		"lone.go": "func Lone() {}",
 	}, [][2]string{{"new.go", "a.go"}})
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,9 +500,9 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 	}
 	wired := false
 	for _, connector := range content.GetConnectors() {
-		if connector.GetSourceElementId() == int32(cover.ID) && connector.GetTargetElementId() == transientID {
+		if connector.GetSourceElementId() == transientID && connector.GetTargetElementId() == int32(cover.ID) {
 			wired = true
-			if label := connector.GetLabel(); !strings.Contains(label, "dependencies") {
+			if label := connector.GetLabel(); !strings.Contains(label, "dependency") {
 				t.Fatalf("attachment connector lost its weight label: %q", label)
 			}
 		}
@@ -570,7 +570,7 @@ func TestSceneAttachesRemovedEdgeCounterparts(t *testing.T) {
 		"a.go": "func A() {} // touched",
 		"b.go": "func B() { return 1 }",
 	}, nil)
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +671,7 @@ func TestSceneIncludesChildViewsOfImpactedElements(t *testing.T) {
 	}
 	publish("base", map[string]string{"a.go": "func A() { return 1 }"})
 	publish("head", map[string]string{"a.go": "func A() { return 2 }"})
-	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -721,9 +721,9 @@ func scopeScenePlacement(viewID, elementID int32, name string, distance uint32, 
 	return placement
 }
 
-// ScopeScene at radius 0 keeps directly changed placements only, dropping
+// SelectScene at radius 0 keeps directly changed placements only, dropping
 // unimpacted neighbours, dangling connectors, and emptied views.
-func TestScopeSceneKeepsDirectChangesOnly(t *testing.T) {
+func TestSelectSceneKeepsDirectChangesOnly(t *testing.T) {
 	scene := &pb.ImpactScene{
 		Views: map[string]*pb.SceneViewContent{
 			"7": {
@@ -746,7 +746,8 @@ func TestScopeSceneKeepsDirectChangesOnly(t *testing.T) {
 		Tree:            []*diagv1.View{{Id: 7, Name: "kept"}, {Id: 8, Name: "dropped"}},
 		AuthoredViewIds: []int64{7, 8},
 	}
-	scoped := ScopeScene(scene, 0)
+	addSceneProvenance(scene)
+	scoped := SelectScene(scene, 0, true)
 	content := scoped.GetViews()["7"]
 	if content == nil || len(content.GetPlacements()) != 1 || content.GetPlacements()[0].GetElement().GetElementId() != 1 {
 		t.Fatalf("radius 0 placements = %+v", scoped.GetViews())
@@ -765,14 +766,14 @@ func TestScopeSceneKeepsDirectChangesOnly(t *testing.T) {
 	}
 	// The input scene is cloned, never mutated.
 	if len(scene.GetViews()["7"].GetPlacements()) != 3 {
-		t.Fatalf("ScopeScene mutated its input: %+v", scene.GetViews()["7"].GetPlacements())
+		t.Fatalf("SelectScene mutated its input: %+v", scene.GetViews()["7"].GetPlacements())
 	}
 }
 
-// ScopeScene at radius 1 additionally keeps context neighbours, and keeps
+// SelectScene at radius 1 additionally keeps context neighbours, and keeps
 // the container elements that own retained drill-down views so nested change
 // evidence never orphans its parent.
-func TestScopeSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
+func TestSelectSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 	scene := &pb.ImpactScene{
 		Views: map[string]*pb.SceneViewContent{
 			"7": {
@@ -799,7 +800,8 @@ func TestScopeSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 		},
 		AuthoredViewIds: []int64{7, 9},
 	}
-	scoped := ScopeScene(scene, 1)
+	addSceneProvenance(scene)
+	scoped := SelectScene(scene, 1, true)
 	child := scoped.GetViews()["9"]
 	if child == nil || len(child.GetPlacements()) != 2 {
 		t.Fatalf("radius 1 placements = %+v", scoped.GetViews())
@@ -817,3 +819,28 @@ func TestScopeSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 }
 
 func int32Ptr(value int32) *int32 { return &value }
+
+// compareSceneSnapshots captures fixtures through the production comparison path.
+func compareSceneSnapshots(ctx context.Context, ws core.Store, idx *cstore.Store, repo, from, to string, radius uint32) (*pb.ImpactDiagram, error) {
+	return (Service{Workspace: ws, Index: idx}).CompareSnapshots(ctx, repo, from, to, radius)
+}
+
+// addSceneProvenance supplies canonical roles for selection-only fixtures.
+func addSceneProvenance(scene *pb.ImpactScene) {
+	scene.SchemaVersion = PipelineVersion
+	scene.Provenance = map[string]*pb.ImpactProvenance{}
+	for _, content := range scene.Views {
+		for _, placement := range content.Placements {
+			e := placement.Element
+			p := &pb.ImpactProvenance{Key: PlacementKey(int64(e.ViewId), int64(e.ElementId)), Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT}
+			if placement.Overlay != nil {
+				p.Role = pb.ImpactRole_IMPACT_ROLE_DIRECT
+				p.Distance = placement.Overlay.Distance
+				if p.Distance > 0 {
+					p.Role = pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT
+				}
+			}
+			scene.Provenance[p.Key] = p
+		}
+	}
+}

@@ -27,6 +27,8 @@ func sceneFixture() *codeindexv1.ImpactScene {
 	return &codeindexv1.ImpactScene{
 		RepositoryId:    "r1",
 		ComparisonKey:   "k1",
+		SchemaVersion:   "2",
+		Provenance:      map[string]*codeindexv1.ImpactProvenance{"placement|-1|-1": {Origin: codeindexv1.ImpactOrigin_IMPACT_ORIGIN_RAW}},
 		FallbackViewId:  -1,
 		AuthoredViewIds: []int64{51},
 		Tree: []*diagv1.View{
@@ -73,15 +75,12 @@ func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 	}
 }
 
-func TestExportImpactSceneDegradesToMappedWithoutAuthoredViews(t *testing.T) {
+func TestExportImpactSceneUsesRecordedMappedOrigin(t *testing.T) {
 	t.Parallel()
 
 	fixture := sceneFixture()
 	fixture.AuthoredViewIds = nil
-	// Real degraded payloads tag map-owned placements at build time.
-	for _, placement := range fixture.Views["51"].GetPlacements() {
-		placement.GetElement().Tags = append(placement.GetElement().Tags, mapGeneratedTag)
-	}
+	fixture.Provenance["placement|51|7"] = &codeindexv1.ImpactProvenance{Origin: codeindexv1.ImpactOrigin_IMPACT_ORIGIN_MAPPED}
 	got := ExportImpactScene(fixture, SceneExportOptions{})
 	for _, want := range []string{
 		`subgraph view_51["Mine"]`,
@@ -131,11 +130,14 @@ func TestExportImpactSceneNilIsEmptyFlowchart(t *testing.T) {
 	}
 }
 
-func TestExportImpactScenePlainHidesUnimpacted(t *testing.T) {
+func TestExportImpactSceneRendersBackendPlainSelection(t *testing.T) {
 	t.Parallel()
 
 	fixture := sceneFixture()
-	got := ExportImpactScene(fixture, SceneExportOptions{Plain: true})
+	// The backend has already suppressed authored context and its connectors.
+	fixture.Views["51"].Placements = fixture.Views["51"].Placements[:1]
+	fixture.Views["51"].Connectors = nil
+	got := ExportImpactScene(fixture, SceneExportOptions{})
 	for _, want := range []string{
 		`el_51_7["svc/auth<br/>modified +3 −1"]`,
 		`el_neg1_neg1["◇ new.go<br/>added +1 −0"]`,
@@ -164,5 +166,15 @@ func TestExportImpactSceneChangedLinkAfterUnchanged(t *testing.T) {
 	}
 	if strings.Contains(got, "linkStyle 0") {
 		t.Fatalf("unchanged first link must not be styled, got:\n%s", got)
+	}
+}
+
+func TestExportImpactSceneKeepsUnknownLineCountsUnknown(t *testing.T) {
+	scene := sceneFixture()
+	scene.Views["51"].Placements[0].Overlay.LinesAdded = nil
+	scene.Views["51"].Placements[0].Overlay.LinesRemoved = nil
+	got := ExportImpactScene(scene, SceneExportOptions{})
+	if strings.Contains(got, "modified +0") || !strings.Contains(got, "svc/auth<br/>modified") {
+		t.Fatalf("unknown counts invented: %s", got)
 	}
 }

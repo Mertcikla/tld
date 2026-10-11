@@ -42,7 +42,7 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 |---|---|---|
 | `--mermaid` | off | Emit the Mermaid change diagram instead of the scene |
 | `--markdown` | off | Wrap the Mermaid diagram in a Markdown code fence |
-| `--plain` | off | Hide placements without change impact from the Mermaid diagram (mirrors the canvas plain toggle) |
+| `--plain` | off | Hide unrelated authored context in the selected scene; retain changes, dependency neighbours and required containers |
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
 | `--max-bytes N` | `2097152` | Output byte budget; output is narrowed when exceeded (`0` disables) |
@@ -51,31 +51,76 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
 | `--view REF` | unset | Restrict the grounded bundle to one authored view (id or name substring) |
 | `--all-edges` | off | Disable fan-out roll-up in the grounded summary |
+| `--debug-provenance` | off | Write pipeline stage counts and decisions to stderr |
+| `--provenance-json PATH` | unset | Write structured per-primitive provenance, coverage and detailed decisions to a JSON sidecar |
 | `--report-json PATH` | unset | Write status, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, grounded overlay, and skip reason to JSON |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
 
-- **Default:** protojson encoding of the **grounded bundle** — the portable impact
-  scene plus the authored overlay (`mode: "grounded"`, `grounded: {affected,
-  context, ungrounded, views, elements, fanout, uncovered}`). Only directly
-  changed sections are emitted; pass `--blast-radius 1` or `2` to additionally
-  include the neighbours and edges of each change that many dependency hops
-  away. The user-authored diagram stays canonical while each linked element is
-  verified against the pinned snapshots; the generated map contributes
-  collapsed context only. High fan-out nodes roll up by target prefix
-  (7 groups + "+N more"). When no authored view intersects the change, the
-  bundle notes the fallback and carries the mapped context instead.
-- **`--mermaid` / `--markdown`:** the change scene rendered as Mermaid — the same
-  payload the canvas draws, node for node: `flowchart LR`, then a `%% tld-scene`
-  header and the CLI-only `%% grounded` stats lines, one subgraph per retained
-  view, change badges (`modified +8 −0`, `(context)`) on nodes, provenance
-  glyphs (`◇` graph-augmented, `▦` map-generated) on non-authored nodes, and
-  connector arrows with `linkStyle` colors for added/removed/modified edges.
-  Grounded is the only diagram: with no authored views it degrades to the
-  mapped views, and with no views at all it falls through to the file-level
-  fact graph — the same fallback chain as the canvas.
+- **Default:** a portable scene and a grounded summary derived from it. Standard
+  mode keeps the authored skeleton of selected or relevant views, including
+  unlinked conceptual elements. Direct changes use authored representations
+  first, compatible mapped representations second, then transient file
+  primitives. Symbol/line anchors cover only their matched scope; remaining
+  file edits receive a fallback. The result includes a coverage entry for every
+  changed file, including binaries and files excluded from indexing.
+- **`--blast-radius 1` / `2`:** add neighbours from bounded dependency traversal
+  in BASE and HEAD separately. Each neighbour keeps its distance and witness
+  path. Neighbours without authored or mapped representations receive raw
+  file primitives. Traversal uses both directions; rendered relationships keep
+  their observed direction.
+- **`--mermaid` / `--markdown`:** render the same selected scene as the canvas,
+  with nested views, change annotations, provenance glyphs and directed edges.
+  A synthesized connector is marked added only when the source dependency
+  was added. Multiple observations between the same representatives share a
+  connector and retain their evidence in provenance.
+
+Comparisons freeze the scene and provenance. Subsequent workspace edits produce
+another comparison key; opening an older result does not reread the workspace.
+The source-analysis cache depends on snapshots and radius; the scene cache also
+includes the captured workspace, mappings, repository identities and view filter.
+Old artifacts remain readable through the version 1 compatibility path.
+
+New snapshots persist complete Git file manifests independently of extraction.
+Legacy commit snapshots are enriched when their pinned Git revision is available.
+Legacy/offline working-tree snapshots without manifests explicitly report
+incomplete coverage. Files without captured sources keep unknown line counts and
+unknown dependency impact; a file primitive does not imply complete facts.
+
+```bash
+tld git compare HEAD~1 HEAD --blast-radius 2 \
+  --debug-provenance --provenance-json /tmp/impact-provenance.json
+```
+
+The JSON sidecar contains compact provenance and the full decision ledger,
+without duplicating scene geometry. Debug output goes to stderr so stdout stays
+machine-readable. Normal scene responses include compact origin, grounding,
+role, stage, paths and witnesses; detailed stage decisions require debug opt-in.
+
+The proto contract reuses `SourceFile` for manifest entries (with an optional Git
+mode value) and `SourceChange` for coverage (with selected placement keys).
+Stage counts and decisions belong directly to `ImpactScene`; dependency witness
+seeds are the first path entry. Provenance, dependency witnesses, decisions and
+stage counters retain distinct types because they represent different records.
+Scene schema 3 prevents older cached layouts from bypassing this contract.
+
+All canvas membership, grounding, coverage and Plain/radius selection decisions
+belong to canonical scene assembly and selection. The frontend, Mermaid export
+and grounded summary only project that scene; they do not rebuild a fact graph
+or apply independent workspace matching. Older comparison artifacts without a
+canonical scene are rebuilt through the current pipeline when their indexed
+snapshots remain available.
+
+The repositories page exposes Hops 0/1/2 before Compare and shows the Mermaid
+preview by default. Developers can open the page with `?debugImpact=1` to replace
+that panel with the Impact inspector. Select an element, connector or view on
+the canvas, or search the inspector, to see its origin, grounding, inclusion
+stage, source paths and dependency witnesses. **Impact debug** toggles detailed
+stage counts and suppression decisions within the inspector. Copy Markdown is
+available in both panels. Standard/Plain selection happens in the backend;
+the inspector reports when frontend tag filters hide changed-file coverage.
 
 Progress is written to stderr only with `--verbose`; budget warnings always go
 to stderr. If the payload exceeds a budget, a warning tells you to raise

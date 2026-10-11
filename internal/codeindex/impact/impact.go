@@ -6,19 +6,16 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/core"
+	"google.golang.org/protobuf/proto"
 )
 
-// Build describes changed files, attaches their symbol deltas, and adds
-// eligible existing workspace resources within the requested file-dependency
-// radius. Every node carries its hop distance so callers can scope the diagram
-// client-side without another server round trip.
-func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*pb.ImpactDiagram, error) {
+// buildAnalysis resolves file changes and dependency witnesses from immutable
+// snapshots. Workspace selection and placement belong exclusively to assemble.
+func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*pb.ImpactDiagram, error) {
 	diff, err := idx.ImpactDiff(ctx, fromID, toID)
 	if err != nil {
 		return nil, err
@@ -31,11 +28,33 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	if err != nil {
 		return nil, err
 	}
-	toSources, err := idx.SnapshotSources(ctx, toID)
+	oldKinds, err := idx.FilePairKinds(ctx, fromID)
 	if err != nil {
 		return nil, err
 	}
-	diagram := &pb.ImpactDiagram{RepositoryId: repositoryID, ComparisonKey: key, Diff: diff, Version: uuid.NewString()}
+	newKinds, err := idx.FilePairKinds(ctx, toID)
+	if err != nil {
+		return nil, err
+	}
+	diagram := &pb.ImpactDiagram{RepositoryId: repositoryID, ComparisonKey: key, Diff: diff, Version: uuid.NewString(), RequestedRadius: proto.Uint32(blastRadius)}
+	snapshotPaths := map[string]map[string]bool{}
+	for _, id := range []string{fromID, toID} {
+		snapshot, loadErr := idx.Snapshot(ctx, id)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		snapshotPaths[id] = map[string]bool{}
+		for _, source := range snapshot.Sources {
+			snapshotPaths[id][source.Path] = true
+		}
+		for _, file := range snapshot.GetManifest().GetFiles() {
+			snapshotPaths[id][file.Path] = true
+		}
+		if !snapshot.GetManifest().GetComplete() {
+			diagram.Warnings = append(diagram.Warnings, "Incomplete Git manifest for snapshot "+id+"; coverage is limited to captured sources")
+		}
+	}
+	diagram.ManifestComplete = len(diagram.Warnings) == 0
 	changes := map[string]*pb.ImpactNode{}
 	distance := map[string]uint32{}
 	queue := []string{}
@@ -68,74 +87,30 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	addSymbols(diff.GetFacts().GetAdded(), pb.ChangeKind_CHANGE_KIND_ADDED)
 	addSymbols(diff.GetFacts().GetRemoved(), pb.ChangeKind_CHANGE_KIND_REMOVED)
 	addSymbols(diff.GetFacts().GetModified(), pb.ChangeKind_CHANGE_KIND_MODIFIED)
-	adjacency := map[string]map[string]bool{}
-	link := func(a, b string) {
-		if adjacency[a] == nil {
-			adjacency[a] = map[string]bool{}
+	witnesses := map[string][]*pb.ImpactWitness{}
+	for side, pairs := range []map[[2]string]float64{oldEdges, newEdges} {
+		snapshotID := fromID
+		if side == 1 {
+			snapshotID = toID
 		}
-		adjacency[a][b] = true
-	}
-	for edge := range oldEdges {
-		link(edge[0], edge[1])
-		link(edge[1], edge[0])
-	}
-	for edge := range newEdges {
-		link(edge[0], edge[1])
-		link(edge[1], edge[0])
-	}
-	for i := 0; i < len(queue); i++ {
-		path := queue[i]
-		neighbors := make([]string, 0, len(adjacency[path]))
-		for next := range adjacency[path] {
-			neighbors = append(neighbors, next)
-		}
-		sort.Strings(neighbors)
-		for _, next := range neighbors {
-			if _, seen := distance[next]; seen {
-				continue
+		for path, witness := range dependencyWitnesses(presentSeeds(queue, snapshotPaths[snapshotID]), pairs, snapshotID, blastRadius) {
+			hops := uint32(len(witness.Paths) - 1)
+			if previous, found := distance[path]; !found || hops < previous {
+				distance[path] = hops
 			}
-			distance[next] = distance[path] + 1
-			queue = append(queue, next)
+			witnesses[path] = append(witnesses[path], witness)
 		}
 	}
-	mappings, err := idx.MappingsByRepository(ctx, repositoryID)
-	if err != nil {
-		return nil, err
-	}
-	// Explore once for both placement and hierarchy resolution. A clean overlay
-	// has no nodes to place or group, so skip the query entirely.
-	data := core.ExploreData{}
-	if len(diagram.Nodes) > 0 {
-		data, err = ws.Explore(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	seenResources := map[int64]bool{}
-	for _, mapping := range mappings {
-		if mapping.Kind != cstore.MappingElement || strings.HasPrefix(mapping.LogicalKey, "impact|") || seenResources[mapping.ResourceID] {
+	for path, hops := range distance {
+		if node := changes[path]; node != nil {
+			node.Witnesses = witnesses[path]
 			continue
 		}
-		element, err := ws.ElementByID(ctx, mapping.ResourceID)
-		if err != nil {
-			continue
-		}
-		if element.FilePath == nil {
-			continue
-		}
-		path := *element.FilePath
-		hops, reachable := distance[path]
-		if !reachable || changes[path] != nil {
-			continue
-		}
-		if _, present := toSources[path]; !present {
-			continue
-		}
-		seenResources[element.ID] = true
 		if hops > blastRadius {
 			continue
 		}
-		diagram.Nodes = append(diagram.Nodes, &pb.ImpactNode{Key: fmt.Sprintf("context|%d", element.ID), Path: path, Name: element.Name, Distance: hops, ElementId: element.ID})
+		node := &pb.ImpactNode{Key: "context|" + path, Path: path, Name: filepath.Base(path), Distance: hops, Witnesses: witnesses[path]}
+		diagram.Nodes = append(diagram.Nodes, node)
 	}
 	sort.Slice(diagram.Nodes, func(i, j int) bool { return diagram.Nodes[i].Key < diagram.Nodes[j].Key })
 	nodesByPath := map[string][]*pb.ImpactNode{}
@@ -159,7 +134,7 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		case !has:
 			kind = pb.ChangeKind_CHANGE_KIND_REMOVED
 			weight = oldWeight
-		case weight != oldWeight:
+		case weight != oldWeight || fmt.Sprint(oldKinds[edge]) != fmt.Sprint(newKinds[edge]):
 			kind = pb.ChangeKind_CHANGE_KIND_MODIFIED
 		}
 		for _, from := range nodesByPath[edge[0]] {
@@ -172,74 +147,15 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		a, b := diagram.Edges[i], diagram.Edges[j]
 		return a.FromKey+"\x00"+a.ToKey < b.FromKey+"\x00"+b.ToKey
 	})
-	// Placement runs last so new overlay nodes can be laid out next to the
-	// context and already-mapped elements they are connected to.
-	if err := placeAddedFiles(ctx, ws, diagram, mappings, data); err != nil {
-		return nil, err
-	}
-	diagram.Groups = buildImpactGroups(ctx, idx, diagram, mappings, data)
 	return diagram, nil
 }
 
-// Save persists the comparison payload only. Canvas overlays are ephemeral and
-// must never create workspace elements, connectors, or views.
-func Save(ctx context.Context, ws core.Store, idx *cstore.Store, repo, key, from, to string, radius uint32) (*pb.ImpactDiagram, error) {
-	if err := removeLegacyMaterialization(ctx, ws, idx, repo); err != nil {
-		return nil, err
-	}
-	// Identical snapshots carry no delta: the diff, adjacency, and placement
-	// queries would all scan the index to discover nothing. Snapshots are
-	// reused verbatim when content matches, so this also covers different
-	// revisions with identical trees.
-	if from == to {
-		diagram := &pb.ImpactDiagram{
-			RepositoryId:  repo,
-			ComparisonKey: key,
-			Diff:          &pb.SnapshotDiff{RepositoryId: repo, FromSnapshotId: from, ToSnapshotId: to},
-			Version:       uuid.NewString(),
-		}
-		if err := idx.SaveImpact(ctx, diagram); err != nil {
-			return nil, err
-		}
-		return diagram, nil
-	}
-	diagram, err := Build(ctx, ws, idx, repo, key, from, to, radius)
-	if err != nil {
-		return nil, err
-	}
-	if err = idx.SaveImpact(ctx, diagram); err != nil {
-		return nil, err
-	}
-	return diagram, nil
-}
-
-// Remove only resources owned by the retired impact materializer. Shared
-// context elements have no impact ownership mapping and remain untouched.
-func removeLegacyMaterialization(ctx context.Context, ws core.Store, idx *cstore.Store, repo string) error {
-	mappings, err := idx.MappingsByRepository(ctx, repo)
-	if err != nil {
-		return err
-	}
-	for _, kind := range []cstore.MappingKind{cstore.MappingConnector, cstore.MappingView, cstore.MappingElement} {
-		for _, mapping := range mappings {
-			if mapping.Kind != kind || !strings.HasPrefix(mapping.LogicalKey, "impact|") {
-				continue
-			}
-			switch kind {
-			case cstore.MappingConnector:
-				err = ws.DeleteConnector(ctx, mapping.ResourceID)
-			case cstore.MappingView:
-				err = ws.DeleteView(ctx, mapping.ResourceID)
-			case cstore.MappingElement:
-				err = ws.DeleteElement(ctx, mapping.ResourceID)
-			}
-			if err != nil {
-				return err
-			}
-			if err = idx.DeleteMapping(ctx, mapping.LogicalKey); err != nil {
-				return err
-			}
+func presentSeeds(seeds []string, paths map[string]bool) []string {
+	out := []string{}
+	for _, path := range seeds {
+		if paths[path] {
+			out = append(out, path)
 		}
 	}
-	return nil
+	return out
 }

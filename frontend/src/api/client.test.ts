@@ -254,6 +254,23 @@ describe('codeindex snapshot mapping', () => {
 })
 
 describe('impact scene mapping', () => {
+  it('maps reused change coverage and the scene-owned debug ledger', () => {
+    const scene = create(ImpactSceneSchema, {
+      schemaVersion: '3',
+      coverage: [{ path: 'asset.bin', change: ChangeKind.ADDED, placementKeys: ['placement|1|-1'], factsUnavailable: true }],
+      stages: [{ id: 'coverage', name: 'Guarantee direct coverage', added: 1 }],
+      decisions: [{ stage: 'coverage', action: 'add', key: 'placement|1|-1', reason: 'Missing authored representation' }],
+      provenance: { 'placement|1|-1': { witnesses: [{ snapshotId: 'head', paths: ['changed.go', 'neighbour.go'] }] } },
+    })
+    const mapped = mapImpactScene(scene)
+    expect(mapped.coverage).toEqual([{ path: 'asset.bin', placementKeys: ['placement|1|-1'], factsUnavailable: true }])
+    expect(mapped.trace?.pipelineVersion).toBe('3')
+    expect(mapped.trace?.stages[0].added).toBe(1)
+    expect(mapped.trace?.decisions[0].key).toBe('placement|1|-1')
+    expect(mapped.provenance?.['placement|1|-1'].witnesses[0]).toEqual({ snapshotId: 'head', seedPath: 'changed.go', paths: ['changed.go', 'neighbour.go'] })
+    expect(mapImpactScene(create(ImpactSceneSchema)).trace).toBeUndefined()
+  })
+
   it('labels symbols from structured changes and keeps scene identity', () => {
     const scene = create(ImpactSceneSchema, {
       repositoryId: 'repo-1',

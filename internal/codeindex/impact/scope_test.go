@@ -20,11 +20,6 @@ func scopeDiagram() *pb.ImpactDiagram {
 			{FromKey: "file|a.go", ToKey: "context|1", Weight: 2},
 			{FromKey: "context|1", ToKey: "context|2", Weight: 3},
 		},
-		Groups: []*pb.ImpactGroup{
-			{Key: "view:1", Name: "repo", NodeKeys: []string{"file|a.go"}, Children: []*pb.ImpactGroup{
-				{Key: "view:2", Name: "pkg", NodeKeys: []string{"context|1", "context|2"}},
-			}},
-		},
 	}
 }
 
@@ -35,24 +30,6 @@ func TestScopeKeepsDirectChangesAndRadiusNeighbours(t *testing.T) {
 	}
 	if len(scoped.GetEdges()) != 2 {
 		t.Fatalf("scoped edges = %+v", scoped.GetEdges())
-	}
-	if len(scoped.GetGroups()) != 1 || len(scoped.GetGroups()[0].GetChildren()) != 1 {
-		t.Fatalf("scoped groups = %+v", scoped.GetGroups())
-	}
-	if keys := scoped.GetGroups()[0].GetChildren()[0].GetNodeKeys(); len(keys) != 1 || keys[0] != "context|1" {
-		t.Fatalf("scoped group keys = %v", keys)
-	}
-}
-
-func TestScopeDropsEmptyGroups(t *testing.T) {
-	scoped := Scope(scopeDiagram(), 0)
-	if len(scoped.GetGroups()) != 1 || len(scoped.GetGroups()[0].GetChildren()) != 0 {
-		t.Fatalf("scoped groups = %+v", scoped.GetGroups())
-	}
-	empty := Scope(scopeDiagram(), 0)
-	empty.Nodes = nil
-	if groups := scopeGroups(empty.GetGroups(), map[string]bool{}); len(groups) != 0 {
-		t.Fatalf("empty groups = %+v", groups)
 	}
 }
 

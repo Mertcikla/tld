@@ -358,6 +358,7 @@ export default function Repositories() {
   const [busy, setBusy] = useState(false)
   const [capturing, setCapturing] = useState(false)
   const [progress, setProgress] = useState<RepositoryMapProgress | null>(null)
+  const [blastRadius, setBlastRadius] = useState(0)
   const [comparison, setComparison] = useState<RepositoryImpactResult | null>(null)
   const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
   const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
@@ -781,6 +782,7 @@ export default function Repositories() {
       if (kind === 'compare') {
         const result = await api.repositories.compare(repositoryId, {
           base: targetMapOptions(base, baseBranch), head: targetMapOptions(head, headBranch),
+          blastRadius,
           signal: controller.signal, onProgress: (next) => { if (isActive()) setProgress(next) },
         })
         if (isActive()) {
@@ -1401,7 +1403,11 @@ export default function Repositories() {
                           )
                         })}
                       </Flex>
-                      <HStack spacing={2} flexShrink={0} ml="auto">
+                      <HStack spacing={2} flexShrink={0} ml="auto" flexWrap="wrap">
+                        <HStack spacing={1} data-testid="repositories-radius">
+                          <Text fontSize="xs" color="gray.400">Hops</Text>
+                          {[0, 1, 2].map((radius) => <Button key={radius} size="xs" variant={blastRadius === radius ? 'solid' : 'ghost'} aria-label={`Blast radius ${radius}`} aria-pressed={blastRadius === radius} isDisabled={busy} onClick={() => setBlastRadius(radius)}>{radius}</Button>)}
+                        </HStack>
                         <Button
                           {...accentStyle}
                           size="sm"

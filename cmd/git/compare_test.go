@@ -13,6 +13,7 @@ import (
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
@@ -445,37 +446,25 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 		}
 		// The scene render carries the uncovered file as a transient, exactly
 		// as the canvas draws it.
-		if !strings.Contains(text, `subgraph view_neg1["Changes"]`) {
+		if !strings.Contains(text, "a.go") {
 			t.Fatalf("scene mermaid missing fallback view for %+v:\n%s", opts, text)
 		}
 	}
 }
 
-func TestCompareRendererFallsBackToFactGraph(t *testing.T) {
-	ctx := context.Background()
-	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ws.Close() }()
-	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
-	snap := &pb.Snapshot{Id: "head", RepositoryId: "repo", GitRevision: "head", Provenance: "commit", IngestionStatus: "complete"}
-	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", "head")); err != nil {
-		t.Fatal(err)
-	}
-	service := impact.Service{Workspace: ws, Index: idx}
+// An empty frozen scene must remain empty; raw analysis cannot add nodes
+// outside the provenance pipeline during export.
+func TestCompareRendererUsesFrozenSceneWithoutFactGraphFallback(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
-		RepositoryId:  "repo",
-		ComparisonKey: "key",
-		Diff:          &pb.SnapshotDiff{ToSnapshotId: "head"},
+		Nodes: []*pb.ImpactNode{{Key: "file|hidden.go", Path: "hidden.go", Name: "hidden.go"}},
+		Scene: &pb.ImpactScene{SchemaVersion: impact.PipelineVersion},
 	}
-	text, _, err := compareRenderer{ctx: ctx, service: service, opts: compareOptions{mermaid: true}}.build(diagram, 0)
+	text, _, err := (compareRenderer{ctx: context.Background(), opts: compareOptions{mermaid: true}}).build(diagram, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No view survived: the file-level fact graph renders instead of a blank diagram.
-	if !strings.Contains(text, "%% tld-impact") {
-		t.Fatalf("empty scene must fall through to the fact graph:\n%s", text)
+	if text != "flowchart LR\n%% tld-scene\n" {
+		t.Fatalf("export changed frozen scene membership: %s", text)
 	}
 }
 
@@ -587,6 +576,24 @@ func writeSource(t *testing.T, dir, name, code string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(code), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlainBudgetAndProvenanceUseTheEmittedSelection(t *testing.T) {
+	scene := &pb.ImpactScene{SchemaVersion: impact.PipelineVersion, RequestedRadius: 1, Views: map[string]*pb.SceneViewContent{"1": {Placements: []*pb.ScenePlacement{{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 2, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 3, ViewId: 1}}}}}, Provenance: map[string]*pb.ImpactProvenance{
+		"placement|1|1": {Key: "placement|1|1", Role: pb.ImpactRole_IMPACT_ROLE_DIRECT},
+		"placement|1|2": {Key: "placement|1|2", Role: pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT, Distance: 1},
+		"placement|1|3": {Key: "placement|1|3", Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT},
+	}, Coverage: []*pb.SourceChange{{Path: "a.go", PlacementKeys: []string{"placement|1|1"}}}}
+	result, err := scopeToBudget(&pb.ImpactDiagram{Scene: scene}, 1, compareOptions{plain: true, maxNodes: 2}, func(*pb.ImpactDiagram, uint32) (string, int, error) { return "", 0, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.radius != 1 || impact.SceneNodeCount(result.diagram.Scene) != 2 || result.diagram.Scene.Provenance["placement|1|3"] != nil {
+		t.Fatal("plain budget or provenance disagrees with emitted scene")
+	}
+	if err := impact.ValidateCoverage(result.diagram.Scene); err != nil {
 		t.Fatal(err)
 	}
 }

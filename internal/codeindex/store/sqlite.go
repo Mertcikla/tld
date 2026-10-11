@@ -93,9 +93,13 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	projects, _ := marshalJSON(snap.Projects)
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
+	manifest, err := marshalJSON(snap.Manifest)
+	if err != nil {
+		return err
+	}
 	res, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id, manifest_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
@@ -106,9 +110,9 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 			warnings_json = excluded.warnings_json,
 			tool_versions_json = excluded.tool_versions_json,
         provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
-        commit_message = excluded.commit_message`,
+        commit_message = excluded.commit_message, manifest_json = excluded.manifest_json`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value()).Exec(ctx)
+		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value(), manifest).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -217,16 +221,16 @@ func sortedEdges(g *graph.Graph) []*pb.EdgeFact {
 // Snapshot loads a published snapshot and its source manifest.
 func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	var (
-		snap                              pb.Snapshot
-		projects, warnings, tools         string
-		createdUnix                       int64
-		gitRevision, gitBranch            string
-		ingestion, configHash, repository string
+		snap                                pb.Snapshot
+		projects, warnings, tools, manifest string
+		createdUnix                         int64
+		gitRevision, gitBranch              string
+		ingestion, configHash, repository   string
 	)
 	where, scopeArgs := scope(ctx).clause("org_id")
-	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
+	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, manifest_json
 		FROM codeindex_snapshots WHERE id = ?`+where, append([]any{id}, scopeArgs...)...).
-		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage)
+		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage, &manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +244,9 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	_ = json.Unmarshal([]byte(projects), &snap.Projects)
 	_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
 	_ = json.Unmarshal([]byte(tools), &snap.ToolVersions)
+	if err := json.Unmarshal([]byte(manifest), &snap.Manifest); err != nil {
+		return nil, fmt.Errorf("load snapshot manifest: %w", err)
+	}
 	sourceWhere, sourceArgs := scope(ctx).clause("org_id")
 	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, size FROM codeindex_sources WHERE snapshot_id = ?`+sourceWhere+` ORDER BY path`, append([]any{id}, sourceArgs...)...)
 	if err != nil {

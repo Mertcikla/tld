@@ -1,7 +1,7 @@
 // src/components/ZUI/useZUIInteraction.ts
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
-import type { BBox, DiagramGroupLayout, LayoutNode, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
+import type { BBox, DiagramGroupLayout, LayoutNode, ZUIObjectSelection, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes } from './hitTest'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
@@ -217,6 +217,7 @@ export function useZUIInteraction(
   hiddenTags: string[] = [],
   canvasWidth: number = 0,
   hoverLocked: boolean = false,
+  onSelectObject?: (selection: ZUIObjectSelection | null) => void,
 ): ZUIInteraction {
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
@@ -280,6 +281,8 @@ export function useZUIInteraction(
   const bboxRef = useRef<BBox | undefined>(bbox)
   const onZoomRef = useRef(onZoom)
   const onPanRef = useRef(onPan)
+  const onSelectRef = useRef(onSelectObject)
+  useEffect(() => { onSelectRef.current = onSelectObject }, [onSelectObject])
 
   useEffect(() => {
     groupsRef.current = groups
@@ -373,6 +376,7 @@ export function useZUIInteraction(
   }, [])
 
   const dragging = useRef(false)
+  const pointerStart = useRef<{ x: number; y: number } | null>(null)
   const dragButton = useRef<number | null>(null)
   const lastMouse = useRef({ x: 0, y: 0 })
   const lastPointerClient = useRef<{ x: number; y: number } | null>(null)
@@ -493,6 +497,7 @@ export function useZUIInteraction(
     function onMouseDown(e: MouseEvent) {
       if (!isZUIPanMouseButton(e.button)) return
       e.preventDefault()
+      pointerStart.current = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
       dragging.current = true
       dragButton.current = e.button
       lastMouse.current.x = e.clientX
@@ -503,6 +508,8 @@ export function useZUIInteraction(
     }
 
     function onMouseMove(e: MouseEvent) {
+      const start = pointerStart.current
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5) pointerStart.current = null
       const rect = el!.getBoundingClientRect()
       const screenX = e.clientX - rect.left
       const screenY = e.clientY - rect.top
@@ -567,7 +574,24 @@ export function useZUIInteraction(
       }
     }
 
-    function onMouseUp() {
+    function selectAt(clientX: number, clientY: number) {
+      if (!onSelectRef.current) return
+      const rect = el!.getBoundingClientRect()
+      const view = viewStateRef.current
+      const x = screenToWorldX(clientX - rect.left, view)
+      const y = screenToWorldY(clientY - rect.top, view)
+      const hit = hitTestZUIRenderedNode(x, y, groupsRef.current, view, getExpandThresholds(rect.width), hiddenTagsRef.current)
+      if (hit) { onSelectRef.current({ kind: 'placement', viewId: hit.node.diagramId, resourceId: hit.node.elementId }); return }
+      const edge = resolveHoveredProxyItem?.(x, y, view, rect.width) ?? findHoveredEdge(x, y, edgeSpatialIndexRef.current!, view)
+      if (edge?.type === 'edge' && edge.data.id != null) { onSelectRef.current({ kind: 'connector', viewId: edge.data.diagramId, resourceId: edge.data.id }); return }
+      const group = findHoveredGroup(x, y, groupsRef.current, view)
+      onSelectRef.current(group ? { kind: 'view', viewId: group.diagramId, resourceId: group.diagramId } : null)
+    }
+
+    function onMouseUp(e: MouseEvent) {
+      const start = pointerStart.current
+      if (start && dragging.current && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 5) selectAt(e.clientX, e.clientY)
+      pointerStart.current = null
       dragging.current = false
       dragButton.current = null
       if (el) el.style.cursor = 'grab'
@@ -663,12 +687,14 @@ export function useZUIInteraction(
     function onTouchStart(e: TouchEvent) {
       e.preventDefault()
       if (e.touches.length === 1) {
+        pointerStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         dragging.current = true
         lastMouse.current.x = e.touches[0].clientX
         lastMouse.current.y = e.touches[0].clientY
         lastPointerClient.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         lastPinchDist.current = null
       } else if (e.touches.length >= 2) {
+        pointerStart.current = null
         dragging.current = false
         const dist = pinchDist(e.touches)
         lastPinchDist.current = dist > 0 ? dist : null
@@ -678,6 +704,9 @@ export function useZUIInteraction(
 
     function onTouchMove(e: TouchEvent) {
       e.preventDefault()
+      const start = pointerStart.current
+      const touch = e.touches[0]
+      if (start && touch && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 5) pointerStart.current = null
       setHoveredItem(null, true) // Clear popover immediately on touch movement
       if (e.touches.length === 1 && dragging.current) {
         const dx = e.touches[0].clientX - lastMouse.current.x
@@ -710,6 +739,10 @@ export function useZUIInteraction(
       }
     }
     function onTouchEnd(e: TouchEvent) {
+      const start = pointerStart.current
+      const touch = e.changedTouches[0]
+      if (e.type !== 'touchcancel' && e.touches.length === 0 && start && touch && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) <= 5) selectAt(touch.clientX, touch.clientY)
+      pointerStart.current = null
       if (e.touches.length === 0) {
         dragging.current = false
         lastPinchDist.current = null

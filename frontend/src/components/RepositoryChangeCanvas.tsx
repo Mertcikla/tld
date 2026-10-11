@@ -13,10 +13,11 @@ import {
 } from '../hooks/useResizableColumn'
 import ColumnResizeHandle from './ColumnResizeHandle'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
+import RepositoryImpactInspector from './RepositoryImpactInspector'
 import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
-const MERMAID_PANE_DEFAULT_WIDTH = 380
-const crossBranchSettings = { enabled: false, depth: 1, connectorBudget: 50, connectorPriority: 'external' as const }
+const SIDE_PANE_DEFAULT_WIDTH = 380
+const crossBranchSettings = { enabled: true, depth: 2, connectorBudget: Number.MAX_SAFE_INTEGER, connectorPriority: 'external' as const }
 const seedTagColors = (): Record<string, Tag> =>
   Object.fromEntries(
     Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
@@ -29,13 +30,16 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const splitRef = useRef<HTMLDivElement | null>(null)
   const [scene, setScene] = useState<RepositoryImpactScene | null>(null)
   const [error, setError] = useState('')
+  const [selectedKey, setSelectedKey] = useState('')
+  const [inspectorEnabled] = useState(() => new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
+  const [debug, setDebug] = useState(inspectorEnabled)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [tagColors, setTagColors] = useState<Record<string, Tag>>(seedTagColors)
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
   const [hiddenTags, setHiddenTags] = useState<string[]>([])
-  const mermaidPane = useResizableColumn({
-    storageKey: 'tld:repositories:mermaidPaneWidth',
-    defaultWidth: MERMAID_PANE_DEFAULT_WIDTH,
+  const sidePane = useResizableColumn({
+    storageKey: inspectorEnabled ? 'tld:repositories:impactInspectorWidth' : 'tld:repositories:mermaidPaneWidth',
+    defaultWidth: SIDE_PANE_DEFAULT_WIDTH,
     collapseBelow: PANEL_COLLAPSE_SNAP,
     overlayAbove: PANEL_OVERLAY_SNAP,
     side: 'end',
@@ -47,15 +51,16 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const version = diagram?.version ?? ''
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
     setError('')
     setScene(null)
     if (!repositoryId || !comparisonKey) return undefined
-    void api.repositories.impactScene(repositoryId, comparisonKey)
+    void api.repositories.impactScene(repositoryId, comparisonKey, controller.signal, { debugProvenance: debug, plain: displayMode === 'plain' })
       .then((result) => { if (active) setScene(result) })
-      .catch((err: unknown) => { if (active) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
-    return () => { active = false }
-  }, [repositoryId, comparisonKey, version])
-  const view = useMemo(() => scene ? repositoryChangeScene(scene, { plain: displayMode === 'plain' }) : null, [scene, displayMode])
+      .catch((err: unknown) => { if (active && !controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
+    return () => { active = false; controller.abort() }
+  }, [repositoryId, comparisonKey, version, debug, displayMode])
+  const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
   useEffect(() => {
     if (!diagram) return
     let cancelled = false
@@ -93,13 +98,29 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const handleToggleTagVisibility = useCallback((tag: string) => {
     setHiddenTags((prev) => prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag])
   }, [])
-  const focusSelected = useCallback(() => {    if (!view || !selectedPath) return
+  const selectPrimitive = useCallback((key: string) => {
+    setSelectedKey(key)
+    const entry = scene?.provenance?.[key]
+    if (!entry) return
+    if (entry.objectKind === 'view') canvas.current?.focusDiagram(entry.viewId)
+    else if (entry.objectKind === 'placement') canvas.current?.focusElement(entry.viewId, entry.resourceId)
+  }, [scene])
+  const focusSelected = useCallback(() => {
+    if (!view || !selectedPath) return
+    const key = scene?.coverage?.find((entry) => entry.path === selectedPath)?.placementKeys[0]
+    if (key) { selectPrimitive(key); return }
     for (const [viewId, data] of Object.entries(view.data.views)) {
       const element = data.placements.find((item) => item.file_path === selectedPath && view.overlays[item.element_id])
-      if (element && canvas.current?.focusElement(Number(viewId), element.element_id)) return
+      if (element && canvas.current?.focusElement(Number(viewId), element.element_id)) { setSelectedKey(`placement|${viewId}|${element.element_id}`); return }
     }
-  }, [view, selectedPath])
+  }, [view, selectedPath, scene, selectPrimitive])
   useEffect(focusSelected, [focusSelected])
+  const hiddenChanges = useMemo(() => (scene?.coverage ?? []).filter((entry) => entry.placementKeys.every((key) => {
+    const provenance = scene?.provenance?.[key]
+    if (!provenance || !view) return true
+    const element = view.data.views[String(provenance.viewId)]?.placements.find((item) => item.element_id === provenance.resourceId)
+    return !element || element.tags.some((tag) => hiddenTags.includes(tag))
+  })).length, [scene, view, hiddenTags])
   return (
     <Flex direction="column" flex={1} minW={0} minH="240px" data-testid="repository-change-overlay">
       {!diagram ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
@@ -107,7 +128,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} onSelectObject={inspectorEnabled ? (selection) => setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') : undefined} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               busy={busy}
               viewMode={displayMode}
@@ -120,41 +141,53 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
               onToggleTagVisibility={handleToggleTagVisibility}
             />
           </Box>
-          {/* The change diagram is always docked beside the canvas; shrinking it
+          {/* The side panel is docked beside the canvas; shrinking it
               below the collapse threshold is what hides its contents. */}
           <ColumnResizeHandle
-          label="Resize change diagram"
-          dataTestId="repository-change-mermaid-resize"
+          label={inspectorEnabled ? 'Resize impact inspector' : 'Resize change diagram'}
+          dataTestId={inspectorEnabled ? 'repository-impact-inspector-resize' : 'repository-change-mermaid-resize'}
           display={{ base: 'none', lg: 'block' }}
-          zIndex={mermaidPane.isOverlay ? 40 : 0}
-          isActive={mermaidPane.isResizing}
-          onPointerDown={mermaidPane.startResize}
+          zIndex={sidePane.isOverlay ? 40 : 0}
+          isActive={sidePane.isResizing}
+          onPointerDown={sidePane.startResize}
         />
         <Box
-          data-testid="repository-change-mermaid-slot"
-          w={{ base: 'full', lg: `${mermaidPane.renderedWidth}px` }}
+          data-testid={inspectorEnabled ? 'repository-impact-inspector-slot' : 'repository-change-mermaid-slot'}
+          w={{ base: 'full', lg: `${sidePane.renderedWidth}px` }}
           h={{ base: '360px', lg: 'auto' }}
           minH={0}
           flexShrink={0}
-          position={mermaidPane.isOverlay ? { base: 'relative', lg: 'absolute' } : 'relative'}
+          position={sidePane.isOverlay ? { base: 'relative', lg: 'absolute' } : 'relative'}
           top={{ lg: 0 }}
           right={{ lg: 0 }}
           bottom={{ lg: 0 }}
-          zIndex={mermaidPane.isOverlay ? 30 : undefined}
-          boxShadow={mermaidPane.isOverlay ? '-12px 0 32px rgba(0,0,0,0.55)' : undefined}
+          zIndex={sidePane.isOverlay ? 30 : undefined}
+          boxShadow={sidePane.isOverlay ? '-12px 0 32px rgba(0,0,0,0.55)' : undefined}
           borderTop={{ base: '1px solid', lg: 'none' }}
           borderColor="whiteAlpha.100"
         >
-          <RepositoryChangeMermaid
-            repositoryId={diagram.repositoryId}
-            comparisonKey={diagram.comparisonKey}
+          {inspectorEnabled ? <RepositoryImpactInspector
+            scene={scene}
+            selectedKey={selectedKey}
+            onSelect={selectPrimitive}
+            debug={debug}
+            onDebugChange={setDebug}
+            plain={displayMode === 'plain'}
+            hiddenChanges={hiddenChanges}
+            collapsed={sidePane.isCollapsed}
+            overlay={sidePane.isOverlay}
+            onExpand={sidePane.expand}
+            onDock={sidePane.dock}
+          /> : <RepositoryChangeMermaid
+            repositoryId={repositoryId}
+            comparisonKey={comparisonKey}
             plain={displayMode === 'plain'}
             open
-            collapsed={mermaidPane.isCollapsed}
-            overlay={mermaidPane.isOverlay}
-            onExpand={mermaidPane.expand}
-            onDock={mermaidPane.dock}
-          />
+            collapsed={sidePane.isCollapsed}
+            overlay={sidePane.isOverlay}
+            onExpand={sidePane.expand}
+            onDock={sidePane.dock}
+          />}
         </Box>
         </Flex>
       </Flex>}

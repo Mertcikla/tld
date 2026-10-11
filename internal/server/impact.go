@@ -13,6 +13,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
+	"google.golang.org/protobuf/proto"
 )
 
 func impactError(err error) error {
@@ -42,14 +43,15 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if input.RepositoryId == "" || input.Base == nil || input.Head == nil {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository and both comparison targets are required"))
 	}
-	if err := impact.ValidateBlastRadius(input.GetBlastRadius()); err != nil {
+	if err := impact.ValidateBlastRadius(input.GetContextDepth()); err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	diagram, err := s.impactService().Compare(ctx, impact.CompareRequest{
 		RepositoryID: input.RepositoryId,
 		Base:         input.Base,
 		Head:         input.Head,
-		BlastRadius:  input.GetBlastRadius(),
+		BlastRadius:  input.GetContextDepth(),
+		ViewFilter:   input.GetViewFilter(),
 		Progress: func(p indexer.Progress) {
 			_ = stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Progress{Progress: &pb.Progress{Stage: p.Stage, Current: uint32(p.Current), Total: uint32(p.Total), Detail: p.Detail}}})
 		},
@@ -57,7 +59,9 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if err != nil {
 		return impactError(err)
 	}
-	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: diagram}})
+	result := proto.Clone(diagram).(*pb.ImpactDiagram)
+	result.Scene = impact.PublicScene(result.Scene, input.GetDebugProvenance())
+	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: result}})
 }
 
 func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.LiveImpact], error) {
@@ -68,7 +72,11 @@ func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(result), nil
+	public := proto.Clone(result).(*pb.LiveImpact)
+	if public.Diagram != nil {
+		public.Diagram.Scene = impact.PublicScene(public.Diagram.Scene, false)
+	}
+	return connect.NewResponse(public), nil
 }
 
 func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect.Request[pb.ExportImpactMermaidRequest]) (*connect.Response[pb.ExportImpactMermaidResponse], error) {
@@ -88,8 +96,8 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	scene = impact.ScopeScene(scene, impact.DiagramRadius(diagram))
-	code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: req.Msg.GetPlain()})
+	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
+	code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
 		response.Markdown = mermaid.MermaidBlock(code)
@@ -109,8 +117,11 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	// The canvas draws the blast-radius scene only: authored views arrive
-	// pruned to impacted placements, so the full workspace never ships.
-	scene = impact.ScopeScene(scene, impact.DiagramRadius(diagram))
-	return connect.NewResponse(&pb.GetImpactSceneResponse{Scene: scene}), nil
+	// Serve the frozen selection. Standard retains the authored skeleton;
+	// Plain applies the same backend policy used by CLI and Mermaid exports.
+	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
+	if err := impact.ValidateCoverage(scene); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&pb.GetImpactSceneResponse{Scene: impact.PublicScene(scene, req.Msg.GetDebugProvenance())}), nil
 }

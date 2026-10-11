@@ -5,10 +5,20 @@ import type { RepositoryImpact as ImpactDiagram } from '../api/client'
 import { PANEL_COLLAPSE_SNAP, PANEL_OVERLAY_SNAP, PANEL_RAIL_WIDTH } from '../hooks/useResizableColumn'
 import RepositoryChangeCanvas from './RepositoryChangeCanvas'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
+import RepositoryImpactInspector from './RepositoryImpactInspector'
+import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const storageKey = 'tld:repositories:mermaidPaneWidth'
 
 vi.mock('./ZUI', () => ({ ZUICanvas: () => null }))
+vi.mock('./RepositoryImpactInspector', () => ({
+  default: (props: Record<string, unknown>) =>
+    React.createElement('div', {
+      'data-testid': 'mock-inspector',
+      'data-collapsed': String(!!props.collapsed),
+      'data-overlay': String(!!props.overlay),
+    }),
+}))
 vi.mock('./RepositoryChangeMermaid', () => ({
   default: (props: Record<string, unknown>) =>
     React.createElement('div', {
@@ -55,10 +65,11 @@ const diagram = {
   diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
 } as unknown as ImpactDiagram
 
-function stubEnvironment(storedWidth?: string) {
+function stubEnvironment(storedWidth?: string, search = '') {
   const values = new Map<string, string>()
   if (storedWidth != null) values.set(storageKey, storedWidth)
   vi.stubGlobal('window', {
+    location: { search },
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     localStorage: {
@@ -102,13 +113,47 @@ async function renderCanvas() {
   return renderer
 }
 
-describe('RepositoryChangeCanvas mermaid pane', () => {
+describe('RepositoryChangeCanvas side panel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('defaults to Mermaid without requesting debug provenance', async () => {
+    stubEnvironment()
+    const renderer = await renderCanvas()
+    const { api } = await import('../api/client')
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryImpactInspector)).toHaveLength(0)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: false, plain: false })
+    renderer.unmount()
+  })
+
+  it('enables the inspector only with the explicit developer flag', async () => {
+    stubEnvironment(undefined, '?debugImpact=1')
+    const renderer = await renderCanvas()
+    const { api } = await import('../api/client')
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(0)
+    expect(hostNodes(renderer, 'mock-inspector')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repository-impact-inspector-resize')).toHaveLength(1)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: true, plain: false })
+
+    await act(async () => { renderer.root.findByType(RepositoryImpactInspector).props.onDebugChange(false) })
+    expect(hostNodes(renderer, 'mock-inspector')).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(0)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: false, plain: false })
+    renderer.unmount()
+  })
+
+  it('keeps Mermaid for a disabled developer flag', async () => {
+    stubEnvironment(undefined, '?debugImpact=0')
+    const renderer = await renderCanvas()
+    expect(hostNodes(renderer, 'mock-mermaid')).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryImpactInspector)).toHaveLength(0)
+    renderer.unmount()
   })
 
   it('renders the grounded diagram with view-mode toggle and legend', async () => {
@@ -227,7 +272,7 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     renderer.unmount()
   })
 
-  it('feeds the loaded scene into the mermaid pane', async () => {
+  it('keeps the Mermaid panel alongside the loaded scene', async () => {
     stubEnvironment()
     const { api } = await import('../api/client')
     const impactScene = api.repositories.impactScene as unknown as ReturnType<typeof vi.fn>

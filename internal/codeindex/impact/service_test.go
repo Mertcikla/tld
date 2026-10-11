@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/codeindex/indexer"
@@ -84,13 +86,14 @@ func TestCompareServesStoredComparison(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.GetComparisonKey() != ComparisonKey("base", "head", 0) {
+	if first.GetComparisonKey() != ComparisonKey("base", "head", 0, first.WorkspaceFingerprint) {
 		t.Fatalf("comparison key = %q", first.GetComparisonKey())
 	}
 	if len(first.GetNodes()) != 1 {
 		t.Fatalf("nodes = %d, want the single changed file", len(first.GetNodes()))
 	}
-	marker := &pb.ImpactDiagram{RepositoryId: "repo", ComparisonKey: first.GetComparisonKey(), Version: "cached-marker", Diff: first.GetDiff()}
+	marker := proto.Clone(first).(*pb.ImpactDiagram)
+	marker.Version = "cached-marker"
 	if err := idx.SaveImpact(ctx, marker); err != nil {
 		t.Fatal(err)
 	}
@@ -110,5 +113,42 @@ func TestCompareRejectsInvalidRadiusBeforeIndexing(t *testing.T) {
 	}
 	if _, err := service.CompareSnapshots(context.Background(), "repo", "base", "head", MaxBlastRadius+1); err == nil {
 		t.Fatal("invalid snapshot radius accepted")
+	}
+}
+
+func TestSceneReturnsFrozenCanonicalArtifactWithoutStores(t *testing.T) {
+	frozen := &pb.ImpactScene{SchemaVersion: PipelineVersion, RepositoryId: "repo", Warnings: []string{"captured warning"}}
+	scene, err := (Service{}).Scene(context.Background(), &pb.ImpactDiagram{Scene: frozen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene.Warnings[0] = "reader changed its copy"
+	if frozen.Warnings[0] != "captured warning" {
+		t.Fatal("scene reader mutated the stored artifact")
+	}
+}
+
+func TestSceneReassemblesLegacyAnalysisWithCanonicalProvenance(t *testing.T) {
+	ctx, ws, idx := pipelineStore(t)
+	publishPipeline(t, ctx, idx, "base", map[string]string{"a.go": "before"}, nil)
+	publishPipeline(t, ctx, idx, "head", map[string]string{"a.go": "after"}, nil)
+	diagram, err := buildAnalysis(ctx, idx, "repo", "legacy", "base", "head", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram.RequestedRadius = nil
+	diagram.Scene = &pb.ImpactScene{SchemaVersion: "1"}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scene.SchemaVersion != PipelineVersion || len(scene.Stages) == 0 || len(scene.Coverage) != 1 {
+		t.Fatalf("legacy scene bypassed assembly: %+v", scene)
+	}
+	if err := ValidateCoverage(scene); err != nil {
+		t.Fatal(err)
+	}
+	if diagram.RequestedRadius != nil || diagram.Scene.SchemaVersion != "1" {
+		t.Fatal("legacy input was mutated")
 	}
 }

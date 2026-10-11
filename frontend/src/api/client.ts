@@ -80,6 +80,10 @@ import {
   CodeIndexService,
   FactKind,
   OverlayReason,
+  ImpactOrigin,
+  ImpactGrounding,
+  ImpactRole,
+  type ImpactProvenance as ImpactProvenanceProto,
   RepositoryService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
@@ -262,6 +266,8 @@ export interface RepositoryImpact {
   nodes: ImpactFileNode[]
   edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
   version: string
+  scene?: RepositoryImpactScene
+  requestedRadius?: number
 }
 export interface RepositoryImpactMermaid {
   code: string
@@ -308,6 +314,27 @@ export interface RepositoryImpactScene extends ExploreData {
   toGitRevision: string
   overlays: Record<number, RepositoryImpactOverlay>
   authoredViewIds: number[]
+  provenance?: Record<string, RepositoryImpactProvenance>
+  coverage?: { path: string; placementKeys: string[]; factsUnavailable: boolean }[]
+  trace?: { pipelineVersion: string; stages: { id: string; name: string; added: number; annotated: number; reused: number; suppressed: number }[]; decisions: RepositoryImpactDecision[] }
+  requestedRadius?: number
+  effectiveRadius?: number
+  warnings?: string[]
+  manifestComplete?: boolean
+  omittedContext?: string[]
+  workspaceFingerprint?: string
+}
+
+export interface RepositoryImpactDecision {
+  stage: string; action: string; key: string; reason: string; paths: string[]; representativeKeys: string[]
+}
+
+export interface RepositoryImpactProvenance {
+  key: string; objectKind: string; viewId: number; resourceId: number; name: string
+  origin: 'authored' | 'mapped' | 'raw' | 'unknown'
+  grounding: string; role: string; stage: string; reason: string; paths: string[]; distance: number
+  witnesses: { snapshotId: string; seedPath: string; paths: string[] }[]
+  logicalKey: string; mapSnapshotId: string; evidence: string[]; partial: boolean; endpointKeys: string[]
 }
 export interface LiveRepositoryImpact {
   diagram: RepositoryImpact | null
@@ -632,6 +659,8 @@ function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
     repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
     viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
     version: diagram.version,
+    scene: diagram.scene ? mapImpactScene(diagram.scene) : undefined,
+    requestedRadius: diagram.requestedRadius,
     nodes: diagram.nodes.map((node) => ({
       key: node.key, path: node.path, name: node.name, change: change(node.change),
       distance: node.distance, elementId: Number(node.elementId), x: node.x, y: node.y,
@@ -704,7 +733,27 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
     toGitRevision: scene.toGitRevision,
     overlays,
     authoredViewIds: scene.authoredViewIds.map(Number),
+    provenance: Object.fromEntries(Object.entries(scene.provenance).map(([key, value]) => [key, mapImpactProvenance(value)])),
+    coverage: scene.coverage.map((entry) => ({ path: entry.path, placementKeys: [...entry.placementKeys], factsUnavailable: entry.factsUnavailable })),
+    trace: scene.stages.length ? { pipelineVersion: scene.schemaVersion, stages: scene.stages.map((stage) => ({ ...stage })), decisions: scene.decisions.map((decision) => ({ ...decision })) } : undefined,
+    requestedRadius: scene.requestedRadius,
+    effectiveRadius: scene.effectiveRadius,
+    warnings: [...scene.warnings],
+    manifestComplete: scene.manifestComplete,
+    omittedContext: [...scene.omittedContext],
+    workspaceFingerprint: scene.workspaceFingerprint,
   }
+}
+
+function mapImpactProvenance(value: ImpactProvenanceProto): RepositoryImpactProvenance {
+  const origins: Record<number, RepositoryImpactProvenance['origin']> = { [ImpactOrigin.AUTHORED]: 'authored', [ImpactOrigin.MAPPED]: 'mapped', [ImpactOrigin.RAW]: 'raw' }
+  const grounding: Record<number, string> = { [ImpactGrounding.RESOLVED]: 'resolved', [ImpactGrounding.UNLINKED]: 'unlinked', [ImpactGrounding.UNRESOLVED]: 'unresolved', [ImpactGrounding.OUTSIDE_REPOSITORY]: 'outside repository', [ImpactGrounding.AMBIGUOUS]: 'ambiguous', [ImpactGrounding.MANIFEST_ONLY]: 'manifest only' }
+  const roles: Record<number, string> = { [ImpactRole.DIRECT]: 'direct change', [ImpactRole.CONTAINED]: 'contained change', [ImpactRole.DEPENDENCY_CONTEXT]: 'dependency context', [ImpactRole.AUTHORED_CONTEXT]: 'authored context', [ImpactRole.CONTAINER]: 'container' }
+  return { key: value.key, objectKind: value.objectKind, viewId: Number(value.viewId), resourceId: Number(value.resourceId), name: value.name,
+    origin: origins[value.origin] ?? 'unknown', grounding: grounding[value.grounding] ?? 'unknown', role: roles[value.role] ?? 'relationship',
+    stage: value.stage, reason: value.reason, paths: [...value.paths], distance: value.distance,
+    witnesses: value.witnesses.map((witness) => ({ snapshotId: witness.snapshotId, seedPath: witness.paths[0] ?? '', paths: [...witness.paths] })),
+    logicalKey: value.logicalKey, mapSnapshotId: value.mapSnapshotId, evidence: [...value.evidence], partial: value.partial, endpointKeys: [...value.endpointKeys] }
 }
 
 function mapImpactSymbolChange(symbol: ImpactSymbolChangeProto): RepositoryImpactSymbol {
@@ -2316,6 +2365,7 @@ export const api = {
     },
     compare: async (repositoryId: string, options: {
       base: RepositoryMapOptions; head: RepositoryMapOptions
+      blastRadius?: number; debugProvenance?: boolean; viewFilter?: string
       signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
     }): Promise<RepositoryImpact> => {
       const toRevision = (o: RepositoryMapOptions) => ({
@@ -2323,7 +2373,7 @@ export const api = {
         workingTree: o.workingTree, gitBranch: o.gitBranch,
       })
       // Omit blastRadius to use the shared default: direct changes only.
-      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head) }, { signal: options.signal })
+      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head), contextDepth: options.blastRadius ?? 0, debugProvenance: options.debugProvenance ?? false, viewFilter: options.viewFilter ?? '' }, { signal: options.signal })
       let result: RepositoryImpact | null = null
       for await (const event of stream) {
         if (event.event.case === 'progress') options.onProgress?.(event.event.value)
@@ -2351,8 +2401,8 @@ export const api = {
       const result = await codeIndexRepositoryClient.stopWatch({ id: repositoryId })
       return mapWatchStatus(result)
     }),
-    impactScene: (repositoryId: string, comparisonKey: string, signal?: AbortSignal): Promise<RepositoryImpactScene> => rpc(async () => {
-      const response = await codeIndexClient.getImpactScene({ repositoryId, comparisonKey }, { signal })
+    impactScene: (repositoryId: string, comparisonKey: string, signal?: AbortSignal, options: { debugProvenance?: boolean; plain?: boolean } = {}): Promise<RepositoryImpactScene> => rpc(async () => {
+      const response = await codeIndexClient.getImpactScene({ repositoryId, comparisonKey, debugProvenance: options.debugProvenance ?? false, plain: options.plain ?? false }, { signal })
       if (!response.scene) throw new Error('Impact scene unavailable')
       return mapImpactScene(response.scene)
     }),

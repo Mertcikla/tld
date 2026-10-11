@@ -308,3 +308,31 @@ func (s *Store) FileImports(ctx context.Context, snapshotID string) ([]FileImpor
 func isRelativeImport(path string) bool {
 	return strings.HasPrefix(path, ".") || strings.HasPrefix(path, "/")
 }
+
+// FilePairKinds retains the observed relationship kinds behind each ordered
+// file dependency for impact provenance; containment is never a dependency hop.
+func (s *Store) FilePairKinds(ctx context.Context, snapshotID string) (map[[2]string][]pb.EdgeKind, error) {
+	where, scopeArgs := scope(ctx).clause("e.org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT DISTINCT sf.path, tf.path, e.kind
+ FROM codeindex_edges e
+ JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id
+ JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
+ JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
+ WHERE m.snapshot_id = ? AND sf.path <> '' AND tf.path <> '' AND sf.path <> tf.path`+where+`
+ ORDER BY sf.path, tf.path, e.kind`, append([]any{snapshotID}, scopeArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[[2]string][]pb.EdgeKind{}
+	for rows.Next() {
+		var from, to string
+		var kind int32
+		if err := rows.Scan(&from, &to, &kind); err != nil {
+			return nil, err
+		}
+		pair := [2]string{from, to}
+		out[pair] = append(out[pair], pb.EdgeKind(kind))
+	}
+	return out, rows.Err()
+}

@@ -8,6 +8,9 @@ import (
 // DiagramRadius recovers the retained context from a cached diagram, including
 // older artifacts. Scene exports must preserve it instead of applying a default.
 func DiagramRadius(diagram *pb.ImpactDiagram) uint32 {
+	if diagram != nil && diagram.RequestedRadius != nil {
+		return diagram.GetRequestedRadius()
+	}
 	var radius uint32
 	for _, node := range diagram.GetNodes() {
 		if node.GetDistance() > radius {
@@ -19,7 +22,7 @@ func DiagramRadius(diagram *pb.ImpactDiagram) uint32 {
 
 // Scope filters a comparison diagram down to the requested blast radius.
 // Direct changes (distance 0) are always kept; unchanged context farther than
-// radius is dropped, along with edges and group entries that reference it.
+// radius is dropped, along with edges that reference it.
 func Scope(diagram *pb.ImpactDiagram, radius uint32) *pb.ImpactDiagram {
 	if diagram == nil {
 		return nil
@@ -44,32 +47,11 @@ func Scope(diagram *pb.ImpactDiagram, radius uint32) *pb.ImpactDiagram {
 		edges = append(edges, edge)
 	}
 	scoped.Edges = edges
-	scoped.Groups = scopeGroups(scoped.GetGroups(), kept)
-	return scoped
-}
-
-func scopeGroups(groups []*pb.ImpactGroup, kept map[string]bool) []*pb.ImpactGroup {
-	out := make([]*pb.ImpactGroup, 0, len(groups))
-	for _, group := range groups {
-		if group == nil {
-			continue
-		}
-		children := scopeGroups(group.GetChildren(), kept)
-		keys := make([]string, 0, len(group.GetNodeKeys()))
-		for _, key := range group.GetNodeKeys() {
-			if kept[key] {
-				keys = append(keys, key)
-			}
-		}
-		if len(keys) == 0 && len(children) == 0 {
-			continue
-		}
-		clone := proto.Clone(group).(*pb.ImpactGroup)
-		clone.NodeKeys = keys
-		clone.Children = children
-		out = append(out, clone)
+	scoped.Groups = nil // Scene.Tree owns hierarchy; retired node groups are not exported.
+	if scoped.Scene != nil {
+		scoped.Scene = SelectScene(scoped.Scene, radius, false)
 	}
-	return out
+	return scoped
 }
 
 // FitRadius picks the widest blast radius at or below maxRadius whose node
@@ -84,6 +66,9 @@ func FitRadius(diagram *pb.ImpactDiagram, maxRadius uint32, maxNodes int) (radiu
 		return maxRadius, false
 	}
 	count := func(r uint32) int {
+		if diagram.Scene != nil {
+			return SceneNodeCount(SelectScene(diagram.Scene, r, false))
+		}
 		total := 0
 		for _, node := range diagram.GetNodes() {
 			if node != nil && node.GetDistance() <= r {
