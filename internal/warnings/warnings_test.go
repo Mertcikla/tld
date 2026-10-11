@@ -31,7 +31,7 @@ func TestAnalyze_TechnologyValidation(t *testing.T) {
 			level:            2,
 			technology:       "UnknownTech",
 			wantWarningCount: 1,
-			wantRuleCode:     "ARC103",
+			wantRuleCode:     "ARC207",
 			wantRuleName:     "Unknown Technology",
 		},
 		{
@@ -39,7 +39,7 @@ func TestAnalyze_TechnologyValidation(t *testing.T) {
 			level:            2,
 			technology:       "Go, NonExistentTech",
 			wantWarningCount: 1,
-			wantRuleCode:     "ARC103",
+			wantRuleCode:     "ARC207",
 			wantRuleName:     "Unknown Technology",
 		},
 		{
@@ -47,7 +47,7 @@ func TestAnalyze_TechnologyValidation(t *testing.T) {
 			level:            2,
 			technology:       "TechA / TechB",
 			wantWarningCount: 1,
-			wantRuleCode:     "ARC103",
+			wantRuleCode:     "ARC207",
 			wantRuleName:     "Unknown Technology",
 		},
 		{

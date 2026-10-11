@@ -211,11 +211,11 @@ func TestValidateCmd_RuleCodeNoViolations(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC103")
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC207")
 	if err != nil {
-		t.Fatalf("validate ARC103: %v", err)
+		t.Fatalf("validate ARC207: %v", err)
 	}
-	if !strings.Contains(stdout, "No violations found for ARC103") {
+	if !strings.Contains(stdout, "No violations found for ARC207") {
 		t.Errorf("stdout %q does not contain 'No violations found'", stdout)
 	}
 }

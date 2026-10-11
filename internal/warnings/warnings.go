@@ -291,24 +291,6 @@ var warningRules = []warningRule{
 		},
 	},
 	{
-		Code:        "ARC103",
-		Name:        "Unknown Technology",
-		Description: "Catalog mismatch",
-		Mediation:   "Use recognized technology names (e.g. Go, React) or double check spelling.",
-		Level:       2,
-		Check: func(ctx *warningContext, rule warningRule) {
-			for elementRef, element := range ctx.ws.Elements {
-				if element == nil || element.Technology == "" {
-					continue
-				}
-				missing := tech.Validate(element.Technology)
-				if len(missing) > 0 {
-					ctx.addWarning(rule.Code, fmt.Sprintf("Element %q has unknown: %s", elementRef, strings.Join(missing, ", ")))
-				}
-			}
-		},
-	},
-	{
 		Code:        "ARC201",
 		Name:        "Missing Desc",
 		Description: "`description` field is empty",
@@ -450,7 +432,7 @@ var warningRules = []warningRule{
 		Code:        "ARC206",
 		Name:        "Low Link Coverage",
 		Description: "Linked elements do not cover the indexed code directories",
-		Mediation: "Link elements to files in the uncovered directories, e.g. `tld link <element> --file <path>`, so change tracking reaches the whole codebase.",
+		Mediation:   "Link elements to files in the uncovered directories, e.g. `tld link <element> --file <path>`, so change tracking reaches the whole codebase.",
 		Level:       3,
 		Check: func(ctx *warningContext, rule warningRule) {
 			report := ctx.linkCoverageReport()
@@ -463,6 +445,24 @@ var warningRules = []warningRule{
 					continue
 				}
 				ctx.addWarning(rule.Code, linkCoverageViolation(repo))
+			}
+		},
+	},
+	{
+		Code:        "ARC207",
+		Name:        "Unknown Technology",
+		Description: "Catalog mismatch",
+		Mediation:   "Use recognized technology names (e.g. Go, React) or double check spelling.",
+		Level:       3,
+		Check: func(ctx *warningContext, rule warningRule) {
+			for elementRef, element := range ctx.ws.Elements {
+				if element == nil || element.Technology == "" {
+					continue
+				}
+				missing := tech.Validate(element.Technology)
+				if len(missing) > 0 {
+					ctx.addWarning(rule.Code, fmt.Sprintf("Element %q has unknown: %s", elementRef, strings.Join(missing, ", ")))
+				}
 			}
 		},
 	},
