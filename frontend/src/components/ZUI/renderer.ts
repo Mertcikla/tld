@@ -1417,15 +1417,9 @@ function drawEdges(
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
       ctx.lineWidth = CONNECTOR_LINE_PX / zoom
-      // Edges new, removed, or modified in the compared revisions keep their
-      // routing but take the change palette over the layer color, so connector
-      // churn reads at a glance. Removed edges additionally dash.
-      if (edge.change) {
-        const edgeMeta = EDGE_CHANGE_META[edge.change]
-        ctx.strokeStyle = edgeMeta.color
-        if (edgeMeta.dash.length > 0) {
-          ctx.setLineDash(edgeMeta.dash.map((segment) => segment / zoom))
-        }
+
+      if (edge.change === 'removed') {
+        ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))
       }
 
       let midX = (sH.x + tH.x) / 2

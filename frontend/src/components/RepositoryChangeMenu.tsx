@@ -159,7 +159,7 @@ export default function RepositoryChangeMenu({
       >
         {EDGE_CHANGE_ORDER.map((kind) => (
           <HStack key={kind} spacing={1.5} data-testid={`repositories-edge-${kind}`}>
-            <Box w="14px" h="0" borderTop="2px solid" borderColor={EDGE_CHANGE_META[kind].color} borderTopStyle={kind === 'removed' ? 'dashed' : 'solid'} flexShrink={0} />
+            <Box w="14px" h="0" borderTop="2px solid" borderColor="var(--accent)" borderTopStyle={kind === 'removed' ? 'dashed' : 'solid'} flexShrink={0} />
             <Text fontSize="10px" color="gray.400" title={EDGE_CHANGE_META[kind].label}>
               {kind} edge
             </Text>
