@@ -453,7 +453,7 @@ var warningRules = []warningRule{
 		Name:        "Unknown Technology",
 		Description: "Catalog mismatch",
 		Mediation:   "Use recognized technology names (e.g. Go, React) or double check spelling.",
-		Level:       3,
+		Level:       2,
 		Check: func(ctx *warningContext, rule warningRule) {
 			for elementRef, element := range ctx.ws.Elements {
 				if element == nil || element.Technology == "" {
