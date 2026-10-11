@@ -20,6 +20,20 @@ import (
 // scene shape changes so a stored artifact stays readable by later readers.
 const SceneSchemaVersion = "1"
 
+const MapGeneratedTag = "map-generated"
+
+func transientName(p string) string {
+	dir, base := path.Split(p)
+	parent := strings.TrimSuffix(dir, "/")
+	if i := strings.LastIndex(parent, "/"); i >= 0 {
+		parent = parent[i+1:]
+	}
+	if parent == "" || parent == "." {
+		return base
+	}
+	return parent + "/" + base
+}
+
 // retiredImpactViewMarker identifies views owned by the retired impact
 // materializer. They are hidden while an older watcher is still running.
 const retiredImpactViewMarker = " impact · "
@@ -448,6 +462,9 @@ func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 	carriesOverlay := false
 	for _, placement := range content.Placements {
 		item := scenePlacement(placement)
+		if b.mappedElements[placement.ElementID] {
+			item.Element.Tags = appendTagUnique(item.Element.Tags, MapGeneratedTag)
+		}
 		if b.belongs(placement) {
 			if node := b.nodes[normalizeScenePath(filePathValue(placement.FilePath))]; node != nil {
 				if node.GetDistance() == 0 {
@@ -573,7 +590,7 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 			Element: &diagv1.PlacedElement{
 				Id: int32(id), ElementId: int32(id), ViewId: int32(viewID),
 				PositionX: x, PositionY: y,
-				Name: node.GetName(), Kind: proto.String("component"),
+				Name: transientName(node.GetPath()), Kind: proto.String("component"),
 				Description: proto.String(node.GetPath()), Repo: proto.String(b.root),
 				FilePath: proto.String(node.GetPath()),
 				Tags:     []string{},
@@ -624,10 +641,7 @@ type authoredCover struct {
 // the covering authored view, wired to the covering elements, and returns
 // the nodes it did not place. Coverage comes from user-owned placements
 // (file, symbol, line, or folder links) in non-generated views; adjacency
-// comes from the head snapshot's file pairs, so this is one cheap aggregate
-// query, never a path search. A view wins by covering-neighbour count with
-// ties broken by view id, keeping the choice deterministic. Files with no
-// authored neighbour fall through untouched.
+
 func (b *sceneBuilder) attachCovered(scene *pb.ImpactScene, missing []*pb.ImpactNode, ids map[string]int64) []*pb.ImpactNode {
 	pairs := b.filePairs()
 	if len(pairs) == 0 {
@@ -698,7 +712,7 @@ func (b *sceneBuilder) attachCovered(scene *pb.ImpactScene, missing []*pb.Impact
 			Element: &diagv1.PlacedElement{
 				Id: int32(id), ElementId: int32(id), ViewId: int32(best),
 				PositionX: float64((index % 3) * 240), PositionY: float64((index / 3) * 150),
-				Name: node.GetName(), Kind: proto.String("component"),
+				Name: transientName(node.GetPath()), Kind: proto.String("component"),
 				Description: proto.String(node.GetPath()), Repo: proto.String(b.root),
 				FilePath: proto.String(node.GetPath()),
 				Tags:     []string{},
@@ -757,21 +771,32 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// filePairs loads the head snapshot's file adjacency. Any failure degrades to
-// the previous fallback behaviour, never to an error.
+// filePairs loads the union of the from/to snapshot file adjacencies,
+// keeping the stronger observation count per ordered pair. Removed edges
+// survive here so a file whose only border was deleted still attaches to the
+// authored view it detached from; the pair's change kind (added/removed/…)
+// keeps coming from the diagram's ImpactEdges, never from these weights. Any
+// failure degrades to the previous fallback behaviour, never to an error.
 func (b *sceneBuilder) filePairs() map[[2]string]float64 {
 	if b.ctx == nil || b.store == nil {
 		return nil
 	}
-	snapshotID := b.diagram.GetDiff().GetToSnapshotId()
-	if snapshotID == "" {
-		return nil
+	out := map[[2]string]float64{}
+	for _, snapshotID := range []string{b.diagram.GetDiff().GetFromSnapshotId(), b.diagram.GetDiff().GetToSnapshotId()} {
+		if snapshotID == "" {
+			continue
+		}
+		pairs, err := b.store.FilePairCounts(b.ctx, snapshotID)
+		if err != nil {
+			return nil
+		}
+		for pair, weight := range pairs {
+			if weight > out[pair] {
+				out[pair] = weight
+			}
+		}
 	}
-	pairs, err := b.store.FilePairCounts(b.ctx, snapshotID)
-	if err != nil {
-		return nil
-	}
-	return pairs
+	return out
 }
 
 // matchAuthoredOverlay resolves a change overlay for a placement the

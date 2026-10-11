@@ -78,6 +78,10 @@ func TestExportImpactSceneDegradesToMappedWithoutAuthoredViews(t *testing.T) {
 
 	fixture := sceneFixture()
 	fixture.AuthoredViewIds = nil
+	// Real degraded payloads tag map-owned placements at build time.
+	for _, placement := range fixture.Views["51"].GetPlacements() {
+		placement.GetElement().Tags = append(placement.GetElement().Tags, mapGeneratedTag)
+	}
 	got := ExportImpactScene(fixture, SceneExportOptions{})
 	for _, want := range []string{
 		`subgraph view_51["Mine"]`,
@@ -87,6 +91,19 @@ func TestExportImpactSceneDegradesToMappedWithoutAuthoredViews(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("degraded scene missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestExportImpactSceneUntaggedPlacementInDegradedViewStaysPlain(t *testing.T) {
+	t.Parallel()
+
+	// User-authored placements carry no provenance tag: even when their view
+	// has no change overlay, they must not read as map-generated.
+	fixture := sceneFixture()
+	fixture.AuthoredViewIds = nil
+	got := ExportImpactScene(fixture, SceneExportOptions{})
+	if !strings.Contains(got, `el_51_7["svc/auth<br/>modified +3 −1"]`) {
+		t.Fatalf("authored placement mislabeled in degraded view:\n%s", got)
 	}
 }
 
@@ -130,5 +147,22 @@ func TestExportImpactScenePlainHidesUnimpacted(t *testing.T) {
 	// The unimpacted member drops out, taking its connector with it.
 	if strings.Contains(got, `el_51_8["svc/db"]`) || strings.Contains(got, "linkStyle") {
 		t.Fatalf("plain scene kept unimpacted content:\n%s", got)
+	}
+}
+
+func TestExportImpactSceneChangedLinkAfterUnchanged(t *testing.T) {
+	t.Parallel()
+
+	fixture := sceneFixture()
+	fixture.Views["51"].Connectors = []*diagv1.Connector{
+		{Id: 9, ViewId: 51, SourceElementId: 7, TargetElementId: 8, Label: proto.String("uses")},
+		{Id: 1, ViewId: 51, SourceElementId: 7, TargetElementId: 8, Label: proto.String("calls"), Tags: []string{"change:modified"}},
+	}
+	got := ExportImpactScene(fixture, SceneExportOptions{})
+	if !strings.Contains(got, "linkStyle 1 stroke:#ecc94b") {
+		t.Fatalf("changed second link must address index 1, got:\n%s", got)
+	}
+	if strings.Contains(got, "linkStyle 0") {
+		t.Fatalf("unchanged first link must not be styled, got:\n%s", got)
 	}
 }

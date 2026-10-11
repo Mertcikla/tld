@@ -134,23 +134,27 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
       ...view,
       placements: placements.map((element) => {
         // Provenance is a plain tag: transients synthesized from graph facts
-        // read as augmented even inside authored views, authored-view members
-        // as authored, everything else as generated. Change state is a second
-        // tag so blast-radius context reads through the tag menu instead of
-        // outline chrome — except modified, which reads through the +a/−r
-        // lines badge under the node instead of a tag.
+        // read as augmented even inside authored views. Map-owned placements
+        // carry a map-generated tag written at scene build time and read as
+        // generated; everything else reads as authored, so user-authored
+        // members stay authored even in views with no change overlay. The
+        // raw tag is stripped so it never leaks into the tag filter menu.
+        // Change state is a second tag so blast-radius context reads through
+        // the tag menu instead of outline chrome — except modified, which
+        // reads through the +a/−r lines badge under the node instead of a tag.
+        const tags = (element.tags ?? []).filter((t) => t !== 'map-generated')
         const provenanceTag: ZUINodeProvenance = element.element_id < 0
           ? 'augmented'
-          : authored.has(id) ? 'authored' : 'generated'
+          : (element.tags ?? []).includes('map-generated') ? 'generated' : 'authored'
         const overlay = scene.overlays[element.element_id]
-        if (!overlay) return { ...element, tags: [...element.tags, provenanceTag] }
+        if (!overlay) return { ...element, tags: [...tags, provenanceTag] }
         overlays[element.element_id] = {
           change: overlay.change, path: overlay.path,
           linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols,
           reason: overlay.reason,
         }
         const changeTags = overlay.change === 'modified' ? [] : [overlay.change]
-        return { ...element, tags: [...element.tags, provenanceTag, ...changeTags] }
+        return { ...element, tags: [...tags, provenanceTag, ...changeTags] }
       }),
       connectors,
     }

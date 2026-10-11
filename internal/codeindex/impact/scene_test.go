@@ -296,6 +296,20 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 	bID := link("b", "b.go")
 	cID := link("c", "c.go")
 	dID := link("d", "d.go")
+	// Folder links resolve by prefix: f anchors the pkg/ subtree, h the
+	// file it will gain an edge to.
+	fID := link("f", "pkg/")
+	hID := link("h", "h.go")
+	// Unlinked elements carry no source anchor, so their connectors can
+	// never resolve to a file pair.
+	unlinked, err := ws.CreateElement(ctx, core.LibraryElement{Name: "u", RepositoryID: stringPtr("repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, mine.ID, unlinked.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	uID := unlinked.ID
 	connect := func(sourceID, targetID int64) {
 		t.Helper()
 		if _, err := ws.CreateConnector(ctx, core.Connector{ViewID: mine.ID, SourceElementID: sourceID, TargetElementID: targetID, Label: stringPtr("calls")}); err != nil {
@@ -304,6 +318,8 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 	}
 	connect(aID, bID)
 	connect(cID, dID)
+	connect(fID, hID)
+	connect(uID, aID)
 	publish := func(id string, files map[string]string, edges [][2]string) {
 		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
 		g := graph.NewGraph("repo", id)
@@ -322,17 +338,21 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 		}
 	}
 	publish("base", map[string]string{
-		"a.go": "func A() { return 1 }",
-		"b.go": "func B() {}",
-		"c.go": "func C() { return 1 }",
-		"d.go": "func D() {}",
+		"a.go":     "func A() { return 1 }",
+		"b.go":     "func B() {}",
+		"c.go":     "func C() { return 1 }",
+		"d.go":     "func D() {}",
+		"pkg/i.go": "func I() {}",
+		"h.go":     "func H() {}",
 	}, nil)
 	publish("head", map[string]string{
-		"a.go": "func A() { return 2 }",
-		"b.go": "func B2() {}",
-		"c.go": "func C() { return 2 }",
-		"d.go": "func D2() {}",
-	}, [][2]string{{"a.go", "b.go"}})
+		"a.go":     "func A() { return 2 }",
+		"b.go":     "func B2() {}",
+		"c.go":     "func C() { return 2 }",
+		"d.go":     "func D2() {}",
+		"pkg/i.go": "func I() { return 1 }",
+		"h.go":     "func H2() {}",
+	}, [][2]string{{"a.go", "b.go"}, {"pkg/i.go", "h.go"}})
 	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -354,6 +374,28 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 	}
 	if tags := tagsOf[[2]int32{int32(cID), int32(dID)}]; hasChangeTag(tags) {
 		t.Fatalf("connector over an unchanged pair carries a change tag: %+v", tags)
+	}
+	if tags := tagsOf[[2]int32{int32(fID), int32(hID)}]; !hasTag(tags, "change:added") {
+		t.Fatalf("connector from a folder endpoint over a new file edge is untagged: %+v", tags)
+	}
+	if tags := tagsOf[[2]int32{int32(uID), int32(aID)}]; hasChangeTag(tags) {
+		t.Fatalf("connector from an unlinked element carries a change tag: %+v", tags)
+	}
+}
+
+func TestTransientNameKeepsParentDirectory(t *testing.T) {
+	t.Parallel()
+
+	for path, want := range map[string]string{
+		"go/api/api.go": "api/api.go",
+		"go/api.go":     "go/api.go",
+		"ts/client.ts":  "ts/client.ts",
+		"main.go":       "main.go",
+		"":              "",
+	} {
+		if got := transientName(path); got != want {
+			t.Fatalf("transientName(%q) = %q, want %q", path, got, want)
+		}
 	}
 }
 
@@ -475,6 +517,91 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 	if fallback == nil || len(fallback.GetPlacements()) != 1 || fallback.GetPlacements()[0].GetElement().GetFilePath() != "lone.go" {
 		t.Fatalf("fallback view = %+v", fallback)
 	}
+}
+
+// TestSceneAttachesRemovedEdgeCounterparts proves a changed file whose only
+// coupling was removed still attaches to the authored view covering its
+// former neighbour — wired with the pair's removed kind, so the canvas draws
+// the detachment arrow instead of stranding the file in Changes.
+func TestSceneAttachesRemovedEdgeCounterparts(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	mine, err := ws.CreateView(ctx, "mine", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cover, err := ws.CreateElement(ctx, core.LibraryElement{Name: "cover", FilePath: stringPtr("a.go"), RepositoryID: stringPtr("repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, mine.ID, cover.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, files map[string]string, edges [][2]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range files {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		for _, edge := range edges {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", map[string]string{
+		"a.go": "func A() {}",
+		"b.go": "func B() {}",
+	}, [][2]string{{"a.go", "b.go"}})
+	// Both files change (so both stay diagram nodes) but the edge between
+	// them is gone: head-only adjacency would strand b.go in Changes.
+	publish("head", map[string]string{
+		"a.go": "func A() {} // touched",
+		"b.go": "func B() { return 1 }",
+	}, nil)
+	diagram, err := Save(ctx, ws, idx, "repo", "key", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := scene.GetViews()[strconv.FormatInt(mine.ID, 10)]
+	if content == nil {
+		t.Fatalf("scene missing authored view content: %+v", scene.GetViews())
+	}
+	var transientID int32
+	for _, placement := range content.GetPlacements() {
+		if placement.GetElement().GetFilePath() == "b.go" {
+			transientID = placement.GetElement().GetElementId()
+			if transientID >= 0 {
+				t.Fatalf("attached counterpart is not transient: %+v", placement.GetElement())
+			}
+		}
+	}
+	if transientID == 0 {
+		t.Fatalf("removed-edge counterpart missing from authored view: %+v", content.GetPlacements())
+	}
+	for _, connector := range content.GetConnectors() {
+		if connector.GetSourceElementId() == int32(cover.ID) && connector.GetTargetElementId() == transientID {
+			if !hasTag(connector.GetTags(), "change:removed") {
+				t.Fatalf("detachment wire lost its removed kind: %+v", connector.GetTags())
+			}
+			return
+		}
+	}
+	t.Fatalf("counterpart not wired to its former neighbour: %+v", content.GetConnectors())
 }
 
 // TestSceneIncludesChildViewsOfImpactedElements proves an element on the

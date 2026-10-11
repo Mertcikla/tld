@@ -111,7 +111,8 @@ describe('repositoryChangeScene', () => {
       tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
       views: {
         10: { placements: [placement(100, 'top.go')], connectors: [] },
-        11: { placements: [placement(1, 'a.go')], connectors: [] },
+        // Real payloads tag map-owned placements at scene build time.
+        11: { placements: [{ ...placement(1, 'a.go'), tags: ['original', 'map-generated'] }], connectors: [] },
         51: { placements: [placement(7, 'svc/auth')], connectors: [] },
         '-1': { placements: [placement(-1, 'new.go')], connectors: [] },
       },
@@ -128,7 +129,24 @@ describe('repositoryChangeScene', () => {
     expect(tagsFor(51, 7)).toContain('authored')
     expect(tagsFor(-1, -1)).toContain('augmented')
     const degraded = repositoryChangeScene({ ...withOrphan, authoredViewIds: [] }, {})
-    expect(degraded.data.views[11].placements.find((element) => element.element_id === 1)!.tags).toContain('generated')
+    const degradedTags = degraded.data.views[11].placements.find((element) => element.element_id === 1)!.tags
+    expect(degradedTags).toContain('generated')
+    expect(degradedTags).not.toContain('map-generated')
+  })
+
+  it('keeps untagged members authored even with no authored view', () => {
+    const untagged: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map')])],
+      views: {
+        10: { placements: [placement(100, 'top.go')], connectors: [] },
+        11: { placements: [placement(1, 'a.go')], connectors: [] },
+      },
+      overlays: { 1: overlay('modified', 'a.go', 0) },
+      authoredViewIds: [],
+    }
+    const degraded = repositoryChangeScene(untagged, {})
+    expect(degraded.data.views[11].placements.find((element) => element.element_id === 1)!.tags).toContain('authored')
   })
 
   it('falls back to mapped when no authored view matched', () => {

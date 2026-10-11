@@ -9,6 +9,11 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 )
 
+// mapGeneratedTag mirrors impact.MapGeneratedTag without importing the impact
+// package: that import would close a test-only cycle (impact's tests reach
+// mermaid through store and api). Compare by value.
+const mapGeneratedTag = "map-generated"
+
 // SceneExportOptions controls how ExportImpactScene renders a portable change
 // scene. Plain mirrors the canvas plain toggle: hide placements without
 // change impact, keeping only the container elements that reach impacted
@@ -257,16 +262,24 @@ func sceneChangeWord(change codeindexv1.ChangeKind) string {
 	}
 }
 
-// sceneProvenanceGlyph mirrors the canvas provenance chips: graph-augmented
-// transients and map-generated nodes are marked, authored nodes are plain.
-func (v *sceneViewer) sceneProvenanceGlyph(viewID, elementID int32) string {
-	if v.isTransient(elementID) {
+// sceneProvenanceGlyph mirrors the canvas provenance chips per element:
+// graph-augmented transients and map-generated placements are marked,
+// everything else stays plain — including user-authored placements in views
+// that carry no change overlay (degraded scenes). The map-generated tag rides
+// the placement tags, written at scene build time.
+func (v *sceneViewer) sceneProvenanceGlyph(viewID int32, element *diagv1.PlacedElement) string {
+	if v.isTransient(element.GetElementId()) {
 		return "◇ "
 	}
 	if v.authored[viewID] {
 		return ""
 	}
-	return "▦ "
+	for _, tag := range element.GetTags() {
+		if tag == mapGeneratedTag {
+			return "▦ "
+		}
+	}
+	return ""
 }
 
 func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement) string {
@@ -274,7 +287,7 @@ func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement
 	if label == "" {
 		label = fmt.Sprintf("element %d", element.GetElementId())
 	}
-	label = v.sceneProvenanceGlyph(viewID, element.GetElementId()) + label
+	label = v.sceneProvenanceGlyph(viewID, element) + label
 	if overlay, ok := v.overlayOf[element.GetElementId()]; ok {
 		if word := sceneChangeWord(overlay.GetChange()); word != "unchanged" {
 			label += fmt.Sprintf("<br/>%s +%d \u2212%d", word, overlay.GetLinesAdded(), overlay.GetLinesRemoved())
@@ -328,6 +341,10 @@ func (v *sceneViewer) renderView(viewID int32) []string {
 			continue
 		}
 		lines = append(lines, "  "+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
+		// Mermaid numbers linkStyle statements over every rendered link line
+		// in order, so the counter advances for each emitted connector, not
+		// just the changed ones styleLink records.
+		v.linkIndex++
 	}
 	lines = append(lines, "end")
 	return lines
@@ -394,16 +411,17 @@ func (v *sceneViewer) sceneConnectorLine(viewID, source, target int32, label str
 }
 
 // styleLink records a linkStyle statement for the connector line just
-// emitted. Indices count emitted connector lines across views, in order. No
-// trailing semicolon: the mermaid grammar rejects it (and its own error
-// message mangles the line beyond recognition).
+// emitted. The index is the caller's rendered-link counter: it advances for
+// every emitted connector (see the render loop), so a changed edge following
+// unchanged ones still addresses its own line. No trailing semicolon: the
+// mermaid grammar rejects it (and its own error message mangles the line
+// beyond recognition).
 func (v *sceneViewer) styleLink(color, dash string) {
 	line := fmt.Sprintf("linkStyle %d stroke:%s", v.linkIndex, color)
 	if dash != "" {
 		line += ",stroke-dasharray:" + dash
 	}
 	v.linkStyles = append(v.linkStyles, line)
-	v.linkIndex++
 }
 
 // edgeChangeFromTags reads the scene connector change tag written at scene
