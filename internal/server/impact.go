@@ -32,13 +32,6 @@ func impactLookupError(err error) error {
 	return connect.NewError(connect.CodeInternal, err)
 }
 
-// compareBlastRadius is the single canonical blast radius for repository
-// comparisons served over RPC: direct changes plus one dependency hop of
-// unchanged neighbours and edges. It mirrors the CLI's --blast-radius flow.
-// The request's context depth is ignored until the proto carries a blast
-// radius, so canvas, dock, and CLI payloads cannot drift.
-const compareBlastRadius = 1
-
 // impactService builds the reusable comparison service shared with the CLI.
 func (s *codeIndexService) impactService() impact.Service {
 	return impact.Service{Workspace: s.ws, Index: s.store, Config: configbridge.FromGlobal(s.config)}
@@ -49,11 +42,14 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if input.RepositoryId == "" || input.Base == nil || input.Head == nil {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository and both comparison targets are required"))
 	}
+	if err := impact.ValidateBlastRadius(input.GetBlastRadius()); err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	diagram, err := s.impactService().Compare(ctx, impact.CompareRequest{
 		RepositoryID: input.RepositoryId,
 		Base:         input.Base,
 		Head:         input.Head,
-		ContextDepth: compareBlastRadius,
+		BlastRadius:  input.GetBlastRadius(),
 		Progress: func(p indexer.Progress) {
 			_ = stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Progress{Progress: &pb.Progress{Stage: p.Stage, Current: uint32(p.Current), Total: uint32(p.Total), Detail: p.Detail}}})
 		},
@@ -61,7 +57,7 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if err != nil {
 		return impactError(err)
 	}
-	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: impact.Scope(diagram, compareBlastRadius)}})
+	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: diagram}})
 }
 
 func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.LiveImpact], error) {
@@ -92,7 +88,7 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	scene = impact.ScopeScene(scene, compareBlastRadius)
+	scene = impact.ScopeScene(scene, impact.DiagramRadius(diagram))
 	code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: req.Msg.GetPlain()})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
@@ -115,6 +111,6 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 	}
 	// The canvas draws the blast-radius scene only: authored views arrive
 	// pruned to impacted placements, so the full workspace never ships.
-	scene = impact.ScopeScene(scene, compareBlastRadius)
+	scene = impact.ScopeScene(scene, impact.DiagramRadius(diagram))
 	return connect.NewResponse(&pb.GetImpactSceneResponse{Scene: scene}), nil
 }

@@ -50,10 +50,6 @@ type compareOptions struct {
 	allEdges       bool
 }
 
-// maxBlastRadius bounds --blast-radius: direct changes plus at most two
-// dependency hops of unchanged neighbours and edges.
-const maxBlastRadius = 2
-
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
 // read distances and counts without knowing proto3 defaults.
 var protoJSONOptions = protojson.MarshalOptions{Multiline: true, Indent: "  ", EmitUnpopulated: true}
@@ -104,7 +100,7 @@ stderr.`,
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
-	c.Flags().IntVar(&opts.blastRadius, "blast-radius", 0, "dependency hops of unchanged neighbours and edges to include around each change (0-2)")
+	c.Flags().IntVar(&opts.blastRadius, "blast-radius", impact.DefaultBlastRadius, "dependency hops of unchanged neighbours and edges to include around each change (0-2)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().IntVar(&opts.maxElements, "max-elements", 0, "skip output when the requested diagram exceeds this element count (0 disables)")
 	c.Flags().IntVar(&opts.maxConnectors, "max-connectors", 0, "skip output when the requested diagram exceeds this connector count (0 disables)")
@@ -119,8 +115,8 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	if opts.maxElements < 0 || opts.maxConnectors < 0 {
 		return fmt.Errorf("--max-elements and --max-connectors must be nonnegative")
 	}
-	if opts.blastRadius < 0 || opts.blastRadius > maxBlastRadius {
-		return fmt.Errorf("--blast-radius must be between 0 and %d", maxBlastRadius)
+	if opts.blastRadius < 0 || opts.blastRadius > impact.MaxBlastRadius {
+		return fmt.Errorf("--blast-radius must be between 0 and %d", impact.MaxBlastRadius)
 	}
 	ctx := cmd.Context()
 	global, err := workspace.LoadGlobalConfig()
@@ -183,7 +179,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		RepositoryID:    repositoryID,
 		Base:            &pb.Revision{GitRevision: base},
 		Head:            &pb.Revision{GitRevision: head},
-		ContextDepth:    uint32(opts.blastRadius),
+		BlastRadius:     uint32(opts.blastRadius),
 		PrepareCheckout: prepare,
 		Progress: func(update indexer.Progress) {
 			if tracker == nil {

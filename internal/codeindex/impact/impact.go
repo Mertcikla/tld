@@ -18,7 +18,7 @@ import (
 // eligible existing workspace resources within the requested file-dependency
 // radius. Every node carries its hop distance so callers can scope the diagram
 // client-side without another server round trip.
-func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, contextDepth uint32) (*pb.ImpactDiagram, error) {
+func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*pb.ImpactDiagram, error) {
 	diff, err := idx.ImpactDiff(ctx, fromID, toID)
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 			continue
 		}
 		seenResources[element.ID] = true
-		if hops > contextDepth {
+		if hops > blastRadius {
 			continue
 		}
 		diagram.Nodes = append(diagram.Nodes, &pb.ImpactNode{Key: fmt.Sprintf("context|%d", element.ID), Path: path, Name: element.Name, Distance: hops, ElementId: element.ID})

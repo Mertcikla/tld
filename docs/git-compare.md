@@ -108,3 +108,9 @@ See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached
 - Only directly changed sections are emitted by default; `--blast-radius 1`
   or `2` widens the bundle to neighbours and edges that many hops out.
   Node and byte budgets narrow oversized output automatically.
+
+CLI, RPC, and live/watch impact default to blast radius `0` (direct changes
+only). RPC callers can set `blast_radius` to `0`–`2`, matching `--blast-radius`.
+Comparisons share a cache keyed by snapshot pair and radius; the live result
+also keeps a mutable `live` alias. Scene and Mermaid exports preserve the
+cached comparison’s radius.

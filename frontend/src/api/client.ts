@@ -2322,9 +2322,8 @@ export const api = {
         snapshotId: o.snapshotId, gitRevision: o.gitRevision,
         workingTree: o.workingTree, gitBranch: o.gitBranch,
       })
-      // Blast radius is fixed backend-side (one dependency hop); the
-      // comparison computes direct changes plus their immediate neighbourhood.
-      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head), contextDepth: 2 }, { signal: options.signal })
+      // Omit blastRadius to use the shared default: direct changes only.
+      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head) }, { signal: options.signal })
       let result: RepositoryImpact | null = null
       for await (const event of stream) {
         if (event.event.case === 'progress') options.onProgress?.(event.event.value)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/pkg/app"
@@ -95,19 +97,25 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	}
 }
 
-// TestCompareRepositoryUsesBlastRadiusOne proves the RPC serves the canonical
-// blast-radius flow: even when the client asks for three dependency hops, the
-// diagram carries direct changes plus one hop of neighbours only.
-func TestCompareRepositoryUsesBlastRadiusOne(t *testing.T) {
+// Every supported RPC radius must match the shared service cache and survive
+// scene and Mermaid export without being narrowed to a server default.
+func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 	workspaceID := uuid.New()
 	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	repoID := graph.RepositoryID("/repo")
+	view, err := ws.CreateView(ctx, "Context", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{"b.go", "c.go"} {
 		filePath, name, owner := path, path, repoID
 		element, err := ws.CreateElement(ctx, core.LibraryElement{Name: name, FilePath: &filePath, RepositoryID: &owner})
 		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ws.AddPlacement(ctx, view.ID, element.ID, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 		if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
@@ -139,41 +147,68 @@ func TestCompareRepositoryUsesBlastRadiusOne(t *testing.T) {
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
 	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
-	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{
-		RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, ContextDepth: 3,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result *pb.ImpactDiagram
-	for stream.Receive() {
-		if found := stream.Msg().GetResult(); found != nil {
-			result = found
-		}
-	}
-	if err := stream.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if result == nil {
-		t.Fatal("comparison missing")
-	}
-	byPath := map[string]*pb.ImpactNode{}
-	for _, node := range result.GetNodes() {
-		byPath[node.GetPath()] = node
-		if node.GetDistance() > 1 {
-			t.Fatalf("node beyond blast radius 1: %+v", node)
-		}
-	}
-	if direct := byPath["a.go"]; direct == nil || direct.GetDistance() != 0 {
-		t.Fatalf("direct change missing: %+v", result.GetNodes())
-	}
-	if neighbour := byPath["b.go"]; neighbour == nil || neighbour.GetDistance() != 1 {
-		t.Fatalf("one-hop neighbour missing: %+v", result.GetNodes())
-	}
-	if _, ok := byPath["c.go"]; ok {
-		t.Fatalf("two-hop context must not be served: %+v", result.GetNodes())
+	for _, radius := range []uint32{0, 1, 2, 3} {
+		t.Run(fmt.Sprint(radius), func(t *testing.T) {
+			stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{
+				RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, BlastRadius: radius,
+			}))
+			var result *pb.ImpactDiagram
+			if err == nil {
+				for stream.Receive() {
+					if found := stream.Msg().GetResult(); found != nil {
+						result = found
+					}
+				}
+				err = stream.Err()
+			}
+			if radius > impact.MaxBlastRadius {
+				if connect.CodeOf(err) != connect.CodeInvalidArgument {
+					t.Fatalf("invalid radius: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result == nil || len(result.GetNodes()) != int(radius)+1 {
+				t.Fatalf("radius %d: %+v", radius, result)
+			}
+			if result.GetComparisonKey() != impact.ComparisonKey("base", "head", radius) {
+				t.Fatal("RPC cache key differs from CLI/service")
+			}
+			for _, node := range result.GetNodes() {
+				if node.GetDistance() > radius {
+					t.Fatalf("node beyond radius: %+v", node)
+				}
+			}
+			cached, err := (impact.Service{Workspace: ws, Index: idx}).CompareSnapshots(ctx, repoID, "base", "head", radius)
+			if err != nil || cached.GetVersion() != result.GetVersion() {
+				t.Fatalf("comparison cache not shared: %v", err)
+			}
+			scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var placements int
+			for _, view := range scene.Msg.GetScene().GetViews() {
+				placements += len(view.GetPlacements())
+			}
+			if placements != int(radius)+1 {
+				t.Fatalf("scene radius %d: %d placements", radius, placements)
+			}
+			code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for hop, path := range []string{"a.go", "b.go", "c.go"} {
+				if strings.Contains(code.Msg.GetCode(), path) != (uint32(hop) <= radius) {
+					t.Fatalf("radius %d, path %s: %s", radius, path, code.Msg.GetCode())
+				}
+			}
+		})
 	}
 }
+
 // TestExportImpactMermaidKeepsBlastRadius proves the served scene and diagram
 // carry the blast radius only: the impacted file and its one-hop neighbour
 // render, while far unimpacted members never reach the payload.
@@ -229,7 +264,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
 	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
-	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}}))
+	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, BlastRadius: 1}))
 	if err != nil {
 		t.Fatal(err)
 	}

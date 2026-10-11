@@ -78,7 +78,7 @@ func TestCompareServesStoredComparison(t *testing.T) {
 		RepositoryID: "repo",
 		Base:         &pb.Revision{SnapshotId: "base"},
 		Head:         &pb.Revision{SnapshotId: "head"},
-		ContextDepth: 0,
+		BlastRadius:  0,
 	}
 	first, err := service.Compare(ctx, request)
 	if err != nil {
@@ -94,11 +94,21 @@ func TestCompareServesStoredComparison(t *testing.T) {
 	if err := idx.SaveImpact(ctx, marker); err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Compare(ctx, request)
+	second, err := service.CompareSnapshots(ctx, request.RepositoryID, "base", "head", DefaultBlastRadius)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.GetVersion() != "cached-marker" {
 		t.Fatalf("repeat comparison rebuilt instead of serving the stored payload (version %q)", second.GetVersion())
+	}
+}
+
+func TestCompareRejectsInvalidRadiusBeforeIndexing(t *testing.T) {
+	service := Service{}
+	if _, err := service.Compare(context.Background(), CompareRequest{BlastRadius: MaxBlastRadius + 1}); err == nil {
+		t.Fatal("invalid comparison radius accepted")
+	}
+	if _, err := service.CompareSnapshots(context.Background(), "repo", "base", "head", MaxBlastRadius+1); err == nil {
+		t.Fatal("invalid snapshot radius accepted")
 	}
 }

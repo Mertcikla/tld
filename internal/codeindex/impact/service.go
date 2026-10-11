@@ -15,11 +15,20 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 )
 
-// DefaultContextDepth is the default number of dependency hops of unchanged
-// context a comparison carries. The `tld git compare` command passes its
-// --blast-radius flag instead; other callers (live impact, RPC defaults) use
-// this.
-const DefaultContextDepth = 3
+// DefaultBlastRadius is the shared blast radius for CLI, RPC, and live impact.
+// Zero includes direct changes only, matching an omitted proto blast_radius.
+const DefaultBlastRadius = 0
+
+// MaxBlastRadius bounds the dependency hops accepted by comparison callers.
+const MaxBlastRadius = 2
+
+// ValidateBlastRadius applies the same blast-radius limit on every surface.
+func ValidateBlastRadius(radius uint32) error {
+	if radius > MaxBlastRadius {
+		return fmt.Errorf("blast radius must be between 0 and %d", MaxBlastRadius)
+	}
+	return nil
+}
 
 // DefaultMaxNodes is the size budget used when a client does not pick one. A
 // diagram wider than this is progressively narrowed by blast radius.
@@ -47,7 +56,7 @@ type CompareRequest struct {
 	RepositoryID string
 	Base         *pb.Revision
 	Head         *pb.Revision
-	ContextDepth uint32
+	BlastRadius  uint32
 	Progress     indexer.ProgressFunc
 	// PrepareCheckout runs only when a revision needs indexing.
 	PrepareCheckout func(context.Context, string) error
@@ -56,6 +65,9 @@ type CompareRequest struct {
 // Compare prepares both targets (indexing on demand), builds the impact diagram
 // for their snapshot pair, persists it, and returns it.
 func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDiagram, error) {
+	if err := ValidateBlastRadius(req.BlastRadius); err != nil {
+		return nil, err
+	}
 	repo, err := s.Index.Repository(ctx, req.RepositoryID)
 	if err != nil {
 		return nil, err
@@ -85,23 +97,32 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 	if req.Progress != nil {
 		req.Progress(indexer.Progress{Stage: "overlay", Detail: "preparing change overlay"})
 	}
-	key := ComparisonKey(before.Id, after.Id, req.ContextDepth)
+	return s.CompareSnapshots(ctx, repo.Id, before.Id, after.Id, req.BlastRadius)
+}
+
+// CompareSnapshots shares cached comparisons with callers that already prepared
+// their snapshots, including the live watcher. The caller owns the index lease.
+func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID string, radius uint32) (*pb.ImpactDiagram, error) {
+	if err := ValidateBlastRadius(radius); err != nil {
+		return nil, err
+	}
+	key := ComparisonKey(beforeID, afterID, radius)
 	// A completed comparison is immutable for its snapshot pair and radius,
 	// so a repeat request is a single indexed lookup instead of a rebuild.
-	if cached, err := s.Index.Impact(ctx, repo.Id, key); err == nil {
+	if cached, err := s.Index.Impact(ctx, repoID, key); err == nil {
 		return cached, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	return Save(ctx, s.Workspace, s.Index, repo.Id, key, before.Id, after.Id, req.ContextDepth)
+	return Save(ctx, s.Workspace, s.Index, repoID, key, beforeID, afterID, radius)
 }
 
 // ComparisonKey identifies a stored comparison payload. Snapshot IDs already
 // pin the exact content, config, and toolchain of both sides, so a completed
 // comparison is immutable and safe to serve again. The blast radius is part of
 // the key because diagrams built at different radii carry different context.
-func ComparisonKey(beforeID, afterID string, depth uint32) string {
-	return graph.ID(beforeID, afterID, fmt.Sprintf("radius=%d", depth))
+func ComparisonKey(beforeID, afterID string, radius uint32) string {
+	return graph.ID(beforeID, afterID, fmt.Sprintf("radius=%d", radius))
 }
 
 // forTarget tags every progress update with the comparison side being prepared

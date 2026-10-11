@@ -5,6 +5,18 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// DiagramRadius recovers the retained context from a cached diagram, including
+// older artifacts. Scene exports must preserve it instead of applying a default.
+func DiagramRadius(diagram *pb.ImpactDiagram) uint32 {
+	var radius uint32
+	for _, node := range diagram.GetNodes() {
+		if node.GetDistance() > radius {
+			radius = node.GetDistance()
+		}
+	}
+	return radius
+}
+
 // Scope filters a comparison diagram down to the requested blast radius.
 // Direct changes (distance 0) are always kept; unchanged context farther than
 // radius is dropped, along with edges and group entries that reference it.

@@ -39,6 +39,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/proto"
 )
 
 type options struct {
@@ -680,7 +681,15 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
-	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, impact.DefaultContextDepth); err != nil {
+	service := impact.Service{Workspace: e.ws, Index: e.store}
+	diagram, err := service.CompareSnapshots(ctx, repoID, base.Id, snap.Id, impact.DefaultBlastRadius)
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	// Keep the mutable live alias while sharing the immutable comparison cache.
+	live := proto.Clone(diagram).(*pb.ImpactDiagram)
+	live.ComparisonKey = "live"
+	if err = e.store.SaveImpact(ctx, live); err != nil {
 		return nil, parity.Report{}, nil, err
 	}
 	var mapRes *pb.MapResult

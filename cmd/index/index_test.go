@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/config"
 	"github.com/mertcikla/codeindex/gitstate"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -134,6 +136,17 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	}
 	if len(live.Nodes) != 1 || live.Nodes[0].Path != "a.go" {
 		t.Fatalf("impact: %+v", live)
+	}
+	comparison, err := (impact.Service{Workspace: sq, Index: idx}).Compare(ctx, impact.CompareRequest{
+		RepositoryID: graph.RepositoryID(dir),
+		Base:         &pb.Revision{SnapshotId: live.Diff.FromSnapshotId},
+		Head:         &pb.Revision{SnapshotId: live.Diff.ToSnapshotId},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparison.GetVersion() != live.GetVersion() || comparison.GetComparisonKey() == "live" {
+		t.Fatal("watcher must populate the immutable default comparison cache")
 	}
 	base, err := idx.Snapshot(ctx, live.Diff.FromSnapshotId)
 	if err != nil {
