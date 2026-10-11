@@ -261,4 +261,30 @@ describe('repositoryChangeScene', () => {
     expect(parent.linkedDiagramId).toBe(52)
     expect(parent.children.map((child) => child.elementId)).toEqual([8])
   })
+
+  it('standard mode keeps containers that reach retained child views so the canvas never blanks', () => {
+    const linked = (id: number, from: number, to: number, element: number) => ({ id, element_id: element, from_view_id: from, to_view_id: to, to_view_name: `view-${to}`, relation_type: 'child' })
+    // Only the leaf view is authored; the ancestors hold overlay-less
+    // containers. Dropping those would orphan the nesting: the root would
+    // render zero nodes and the canvas would go blank.
+    const hierarchy: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(1, 'Workspace', [view(2, 'Mid', [view(3, 'Leaf')])])],
+      views: {
+        1: { placements: [{ ...placement(100, ''), file_path: null, has_view: true, name: 'mid' }], connectors: [] },
+        2: { placements: [{ ...placement(200, ''), file_path: null, has_view: true, name: 'leaf' }], connectors: [] },
+        3: { placements: [placement(1, 'a.go')], connectors: [] },
+      },
+      navigations: [linked(1, 1, 2, 100), linked(2, 2, 3, 200)],
+      fallbackViewId: 0,
+      overlays: { 1: overlay('modified', 'a.go', 0) },
+      authoredViewIds: [3],
+    }
+    const rendered = repositoryChangeScene(hierarchy, {})
+    expect(rendered.data.views[1]?.placements.map((element) => element.element_id)).toEqual([100])
+    expect(rendered.data.views[2]?.placements.map((element) => element.element_id)).toEqual([200])
+    const nodes = applyChangeOverlays(computeLayout(rendered.data), rendered.overlays).groups.flatMap((group) => group.nodes)
+    expect(nodes.length).toBeGreaterThan(0)
+    expect(rendered.overlays[100]).toBeUndefined()
+  })
 })

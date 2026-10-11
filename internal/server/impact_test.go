@@ -174,10 +174,10 @@ func TestCompareRepositoryUsesBlastRadiusOne(t *testing.T) {
 		t.Fatalf("two-hop context must not be served: %+v", result.GetNodes())
 	}
 }
-// TestExportImpactMermaidPlainHidesUnimpacted proves the plain request prunes
-// placements without change impact while the standard request keeps the full
-// authored membership.
-func TestExportImpactMermaidPlainHidesUnimpacted(t *testing.T) {
+// TestExportImpactMermaidKeepsBlastRadius proves the served scene and diagram
+// carry the blast radius only: the impacted file and its one-hop neighbour
+// render, while far unimpacted members never reach the payload.
+func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	workspaceID := uuid.New()
 	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
@@ -187,7 +187,7 @@ func TestExportImpactMermaidPlainHidesUnimpacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := func(name, filePath string) {
+	link := func(name, filePath string) int64 {
 		t.Helper()
 		element, err := ws.CreateElement(ctx, core.LibraryElement{Name: name, FilePath: &filePath, RepositoryID: &repoID})
 		if err != nil {
@@ -196,19 +196,30 @@ func TestExportImpactMermaidPlainHidesUnimpacted(t *testing.T) {
 		if _, err := ws.AddPlacement(ctx, mine.ID, element.ID, 0, 0); err != nil {
 			t.Fatal(err)
 		}
+		return element.ID
 	}
 	link("Changed File", "a.go")
-	link("Quiet File", "b.go")
+	neighbourID := link("Neighbour File", "b.go")
+	link("Far File", "c.go")
+	// Only the neighbour is mapped, so only it can surface as diagram
+	// context; the far file stays a plain authored member with no overlay.
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+		{LogicalKey: "map|file|b", Kind: cstore.MappingElement, ResourceID: neighbourID, RepositoryID: repoID, SnapshotID: "head"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	publish := func(id, aText string) {
 		g := graph.NewGraph(repoID, id)
-		files := map[string]string{"a.go": aText, "b.go": "func B() {}"}
+		files := map[string]string{"a.go": aText, "b.go": "func B() {}", "c.go": "func C() {}"}
 		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete"}
+		facts := map[string]*pb.CodeFact{}
 		for path, text := range files {
 			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
 			g.Sources[path] = src
 			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
-			g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor, nil)
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
 		}
@@ -231,21 +242,29 @@ func TestExportImpactMermaidPlainHidesUnimpacted(t *testing.T) {
 	if err := stream.Err(); err != nil || key == "" {
 		t.Fatalf("comparison: %v", err)
 	}
-	standard, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: key}))
+	scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: key}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(standard.Msg.GetCode(), "Quiet File") {
-		t.Fatalf("standard diagram must keep unimpacted members:\n%s", standard.Msg.GetCode())
+	var placements int
+	for _, content := range scene.Msg.GetScene().GetViews() {
+		placements += len(content.GetPlacements())
 	}
-	plain, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: key, Plain: true}))
-	if err != nil {
-		t.Fatal(err)
+	if placements != 2 {
+		t.Fatalf("scene must carry impacted + neighbour only, got %d placements: %+v", placements, scene.Msg.GetScene().GetViews())
 	}
-	if !strings.Contains(plain.Msg.GetCode(), "Changed File") {
-		t.Fatalf("plain diagram lost the impacted member:\n%s", plain.Msg.GetCode())
-	}
-	if strings.Contains(plain.Msg.GetCode(), "Quiet File") {
-		t.Fatalf("plain diagram kept an unimpacted member:\n%s", plain.Msg.GetCode())
+	for _, plain := range []bool{false, true} {
+		code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: key, Plain: plain}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"Changed File", "Neighbour File"} {
+			if !strings.Contains(code.Msg.GetCode(), want) {
+				t.Fatalf("plain=%v diagram lost %q:\n%s", plain, want, code.Msg.GetCode())
+			}
+		}
+		if strings.Contains(code.Msg.GetCode(), "Far File") {
+			t.Fatalf("plain=%v diagram kept a far unimpacted member:\n%s", plain, code.Msg.GetCode())
+		}
 	}
 }

@@ -85,12 +85,14 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	}
 	// The change diagram renders the same scene the canvas draws, so the
 	// docked pane and the canvas never disagree. Grounded is the only
-	// diagram; the scene carries its own fallback chain. The full computed
-	// context always renders: node and byte budgets stay CLI-side.
+	// diagram; the scene carries its own fallback chain. The scene is pruned
+	// to the compare blast radius, so unimpacted sections never reach the
+	// payload; node and byte budgets stay CLI-side.
 	scene, err := s.impactService().Scene(ctx, diagram)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	scene = impact.ScopeScene(scene, compareBlastRadius)
 	code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: req.Msg.GetPlain()})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
@@ -111,5 +113,8 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	// The canvas draws the blast-radius scene only: authored views arrive
+	// pruned to impacted placements, so the full workspace never ships.
+	scene = impact.ScopeScene(scene, compareBlastRadius)
 	return connect.NewResponse(&pb.GetImpactSceneResponse{Scene: scene}), nil
 }
