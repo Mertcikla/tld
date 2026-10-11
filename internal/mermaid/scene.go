@@ -53,8 +53,20 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 		lines = append(lines, strings.Join(parts, " "))
 	}
 
+	seen := map[int32]bool{}
+	for _, root := range view.scene.GetTree() {
+		if root == nil || strings.Contains(root.GetName(), " impact · ") {
+			continue
+		}
+		lines = append(lines, view.renderTree(root, 0, seen)...)
+	}
+	// Defensive: retained views absent from the tree (e.g. drill-down targets
+	// resolved only through navigations) keep their old flat top-level output.
 	for _, id := range view.retainedOrder {
-		lines = append(lines, view.renderView(id)...)
+		if view.retained[id] && !seen[id] {
+			seen[id] = true
+			lines = append(lines, view.renderNested(id, 0, nil, seen)...)
+		}
 	}
 	if len(view.linkStyles) > 0 {
 		lines = append(lines, "")
@@ -298,18 +310,56 @@ func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement
 	return label
 }
 
-// renderView emits one retained view: its placements (pruned to change
-// evidence in non-authored grounded views, exactly like the canvas) and its
-// connectors filtered to rendered endpoints, with change arrows and link
-// styles for new/removed/modified edges.
-func (v *sceneViewer) renderView(viewID int32) []string {
+// renderTree emits one retained tree node with its retained children nested
+// inside, mirroring the source view hierarchy instead of flattening every
+// view into sibling subgraphs. A non-retained node is transparent: its
+// retained descendants lift to the current level. seen guards hand-built
+// payloads against cycles.
+func (v *sceneViewer) renderTree(node *diagv1.View, depth int, seen map[int32]bool) []string {
+	if node == nil || seen[node.GetId()] {
+		return nil
+	}
+	seen[node.GetId()] = true
+	var kids []*diagv1.View
+	for _, child := range node.GetChildren() {
+		if child == nil || seen[child.GetId()] || !v.retained[child.GetId()] {
+			continue
+		}
+		if strings.Contains(child.GetName(), " impact · ") {
+			continue
+		}
+		kids = append(kids, child)
+	}
+	if !v.retained[node.GetId()] {
+		var lines []string
+		for _, kid := range kids {
+			lines = append(lines, v.renderTree(kid, depth, seen)...)
+		}
+		return lines
+	}
+	return v.renderNested(node.GetId(), depth, kids, seen)
+}
+
+// renderNested emits one retained view: its placements (pruned to change
+// evidence in non-authored grounded views, exactly like the canvas), its
+// retained children nested inside, and its connectors filtered to rendered
+// endpoints, with change arrows and link styles for new/removed/modified
+// edges. depth controls indentation; depth 0 renders exactly like the old
+// flat output.
+func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View, seen map[int32]bool) []string {
 	content := v.scene.GetViews()[strconv.FormatInt(int64(viewID), 10)]
 	if content == nil {
-		return nil
+		var lines []string
+		for _, kid := range kids {
+			lines = append(lines, v.renderTree(kid, depth, seen)...)
+		}
+		return lines
 	}
 	pruned := !v.degraded && !v.authored[viewID] && !v.drilldown[viewID]
 	name := v.viewName(viewID)
-	lines := []string{"", fmt.Sprintf(`subgraph %s["%s"]`, sceneViewRef(viewID), escapeMermaidLabel(name))}
+	head := strings.Repeat("  ", depth)
+	pad := strings.Repeat("  ", depth+1)
+	lines := []string{"", fmt.Sprintf(`%ssubgraph %s["%s"]`, head, sceneViewRef(viewID), escapeMermaidLabel(name))}
 	rendered := map[int32]bool{}
 	links := v.linkElements[viewID]
 	for _, placement := range content.GetPlacements() {
@@ -329,8 +379,11 @@ func (v *sceneViewer) renderView(viewID int32) []string {
 			continue
 		}
 		rendered[elementID] = true
-		lines = append(lines, fmt.Sprintf(`  %s["%s"]`, sceneNodeRef(viewID, elementID),
+		lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, sceneNodeRef(viewID, elementID),
 			escapeMermaidLabel(v.sceneNodeLabel(viewID, placement.GetElement()))))
+	}
+	for _, kid := range kids {
+		lines = append(lines, v.renderTree(kid, depth+1, seen)...)
 	}
 	for _, connector := range content.GetConnectors() {
 		if connector == nil {
@@ -340,13 +393,13 @@ func (v *sceneViewer) renderView(viewID int32) []string {
 		if !rendered[source] || !rendered[target] {
 			continue
 		}
-		lines = append(lines, "  "+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
+		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
 		// Mermaid numbers linkStyle statements over every rendered link line
 		// in order, so the counter advances for each emitted connector, not
 		// just the changed ones styleLink records.
 		v.linkIndex++
 	}
-	lines = append(lines, "end")
+	lines = append(lines, head+"end")
 	return lines
 }
 
