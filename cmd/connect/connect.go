@@ -26,6 +26,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		url          string
 		tags         string
 		legacyView   string
+		noReposition bool
 		target       string
 		dataDir      string
 	)
@@ -112,7 +113,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
 				return nil
 			}
-			return runConnect(cmd, sess, ws, *format, *compact, spec, from, to, view)
+			return runConnect(cmd, sess, ws, *format, *compact, spec, from, to, view, noReposition)
 		},
 	}
 
@@ -126,6 +127,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
 	c.Flags().StringVar(&legacyView, "view", "", "explicit connector view ref (default: source element's view)")
+	c.Flags().BoolVar(&noReposition, "no-reposition", false, "do not auto-place a freshly connected target element")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
@@ -150,7 +152,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 // runConnect creates the connector on the server synchronously, then refreshes
 // the local YAML cache.
-func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, spec *workspace.Connector, from, to, view string) error {
+func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, spec *workspace.Connector, from, to, view string, noReposition bool) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "connect", err)
@@ -197,9 +199,30 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	if err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server create connector failed", err))
 	}
+	// Auto-place a freshly-connected target so the new edge reads cleanly. Only
+	// targets that already live in this view and have no other connectors here
+	// (i.e. just added) are moved, so deliberately wired-up elements are never
+	// disturbed and cross-view targets are left alone. Failures here are
+	// non-fatal: the connector itself was already created.
+	moved := false
+	var movedX, movedY float64
+	if !noReposition && cmdutil.FindPlacement(ws, to, view) != nil && targetIsFresh(ws, view, to) {
+		if x, y, ok := cmdutil.AutoPlace(ws, view, to, []workspace.Connector{*spec}); ok {
+			if err := runner.UpdatePlacement(ctx, viewID, targetID, x, y); err != nil {
+				term.Warnf(cmd.OutOrStdout(), "connected but could not reposition %q: %v", to, err)
+			} else {
+				moved, movedX, movedY = true, x, y
+			}
+		}
+	}
 	if sess.HasWorkspace() {
 		if err := workspace.AppendConnector(sess.Wdir, spec); err != nil {
 			return fail(fmt.Errorf("update YAML cache: %w", err))
+		}
+		if moved {
+			if err := workspace.SetPlacementPosition(sess.Wdir, to, view, movedX, movedY); err != nil {
+				return fail(fmt.Errorf("update YAML cache: %w", err))
+			}
 		}
 		if err := exec.RecordConnectorMeta(ctx, sess.Wdir, workspace.ConnectorKey(spec), created); err != nil {
 			return fail(fmt.Errorf("update cache metadata: %w", err))
@@ -270,6 +293,27 @@ func inferConnectorView(ws *workspace.Workspace, from, to string) (string, error
 		return "", fmt.Errorf("source element %q not found", from)
 	}
 	return parentOfElement(fromElement), nil
+}
+
+// targetIsFresh reports whether ref has no connectors in view yet. A fresh
+// target was almost certainly just added and is safe to auto-place.
+func targetIsFresh(ws *workspace.Workspace, view, ref string) bool {
+	if ws == nil || ref == "" {
+		return false
+	}
+	normalizedView := cmdutil.NormalizeParentRef(view)
+	for _, connector := range ws.Connectors {
+		if connector == nil {
+			continue
+		}
+		if cmdutil.NormalizeParentRef(connector.View) != normalizedView {
+			continue
+		}
+		if connector.Source == ref || connector.Target == ref {
+			return false
+		}
+	}
+	return true
 }
 
 func parentOfElement(element *workspace.Element) string {

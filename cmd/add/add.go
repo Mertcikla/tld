@@ -94,12 +94,38 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				placementParent = resolvedParent
 			}
+			// Place the element automatically unless the caller pinned it. An
+			// element that already has a placement keeps its position (re-add
+			// must not reset the canvas), otherwise the layout engine drops the
+			// new node into the nearest free slot, anchored to any existing
+			// connectors.
+			positionSet := cmd.Flags().Changed("position-x") || cmd.Flags().Changed("position-y")
+			if !positionSet {
+				if existing := cmdutil.FindPlacement(ws, r, placementParent); existing != nil {
+					positionX, positionY = existing.PositionX, existing.PositionY
+				} else if x, y, ok := cmdutil.AutoPlace(ws, placementParent, r, nil); ok {
+					positionX, positionY = x, y
+				}
+			}
 			linkFilePath, err := resolveLinkTarget(linkTarget)
 			if err != nil {
 				return err
 			}
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			parsedTags := workspace.ParseTagList(tags)
+			placement := workspace.ViewPlacement{
+				ParentRef: placementParent,
+				PositionX: positionX,
+				PositionY: positionY,
+			}
+			// Auto-placed coordinates must survive the YAML round-trip even when
+			// they land on 0, so mark them explicit whenever they are non-zero.
+			if positionX != 0 {
+				placement.PositionXSet = true
+			}
+			if positionY != 0 {
+				placement.PositionYSet = true
+			}
 			spec := &workspace.Element{
 				Name:        name,
 				Kind:        kind,
@@ -110,11 +136,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				FilePath:    linkFilePath,
 				Tags:        parsedTags,
 				ViewLabel:   viewLabel,
-				Placements: []workspace.ViewPlacement{{
-					ParentRef: placementParent,
-					PositionX: positionX,
-					PositionY: positionY,
-				}},
+				Placements:  []workspace.ViewPlacement{placement},
 			}
 			validateAndWarnTechnology(cmd, technology)
 			if dryRun {
