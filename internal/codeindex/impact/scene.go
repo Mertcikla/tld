@@ -1138,3 +1138,145 @@ func filePathValue(path *string) string {
 func normalizeScenePath(path string) string {
 	return strings.TrimSuffix(strings.ReplaceAll(path, "\\", "/"), "/")
 }
+
+// ScopeScene prunes a portable change scene down to the requested blast
+// radius, mirroring Scope for diagrams. Placements carrying a change overlay
+// at or within radius are kept — transient change placements always qualify
+// at distance 0 — while unimpacted placements are dropped. Container
+// placements that own a retained drill-down view are kept so the hierarchy
+// still traverses, connectors spanning a dropped endpoint go with them, and
+// views left without placements are removed from the payload, the tree, and
+// the authored set. Callers that need the full canvas scene pass the diagram
+// unscoped instead; this stays CLI-side.
+func ScopeScene(scene *pb.ImpactScene, radius uint32) *pb.ImpactScene {
+	if scene == nil {
+		return nil
+	}
+	out := proto.Clone(scene).(*pb.ImpactScene)
+	kept := map[string]map[int32]bool{}
+	for key, content := range out.GetViews() {
+		for _, placement := range content.GetPlacements() {
+			if placement == nil || placement.GetElement() == nil {
+				continue
+			}
+			overlay := placement.GetOverlay()
+			if overlay == nil || overlay.GetDistance() > radius {
+				continue
+			}
+			set := kept[key]
+			if set == nil {
+				set = map[int32]bool{}
+				kept[key] = set
+			}
+			set[placement.GetElement().GetElementId()] = true
+		}
+	}
+	// Keep the container elements that own retained drill-down views, to a
+	// fixpoint, so nested change evidence never orphans its parent.
+	for changed := true; changed; {
+		changed = false
+		for _, link := range out.GetNavigations() {
+			if link.GetRelationType() != "child" || link.ElementId == nil {
+				continue
+			}
+			to := strconv.FormatInt(int64(link.GetToViewId()), 10)
+			if len(kept[to]) == 0 {
+				continue
+			}
+			from := strconv.FormatInt(int64(link.GetFromViewId()), 10)
+			if out.GetViews()[from] == nil {
+				continue
+			}
+			set := kept[from]
+			if set == nil {
+				set = map[int32]bool{}
+				kept[from] = set
+			}
+			if !set[link.GetElementId()] {
+				set[link.GetElementId()] = true
+				changed = true
+			}
+		}
+	}
+	for key, content := range out.GetViews() {
+		set := kept[key]
+		if len(set) == 0 {
+			delete(out.Views, key)
+			continue
+		}
+		placements := make([]*pb.ScenePlacement, 0, len(content.GetPlacements()))
+		for _, placement := range content.GetPlacements() {
+			if placement == nil || placement.GetElement() == nil || !set[placement.GetElement().GetElementId()] {
+				continue
+			}
+			placements = append(placements, placement)
+		}
+		if len(placements) == 0 {
+			// A container reference with no matching placement carries no
+			// endpoint: drop the view rather than render it empty.
+			delete(out.Views, key)
+			delete(kept, key)
+			continue
+		}
+		content.Placements = placements
+		connectors := make([]*diagv1.Connector, 0, len(content.GetConnectors()))
+		for _, connector := range content.GetConnectors() {
+			if connector == nil || !set[connector.GetSourceElementId()] || !set[connector.GetTargetElementId()] {
+				continue
+			}
+			connectors = append(connectors, connector)
+		}
+		content.Connectors = connectors
+	}
+	out.Tree = pruneScopedSceneTree(out.GetTree(), kept)
+	navigations := make([]*diagv1.ElementNavigationInfo, 0, len(out.GetNavigations()))
+	for _, link := range out.GetNavigations() {
+		if link == nil {
+			continue
+		}
+		from := strconv.FormatInt(int64(link.GetFromViewId()), 10)
+		to := strconv.FormatInt(int64(link.GetToViewId()), 10)
+		if len(kept[from]) == 0 || len(kept[to]) == 0 {
+			continue
+		}
+		// The container fixpoint above may have kept a parent for traversal
+		// whose content was still dropped for lack of placements; its links
+		// cannot render without endpoints.
+		if out.GetViews()[from] == nil || out.GetViews()[to] == nil {
+			continue
+		}
+		navigations = append(navigations, link)
+	}
+	out.Navigations = navigations
+	authored := make([]int64, 0, len(out.GetAuthoredViewIds()))
+	for _, id := range out.GetAuthoredViewIds() {
+		if len(kept[strconv.FormatInt(id, 10)]) > 0 && out.GetViews()[strconv.FormatInt(id, 10)] != nil {
+			authored = append(authored, id)
+		}
+	}
+	out.AuthoredViewIds = authored
+	if len(kept[strconv.FormatInt(out.GetFallbackViewId(), 10)]) == 0 || out.GetViews()[strconv.FormatInt(out.GetFallbackViewId(), 10)] == nil {
+		out.FallbackViewId = 0
+	}
+	return out
+}
+
+// pruneScopedSceneTree rebuilds the scene tree from the views that kept
+// placements, preserving structural ancestors so the hierarchy traverses.
+// Views in kept carry placements; ancestors without placements stay as
+// transparent nodes and their missing content renders as children only.
+func pruneScopedSceneTree(nodes []*diagv1.View, kept map[string]map[int32]bool) []*diagv1.View {
+	out := make([]*diagv1.View, 0, len(nodes))
+	for _, view := range nodes {
+		if view == nil {
+			continue
+		}
+		children := pruneScopedSceneTree(view.GetChildren(), kept)
+		if len(kept[strconv.FormatInt(int64(view.GetId()), 10)]) == 0 && len(children) == 0 {
+			continue
+		}
+		view.Children = children
+		out = append(out, view)
+	}
+	return out
+}

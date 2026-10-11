@@ -95,6 +95,85 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	}
 }
 
+// TestCompareRepositoryUsesBlastRadiusOne proves the RPC serves the canonical
+// blast-radius flow: even when the client asks for three dependency hops, the
+// diagram carries direct changes plus one hop of neighbours only.
+func TestCompareRepositoryUsesBlastRadiusOne(t *testing.T) {
+	workspaceID := uuid.New()
+	ws, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
+	repoID := graph.RepositoryID("/repo")
+	for _, path := range []string{"b.go", "c.go"} {
+		filePath, name, owner := path, path, repoID
+		element, err := ws.CreateElement(ctx, core.LibraryElement{Name: name, FilePath: &filePath, RepositoryID: &owner})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+			{LogicalKey: "map|file|" + path, Kind: cstore.MappingElement, ResourceID: element.ID, RepositoryID: repoID, SnapshotID: "head"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish := func(id, aText string) {
+		g := graph.NewGraph(repoID, id)
+		files := map[string]string{"a.go": aText, "b.go": "func B() {}", "c.go": "func C() {}"}
+		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete"}
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range files {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Fn", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		// Chain a.go -> b.go -> c.go: c.go sits two hops out.
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["b.go"].Id, facts["c.go"].Id, "", facts["b.go"].Anchor, nil)
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", "func A() { return 1 }")
+	publish("head", "func A() { return 2 }")
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
+	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{
+		RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, ContextDepth: 3,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result *pb.ImpactDiagram
+	for stream.Receive() {
+		if found := stream.Msg().GetResult(); found != nil {
+			result = found
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("comparison missing")
+	}
+	byPath := map[string]*pb.ImpactNode{}
+	for _, node := range result.GetNodes() {
+		byPath[node.GetPath()] = node
+		if node.GetDistance() > 1 {
+			t.Fatalf("node beyond blast radius 1: %+v", node)
+		}
+	}
+	if direct := byPath["a.go"]; direct == nil || direct.GetDistance() != 0 {
+		t.Fatalf("direct change missing: %+v", result.GetNodes())
+	}
+	if neighbour := byPath["b.go"]; neighbour == nil || neighbour.GetDistance() != 1 {
+		t.Fatalf("one-hop neighbour missing: %+v", result.GetNodes())
+	}
+	if _, ok := byPath["c.go"]; ok {
+		t.Fatalf("two-hop context must not be served: %+v", result.GetNodes())
+	}
+}
 // TestExportImpactMermaidPlainHidesUnimpacted proves the plain request prunes
 // placements without change impact while the standard request keeps the full
 // authored membership.

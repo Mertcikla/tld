@@ -46,6 +46,7 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
 | `--max-bytes N` | `2097152` | Output byte budget; output is narrowed when exceeded (`0` disables) |
+| `--blast-radius N` | `0` | Dependency hops of unchanged neighbours and edges to include around each change (`0`–`2`) |
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
 | `--view REF` | unset | Restrict the grounded bundle to one authored view (id or name substring) |
@@ -58,12 +59,14 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 
 - **Default:** protojson encoding of the **grounded bundle** — the portable impact
   scene plus the authored overlay (`mode: "grounded"`, `grounded: {affected,
-  context, ungrounded, views, elements, fanout, uncovered}`). The user-authored diagram
-  stays canonical while each linked element is verified against the pinned
-  snapshots; the generated map contributes collapsed context only. High fan-out
-  nodes roll up by target prefix (7 groups + "+N more"). When no authored view
-  intersects the change, the bundle notes the fallback and carries the mapped
-  context instead.
+  context, ungrounded, views, elements, fanout, uncovered}`). Only directly
+  changed sections are emitted; pass `--blast-radius 1` or `2` to additionally
+  include the neighbours and edges of each change that many dependency hops
+  away. The user-authored diagram stays canonical while each linked element is
+  verified against the pinned snapshots; the generated map contributes
+  collapsed context only. High fan-out nodes roll up by target prefix
+  (7 groups + "+N more"). When no authored view intersects the change, the
+  bundle notes the fallback and carries the mapped context instead.
 - **`--mermaid` / `--markdown`:** the change scene rendered as Mermaid — the same
   payload the canvas draws, node for node: `flowchart LR`, then a `%% tld-scene`
   header and the CLI-only `%% grounded` stats lines, one subgraph per retained
@@ -102,5 +105,6 @@ See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached
 
 ## Tips
 
-- Context is always computed three dependency hops out and displayed in full;
-  node and byte budgets narrow oversized output automatically.
+- Only directly changed sections are emitted by default; `--blast-radius 1`
+  or `2` widens the bundle to neighbours and edges that many hops out.
+  Node and byte budgets narrow oversized output automatically.

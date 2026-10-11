@@ -105,6 +105,19 @@ type Summary struct {
 // still resolve to the neighbours they may disturb. viewFilter optionally
 // restricts to one view id or case-insensitive name substring.
 func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter string, allEdges bool, neighbours map[string][]string) Summary {
+	return SummarizeWithRadius(diagram, explore, viewFilter, allEdges, neighbours, -1)
+}
+
+// SummarizeWithRadius behaves as Summarize, then narrows the listed elements,
+// connectors, views, and counts to the requested blast radius: radius 0 lists
+// directly affected placements only, while a positive radius additionally
+// lists the context neighbours (one file-pair hop away or reached through the
+// diagram's context nodes) of each change. A negative radius disables the
+// narrowing and preserves the full matched-view listing. Unlinked placements
+// and far context are counted, never carried, once a nonnegative radius
+// applies; Total per view keeps the workspace size so readers see the scope
+// each hit came from.
+func SummarizeWithRadius(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter string, allEdges bool, neighbours map[string][]string, radius int) Summary {
 	sum := Summary{Mode: "grounded", ViewFilter: viewFilter, Views: []ViewMatch{}, Elements: []ElementStatus{}}
 	if diagram == nil {
 		sum.FallbackToRaw = true
@@ -112,14 +125,17 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 	}
 	changed := changedPaths(diagram)
 	// reached holds workspace element ids the comparison already placed in
-	// the blast radius (context|<id> nodes), i.e. map-owned neighbours.
-	reached := map[int64]bool{}
+	// the blast radius (context|<id> nodes), i.e. map-owned neighbours, with
+	// their hop distance so a radius filter can test inclusion.
+	reached := map[int64]uint32{}
 	if diagram != nil {
 		for _, node := range diagram.GetNodes() {
 			if node == nil || !strings.HasPrefix(node.GetKey(), "context|") || node.GetElementId() == 0 {
 				continue
 			}
-			reached[node.GetElementId()] = true
+			if distance, ok := reached[node.GetElementId()]; !ok || node.GetDistance() < distance {
+				reached[node.GetElementId()] = node.GetDistance()
+			}
 		}
 	}
 	viewNames := map[int64]string{}
@@ -162,6 +178,21 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 					near = nearChanges(link, changed, neighbours)
 				}
 			}
+			distance, isReached := reached[el.ElementID]
+			// A nonnegative radius lists directly affected placements plus,
+			// when positive, their context neighbours (one file-pair hop away
+			// or reached through the diagram's context nodes). Unlinked
+			// placements and far context stay in the per-view totals below,
+			// counted but never carried.
+			if radius >= 0 {
+				keep := status == StatusAffected
+				if !keep && status == StatusContext && radius > 0 {
+					keep = len(near) > 0 || (isReached && distance <= uint32(radius))
+				}
+				if !keep {
+					continue
+				}
+			}
 			switch status {
 			case StatusAffected:
 				sum.Affected++
@@ -171,7 +202,7 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 			default:
 				sum.Ungrounded++
 			}
-			if len(near) > 0 || reached[el.ElementID] {
+			if len(near) > 0 || isReached {
 				perViewIndirect[viewID]++
 			}
 			all = append(all, placed{viewID: viewID, el: el, link: link, status: status, near: near})
@@ -186,9 +217,11 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 		sum.Views = append(sum.Views, ViewMatch{ViewID: viewID, ViewName: viewNames[viewID], Affected: perViewAffected[viewID], Total: total, Indirect: perViewIndirect[viewID]})
 	}
 	sort.Slice(sum.Views, func(i, j int) bool { return sum.Views[i].Affected > sum.Views[j].Affected })
-	// Elements lists every placement in the matched views — affected, unlinked,
-	// and context neighbours alike — so text renders show the same authored
-	// nodes as the canvas. Pure-context views stay counted, not listed.
+	// Elements lists the placements in the matched views within the blast
+	// radius — affected plus, when positive, their context neighbours — so
+	// text renders show the same authored nodes as the pruned scene. Without
+	// a radius every placement in the matched views is listed, as the canvas
+	// does. Pure-context views stay counted, not listed.
 	for _, item := range all {
 		if !matched[item.viewID] {
 			continue
@@ -205,12 +238,19 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 		}
 		return sum.Elements[i].Name < sum.Elements[j].Name
 	})
-	// Connectors carries the user-authored edges inside matched views so the
-	// mermaid export draws the same connectors as the canvas overlay.
+	// Connectors carries the user-authored edges inside matched views whose
+	// endpoints both survived the radius filter, so the mermaid export draws
+	// the same connectors as the pruned scene.
 	for viewIDStr, content := range explore.Views {
 		viewID, err := strconv.ParseInt(viewIDStr, 10, 64)
 		if err != nil || !matched[viewID] {
 			continue
+		}
+		kept := map[int64]bool{}
+		for _, item := range all {
+			if item.viewID == viewID {
+				kept[item.el.ElementID] = true
+			}
 		}
 		names := map[int64]string{}
 		for _, el := range content.Placements {
@@ -222,6 +262,9 @@ func Summarize(diagram *pb.ImpactDiagram, explore app.ExploreData, viewFilter st
 			source, okSource := names[conn.SourceElementID]
 			target, okTarget := names[conn.TargetElementID]
 			if !okSource || !okTarget {
+				continue
+			}
+			if radius >= 0 && (!kept[conn.SourceElementID] || !kept[conn.TargetElementID]) {
 				continue
 			}
 			label := ""

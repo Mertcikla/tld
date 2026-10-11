@@ -12,8 +12,10 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 )
 
-// DefaultContextDepth is the number of dependency hops of unchanged context
-// every comparison computes and displays.
+// DefaultContextDepth is the default number of dependency hops of unchanged
+// context a comparison carries. The `tld git compare` command passes its
+// --blast-radius flag instead; other callers (live impact, RPC defaults) use
+// this.
 const DefaultContextDepth = 3
 
 // DefaultMaxNodes is the size budget used when a client does not pick one. A

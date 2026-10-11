@@ -32,6 +32,13 @@ func impactLookupError(err error) error {
 	return connect.NewError(connect.CodeInternal, err)
 }
 
+// compareBlastRadius is the single canonical blast radius for repository
+// comparisons served over RPC: direct changes plus one dependency hop of
+// unchanged neighbours and edges. It mirrors the CLI's --blast-radius flow.
+// The request's context depth is ignored until the proto carries a blast
+// radius, so canvas, dock, and CLI payloads cannot drift.
+const compareBlastRadius = 1
+
 // impactService builds the reusable comparison service shared with the CLI.
 func (s *codeIndexService) impactService() impact.Service {
 	return impact.Service{Workspace: s.ws, Index: s.store, Config: configbridge.FromGlobal(s.config)}
@@ -46,7 +53,7 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 		RepositoryID: input.RepositoryId,
 		Base:         input.Base,
 		Head:         input.Head,
-		ContextDepth: input.ContextDepth,
+		ContextDepth: compareBlastRadius,
 		Progress: func(p indexer.Progress) {
 			_ = stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Progress{Progress: &pb.Progress{Stage: p.Stage, Current: uint32(p.Current), Total: uint32(p.Total), Detail: p.Detail}}})
 		},
@@ -54,7 +61,7 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if err != nil {
 		return impactError(err)
 	}
-	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: diagram}})
+	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: impact.Scope(diagram, compareBlastRadius)}})
 }
 
 func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.LiveImpact], error) {

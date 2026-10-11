@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -703,3 +704,116 @@ func TestSceneIncludesChildViewsOfImpactedElements(t *testing.T) {
 		}
 	}
 }
+
+func scopeScenePlacement(viewID, elementID int32, name string, distance uint32, changed bool) *pb.ScenePlacement {
+	placement := &pb.ScenePlacement{
+		Element: &diagv1.PlacedElement{
+			Id: int32(elementID), ElementId: elementID, ViewId: viewID, Name: name,
+		},
+	}
+	if changed {
+		placement.Overlay = &pb.ImpactSceneOverlay{
+			Change:   pb.ChangeKind_CHANGE_KIND_MODIFIED,
+			Path:     name,
+			Distance: distance,
+		}
+	}
+	return placement
+}
+
+// ScopeScene at radius 0 keeps directly changed placements only, dropping
+// unimpacted neighbours, dangling connectors, and emptied views.
+func TestScopeSceneKeepsDirectChangesOnly(t *testing.T) {
+	scene := &pb.ImpactScene{
+		Views: map[string]*pb.SceneViewContent{
+			"7": {
+				Placements: []*pb.ScenePlacement{
+					scopeScenePlacement(7, 1, "a.go", 0, true),
+					scopeScenePlacement(7, 2, "b.go", 1, true),
+					scopeScenePlacement(7, 3, "notes", 0, false),
+				},
+				Connectors: []*diagv1.Connector{
+					{Id: 1, ViewId: 7, SourceElementId: 1, TargetElementId: 2},
+					{Id: 2, ViewId: 7, SourceElementId: 1, TargetElementId: 3},
+				},
+			},
+			"8": {
+				Placements: []*pb.ScenePlacement{
+					scopeScenePlacement(8, 9, "z.go", 0, false),
+				},
+			},
+		},
+		Tree:            []*diagv1.View{{Id: 7, Name: "kept"}, {Id: 8, Name: "dropped"}},
+		AuthoredViewIds: []int64{7, 8},
+	}
+	scoped := ScopeScene(scene, 0)
+	content := scoped.GetViews()["7"]
+	if content == nil || len(content.GetPlacements()) != 1 || content.GetPlacements()[0].GetElement().GetElementId() != 1 {
+		t.Fatalf("radius 0 placements = %+v", scoped.GetViews())
+	}
+	if len(content.GetConnectors()) != 0 {
+		t.Fatalf("connectors without both endpoints must go: %+v", content.GetConnectors())
+	}
+	if _, ok := scoped.GetViews()["8"]; ok {
+		t.Fatalf("emptied view must go: %+v", scoped.GetViews())
+	}
+	if len(scoped.GetTree()) != 1 || scoped.GetTree()[0].GetId() != 7 {
+		t.Fatalf("tree = %+v", scoped.GetTree())
+	}
+	if len(scoped.GetAuthoredViewIds()) != 1 || scoped.GetAuthoredViewIds()[0] != 7 {
+		t.Fatalf("authored views = %+v", scoped.GetAuthoredViewIds())
+	}
+	// The input scene is cloned, never mutated.
+	if len(scene.GetViews()["7"].GetPlacements()) != 3 {
+		t.Fatalf("ScopeScene mutated its input: %+v", scene.GetViews()["7"].GetPlacements())
+	}
+}
+
+// ScopeScene at radius 1 additionally keeps context neighbours, and keeps
+// the container elements that own retained drill-down views so nested change
+// evidence never orphans its parent.
+func TestScopeSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
+	scene := &pb.ImpactScene{
+		Views: map[string]*pb.SceneViewContent{
+			"7": {
+				Placements: []*pb.ScenePlacement{
+					scopeScenePlacement(7, 10, "service", 0, false),
+					scopeScenePlacement(7, 11, "other", 0, false),
+				},
+			},
+			"9": {
+				Placements: []*pb.ScenePlacement{
+					scopeScenePlacement(9, 1, "a.go", 0, true),
+					scopeScenePlacement(9, 2, "b.go", 1, true),
+					scopeScenePlacement(9, 3, "far.go", 2, true),
+				},
+				Connectors: []*diagv1.Connector{
+					{Id: 1, ViewId: 9, SourceElementId: 1, TargetElementId: 2},
+					{Id: 2, ViewId: 9, SourceElementId: 1, TargetElementId: 3},
+				},
+			},
+		},
+		Tree: []*diagv1.View{{Id: 7, Name: "parent", Children: []*diagv1.View{{Id: 9, Name: "child"}}}},
+		Navigations: []*diagv1.ElementNavigationInfo{
+			{FromViewId: 7, ToViewId: 9, RelationType: "child", ElementId: int32Ptr(10)},
+		},
+		AuthoredViewIds: []int64{7, 9},
+	}
+	scoped := ScopeScene(scene, 1)
+	child := scoped.GetViews()["9"]
+	if child == nil || len(child.GetPlacements()) != 2 {
+		t.Fatalf("radius 1 placements = %+v", scoped.GetViews())
+	}
+	if len(child.GetConnectors()) != 1 || child.GetConnectors()[0].GetTargetElementId() != 2 {
+		t.Fatalf("connectors = %+v", child.GetConnectors())
+	}
+	parent := scoped.GetViews()["7"]
+	if parent == nil || len(parent.GetPlacements()) != 1 || parent.GetPlacements()[0].GetElement().GetElementId() != 10 {
+		t.Fatalf("drill-down container must survive: %+v", scoped.GetViews())
+	}
+	if len(scoped.GetNavigations()) != 1 {
+		t.Fatalf("navigations = %+v", scoped.GetNavigations())
+	}
+}
+
+func int32Ptr(value int32) *int32 { return &value }

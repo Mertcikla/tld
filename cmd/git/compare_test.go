@@ -505,6 +505,60 @@ func TestCompareHasNoScopeOrRawFlags(t *testing.T) {
 	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
 		t.Fatal("--view and --all-edges flags are required")
 	}
+	blast := found.Flags().Lookup("blast-radius")
+	if blast == nil {
+		t.Fatal("--blast-radius flag is required")
+	}
+	if blast.DefValue != "0" {
+		t.Fatalf("--blast-radius default = %q, want 0", blast.DefValue)
+	}
+}
+
+func TestCompareBlastRadiusValidation(t *testing.T) {
+	dir := compareRepo(t)
+	for _, radius := range []string{"-1", "3", "99"} {
+		_, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--blast-radius", radius)
+		if err == nil || !strings.Contains(err.Error(), "--blast-radius must be between 0 and 2") {
+			t.Fatalf("radius %q: error = %v", radius, err)
+		}
+	}
+}
+
+func TestCompareBlastRadiusZeroIsDefault(t *testing.T) {
+	dir := compareRepo(t)
+	def, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--blast-radius", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same change, same radius: the payload must be identical modulo the
+	// regenerated diagram version.
+	var defBundle, explicitBundle map[string]any
+	if err := json.Unmarshal([]byte(def), &defBundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(explicit), &explicitBundle); err != nil {
+		t.Fatal(err)
+	}
+	defScene, _ := json.Marshal(defBundle["scene"])
+	explicitScene, _ := json.Marshal(explicitBundle["scene"])
+	var defSceneMap, explicitSceneMap map[string]any
+	if err := json.Unmarshal(defScene, &defSceneMap); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(explicitScene, &explicitSceneMap); err != nil {
+		t.Fatal(err)
+	}
+	delete(defSceneMap, "version")
+	delete(explicitSceneMap, "version")
+	defScene, _ = json.Marshal(defSceneMap)
+	explicitScene, _ = json.Marshal(explicitSceneMap)
+	if string(defScene) != string(explicitScene) {
+		t.Fatalf("default radius differs from --blast-radius 0:\n%s\n%s", defScene, explicitScene)
+	}
 }
 
 func runGitCompare(t *testing.T, args ...string) (string, string, error) {

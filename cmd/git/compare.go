@@ -40,6 +40,7 @@ type compareOptions struct {
 	plain          bool
 	maxNodes       int
 	maxBytes       int
+	blastRadius    int
 	dataDir        string
 	maxElements    int
 	maxConnectors  int
@@ -48,6 +49,10 @@ type compareOptions struct {
 	view           string
 	allEdges       bool
 }
+
+// maxBlastRadius bounds --blast-radius: direct changes plus at most two
+// dependency hops of unchanged neighbours and edges.
+const maxBlastRadius = 2
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
 // read distances and counts without knowing proto3 defaults.
@@ -73,7 +78,9 @@ draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
 and added/removed/modified arrows on connectors.
 
 --view restricts the bundle to one authored view (id or name substring).
-Context is always computed three dependency hops out and displayed in full;
+Only directly changed sections are emitted by default; --blast-radius (0-2)
+additionally includes the neighbours and edges of each change that many
+dependency hops away. Context beyond that is never computed or displayed;
 when the output exceeds the node or byte budget it is progressively narrowed
 by blast radius and a warning is written to stderr. High fan-out nodes are
 rolled up by target prefix (7 groups + "+N more"); pass --all-edges to
@@ -97,6 +104,7 @@ stderr.`,
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
+	c.Flags().IntVar(&opts.blastRadius, "blast-radius", 0, "dependency hops of unchanged neighbours and edges to include around each change (0-2)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().IntVar(&opts.maxElements, "max-elements", 0, "skip output when the requested diagram exceeds this element count (0 disables)")
 	c.Flags().IntVar(&opts.maxConnectors, "max-connectors", 0, "skip output when the requested diagram exceeds this connector count (0 disables)")
@@ -110,6 +118,9 @@ stderr.`,
 func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head string) error {
 	if opts.maxElements < 0 || opts.maxConnectors < 0 {
 		return fmt.Errorf("--max-elements and --max-connectors must be nonnegative")
+	}
+	if opts.blastRadius < 0 || opts.blastRadius > maxBlastRadius {
+		return fmt.Errorf("--blast-radius must be between 0 and %d", maxBlastRadius)
 	}
 	ctx := cmd.Context()
 	global, err := workspace.LoadGlobalConfig()
@@ -165,13 +176,14 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	lastStage := indexcmd.DisplayStage("discover")
 	revisions := map[string]string{impact.TargetBase: base, impact.TargetHead: head}
 	shownTarget := ""
-	// Context depth is fixed: comparisons always compute three dependency
-	// hops out and display everything, narrowing only on node/byte budgets.
+	// Only the requested blast radius is computed: direct changes plus that
+	// many dependency hops of unchanged neighbours. Budgets below can only
+	// narrow further.
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
 		RepositoryID:    repositoryID,
 		Base:            &pb.Revision{GitRevision: base},
 		Head:            &pb.Revision{GitRevision: head},
-		ContextDepth:    impact.DefaultContextDepth,
+		ContextDepth:    uint32(opts.blastRadius),
 		PrepareCheckout: prepare,
 		Progress: func(update indexer.Progress) {
 			if tracker == nil {
@@ -202,19 +214,21 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// Commit the trailing stage before reporting on the output so the notices
 	// land below the work they describe.
 	tracker.Complete(lastStage)
-	requested := uint32(impact.DefaultContextDepth)
-	report := comparisonReport(impact.Scope(diagram, requested), opts)
+	requested := uint32(opts.blastRadius)
+	scoped := impact.Scope(diagram, requested)
+	report := comparisonReport(scoped, opts)
 	// The grounded summary intersects the change with the authored workspace so
 	// the payload pins the user's diagram and rolls up fan-out. Neighbourhood
 	// comes from the head snapshot's file pairs so unlinked-but-indexed edits
-	// still resolve to the linked neighbours they may disturb.
+	// still resolve to the linked neighbours they may disturb. Only sections
+	// within the blast radius are listed; the rest stays counted, not carried.
 	var summary grounded.Summary
 	explore, exploreErr := sq.Explore(ctx)
 	if exploreErr != nil {
 		return exploreErr
 	}
 	neighbours := groundedNeighbours(ctx, store, diagram)
-	summary = grounded.Summarize(diagram, explore, opts.view, opts.allEdges, neighbours)
+	summary = grounded.SummarizeWithRadius(scoped, explore, opts.view, opts.allEdges, neighbours, opts.blastRadius)
 	report.Grounded = &summary
 	if summary.FallbackToRaw && opts.verbose {
 		notice("notice: no authored views intersect this change; grounded bundle falls back to raw impact context")
@@ -437,12 +451,15 @@ type groundedBundle struct {
 
 // build renders a scoped diagram at radius, returning the text to write and its
 // size in bytes so --max-bytes describes the payload the caller receives.
+// The scene is pruned to the same radius, so unimpacted sections never reach
+// the payload.
 func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
 	if r.opts.mermaid || r.opts.markdown {
 		scene, err := r.service.Scene(r.ctx, diagram)
 		if err != nil {
 			return "", 0, err
 		}
+		scene = impact.ScopeScene(scene, radius)
 		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true, Plain: r.opts.plain})
 		// An empty scene render means neither authored nor mapped views
 		// survived: fall through to the file-level fact graph so the change
@@ -469,6 +486,7 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	if err != nil {
 		return "", 0, err
 	}
+	scene = impact.ScopeScene(scene, radius)
 	payload, err := protoJSONOptions.Marshal(scene)
 	if err != nil {
 		return "", 0, err

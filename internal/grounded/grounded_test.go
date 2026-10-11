@@ -169,3 +169,99 @@ func TestSummarizeUncoveredListsWorkspaceGaps(t *testing.T) {
 		t.Fatalf("uncovered = %+v", sum.Uncovered)
 	}
 }
+
+func radiusFixture() (*pb.ImpactDiagram, app.ExploreData, map[string][]string) {
+	diagram := &pb.ImpactDiagram{
+		Diff: &pb.SnapshotDiff{Sources: []*pb.SourceChange{{Path: "a.go"}}},
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|a.go", Path: "a.go", Distance: 0},
+			{Key: "context|2", Path: "b.go", Distance: 1, ElementId: 2},
+		},
+	}
+	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
+		"7": {
+			Placements: []app.PlacedElement{
+				{ElementID: 1, Name: "entry", FilePath: strPtr("a.go")},
+				{ElementID: 2, Name: "neighbour", FilePath: strPtr("b.go")},
+				{ElementID: 3, Name: "far", FilePath: strPtr("z.go")},
+				{ElementID: 4, Name: "notes"},
+			},
+			Connectors: []app.Connector{
+				{SourceElementID: 1, TargetElementID: 2, Label: strPtr("calls")},
+				{SourceElementID: 1, TargetElementID: 3, Label: strPtr("ignores")},
+			},
+		},
+	}}
+	neighbours := map[string][]string{
+		"a.go": {"b.go"},
+		"b.go": {"a.go"},
+	}
+	return diagram, explore, neighbours
+}
+
+// Radius 0 lists directly affected placements only: neighbours, far context,
+// and unlinked notes stay in the per-view totals, counted but never carried.
+func TestSummarizeWithRadiusZeroListsAffectedOnly(t *testing.T) {
+	diagram, explore, neighbours := radiusFixture()
+	sum := SummarizeWithRadius(diagram, explore, "", false, neighbours, 0)
+	if sum.Affected != 1 || sum.Context != 0 || sum.Ungrounded != 0 {
+		t.Fatalf("counts = %+v", sum)
+	}
+	if len(sum.Elements) != 1 || sum.Elements[0].Name != "entry" || sum.Elements[0].Status != StatusAffected {
+		t.Fatalf("elements = %+v", sum.Elements)
+	}
+	if len(sum.Connectors) != 0 {
+		t.Fatalf("no connector survives without both endpoints: %+v", sum.Connectors)
+	}
+	if len(sum.Views) != 1 || sum.Views[0].Affected != 1 || sum.Views[0].Total != 4 {
+		t.Fatalf("views = %+v", sum.Views)
+	}
+}
+
+// A positive radius additionally lists the neighbours of each change with
+// the edges between surviving endpoints only.
+func TestSummarizeWithRadiusOneListsNeighbours(t *testing.T) {
+	diagram, explore, neighbours := radiusFixture()
+	sum := SummarizeWithRadius(diagram, explore, "", false, neighbours, 1)
+	if sum.Affected != 1 || sum.Context != 1 {
+		t.Fatalf("counts = %+v", sum)
+	}
+	found := map[string]string{}
+	for _, el := range sum.Elements {
+		found[el.Name] = el.Status
+	}
+	if len(sum.Elements) != 2 || found["entry"] != StatusAffected || found["neighbour"] != StatusContext {
+		t.Fatalf("elements = %+v", sum.Elements)
+	}
+	if len(sum.Connectors) != 1 || sum.Connectors[0].Label != "calls" {
+		t.Fatalf("connectors = %+v", sum.Connectors)
+	}
+}
+
+// An indirect-only change matches no view at radius 0 and falls back to raw
+// context instead of emitting an empty bundle.
+func TestSummarizeWithRadiusZeroFallsBackWithoutDirectHit(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|validate.py", Path: "validate.py", Name: "validate.py"},
+		},
+		Diff: &pb.SnapshotDiff{Sources: []*pb.SourceChange{{Path: "validate.py"}}},
+	}
+	explore := app.ExploreData{Views: map[string]app.ExploreViewData{
+		"7": {Placements: []app.PlacedElement{
+			{ElementID: 1, Name: "build", FilePath: strPtr("build.py")},
+		}},
+	}}
+	neighbours := map[string][]string{
+		"validate.py": {"build.py"},
+		"build.py":    {"validate.py"},
+	}
+	sum := SummarizeWithRadius(diagram, explore, "", false, neighbours, 0)
+	if len(sum.Views) != 0 || !sum.FallbackToRaw || len(sum.Elements) != 0 {
+		t.Fatalf("indirect-only change at radius 0 must fall back: %+v", sum)
+	}
+	sum = SummarizeWithRadius(diagram, explore, "", false, neighbours, 1)
+	if len(sum.Views) != 1 || sum.FallbackToRaw || len(sum.Elements) != 1 {
+		t.Fatalf("indirect change at radius 1 must match its neighbour: %+v", sum)
+	}
+}
