@@ -51,6 +51,12 @@ const TAG_DOT_GAP_TO_NODE_H = 4 / VIEW_EDITOR_NODE_H
 const TAG_DOT_INSET_X_TO_NODE_W = 8 / VIEW_EDITOR_NODE_W
 const TAG_DOT_INSET_Y_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
 const TAG_OVERFLOW_FONT_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const BADGE_H_TO_NODE_H = 16 / VIEW_EDITOR_NODE_H
+const BADGE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
+const BADGE_PAD_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
+const BADGE_GAP_TO_NODE_H = 5 / VIEW_EDITOR_NODE_H
+const BADGE_RADIUS_TO_NODE_H = 5 / VIEW_EDITOR_NODE_H
+const BADGE_MIN_SCREEN_H = 12
 
 export interface ScreenRect {
   left: number
@@ -1164,22 +1170,22 @@ function drawSceneNode(
     ctx.setLineDash([])
     traceShape()
     ctx.stroke()
-    if (change.change === 'modified' && drawScreenW > 70 && !renderCtx.lowDetail) {
+    if (change.change === 'modified' && !renderCtx.lowDetail && h * BADGE_H_TO_NODE_H * drawZoom >= BADGE_MIN_SCREEN_H) {
       const plus = `+${change.linesAdded ?? 0}`
       const minus = `\u2212${change.linesRemoved ?? 0}`
-      const badgePad = 6 / drawZoom
-      const padX = 6 / drawZoom
-      const gap = 5 / drawZoom
-      const badgeH = 16 / drawZoom
-      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
+      const badgePad = h * BADGE_PAD_TO_NODE_H
+      const padX = h * BADGE_PAD_TO_NODE_H
+      const gap = h * BADGE_GAP_TO_NODE_H
+      const badgeH = h * BADGE_H_TO_NODE_H
+      ctx.font = `600 ${h * BADGE_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
       const plusW = ctx.measureText(plus).width
       const minusW = ctx.measureText(minus).width
       const badgeW = Math.min(plusW + gap + minusW + padX * 2, w - badgePad * 2)
-      const badgeX = x
-      const badgeY = y + h + badgePad
+      const badgeX = x + w - badgeW
+      const badgeY = y + h + badgeH - badgePad
       ctx.setLineDash([])
       ctx.beginPath()
-      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, h * BADGE_RADIUS_TO_NODE_H)
       ctx.fillStyle = portalTintColor(color, 0.22)
       ctx.fill()
       ctx.strokeStyle = color
