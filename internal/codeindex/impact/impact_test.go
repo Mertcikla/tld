@@ -495,3 +495,33 @@ func assertFactFingerprints(t *testing.T, diagram *pb.ImpactDiagram) {
 		}
 	}
 }
+
+// TestSaveIdenticalSnapshotsSkipsDiffQueries proves comparing a snapshot with
+// itself issues no diff queries: it succeeds even when the snapshots do not
+// exist, and persists the empty payload for downstream readers.
+func TestSaveIdenticalSnapshotsSkipsDiffQueries(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	diagram, err := Save(ctx, ws, idx, "repo", "key", "missing", "missing", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagram.GetNodes()) != 0 || len(diagram.GetEdges()) != 0 {
+		t.Fatalf("identical snapshots must yield an empty diagram: %+v", diagram)
+	}
+	if diagram.GetDiff().GetFromSnapshotId() != "missing" || diagram.GetDiff().GetToSnapshotId() != "missing" {
+		t.Fatalf("empty diagram must pin its snapshots: %+v", diagram.GetDiff())
+	}
+	stored, err := idx.Impact(ctx, "repo", "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.GetNodes()) != 0 || stored.GetComparisonKey() != "key" {
+		t.Fatalf("empty diagram was not persisted: %+v", stored)
+	}
+}

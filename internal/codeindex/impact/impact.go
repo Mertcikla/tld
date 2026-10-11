@@ -187,6 +187,22 @@ func Save(ctx context.Context, ws core.Store, idx *cstore.Store, repo, key, from
 	if err := removeLegacyMaterialization(ctx, ws, idx, repo); err != nil {
 		return nil, err
 	}
+	// Identical snapshots carry no delta: the diff, adjacency, and placement
+	// queries would all scan the index to discover nothing. Snapshots are
+	// reused verbatim when content matches, so this also covers different
+	// revisions with identical trees.
+	if from == to {
+		diagram := &pb.ImpactDiagram{
+			RepositoryId:  repo,
+			ComparisonKey: key,
+			Diff:          &pb.SnapshotDiff{RepositoryId: repo, FromSnapshotId: from, ToSnapshotId: to},
+			Version:       uuid.NewString(),
+		}
+		if err := idx.SaveImpact(ctx, diagram); err != nil {
+			return nil, err
+		}
+		return diagram, nil
+	}
 	diagram, err := Build(ctx, ws, idx, repo, key, from, to, radius)
 	if err != nil {
 		return nil, err

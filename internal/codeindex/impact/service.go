@@ -2,6 +2,9 @@ package impact
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/config"
@@ -82,8 +85,23 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 	if req.Progress != nil {
 		req.Progress(indexer.Progress{Stage: "overlay", Detail: "preparing change overlay"})
 	}
-	key := graph.ID(before.Id, after.Id)
+	key := ComparisonKey(before.Id, after.Id, req.ContextDepth)
+	// A completed comparison is immutable for its snapshot pair and radius,
+	// so a repeat request is a single indexed lookup instead of a rebuild.
+	if cached, err := s.Index.Impact(ctx, repo.Id, key); err == nil {
+		return cached, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	return Save(ctx, s.Workspace, s.Index, repo.Id, key, before.Id, after.Id, req.ContextDepth)
+}
+
+// ComparisonKey identifies a stored comparison payload. Snapshot IDs already
+// pin the exact content, config, and toolchain of both sides, so a completed
+// comparison is immutable and safe to serve again. The blast radius is part of
+// the key because diagrams built at different radii carry different context.
+func ComparisonKey(beforeID, afterID string, depth uint32) string {
+	return graph.ID(beforeID, afterID, fmt.Sprintf("radius=%d", depth))
 }
 
 // forTarget tags every progress update with the comparison side being prepared
