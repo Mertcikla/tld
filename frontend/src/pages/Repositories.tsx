@@ -344,6 +344,7 @@ export default function Repositories() {
   const [branch, setBranch] = useState(() => params.get('branch') || '')
   const [showRepositorySettings, setShowRepositorySettings] = useState(() => params.get('page') === 'settings')
   const [collapsed, setCollapsed] = useState(false)
+  const initializedRepositoryPanel = useRef(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
@@ -431,6 +432,10 @@ export default function Repositories() {
       const items = await api.repositories.list()
       invalidateIndexedRepositories()
       setRepositories(items)
+      if (!initializedRepositoryPanel.current) {
+        setCollapsed(items.length > 0)
+        initializedRepositoryPanel.current = true
+      }
       setSelectedId((id) =>
         items.some((r) => r.id === id) ? id : items[0]?.id || '',
       )

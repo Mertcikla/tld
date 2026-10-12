@@ -212,10 +212,18 @@ describe('Repositories map action', () => {
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
   })
 
+  it('starts with the repository list collapsed when repositories already exist', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(renderer.root.findByProps({ 'aria-label': 'Expand repositories' })).toBeTruthy()
+    await act(async () => { renderer.unmount() })
+  })
+
   it('hides history in Watch and hosts repository information in settings', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-delete-repo-1' })).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
@@ -311,6 +319,7 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
 
     act(() => {
@@ -389,6 +398,9 @@ describe('Repositories map action', () => {
           node.props['data-testid'] === 'repositories-add',
       )[0]
 
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick()
+    })
     act(() => {
       renderer.root.findByProps({ 'aria-label': 'Collapse repositories' }).props.onClick()
     })
@@ -601,6 +613,7 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'repositories-delete-repo-1' }).props.onClick({ stopPropagation: () => {} })
@@ -834,6 +847,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
