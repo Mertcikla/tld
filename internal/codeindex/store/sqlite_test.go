@@ -202,3 +202,78 @@ func TestSnapshotRefsSkipsStatistics(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishDeduplicatesContentAndArtifacts(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	text := "package dedupe\nfunc A() {}\n"
+	artifact := []byte("scip-index-bytes")
+	publish := func(id string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "dedupe"}
+		g := graph.NewGraph(snap.RepositoryId, snap.Id)
+		src := &graph.Source{Path: "a.go", Text: []byte(text), Hash: graph.Hash([]byte(text)), Language: "go", SyntaxCache: `{"v":1}`, FileCache: "cache", InputBlob: "blob-" + id}
+		g.Sources[src.Path] = src
+		snap.Sources = []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(text))}}
+		g.ProjectArtifacts["go|."] = graph.ProjectArtifact{Fingerprint: "fp-1", Data: artifact}
+		if err := st.Publish(ctx, "/dedupe", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("dedupe-a")
+	publish("dedupe-b")
+
+	count := func(table string) int {
+		t.Helper()
+		var n int
+		if err := st.bun.NewRaw(`SELECT COUNT(*) FROM `+table+` WHERE org_id = ?`, scope(ctx).value()).Scan(ctx, &n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count("codeindex_blobs"); n != 1 {
+		t.Fatalf("blobs = %d, want one shared row", n)
+	}
+	if n := count("codeindex_artifacts"); n != 1 {
+		t.Fatalf("artifacts = %d, want one shared row", n)
+	}
+
+	for _, id := range []string{"dedupe-a", "dedupe-b"} {
+		g, err := st.LoadGraph(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := g.Sources["a.go"]
+		if src == nil || string(src.Text) != text || src.SyntaxCache != `{"v":1}` || src.FileCache != "cache" || src.Language != "go" {
+			t.Fatalf("%s source = %+v", id, src)
+		}
+		if a := g.ProjectArtifacts["go|."]; string(a.Data) != string(artifact) || a.Fingerprint != "fp-1" {
+			t.Fatalf("%s artifact = %+v", id, a)
+		}
+	}
+	if content, err := st.Source(ctx, graph.Hash([]byte(text))); err != nil || string(content) != text {
+		t.Fatalf("source lookup = %q, %v", content, err)
+	}
+
+	// Deleting one snapshot keeps the shared rows; the last deletion collects
+	// them.
+	if err := st.DeleteSnapshot(ctx, "dedupe-a"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count("codeindex_blobs"); n != 1 {
+		t.Fatalf("blobs after first delete = %d, want 1", n)
+	}
+	if n := count("codeindex_artifacts"); n != 1 {
+		t.Fatalf("artifacts after first delete = %d, want 1", n)
+	}
+	if err := st.DeleteSnapshot(ctx, "dedupe-b"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count("codeindex_blobs"); n != 0 {
+		t.Fatalf("blobs after final delete = %d, want 0", n)
+	}
+	if n := count("codeindex_artifacts"); n != 0 {
+		t.Fatalf("artifacts after final delete = %d, want 0", n)
+	}
+}

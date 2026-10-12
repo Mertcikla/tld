@@ -18,8 +18,11 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		return nil, err
 	}
 	g := graph.NewGraph(snap.RepositoryId, snap.Id)
-	sourceWhere, sourceScopeArgs := scope(ctx).clause("org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, content, language, input_blob, dirty, syntax_cache, file_cache FROM codeindex_sources WHERE snapshot_id = ?`+sourceWhere, append([]any{snap.Id}, sourceScopeArgs...)...)
+	sourceWhere, sourceScopeArgs := scope(ctx).clause("s.org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT s.path, s.hash, b.content, s.language, s.input_blob, s.dirty, COALESCE(b.syntax_cache, ''), COALESCE(b.file_cache, '')
+		FROM codeindex_sources s
+		LEFT JOIN codeindex_blobs b ON b.org_id = s.org_id AND b.hash = s.hash AND b.language = s.language
+		WHERE s.snapshot_id = ?`+sourceWhere, append([]any{snap.Id}, sourceScopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -36,8 +39,11 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	if err != nil {
 		return nil, err
 	}
-	artifactWhere, artifactScopeArgs := scope(ctx).clause("org_id")
-	rows, err = s.bun.QueryContext(ctx, `SELECT project_key, fingerprint, data FROM codeindex_project_artifacts WHERE snapshot_id = ?`+artifactWhere, append([]any{snap.Id}, artifactScopeArgs...)...)
+	artifactWhere, artifactScopeArgs := scope(ctx).clause("p.org_id")
+	rows, err = s.bun.QueryContext(ctx, `SELECT p.project_key, p.fingerprint, a.data
+		FROM codeindex_project_artifacts p
+		JOIN codeindex_artifacts a ON a.org_id = p.org_id AND a.project_key = p.project_key AND a.fingerprint = p.fingerprint
+		WHERE p.snapshot_id = ?`+artifactWhere, append([]any{snap.Id}, artifactScopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}

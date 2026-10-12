@@ -74,12 +74,35 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
+		// Content-addressed payloads are shared across repositories in the
+		// organisation; only rows nothing references any more are dropped.
+		if err := collectOrphanContent(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_elements WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		_, err := tx.NewRaw(`DELETE FROM codeindex_repositories WHERE id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx)
 		return err
 	})
+}
+
+// collectOrphanContent removes shared blobs and artifacts no snapshot
+// references any more. It runs only on deletion paths, where paying for the
+// anti-join is negligible compared with the storage it reclaims.
+func collectOrphanContent(ctx context.Context, tx bun.Tx) error {
+	org := scope(ctx).value()
+	if _, err := tx.NewRaw(`DELETE FROM codeindex_blobs WHERE org_id = ? AND NOT EXISTS (
+		SELECT 1 FROM codeindex_sources s
+		WHERE s.org_id = codeindex_blobs.org_id AND s.hash = codeindex_blobs.hash AND s.language = codeindex_blobs.language)`, org).Exec(ctx); err != nil {
+		return err
+	}
+	if _, err := tx.NewRaw(`DELETE FROM codeindex_artifacts WHERE org_id = ? AND NOT EXISTS (
+		SELECT 1 FROM codeindex_project_artifacts p
+		WHERE p.org_id = codeindex_artifacts.org_id AND p.project_key = codeindex_artifacts.project_key AND p.fingerprint = codeindex_artifacts.fingerprint)`, org).Exec(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // DeleteSnapshot removes one published snapshot and the records scoped to it
@@ -117,6 +140,9 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			}
 		}
 		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
+			return err
+		}
+		if err := collectOrphanContent(ctx, tx); err != nil {
 			return err
 		}
 		org := scope(ctx).value()

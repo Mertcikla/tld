@@ -170,17 +170,40 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	return nil
 }
 
+// saveSources writes a snapshot's source list and its project artifacts. The
+// heavy payloads (file text, syntax caches, SCIP indexes) live in content-
+// addressed tables keyed by hash or fingerprint; a publish only binds bytes
+// that no earlier snapshot already stored.
 func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
 	org := scope(ctx).value()
 	if g != nil && len(g.ProjectArtifacts) > 0 {
-		artifactRows := make([][]any, 0, len(g.ProjectArtifacts))
+		artifactKeys := make([][2]string, 0, len(g.ProjectArtifacts))
 		for key, artifact := range g.ProjectArtifacts {
-			artifactRows = append(artifactRows, []any{snap.Id, key, artifact.Fingerprint, artifact.Data, org})
+			artifactKeys = append(artifactKeys, [2]string{key, artifact.Fingerprint})
 		}
-		if err := insertRows(ctx, tx, `INSERT INTO codeindex_project_artifacts (snapshot_id, project_key, fingerprint, data, org_id) VALUES `, ``, 5, artifactRows); err != nil {
+		existing, err := existingArtifactKeys(ctx, tx, org, artifactKeys)
+		if err != nil {
+			return err
+		}
+		artifactRows := make([][]any, 0, len(artifactKeys))
+		snapshotRows := make([][]any, 0, len(artifactKeys))
+		for _, key := range artifactKeys {
+			if !existing[key] {
+				artifactRows = append(artifactRows, []any{org, key[0], key[1], g.ProjectArtifacts[key[0]].Data})
+			}
+			snapshotRows = append(snapshotRows, []any{snap.Id, key[0], key[1], org})
+		}
+		if err := insertRows(ctx, tx, `INSERT INTO codeindex_artifacts (org_id, project_key, fingerprint, data) VALUES `, ` ON CONFLICT(org_id, project_key, fingerprint) DO NOTHING`, 4, artifactRows); err != nil {
+			return err
+		}
+		if err := insertRows(ctx, tx, `INSERT INTO codeindex_project_artifacts (snapshot_id, project_key, fingerprint, org_id) VALUES `, ``, 4, snapshotRows); err != nil {
 			return err
 		}
 	}
+
+	type blobKey struct{ hash, language string }
+	blobIndex := map[blobKey]int{}
+	var blobRows [][]any
 	sourceRows := make([][]any, 0, len(snap.Sources))
 	for _, src := range snap.Sources {
 		var content []byte
@@ -192,12 +215,108 @@ func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Gra
 				language, blob, cache, fileCache, dirty = s.Language, s.InputBlob, s.SyntaxCache, s.FileCache, s.Dirty
 			}
 		}
-		sourceRows = append(sourceRows, []any{snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache, fileCache, org})
+		if src.Hash != "" {
+			key := blobKey{hash: src.Hash, language: language}
+			if _, ok := blobIndex[key]; !ok {
+				blobIndex[key] = len(blobRows)
+				blobRows = append(blobRows, []any{org, src.Hash, language, content, cache, fileCache})
+			}
+		}
+		sourceRows = append(sourceRows, []any{snap.Id, src.Path, src.Hash, src.Size, language, blob, dirty, org})
 	}
-	if err := insertRows(ctx, tx, `INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache, file_cache, org_id) VALUES `, ``, 11, sourceRows); err != nil {
+	keys := make([][2]string, 0, len(blobRows))
+	for _, row := range blobRows {
+		keys = append(keys, [2]string{row[1].(string), row[2].(string)})
+	}
+	existing, err := existingBlobKeys(ctx, tx, org, keys)
+	if err != nil {
+		return err
+	}
+	missing := make([][]any, 0, len(blobRows))
+	for i, row := range blobRows {
+		if !existing[keys[i]] {
+			missing = append(missing, row)
+		}
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_blobs (org_id, hash, language, content, syntax_cache, file_cache) VALUES `, ` ON CONFLICT(org_id, hash, language) DO NOTHING`, 6, missing); err != nil {
+		return err
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_sources (snapshot_id, path, hash, size, language, input_blob, dirty, org_id) VALUES `, ``, 8, sourceRows); err != nil {
 		return fmt.Errorf("insert sources: %w", err)
 	}
 	return nil
+}
+
+// existingBlobKeys reports which (hash, language) pairs are already stored, so
+// a publish binds only the bytes that are new. Only hash strings cross the
+// wire; blob contents stay in the database.
+func existingBlobKeys(ctx context.Context, tx bun.Tx, org any, keys [][2]string) (map[[2]string]bool, error) {
+	existing := map[[2]string]bool{}
+	const chunk = 500
+	for start := 0; start < len(keys); start += chunk {
+		end := min(start+chunk, len(keys))
+		placeholders := make([]string, 0, end-start)
+		args := make([]any, 0, 1+(end-start))
+		args = append(args, org)
+		for _, key := range keys[start:end] {
+			placeholders = append(placeholders, "?")
+			args = append(args, key[0])
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT hash, language FROM codeindex_blobs WHERE org_id = ? AND hash IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var hash, language string
+			if err := rows.Scan(&hash, &language); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			existing[[2]string{hash, language}] = true
+		}
+		rowErr := rows.Err()
+		_ = rows.Close()
+		if rowErr != nil {
+			return nil, rowErr
+		}
+	}
+	return existing, nil
+}
+
+// existingArtifactKeys reports which (project_key, fingerprint) artifacts are
+// already stored; an unchanged project's SCIP index is therefore written once
+// no matter how many snapshots reuse it.
+func existingArtifactKeys(ctx context.Context, tx bun.Tx, org any, keys [][2]string) (map[[2]string]bool, error) {
+	existing := map[[2]string]bool{}
+	const chunk = 500
+	for start := 0; start < len(keys); start += chunk {
+		end := min(start+chunk, len(keys))
+		placeholders := make([]string, 0, end-start)
+		args := make([]any, 0, 1+(end-start))
+		args = append(args, org)
+		for _, key := range keys[start:end] {
+			placeholders = append(placeholders, "?")
+			args = append(args, key[1])
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT project_key, fingerprint FROM codeindex_artifacts WHERE org_id = ? AND fingerprint IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var projectKey, fingerprint string
+			if err := rows.Scan(&projectKey, &fingerprint); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			existing[[2]string{projectKey, fingerprint}] = true
+		}
+		rowErr := rows.Err()
+		_ = rows.Close()
+		if rowErr != nil {
+			return nil, rowErr
+		}
+	}
+	return existing, nil
 }
 
 func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
@@ -479,11 +598,12 @@ func (s *Store) Repository(ctx context.Context, id string) (*pb.Repository, erro
 	return &pb.Repository{Id: id, Root: root, LatestSnapshotId: latest}, nil
 }
 
-// Source returns captured file content by content hash.
+// Source returns captured file content by content hash from the shared blob
+// store, so every snapshot with the same file content reads one row.
 func (s *Store) Source(ctx context.Context, hash string) ([]byte, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var content []byte
-	err := s.bun.NewRaw(`SELECT content FROM codeindex_sources WHERE hash = ?`+where+` LIMIT 1`, append([]any{hash}, scopeArgs...)...).Scan(ctx, &content)
+	err := s.bun.NewRaw(`SELECT content FROM codeindex_blobs WHERE hash = ?`+where+` LIMIT 1`, append([]any{hash}, scopeArgs...)...).Scan(ctx, &content)
 	if err != nil {
 		return nil, err
 	}
