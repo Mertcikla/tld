@@ -181,3 +181,90 @@ func TestExportImpactSceneKeepsUnknownLineCountsUnknown(t *testing.T) {
 		t.Fatalf("unknown counts invented: %s", got)
 	}
 }
+
+func containerSceneFixture() *codeindexv1.ImpactScene {
+	return &codeindexv1.ImpactScene{
+		Tree: []*diagv1.View{{Id: 1, Name: "Workspace", Children: []*diagv1.View{
+			{Id: 2, Name: "tld", OwnerElementId: proto.Int32(1)},
+		}}},
+		Views: map[string]*codeindexv1.SceneViewContent{
+			"1": {Placements: []*codeindexv1.ScenePlacement{
+				{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1, Name: "tld"},
+					Origin: codeindexv1.ImpactOrigin_IMPACT_ORIGIN_MAPPED, Role: codeindexv1.ImpactRole_IMPACT_ROLE_CONTAINER},
+			}},
+			"2": {Placements: []*codeindexv1.ScenePlacement{
+				{Element: &diagv1.PlacedElement{ElementId: 2, ViewId: 2, Name: "main.go"}},
+			}},
+		},
+	}
+}
+
+func TestExportImpactSceneFoldsIsolatedContainerIntoChildSubgraph(t *testing.T) {
+	t.Parallel()
+	scene := containerSceneFixture()
+	before := proto.Clone(scene)
+	got := ExportImpactScene(scene, SceneExportOptions{})
+	if strings.Contains(got, "el_1_1") {
+		t.Fatalf("redundant container node remains:\n%s", got)
+	}
+	for _, want := range []string{`subgraph view_1["Workspace"]`, `  subgraph view_2["tld"]`, `el_2_2["main.go"]`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q:\n%s", want, got)
+		}
+	}
+	if !proto.Equal(scene, before) {
+		t.Fatal("export mutated the canonical scene")
+	}
+}
+
+func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		modify func(*codeindexv1.ImpactScene)
+		want   string
+	}{
+		{"change overlay", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["1"].Placements[0].Overlay = &codeindexv1.ImpactSceneOverlay{Change: codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED}
+		}, "modified"},
+		{"dependency context", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["1"].Placements[0].Role = codeindexv1.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT
+		}, ""},
+		{"authored context", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["1"].Placements[0].Role = codeindexv1.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT
+		}, ""},
+		{"child absent", func(scene *codeindexv1.ImpactScene) {
+			scene.Tree[0].Children = nil
+			delete(scene.Views, "2")
+		}, ""},
+		{"child without content", func(scene *codeindexv1.ImpactScene) {
+			delete(scene.Views, "2")
+		}, ""},
+		{"same name different owner", func(scene *codeindexv1.ImpactScene) {
+			scene.Tree[0].Children[0].OwnerElementId = proto.Int32(99)
+		}, ""},
+		{"outgoing connector", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["1"].Placements = append(scene.Views["1"].Placements,
+				&codeindexv1.ScenePlacement{Element: &diagv1.PlacedElement{ElementId: 3, ViewId: 1, Name: "other"}})
+			scene.Views["1"].Connectors = []*diagv1.Connector{{Id: 1, ViewId: 1, SourceElementId: 1, TargetElementId: 3, Tags: []string{"change:added"}}}
+		}, "el_1_1 ==> el_1_3\nend\n\nlinkStyle 0 stroke:#48bb78"},
+		{"incoming connector", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["1"].Placements = append(scene.Views["1"].Placements,
+				&codeindexv1.ScenePlacement{Element: &diagv1.PlacedElement{ElementId: 3, ViewId: 1, Name: "other"}})
+			scene.Views["1"].Connectors = []*diagv1.Connector{{Id: 1, ViewId: 1, SourceElementId: 3, TargetElementId: 1}}
+		}, "el_1_3 --> el_1_1"},
+		{"incoming cross-view connector", func(scene *codeindexv1.ImpactScene) {
+			scene.Views["2"].Connectors = []*diagv1.Connector{{Id: 1, ViewId: 2, SourceElementId: 2, TargetElementId: 1}}
+			scene.Views["2"].ConnectorTargets = map[string]*codeindexv1.ImpactPlacementRef{"1": {ViewId: 1, ElementId: 1}}
+		}, "el_2_2 --> el_1_1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scene := containerSceneFixture()
+			test.modify(scene)
+			got := ExportImpactScene(scene, SceneExportOptions{})
+			if !strings.Contains(got, `el_1_1["▦ tld`) || !strings.Contains(got, test.want) {
+				t.Fatalf("owner or independent information missing:\n%s", got)
+			}
+		})
+	}
+}

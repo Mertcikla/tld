@@ -21,9 +21,10 @@ type SceneExportOptions struct {
 // ExportImpactScene renders a repository change scene — the exact payload the
 // canvas loads — as a Mermaid flowchart, one subgraph per retained view. Node
 // ids, labels, connector arrows, and change link styles follow the same rules
-// as the canvas overlay, so the text diagram matches the UI node for node.
-// Membership is selected once by the impact pipeline. Rendering never consults
-// workspace ownership, source facts, or display policy.
+// as the canvas overlay. Isolated container owners are represented by their
+// nested child subgraph rather than a redundant standalone node.
+// Membership is selected once by the impact pipeline. Rendering uses only the
+// frozen scene, without consulting the live workspace or source facts.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
 	if scene == nil {
 		return "flowchart LR\n"
@@ -77,15 +78,33 @@ type sceneViewer struct {
 	linkIndex     int
 	retained      map[int32]bool
 	retainedOrder []int32
+	connected     map[string]bool
 }
 
 func (v *sceneViewer) index() {
 	v.overlayOf = map[int32]*codeindexv1.ImpactSceneOverlay{}
-	for _, content := range v.scene.GetViews() {
+	v.connected = map[string]bool{}
+	for key, content := range v.scene.GetViews() {
+		viewID, _ := strconv.ParseInt(key, 10, 32)
+		local := map[int32]bool{}
 		for _, placement := range content.GetPlacements() {
+			local[placement.GetElement().GetElementId()] = true
 			if placement.GetOverlay() != nil {
 				v.overlayOf[placement.GetElement().GetElementId()] = placement.GetOverlay()
 			}
+		}
+		for _, connector := range content.GetConnectors() {
+			if connector == nil {
+				continue
+			}
+			v.connected[sceneNodeRef(int32(viewID), connector.SourceElementId)] = true
+			targetViewID := int32(viewID)
+			if !local[connector.TargetElementId] {
+				if ref := content.ConnectorTargets[strconv.Itoa(int(connector.Id))]; ref != nil {
+					targetViewID = ref.ViewId
+				}
+			}
+			v.connected[sceneNodeRef(targetViewID, connector.TargetElementId)] = true
 		}
 	}
 	v.retained = map[int32]bool{}
@@ -227,6 +246,9 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		if placement == nil || placement.GetElement() == nil {
 			continue
 		}
+		if v.redundantOwner(viewID, placement, kids, seen) {
+			continue
+		}
 		elementID := placement.GetElement().GetElementId()
 		rendered[elementID] = true
 		lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, sceneNodeRef(viewID, elementID),
@@ -260,6 +282,24 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 	}
 	lines = append(lines, head+"end")
 	return lines
+}
+
+// redundantOwner only folds structural containers into a child subgraph that
+// will actually render here. Overlays and connector endpoints need their node.
+// This is a Mermaid representation choice; the frozen scene stays unchanged.
+func (v *sceneViewer) redundantOwner(viewID int32, placement *codeindexv1.ScenePlacement, kids []*diagv1.View, seen map[int32]bool) bool {
+	elementID := placement.GetElement().GetElementId()
+	if placement.GetRole() != codeindexv1.ImpactRole_IMPACT_ROLE_CONTAINER ||
+		v.overlayOf[elementID] != nil || v.connected[sceneNodeRef(viewID, elementID)] {
+		return false
+	}
+	for _, kid := range kids {
+		if !seen[kid.Id] && kid.OwnerElementId != nil && kid.GetOwnerElementId() == elementID &&
+			v.scene.Views[strconv.Itoa(int(kid.Id))] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *sceneViewer) viewName(viewID int32) string {
