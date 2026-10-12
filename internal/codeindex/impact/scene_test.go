@@ -15,6 +15,7 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
@@ -816,6 +817,135 @@ func TestSelectSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 }
 
 func int32Ptr(value int32) *int32 { return &value }
+
+func TestConnectorRepresentsDependencyNormalizesBackwardDirection(t *testing.T) {
+	connector := &diagv1.Connector{
+		SourceElementId: 10, TargetElementId: 20, Direction: "backward",
+		Label: proto.String("calls"), Relationship: proto.String("uses"),
+	}
+	if !connectorRepresentsDependency(connector, 20, 10) {
+		t.Fatal("backward connector should represent the reversed logical dependency")
+	}
+	if connectorRepresentsDependency(connector, 10, 20) {
+		t.Fatal("backward connector should not represent its stored endpoint order as a forward dependency")
+	}
+	if connector.GetLabel() != "calls" || connector.GetRelationship() != "uses" {
+		t.Fatalf("matching must preserve semantic label and relationship: %+v", connector)
+	}
+}
+
+func TestConnectorDoesNotMatchOppositeDirectionOrDifferentEndpoint(t *testing.T) {
+	connector := &diagv1.Connector{SourceElementId: 10, TargetElementId: 20, Direction: "forward"}
+	if connectorRepresentsDependency(connector, 20, 10) {
+		t.Fatal("forward connector must not represent a dependency in the opposite direction")
+	}
+	if connectorRepresentsDependency(connector, 10, 30) {
+		t.Fatal("connector must not represent a dependency with a different endpoint")
+	}
+	if connectorRepresentsDependency(&diagv1.Connector{SourceElementId: 10, TargetElementId: 20, Direction: "none"}, 10, 20) {
+		t.Fatal("connector with no direction must not represent a directed dependency")
+	}
+}
+
+func TestSceneReusesBackwardConnectorAndPreservesSemanticConnectors(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	view, err := ws.CreateView(ctx, "repo map", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	place := func(name, filePath string) int64 {
+		t.Helper()
+		element, err := ws.CreateElement(ctx, core.LibraryElement{Name: name, FilePath: stringPtr(filePath), RepositoryID: stringPtr("repo")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ws.AddPlacement(ctx, view.ID, element.ID, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		return element.ID
+	}
+	aID := place("a", "a.go")
+	bID := place("b", "b.go")
+	connectors := []core.Connector{
+		{ViewID: view.ID, SourceElementID: bID, TargetElementID: aID, Direction: "backward", Label: stringPtr("calls"), Relationship: stringPtr("calls")},
+		{ViewID: view.ID, SourceElementID: bID, TargetElementID: aID, Direction: "backward", Label: stringPtr("depends on"), Relationship: stringPtr("uses")},
+	}
+	created := make([]core.Connector, 0, len(connectors))
+	for _, connector := range connectors {
+		stored, err := ws.CreateConnector(ctx, connector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, stored)
+	}
+	publish := func(id, aText string, edges [][2]string) {
+		t.Helper()
+		snapshot := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range map[string]string{"a.go": aText, "b.go": "func B() {}"} {
+			source := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = source
+			snapshot.Sources = append(snapshot.Sources, &pb.SourceFile{Path: path, Hash: source.Hash, Size: uint64(len(source.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", source.Anchor(0, len(source.Text)), text, "", nil)
+		}
+		for _, edge := range edges {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snapshot, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", "func A() { return 1 }", nil)
+	publish("head", "func A() { return 2 }", [][2]string{{"a.go", "b.go"}})
+	diagram, err := compareSceneSnapshots(ctx, ws, idx, "repo", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := scene.GetViews()[strconv.FormatInt(view.ID, 10)]
+	if content == nil {
+		t.Fatalf("scene missing authored view: %+v", scene.GetViews())
+	}
+	if got, want := len(content.GetConnectors()), len(created); got != want {
+		t.Fatalf("connectors = %d, want the %d semantic workspace connectors with no synthesized duplicate: %+v", got, want, content.GetConnectors())
+	}
+	seen := map[int32]bool{}
+	for _, connector := range content.GetConnectors() {
+		seen[connector.GetId()] = true
+		if connector.GetSourceElementId() != int32(bID) || connector.GetTargetElementId() != int32(aID) || connector.GetDirection() != "backward" {
+			t.Fatalf("stored connector identity or direction changed: %+v", connector)
+		}
+		provenance := scene.Provenance[ConnectorKey(view.ID, int64(connector.GetId()))]
+		if provenance == nil {
+			t.Fatalf("connector %d lost provenance", connector.GetId())
+		}
+		if connector.GetId() == int32(created[0].ID) {
+			if connector.GetLabel() != "calls" || connector.GetRelationship() != "calls" {
+				t.Fatalf("matched connector lost semantic fields: %+v", connector)
+			}
+			if provenance.Origin != pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED || len(provenance.EndpointKeys) != 2 || len(provenance.Paths) != 2 {
+				t.Fatalf("matched connector provenance = %+v", provenance)
+			}
+		} else if connector.GetLabel() != "depends on" || connector.GetRelationship() != "uses" {
+			t.Fatalf("distinct existing semantic connector was changed: %+v", connector)
+		}
+	}
+	for _, connector := range created {
+		if !seen[int32(connector.ID)] {
+			t.Fatalf("existing connector %d was dropped", connector.ID)
+		}
+	}
+}
 
 // compareSceneSnapshots captures fixtures through the production comparison path.
 func compareSceneSnapshots(ctx context.Context, ws core.Store, idx *cstore.Store, repo, from, to string, radius uint32) (*model.Diagram, error) {

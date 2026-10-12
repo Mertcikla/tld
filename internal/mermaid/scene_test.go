@@ -133,6 +133,42 @@ func TestExportImpactSceneNilIsEmptyFlowchart(t *testing.T) {
 	}
 }
 
+func TestExportImpactSceneCrossViewTargetDoesNotRewriteSourceOrLabel(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"", "added", "removed", "modified"} {
+		t.Run(change, func(t *testing.T) {
+			var tags []string
+			if change != "" {
+				tags = []string{"change:" + change}
+			}
+			scene := &codeindexv1.ImpactScene{
+				Tree: []*diagv1.View{{Id: 1, Name: "Caller"}, {Id: 2, Name: "Callee"}},
+				Views: map[string]*codeindexv1.SceneViewContent{
+					"1": {
+						Placements:       []*codeindexv1.ScenePlacement{{Element: &diagv1.PlacedElement{ElementId: 70, ViewId: 1, Name: "Source"}}},
+						Connectors:       []*diagv1.Connector{{Id: 1, ViewId: 1, SourceElementId: 70, TargetElementId: 7, Label: proto.String("calls el_1_7"), Tags: tags}},
+						ConnectorTargets: map[string]*codeindexv1.ImpactPlacementRef{"1": {ViewId: 2, ElementId: 7}},
+					},
+					"2": {Placements: []*codeindexv1.ScenePlacement{{Element: &diagv1.PlacedElement{ElementId: 7, ViewId: 2, Name: "Target"}}}},
+				},
+			}
+			got := ExportImpactScene(scene, SceneExportOptions{})
+			if strings.Contains(got, "el_2_70") || !strings.Contains(got, `"calls el_1_7"`) {
+				t.Fatalf("cross-view target rewrote source or user label:\n%s", got)
+			}
+			var edge string
+			for _, line := range strings.Split(got, "\n") {
+				if strings.Contains(line, `"calls el_1_7"`) {
+					edge = strings.TrimSpace(line)
+				}
+			}
+			if !strings.HasPrefix(edge, "el_1_70") || !strings.HasSuffix(edge, "el_2_7") {
+				t.Fatalf("wrong cross-view endpoints: %q", edge)
+			}
+		})
+	}
+}
+
 func TestExportImpactSceneRendersBackendPlainSelection(t *testing.T) {
 	t.Parallel()
 

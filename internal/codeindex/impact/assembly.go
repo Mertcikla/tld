@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "6"
+const PipelineVersion = "7"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -592,6 +592,11 @@ func (a *sceneAssembly) destination(node *model.Node) (int64, string) {
 	}
 	if id := a.viewIdx.closest(node.Path); id != 0 {
 		if _, ok := a.views[id]; ok {
+			if node.Distance == 0 {
+				if sibling := a.consolidateRawDestination(node, id); sibling != 0 {
+					return sibling, "Consolidated compatible raw file into its selected mapped source container"
+				}
+			}
 			return id, "Placed in nearest mapped source container"
 		}
 	}
@@ -736,7 +741,7 @@ func (a *sceneAssembly) projectRelationships() {
 				content := a.scene.Views[strconv.FormatInt(from.ViewId, 10)]
 				var connector *diagv1.Connector
 				for _, candidate := range content.Connectors {
-					if int64(candidate.SourceElementId) == from.ResourceId && int64(candidate.TargetElementId) == to.ResourceId {
+					if connectorRepresentsDependency(candidate, int32(from.ResourceId), int32(to.ResourceId)) {
 						connector = candidate
 						break
 					}
@@ -756,6 +761,27 @@ func (a *sceneAssembly) projectRelationships() {
 			}
 		}
 	}
+}
+
+// connectorRepresentsDependency compares the effective direction of a
+// workspace connector with a directed dependency. Mermaid mappings can store
+// the same edge with reversed endpoints and Direction="backward"; treating
+// that as a second edge would duplicate one logical relationship in the scene.
+func connectorRepresentsDependency(connector *diagv1.Connector, source, target int32) bool {
+	if connector == nil {
+		return false
+	}
+	from, to := connector.GetSourceElementId(), connector.GetTargetElementId()
+	switch strings.ToLower(strings.TrimSpace(connector.GetDirection())) {
+	case "backward":
+		from, to = to, from
+	case "both", "bidirectional":
+		return (from == source && to == target) || (from == target && to == source)
+	case "", "forward":
+	default:
+		return false
+	}
+	return from == source && to == target
 }
 
 func (a *sceneAssembly) placeAdditions() {

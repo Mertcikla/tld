@@ -267,14 +267,13 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		}
 		if !rendered[target] {
 			if ref := content.ConnectorTargets[strconv.Itoa(int(connector.Id))]; ref != nil {
-				line := v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags())
-				line = strings.ReplaceAll(line, sceneNodeRef(viewID, target), sceneNodeRef(ref.ViewId, target))
+				line := v.sceneConnectorLine(viewID, source, ref.ViewId, target, connector.GetLabel(), connector.GetTags())
 				lines = append(lines, pad+line)
 				v.linkIndex++
 			}
 			continue
 		}
-		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags()))
+		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, viewID, target, connector.GetLabel(), connector.GetTags()))
 		// Mermaid numbers linkStyle statements over every rendered link line
 		// in order, so the counter advances for each emitted connector, not
 		// just the changed ones styleLink records.
@@ -314,8 +313,8 @@ func (v *sceneViewer) viewName(viewID int32) string {
 // thick arrows for added edges, crossed arrows for removed ones, and link
 // styles carrying the change palette (modified keeps its arrow, color does
 // the talking).
-func (v *sceneViewer) sceneConnectorLine(viewID, source, target int32, label string, tags []string) string {
-	from, to := sceneNodeRef(viewID, source), sceneNodeRef(viewID, target)
+func (v *sceneViewer) sceneConnectorLine(sourceView, source, targetView, target int32, label string, tags []string) string {
+	from, to := sceneNodeRef(sourceView, source), sceneNodeRef(targetView, target)
 	change := edgeChangeFromTags(tags)
 	text := strings.TrimSpace(label)
 	switch change {
