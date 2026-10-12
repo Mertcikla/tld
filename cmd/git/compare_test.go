@@ -17,15 +17,17 @@ import (
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCompareHardLimits(t *testing.T) {
-	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{{Key: "a"}, {Key: "b"}},
-		Edges: []*pb.ImpactEdge{{FromKey: "a", ToKey: "b"}, {FromKey: "b", ToKey: "a"}},
+	diagram := &model.Diagram{
+		Nodes: []*model.Node{{Key: "a"}, {Key: "b"}},
+		Edges: []*model.Edge{{FromKey: "a", ToKey: "b"}, {FromKey: "b", ToKey: "a"}},
 	}
 	for _, test := range []struct {
 		name   string
@@ -44,14 +46,14 @@ func TestCompareHardLimits(t *testing.T) {
 			}
 		})
 	}
-	if report := comparisonReport(&pb.ImpactDiagram{}, compareOptions{}); report.Status != "empty" {
+	if report := comparisonReport(&model.Diagram{}, compareOptions{}); report.Status != "empty" {
 		t.Fatalf("empty report = %+v", report)
 	}
 }
 
 func TestComparisonStats(t *testing.T) {
 	added, removed := uint32(12), uint32(3)
-	diagram := &pb.ImpactDiagram{
+	diagram := &model.Diagram{
 		Diff: &pb.SnapshotDiff{
 			Sources: []*pb.SourceChange{
 				{Path: "internal/api/routes.go", LinesAdded: &added, LinesRemoved: &removed},
@@ -64,21 +66,26 @@ func TestComparisonStats(t *testing.T) {
 				Removed:  []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_FILE}},
 			},
 		},
-		Edges: []*pb.ImpactEdge{
+		Edges: []*model.Edge{
 			{FromKey: "file|a.go", ToKey: "file|b.go", Change: pb.ChangeKind_CHANGE_KIND_ADDED},
 			{FromKey: "file|b.go", ToKey: "file|c.go", Change: pb.ChangeKind_CHANGE_KIND_REMOVED},
 			{FromKey: "file|c.go", ToKey: "file|a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
 			{FromKey: "file|a.go", ToKey: "file|c.go"},
 		},
 	}
+	diagram.Scene = &model.Assembly{Files: []*pb.ImpactFile{
+		{Path: "internal/api/routes.go", LinesAdded: &added, LinesRemoved: &removed},
+		{Path: "internal/api/handlers.go"}, {Path: "README.md"},
+	}, IndexedSymbols: []*pb.ImpactSymbolChange{{Name: "Added", Change: pb.ChangeKind_CHANGE_KIND_ADDED}, {Name: "Modified", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
+		Views: map[string]*model.ViewContent{"1": {Connectors: []*diagv1.Connector{{Tags: []string{"change:added"}}, {Tags: []string{"change:removed"}}, {Tags: []string{"change:modified"}}}}}}
 	stats := comparisonStats(diagram)
 	if stats.Files != 3 || stats.Directories != 2 || stats.Subsystems != 2 {
 		t.Fatalf("scope = %+v", stats)
 	}
-	if stats.LinesAdded != 12 || stats.LinesRemoved != 3 {
+	if stats.LinesAdded != 12 || stats.LinesRemoved != 3 || stats.LineCountsComplete {
 		t.Fatalf("churn = %+v", stats)
 	}
-	if stats.SymbolsAdded != 1 || stats.SymbolsModified != 1 || stats.SymbolsRemoved != 0 {
+	if stats.IndexedSymbolsAdded != 1 || stats.IndexedSymbolsModified != 1 || stats.IndexedSymbolsRemoved != 0 {
 		t.Fatalf("symbols = %+v", stats)
 	}
 	if stats.EdgesAdded != 1 || stats.EdgesRemoved != 1 || stats.EdgesModified != 1 {
@@ -110,7 +117,19 @@ func TestCompareReportAndSkip(t *testing.T) {
 	if err = json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "skipped" || report.Elements != 2 || len(report.Base) != 40 || len(report.Head) != 40 || report.Warnings == nil {
+	var canonical struct {
+		Comparison json.RawMessage   `json:"comparison"`
+		Files      []json.RawMessage `json:"files"`
+		Summary    json.RawMessage   `json:"summary"`
+	}
+	if err := json.Unmarshal(raw, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	comparison := &pb.ImpactComparison{}
+	if err := protojson.Unmarshal(canonical.Comparison, comparison); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "skipped" || report.Elements != 2 || len(comparison.Base) != 40 || len(comparison.Head) != 40 || report.Warnings == nil || len(canonical.Files) != 2 {
 		t.Fatalf("report = %+v", report)
 	}
 	// A skipped render still leaves both snapshots reusable.
@@ -217,12 +236,12 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if !strings.Contains(mermaid, "flowchart LR") || !strings.Contains(mermaid, "a.go") {
 		t.Fatalf("mermaid output = %q", mermaid)
 	}
-	if !strings.Contains(mermaid, "%% grounded") {
+	if !strings.Contains(mermaid, "%% impact") {
 		t.Fatalf("grounded mermaid header missing: %q", mermaid)
 	}
 	// Stats comments must follow the flowchart directive: strict renderers
 	// reject comments before the diagram type.
-	if flowchartAt := strings.Index(mermaid, "flowchart LR"); flowchartAt < 0 || strings.Index(mermaid, "%% grounded") < flowchartAt {
+	if flowchartAt := strings.Index(mermaid, "flowchart LR"); flowchartAt < 0 || strings.Index(mermaid, "%% impact") < flowchartAt {
 		t.Fatalf("mermaid comments must follow the flowchart directive: %q", mermaid)
 	}
 	// The default mermaid render is the change scene: the uncovered file
@@ -254,20 +273,13 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("protojson compare: %v\n%s", err, stderr)
 	}
-	var bundle map[string]any
-	if err := json.Unmarshal([]byte(out), &bundle); err != nil {
-		t.Fatalf("protojson output: %v\n%s", err, out)
-	}
-	if bundle["mode"] != "grounded" {
-		t.Fatalf("bundle mode = %v, want grounded", bundle["mode"])
-	}
-	sceneRaw, _ := json.Marshal(bundle["scene"])
 	var scene map[string]any
-	if err := json.Unmarshal(sceneRaw, &scene); err != nil {
-		t.Fatalf("bundle scene: %v\n%s", err, out)
+	if err := json.Unmarshal([]byte(out), &scene); err != nil {
+		t.Fatal(err)
 	}
-	if scene["comparisonKey"] == nil || scene["repositoryId"] == nil || scene["schemaVersion"] != impact.SceneSchemaVersion {
-		t.Fatalf("scene is not self-identifying: %v", scene)
+	comparison, _ := scene["comparison"].(map[string]any)
+	if comparison["key"] == nil || comparison["repositoryId"] == nil || comparison["schemaVersion"] != impact.SceneSchemaVersion {
+		t.Fatalf("missing comparison identity: %v", comparison)
 	}
 	if _, ok := scene["diff"]; ok {
 		t.Fatalf("scene must not carry the index diff: %v", scene["diff"])
@@ -276,14 +288,15 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if overlay == nil {
 		t.Fatalf("changed file has no overlay: %v", scene["views"])
 	}
-	if overlay["path"] != "a.go" || overlay["distance"] != float64(0) {
+	if overlay["path"] != "a.go" || overlay["contained"] != false {
 		t.Fatalf("overlay = %v", overlay)
 	}
-	symbols, _ := overlay["symbols"].([]any)
+	symbols, _ := overlay["symbolRefs"].([]any)
 	if len(symbols) == 0 {
 		t.Fatalf("overlay carries no symbol details: %v", overlay)
 	}
-	symbol, _ := symbols[0].(map[string]any)
+	table, _ := scene["symbols"].(map[string]any)
+	symbol, _ := table[symbols[0].(string)].(map[string]any)
 	if symbol["name"] != "A" || symbol["change"] != "CHANGE_KIND_MODIFIED" {
 		t.Fatalf("symbol detail = %v", symbol)
 	}
@@ -371,16 +384,16 @@ func compareRepo(t *testing.T) string {
 }
 
 func TestScopeToBudgetNarrowsRadius(t *testing.T) {
-	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{
+	diagram := &model.Diagram{
+		Nodes: []*model.Node{
 			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
-			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},
-			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
+			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1},
+			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2},
 		},
 	}
 	// A payload proportional to the node count lets the budget walk the radius
 	// down the same way a real render does.
-	build := func(scoped *pb.ImpactDiagram, radius uint32) (string, int, error) {
+	build := func(scoped *model.Diagram, radius uint32) (string, int, error) {
 		size := len(scoped.GetNodes()) * 1000
 		return fmt.Sprintf("radius=%d nodes=%d", radius, len(scoped.GetNodes())), size, nil
 	}
@@ -425,15 +438,16 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := impact.Service{Workspace: ws, Index: idx}
-	diagram := &pb.ImpactDiagram{
+	diagram := &model.Diagram{
 		RepositoryId:  "repo",
 		ComparisonKey: "key",
 		Diff: &pb.SnapshotDiff{
 			ToSnapshotId: "head",
 			Sources:      []*pb.SourceChange{{Path: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
 		},
-		Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
+		Nodes: []*model.Node{{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
 	}
+	diagram.Scene = &model.Assembly{SchemaVersion: impact.PipelineVersion, Views: map[string]*model.ViewContent{"-1": {Placements: []*model.Placement{{Element: &diagv1.PlacedElement{ViewId: -1, ElementId: -1, Name: "a.go"}}}}}, Tree: []*diagv1.View{{Id: -1, Name: "Changes"}}, Provenance: map[string]*model.Metadata{"placement|-1|-1": {Key: "placement|-1|-1", Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW, Role: pb.ImpactRole_IMPACT_ROLE_DIRECT}}}
 	for _, opts := range []compareOptions{{mermaid: true}, {markdown: true}} {
 		text, size, err := compareRenderer{ctx: ctx, service: service, opts: opts}.build(diagram, 0)
 		if err != nil {
@@ -456,15 +470,15 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 // An empty frozen scene must remain empty; raw analysis cannot add nodes
 // outside the provenance pipeline during export.
 func TestCompareRendererUsesFrozenSceneWithoutFactGraphFallback(t *testing.T) {
-	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{{Key: "file|hidden.go", Path: "hidden.go", Name: "hidden.go"}},
-		Scene: &pb.ImpactScene{SchemaVersion: impact.PipelineVersion},
+	diagram := &model.Diagram{
+		Nodes: []*model.Node{{Key: "file|hidden.go", Path: "hidden.go", Name: "hidden.go"}},
+		Scene: &model.Assembly{SchemaVersion: impact.PipelineVersion},
 	}
 	text, _, err := (compareRenderer{ctx: context.Background(), opts: compareOptions{mermaid: true}}).build(diagram, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "flowchart LR\n%% tld-scene\n" {
+	if !strings.HasPrefix(text, "flowchart LR\n%% tld-scene\n%% impact files=0") || strings.Contains(text, "hidden.go") {
 		t.Fatalf("export changed frozen scene membership: %s", text)
 	}
 }
@@ -492,8 +506,8 @@ func TestCompareHasNoScopeOrRawFlags(t *testing.T) {
 	if found.Flags().Lookup("scope") != nil {
 		t.Fatal("--scope flag must be gone; grounded is the only diagram")
 	}
-	if found.Flags().Lookup("view") == nil || found.Flags().Lookup("all-edges") == nil {
-		t.Fatal("--view and --all-edges flags are required")
+	if found.Flags().Lookup("view") == nil {
+		t.Fatal("--view flag is required")
 	}
 	blast := found.Flags().Lookup("blast-radius")
 	if blast == nil {
@@ -582,12 +596,12 @@ func writeSource(t *testing.T, dir, name, code string) {
 }
 
 func TestPlainBudgetAndProvenanceUseTheEmittedSelection(t *testing.T) {
-	scene := &pb.ImpactScene{SchemaVersion: impact.PipelineVersion, RequestedRadius: 1, Views: map[string]*pb.SceneViewContent{"1": {Placements: []*pb.ScenePlacement{{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 2, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 3, ViewId: 1}}}}}, Provenance: map[string]*pb.ImpactProvenance{
+	scene := &model.Assembly{SchemaVersion: impact.PipelineVersion, RequestedRadius: 1, Views: map[string]*model.ViewContent{"1": {Placements: []*model.Placement{{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 2, ViewId: 1}}, {Element: &diagv1.PlacedElement{ElementId: 3, ViewId: 1}}}}}, Provenance: map[string]*model.Metadata{
 		"placement|1|1": {Key: "placement|1|1", Role: pb.ImpactRole_IMPACT_ROLE_DIRECT},
 		"placement|1|2": {Key: "placement|1|2", Role: pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT, Distance: 1},
 		"placement|1|3": {Key: "placement|1|3", Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT},
-	}, Coverage: []*pb.SourceChange{{Path: "a.go", PlacementKeys: []string{"placement|1|1"}}}}
-	result, err := scopeToBudget(&pb.ImpactDiagram{Scene: scene}, 1, compareOptions{plain: true, maxNodes: 2}, func(*pb.ImpactDiagram, uint32) (string, int, error) { return "", 0, nil })
+	}, Files: []*pb.ImpactFile{{Path: "a.go", Representatives: []*pb.ImpactPlacementRef{{ViewId: 1, ElementId: 1}}}}}
+	result, err := scopeToBudget(&model.Diagram{Scene: scene}, 1, compareOptions{plain: true, maxNodes: 2}, func(*model.Diagram, uint32) (string, int, error) { return "", 0, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,60 +614,83 @@ func TestPlainBudgetAndProvenanceUseTheEmittedSelection(t *testing.T) {
 }
 
 func TestCompareJSONProvenanceIsOptIn(t *testing.T) {
-	scene := &pb.ImpactScene{
+	scene := &model.Assembly{
 		SchemaVersion: impact.PipelineVersion,
-		Views: map[string]*pb.SceneViewContent{"1": {Placements: []*pb.ScenePlacement{
+		Views: map[string]*model.ViewContent{"1": {Placements: []*model.Placement{
 			{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1}},
 		}}},
-		Provenance: map[string]*pb.ImpactProvenance{
+		Provenance: map[string]*model.Metadata{
 			"placement|1|1": {Key: "placement|1|1", Role: pb.ImpactRole_IMPACT_ROLE_DIRECT},
 		},
-		Coverage:  []*pb.SourceChange{{Path: "a.go", PlacementKeys: []string{"placement|1|1"}}},
-		Stages:    []*pb.ImpactStage{{Id: "coverage", Added: 1}},
-		Decisions: []*pb.ImpactDecision{{Stage: "coverage", Action: "add", Key: "placement|1|1"}},
+		Files:     []*pb.ImpactFile{{Path: "a.go", Representatives: []*pb.ImpactPlacementRef{{ViewId: 1, ElementId: 1}}}},
+		Decisions: []*model.Decision{{Stage: "coverage", Action: "add", Key: "placement|1|1"}},
 	}
-	var defaultSummary string
-	for _, tc := range []struct {
-		name  string
-		opts  compareOptions
-		debug bool
-	}{
-		{name: "default"},
-		{name: "debug", opts: compareOptions{debugProvenance: true}, debug: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			text, size, err := (compareRenderer{opts: tc.opts}).build(&pb.ImpactDiagram{Scene: scene}, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if size != len(text) {
-				t.Fatal("byte budget does not match exported JSON")
-			}
-			var bundle struct {
-				Scene    json.RawMessage
-				Grounded json.RawMessage
-			}
-			if err := json.Unmarshal([]byte(text), &bundle); err != nil {
-				t.Fatal(err)
-			}
-			exported := &pb.ImpactScene{}
-			if err := protojson.Unmarshal(bundle.Scene, exported); err != nil {
-				t.Fatal(err)
-			}
-			if (len(exported.Provenance) > 0) != tc.debug || (len(exported.Stages) > 0) != tc.debug || (len(exported.Decisions) > 0) != tc.debug {
-				t.Fatal("provenance must only appear with --debug-provenance")
-			}
-			if impact.SceneNodeCount(exported) != 1 || len(exported.Coverage) != 1 {
-				t.Fatal("provenance filtering changed diagram membership or coverage")
-			}
-			if defaultSummary == "" {
-				defaultSummary = string(bundle.Grounded)
-			} else if defaultSummary != string(bundle.Grounded) {
-				t.Fatal("debug flag changed grounded summary")
-			}
-			if len(scene.Provenance) != 1 || len(scene.Stages) != 1 || len(scene.Decisions) != 1 {
-				t.Fatal("export mutated canonical provenance")
-			}
-		})
+	var normal *pb.ImpactScene
+	var normalSize int
+	for _, debug := range []bool{false, true} {
+		text, size, err := (compareRenderer{opts: compareOptions{debugProvenance: debug}}).build(&model.Diagram{Scene: scene}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exported := &pb.ImpactScene{}
+		if err := protojson.Unmarshal([]byte(text), exported); err != nil {
+			t.Fatal(err)
+		}
+		if (exported.Provenance != nil) != debug {
+			t.Fatal("debug evidence must be opt-in")
+		}
+		exported.Provenance = nil
+		if !debug {
+			normal, normalSize = exported, size
+		} else if !proto.Equal(normal, exported) || normalSize != size {
+			t.Fatal("debug altered canvas inputs or budget size")
+		}
+		if len(exported.Files) != 1 || len(exported.Views["1"].Placements) != 1 {
+			t.Fatal("file/placement lost")
+		}
+	}
+	if len(scene.Provenance) != 1 {
+		t.Fatal("canonical assembly mutated")
+	}
+}
+
+func TestDebugOverheadCannotNarrowCanvasBudget(t *testing.T) {
+	scene := &model.Assembly{SchemaVersion: impact.PipelineVersion, RequestedRadius: 2, Comparison: &pb.ImpactComparison{},
+		Views:      map[string]*model.ViewContent{"1": {Placements: []*model.Placement{{Element: &diagv1.PlacedElement{ViewId: 1, ElementId: 1}}, {Element: &diagv1.PlacedElement{ViewId: 1, ElementId: 2}}}}},
+		Provenance: map[string]*model.Metadata{"placement|1|1": {Key: "placement|1|1", Role: pb.ImpactRole_IMPACT_ROLE_DIRECT}, "placement|1|2": {Key: "placement|1|2", Role: pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT, Distance: 1}},
+		Files:      []*pb.ImpactFile{{Path: "a.go", Representatives: []*pb.ImpactPlacementRef{{ViewId: 1, ElementId: 1}}}},
+	}
+	for i := 0; i < 100; i++ {
+		scene.Decisions = append(scene.Decisions, &model.Decision{Stage: "mapped", Action: "suppress", Key: fmt.Sprintf("placement|9|%d", i), Reason: strings.Repeat("Audit evidence ", 10)})
+	}
+	diagram := &model.Diagram{Scene: scene}
+	_, size, err := (compareRenderer{}).build(diagram, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := size + 200
+	var normal *pb.ImpactScene
+	for _, debug := range []bool{false, true} {
+		opts := compareOptions{maxBytes: budget, debugProvenance: debug}
+		result, err := scopeToBudget(diagram, 2, opts, (compareRenderer{opts: opts}).build)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.radius != 2 || result.limited || result.overBudget {
+			t.Fatal("debug overhead narrowed selection")
+		}
+		if debug && len(result.text) <= budget {
+			t.Fatal("fixture must exceed normal budget with debug evidence")
+		}
+		scene := &pb.ImpactScene{}
+		if err := protojson.Unmarshal([]byte(result.text), scene); err != nil {
+			t.Fatal(err)
+		}
+		scene.Provenance = nil
+		if !debug {
+			normal = scene
+		} else if !proto.Equal(normal, scene) {
+			t.Fatal("debug changed selected scene")
+		}
 	}
 }

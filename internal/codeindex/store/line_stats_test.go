@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 )
@@ -99,17 +100,17 @@ func TestSnapshotLineCounts(t *testing.T) {
 			if len(diff.Sources) != 1 || diff.Sources[0].GetLinesAdded() != test.added || diff.Sources[0].GetLinesRemoved() != test.removed {
 				t.Fatalf("line counts: %+v, want +%d -%d", diff.Sources, test.added, test.removed)
 			}
-			// Persisted diagrams from before the fields existed are hydrated too.
+			// Unknown captured counts remain unknown on immutable cache reads.
 			diff.Sources[0].LinesAdded, diff.Sources[0].LinesRemoved = nil, nil
-			if err := st.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: test.name, ComparisonKey: "live", Diff: diff}); err != nil {
+			if err := st.SaveImpact(ctx, &model.Diagram{RepositoryId: test.name, ComparisonKey: "live", Diff: diff}); err != nil {
 				t.Fatal(err)
 			}
 			saved, err := st.Impact(ctx, test.name, "live")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if saved.Diff.Sources[0].GetLinesAdded() != test.added || saved.Diff.Sources[0].GetLinesRemoved() != test.removed {
-				t.Fatal("legacy impact line counts were not hydrated")
+			if saved.Diff.Sources[0].LinesAdded != nil || saved.Diff.Sources[0].LinesRemoved != nil {
+				t.Fatal("unknown captured impact counts were reconstructed")
 			}
 		})
 	}

@@ -5,12 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
-
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
@@ -92,7 +91,7 @@ func TestCompareServesStoredComparison(t *testing.T) {
 	if len(first.GetNodes()) != 1 {
 		t.Fatalf("nodes = %d, want the single changed file", len(first.GetNodes()))
 	}
-	marker := proto.Clone(first).(*pb.ImpactDiagram)
+	marker := model.Clone(first)
 	marker.Version = "cached-marker"
 	if err := idx.SaveImpact(ctx, marker); err != nil {
 		t.Fatal(err)
@@ -101,8 +100,8 @@ func TestCompareServesStoredComparison(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.GetVersion() != "cached-marker" {
-		t.Fatalf("repeat comparison rebuilt instead of serving the stored payload (version %q)", second.GetVersion())
+	if second.Version != "cached-marker" {
+		t.Fatalf("repeat comparison rebuilt instead of serving the stored payload (version %q)", second.Version)
 	}
 }
 
@@ -117,8 +116,8 @@ func TestCompareRejectsInvalidRadiusBeforeIndexing(t *testing.T) {
 }
 
 func TestSceneReturnsFrozenCanonicalArtifactWithoutStores(t *testing.T) {
-	frozen := &pb.ImpactScene{SchemaVersion: PipelineVersion, RepositoryId: "repo", Warnings: []string{"captured warning"}}
-	scene, err := (Service{}).Scene(context.Background(), &pb.ImpactDiagram{Scene: frozen})
+	frozen := &model.Assembly{SchemaVersion: PipelineVersion, RepositoryId: "repo", Warnings: []string{"captured warning"}}
+	scene, err := (Service{}).Scene(context.Background(), &model.Diagram{Scene: frozen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,27 +127,10 @@ func TestSceneReturnsFrozenCanonicalArtifactWithoutStores(t *testing.T) {
 	}
 }
 
-func TestSceneReassemblesLegacyAnalysisWithCanonicalProvenance(t *testing.T) {
-	ctx, ws, idx := pipelineStore(t)
-	publishPipeline(t, ctx, idx, "base", map[string]string{"a.go": "before"}, nil)
-	publishPipeline(t, ctx, idx, "head", map[string]string{"a.go": "after"}, nil)
-	diagram, _, err := buildAnalysis(ctx, idx, "repo", "legacy", "base", "head", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	diagram.RequestedRadius = nil
-	diagram.Scene = &pb.ImpactScene{SchemaVersion: "1"}
-	scene, err := (Service{Workspace: ws, Index: idx}).Scene(ctx, diagram)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scene.SchemaVersion != PipelineVersion || len(scene.Stages) == 0 || len(scene.Coverage) != 1 {
-		t.Fatalf("legacy scene bypassed assembly: %+v", scene)
-	}
-	if err := ValidateCoverage(scene); err != nil {
-		t.Fatal(err)
-	}
-	if diagram.RequestedRadius != nil || diagram.Scene.SchemaVersion != "1" {
-		t.Fatal("legacy input was mutated")
+func TestSceneRejectsObsoleteArtifactsWithoutReadingWorkspace(t *testing.T) {
+	for _, scene := range []*model.Assembly{nil, {SchemaVersion: "3"}} {
+		if _, err := (Service{}).Scene(context.Background(), &model.Diagram{Scene: scene}); err == nil {
+			t.Fatal("obsolete scene accepted")
+		}
 	}
 }

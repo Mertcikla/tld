@@ -148,7 +148,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if comparison.GetVersion() != live.GetVersion() || comparison.GetComparisonKey() == "live" {
+	if comparison.Version != live.Version || comparison.GetComparisonKey() == "live" {
 		t.Fatal("watcher must populate the immutable default comparison cache")
 	}
 	base, err := idx.Snapshot(ctx, live.Diff.FromSnapshotId)
@@ -180,8 +180,8 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.ViewId != live.ViewId || len(empty.Nodes) != 0 {
-		t.Fatal("revert did not clear reusable impact view")
+	if len(empty.Nodes) != 0 {
+		t.Fatal("revert did not clear live comparison")
 	}
 }
 

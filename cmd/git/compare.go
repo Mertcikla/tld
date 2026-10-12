@@ -1,7 +1,6 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,8 +21,8 @@ import (
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/grounded"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -47,26 +46,25 @@ type compareOptions struct {
 	reportJSON      string
 	prepareCommand  string
 	view            string
-	allEdges        bool
 	debugProvenance bool
 }
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
 // read distances and counts without knowing proto3 defaults.
-var protoJSONOptions = protojson.MarshalOptions{Multiline: true, Indent: "  ", EmitUnpopulated: true}
+var protoJSONOptions = protojson.MarshalOptions{Multiline: true, Indent: "  ", EmitDefaultValues: true}
 
 func newCompareCmd() *cobra.Command {
 	opts := compareOptions{}
 	c := &cobra.Command{
 		Use:   "compare [repository] <base> <head>",
 		Short: "Compare two revisions of a repository",
-		Long: `Compare two Git revisions and emit the grounded bundle.
+		Long: `Compare two Git revisions and emit the canonical impact scene.
 
 The repository may be omitted to use the current checkout, or given as a
 repository id, a local path, or a remote URL (github.com/owner/repo,
 owner/repo, or a Git URL). Missing snapshots are indexed on demand.
 
-The default output is the grounded bundle: the user-authored diagram stays
+The default output is the canonical impact scene: the user-authored diagram stays
 canonical, each linked element is verified against the pinned snapshots, and
 the generated map contributes collapsed context only. The payload is
 self-contained, so it renders offline without the repository, its index, or
@@ -74,14 +72,12 @@ its snapshots. Pass --mermaid to emit the same change scene the canvas
 draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
 and added/removed/modified arrows on connectors.
 
---view restricts the bundle to one authored view (id or name substring).
+--view restricts the scene to one authored view (id or name substring).
 Only directly changed sections are emitted by default; --blast-radius (0-2)
 additionally includes the neighbours and edges of each change that many
 dependency hops away. Context beyond that is never computed or displayed;
 when the output exceeds the node or byte budget it is progressively narrowed
-by blast radius and a warning is written to stderr. High fan-out nodes are
-rolled up by target prefix (7 groups + "+N more"); pass --all-edges to
-disable the roll-up summary.
+by blast radius and a warning is written to stderr. All selected workspace connectors retain their original direction and styling.
 
 Indexing progress is quiet by default so scripted runs only emit the payload
 and budget warnings; pass --verbose to follow the base and head scans on
@@ -107,8 +103,7 @@ stderr.`,
 	c.Flags().IntVar(&opts.maxConnectors, "max-connectors", 0, "skip output when the requested diagram exceeds this connector count (0 disables)")
 	c.Flags().StringVar(&opts.reportJSON, "report-json", "", "write comparison status, counts, revisions, and index warnings to this JSON file")
 	c.Flags().StringVar(&opts.prepareCommand, "prepare-command", "", "run this Bash command in each uncached revision before indexing; requires Bash")
-	c.Flags().StringVar(&opts.view, "view", "", "restrict the grounded bundle to one authored view (id or name substring)")
-	c.Flags().BoolVar(&opts.allEdges, "all-edges", false, "disable fan-out roll-up in the grounded summary")
+	c.Flags().StringVar(&opts.view, "view", "", "restrict the scene to one authored view (id or name substring)")
 	c.Flags().BoolVar(&opts.debugProvenance, "debug-provenance", false, "include provenance in JSON output and show pipeline decisions and coverage on stderr")
 	return c
 }
@@ -218,27 +213,13 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	if opts.plain && scoped.Scene != nil {
 		scoped.Scene = impact.SelectScene(scoped.Scene, requested, true)
 	}
+	recordSelection(scoped.Scene, opts)
 	report := comparisonReport(scoped, opts)
 	// Summary, report and output all project the selected frozen scene.
-	summary := grounded.FromScene(scoped.GetScene(), opts.view, opts.allEdges)
-	report.Grounded = &summary
-	if summary.FallbackToRaw && opts.verbose {
+	if len(scoped.GetScene().GetAuthoredViewIds()) == 0 && opts.verbose {
 		notice("notice: no authored views intersect this change; scene uses mapped and raw coverage")
 	}
-	if opts.reportJSON != "" {
-		for _, id := range []string{diagram.GetDiff().GetFromSnapshotId(), diagram.GetDiff().GetToSnapshotId()} {
-			snapshot, loadErr := store.Snapshot(ctx, id)
-			if loadErr != nil {
-				return loadErr
-			}
-			report.Warnings = append(report.Warnings, snapshot.GetWarnings()...)
-			if report.Base == "" {
-				report.Base = snapshot.GetGitRevision()
-			} else {
-				report.Head = snapshot.GetGitRevision()
-			}
-		}
-	}
+
 	if report.Status == "skipped" {
 		if err := writeProvenance(opts, scoped.GetScene(), errOut); err != nil {
 			return err
@@ -246,7 +227,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		notice("warning: " + report.Reason)
 		return writeCompareReport(opts.reportJSON, report)
 	}
-	render := compareRenderer{ctx: ctx, service: service, opts: opts, summary: &summary}
+	render := compareRenderer{ctx: ctx, service: service, opts: opts}
 	result, err := scopeToBudget(scoped, requested, opts, render.build)
 	if err != nil {
 		return err
@@ -266,10 +247,10 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	if err := writeProvenance(opts, result.diagram.GetScene(), errOut); err != nil {
 		return err
 	}
-	emittedSummary := grounded.FromScene(result.diagram.GetScene(), opts.view, opts.allEdges)
-	report.Grounded = &emittedSummary
-	report.EffectiveRadius = int(result.radius)
-	report.Coverage = result.diagram.GetScene().GetCoverage()
+	if opts.debugProvenance && opts.maxBytes > 0 && len(result.text) > opts.maxBytes && result.size <= opts.maxBytes {
+		notice("notice: debug provenance exceeds the normal byte budget; canvas selection is unchanged")
+	}
+	report = comparisonReport(result.diagram, opts)
 	if err := writeCompareReport(opts.reportJSON, report); err != nil {
 		return err
 	}
@@ -282,42 +263,42 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	return err
 }
 
-// CompareReport counts the requested scope, before the shrinking output budgets.
+// CompareReport adds command status to canonical comparison fields. Hard limits
+// are checked against the requested scene; successful reports describe the emitted selection.
 type CompareReport struct {
-	Status           string             `json:"status"`
-	Elements         int                `json:"elements"`
-	Connectors       int                `json:"connectors"`
-	Stats            CompareStats       `json:"stats"`
-	Base             string             `json:"base"`
-	Head             string             `json:"head"`
-	Warnings         []string           `json:"warnings"`
-	Reason           string             `json:"reason,omitempty"`
-	Grounded         *grounded.Summary  `json:"grounded,omitempty"`
-	RequestedRadius  int                `json:"requestedRadius"`
-	EffectiveRadius  int                `json:"effectiveRadius"`
-	ManifestComplete bool               `json:"manifestComplete"`
-	Coverage         []*pb.SourceChange `json:"coverage,omitempty"`
+	Status           string          `json:"status"`
+	Elements         int             `json:"elements"`
+	Connectors       int             `json:"connectors"`
+	Stats            CompareStats    `json:"stats"`
+	Warnings         []string        `json:"warnings"`
+	Reason           string          `json:"reason,omitempty"`
+	RequestedRadius  int             `json:"requestedRadius"`
+	EffectiveRadius  int             `json:"effectiveRadius"`
+	ManifestComplete bool            `json:"manifestComplete"`
+	Scene            *pb.ImpactScene `json:"-"`
 }
 
 // CompareStats summarizes the change itself: its scope, churn, and symbol
-// deltas. It is derived from the snapshot diff, so it is independent of every
-// output budget and stays available even when the diagram is skipped or empty.
+// deltas. It is derived from the canonical scene, preserving unknown counts
+// through the completeness flag, even when the diagram is skipped or empty.
 // Paths feed downstream history lookups; they are capped so a large rename
 // cannot blow the report or command line budget.
 type CompareStats struct {
-	Files           int      `json:"files"`
-	Directories     int      `json:"directories"`
-	Subsystems      int      `json:"subsystems"`
-	LinesAdded      int      `json:"linesAdded"`
-	LinesRemoved    int      `json:"linesRemoved"`
-	SymbolsAdded    int      `json:"symbolsAdded"`
-	SymbolsModified int      `json:"symbolsModified"`
-	SymbolsRemoved  int      `json:"symbolsRemoved"`
-	EdgesAdded      int      `json:"edgesAdded"`
-	EdgesRemoved    int      `json:"edgesRemoved"`
-	EdgesModified   int      `json:"edgesModified"`
-	Paths           []string `json:"paths"`
-	PathsTruncated  bool     `json:"pathsTruncated,omitempty"`
+	Files                  int      `json:"files"`
+	Directories            int      `json:"directories"`
+	Subsystems             int      `json:"subsystems"`
+	LinesAdded             int      `json:"linesAdded"`
+	LinesRemoved           int      `json:"linesRemoved"`
+	LineCountsComplete     bool     `json:"lineCountsComplete"`
+	BinaryFiles            int      `json:"binaryFiles"`
+	IndexedSymbolsAdded    int      `json:"indexedSymbolsAdded"`
+	IndexedSymbolsModified int      `json:"indexedSymbolsModified"`
+	IndexedSymbolsRemoved  int      `json:"indexedSymbolsRemoved"`
+	EdgesAdded             int      `json:"edgesAdded"`
+	EdgesRemoved           int      `json:"edgesRemoved"`
+	EdgesModified          int      `json:"edgesModified"`
+	Paths                  []string `json:"paths"`
+	PathsTruncated         bool     `json:"pathsTruncated,omitempty"`
 }
 
 // maxReportPaths bounds the changed-path list carried in the report. The list
@@ -325,62 +306,62 @@ type CompareStats struct {
 // change set; more paths than this is already an unusually large change.
 const maxReportPaths = 500
 
-func comparisonStats(diagram *pb.ImpactDiagram) CompareStats {
+func comparisonStats(diagram *model.Diagram) CompareStats {
 	stats := CompareStats{Paths: []string{}}
-	diff := diagram.GetDiff()
+	scene := impact.PublicScene(diagram.Scene, false)
 	directories := map[string]struct{}{}
 	subsystems := map[string]struct{}{}
-	for _, change := range diff.GetSources() {
-		file := change.GetPath()
-		stats.Files++
-		stats.LinesAdded += int(change.GetLinesAdded())
-		stats.LinesRemoved += int(change.GetLinesRemoved())
-		directories[path.Dir(file)] = struct{}{}
-		if slash := strings.IndexByte(file, '/'); slash >= 0 {
-			subsystems[file[:slash]] = struct{}{}
+	for _, file := range scene.GetFiles() {
+		name := file.Path
+		directories[path.Dir(name)] = struct{}{}
+		if slash := strings.IndexByte(name, '/'); slash >= 0 {
+			subsystems[name[:slash]] = struct{}{}
 		} else {
 			subsystems["."] = struct{}{}
 		}
 		if len(stats.Paths) < maxReportPaths {
-			stats.Paths = append(stats.Paths, file)
+			stats.Paths = append(stats.Paths, name)
 		} else {
 			stats.PathsTruncated = true
 		}
 	}
-	stats.Directories = len(directories)
-	stats.Subsystems = len(subsystems)
-	stats.SymbolsAdded = countSymbols(diff.GetFacts().GetAdded())
-	stats.SymbolsModified = countSymbols(diff.GetFacts().GetModified())
-	stats.SymbolsRemoved = countSymbols(diff.GetFacts().GetRemoved())
-	for _, edge := range diagram.GetEdges() {
-		switch edge.GetChange() {
+	stats.Files = int(scene.GetSummary().GetFiles())
+	stats.LinesAdded = int(scene.GetSummary().GetKnownLinesAdded())
+	stats.LinesRemoved = int(scene.GetSummary().GetKnownLinesRemoved())
+	stats.LineCountsComplete = scene.GetSummary().GetLineCountsComplete()
+	stats.BinaryFiles = int(scene.GetSummary().GetBinaryFiles())
+	stats.Directories, stats.Subsystems = len(directories), len(subsystems)
+	for _, symbol := range scene.GetSymbols() {
+		switch symbol.Change {
 		case pb.ChangeKind_CHANGE_KIND_ADDED:
-			stats.EdgesAdded++
-		case pb.ChangeKind_CHANGE_KIND_REMOVED:
-			stats.EdgesRemoved++
+			stats.IndexedSymbolsAdded++
 		case pb.ChangeKind_CHANGE_KIND_MODIFIED:
-			stats.EdgesModified++
+			stats.IndexedSymbolsModified++
+		case pb.ChangeKind_CHANGE_KIND_REMOVED:
+			stats.IndexedSymbolsRemoved++
+		}
+	}
+	for _, view := range scene.GetViews() {
+		for _, edge := range view.Connectors {
+			for _, tag := range edge.Tags {
+				switch tag {
+				case "change:added":
+					stats.EdgesAdded++
+				case "change:removed":
+					stats.EdgesRemoved++
+				case "change:modified":
+					stats.EdgesModified++
+				}
+			}
 		}
 	}
 	return stats
 }
 
-// countSymbols counts non-file facts. File facts mirror the changed path and
-// would double the count that the change's symbol churn describes.
-func countSymbols(facts []*pb.CodeFact) int {
-	count := 0
-	for _, fact := range facts {
-		if fact.GetKind() == pb.FactKind_FACT_KIND_FILE {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
-func comparisonReport(diagram *pb.ImpactDiagram, opts compareOptions) CompareReport {
-	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Stats: comparisonStats(diagram), Warnings: append([]string{}, diagram.GetWarnings()...), RequestedRadius: opts.blastRadius, EffectiveRadius: opts.blastRadius, ManifestComplete: diagram.GetManifestComplete(), Coverage: diagram.GetScene().GetCoverage()}
+func comparisonReport(diagram *model.Diagram, opts compareOptions) CompareReport {
+	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Stats: comparisonStats(diagram), Warnings: append([]string{}, diagram.GetWarnings()...), RequestedRadius: opts.blastRadius, EffectiveRadius: opts.blastRadius, ManifestComplete: diagram.GetManifestComplete(), Scene: impact.PublicScene(diagram.GetScene(), false)}
 	if diagram.Scene != nil {
+		report.EffectiveRadius = int(diagram.Scene.EffectiveRadius)
 		report.Elements = impact.SceneNodeCount(diagram.Scene)
 		report.Connectors = 0
 		for _, view := range diagram.Scene.Views {
@@ -401,7 +382,26 @@ func writeCompareReport(path string, report CompareReport) error {
 	if path == "" {
 		return nil
 	}
-	raw, err := json.MarshalIndent(report, "", "  ")
+	// Reuse the canonical wire fields instead of encoding Go protobuf structs
+	// with a second set of names, enum values and optional-count semantics.
+	canonical, err := protoJSONOptions.Marshal(report.Scene)
+	if err != nil {
+		return err
+	}
+	var fields struct {
+		Comparison json.RawMessage `json:"comparison"`
+		Files      json.RawMessage `json:"files"`
+		Summary    json.RawMessage `json:"summary"`
+	}
+	if err := json.Unmarshal(canonical, &fields); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(struct {
+		CompareReport
+		Comparison json.RawMessage `json:"comparison"`
+		Files      json.RawMessage `json:"files"`
+		Summary    json.RawMessage `json:"summary"`
+	}{report, fields.Comparison, fields.Files, fields.Summary}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -409,38 +409,25 @@ func writeCompareReport(path string, report CompareReport) error {
 }
 
 // compareRenderer builds the payload for one blast radius. The output is
-// always the grounded bundle — the portable impact scene plus the authored
-// overlay — so a reader needs no repository, index, or snapshot.
+// always the canonical impact scene — so a reader needs no repository, index, or snapshot.
 type compareRenderer struct {
 	ctx     context.Context
 	service impact.Service
 	opts    compareOptions
-	summary *grounded.Summary
 }
 
 // build renders a scoped diagram at radius, returning the text to write and its
 // size in bytes so --max-bytes describes the payload the caller receives.
 // The scene is pruned to the same radius, so unimpacted sections never reach
 // the payload.
-func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
+func (r compareRenderer) build(diagram *model.Diagram, radius uint32) (string, int, error) {
 	scene, err := r.scene(diagram)
 	if err != nil {
 		return "", 0, err
 	}
 	if r.opts.mermaid || r.opts.markdown {
 		scene = impact.SelectScene(scene, radius, r.opts.plain)
-		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true})
-		summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
-		if r.summary != nil {
-			// Stats comments go directly after the flowchart directive:
-			// some strict renderers reject comments before the diagram
-			// type, and both renderers always lead with it.
-			if i := strings.Index(code, "\n"); i >= 0 {
-				code = code[:i+1] + groundedMermaidHeader(summary, radius) + code[i+1:]
-			} else {
-				code = groundedMermaidHeader(summary, radius) + code
-			}
-		}
+		code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), mermaid.SceneExportOptions{IncludeMetadata: true})
 		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
 		}
@@ -450,69 +437,50 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	if err := impact.ValidateCoverage(scene); err != nil {
 		return "", 0, err
 	}
-	// Build the summary before removing provenance: grounding and selection
-	// use it internally even when the caller did not request debug output.
-	summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
-	// SelectScene returned a freshly owned scene, so export filtering cannot
-	// mutate the canonical scene used for debug diagnostics.
-	if !r.opts.debugProvenance {
-		scene.Provenance, scene.Stages, scene.Decisions = nil, nil, nil
-	}
-	payload, err := protoJSONOptions.Marshal(scene)
+	recordSelection(scene, r.opts)
+	public := impact.PublicScene(scene, r.opts.debugProvenance)
+	payload, err := protoJSONOptions.Marshal(public)
 	if err != nil {
 		return "", 0, err
 	}
-	summaryJSON, err := json.MarshalIndent(&summary, "  ", "  ")
-	if err != nil {
-		return "", 0, err
+	size := len(payload)
+	if r.opts.debugProvenance {
+		public.Provenance = nil
+		normal, marshalErr := protoJSONOptions.Marshal(public)
+		if marshalErr != nil {
+			return "", 0, marshalErr
+		}
+		size = len(normal)
 	}
-	var pretty bytes.Buffer
-	pretty.Grow(len(payload) + len(summaryJSON) + 64)
-	pretty.WriteString("{\n  \"mode\": \"grounded\",\n  \"scene\": ")
-	pretty.Write(payload)
-	pretty.WriteString(",\n  \"grounded\": ")
-	pretty.Write(summaryJSON)
-	pretty.WriteString("\n}\n")
-	return pretty.String(), pretty.Len(), nil
+	return string(payload), size, nil
 }
 
-// scene returns the frozen scene for a diagram, falling back to assembly when
-// the payload predates the current scene schema. The returned scene may be the
+// recordSelection adds CLI-only budgets to the selected copy of the shared
+// scene. The immutable cached assembly is never modified.
+func recordSelection(scene *model.Assembly, opts compareOptions) {
+	if scene == nil {
+		return
+	}
+	if scene.Comparison == nil {
+		scene.Comparison = &pb.ImpactComparison{}
+	}
+	if opts.maxNodes > 0 {
+		scene.Comparison.NodeBudget = uint32(opts.maxNodes)
+	}
+	if opts.maxBytes > 0 {
+		scene.Comparison.ByteBudget = uint32(opts.maxBytes)
+	}
+}
+
+// scene returns the frozen scene for a diagram, rejecting obsolete artifacts that
+// must be regenerated with the current pipeline. The returned scene may be the
 // diagram's own; callers always copy through SelectScene before mutating.
-func (r compareRenderer) scene(diagram *pb.ImpactDiagram) (*pb.ImpactScene, error) {
+func (r compareRenderer) scene(diagram *model.Diagram) (*model.Assembly, error) {
 	scene := diagram.GetScene()
 	if scene != nil && scene.GetSchemaVersion() == impact.PipelineVersion {
 		return scene, nil
 	}
 	return r.service.Scene(r.ctx, diagram)
-}
-
-// groundedMermaidHeader adds authored summary comments to the selected scene
-// so humans see which of their elements the change touches before the fan-out.
-func groundedMermaidHeader(summary grounded.Summary, radius uint32) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%%%% grounded mode=%s radius=%d affected=%d context=%d ungrounded=%d\n",
-		summary.Mode, radius, summary.Affected, summary.Context, summary.Ungrounded)
-	for _, view := range summary.Views {
-		name := view.ViewName
-		if name == "" {
-			name = fmt.Sprintf("view %d", view.ViewID)
-		}
-		fmt.Fprintf(&sb, "%%%% grounded view %q affected=%d total=%d\n", name, view.Affected, view.Total)
-	}
-	for _, fan := range summary.Fanout {
-		fmt.Fprintf(&sb, "%%%% fanout %q edges=%d groups=", fan.Source, fan.Total)
-		parts := make([]string, 0, len(fan.Groups))
-		for _, group := range fan.Groups {
-			parts = append(parts, fmt.Sprintf("%s×%d", group.Prefix, group.Count))
-		}
-		sb.WriteString(strings.Join(parts, ","))
-		if fan.Hidden > 0 {
-			fmt.Fprintf(&sb, " +%d more", fan.Hidden)
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
 }
 
 // compareTargetLabel titles the stage run of one comparison side, naming the
@@ -527,7 +495,7 @@ func compareTargetLabel(out io.Writer, target, revision string) string {
 
 // scopedDiagram is the outcome of applying the CLI size budgets.
 type scopedDiagram struct {
-	diagram    *pb.ImpactDiagram
+	diagram    *model.Diagram
 	radius     uint32
 	text       string // the payload to write
 	size       int
@@ -540,7 +508,7 @@ type scopedDiagram struct {
 // would write, so the budget describes the selected output format and not some
 // internal encoding. If even the direct-change payload exceeds the byte budget
 // the caller is told the budget cannot be met.
-func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions, build func(*pb.ImpactDiagram, uint32) (string, int, error)) (scopedDiagram, error) {
+func scopeToBudget(diagram *model.Diagram, requested uint32, opts compareOptions, build func(*model.Diagram, uint32) (string, int, error)) (scopedDiagram, error) {
 	if opts.plain && diagram.GetScene() != nil {
 		diagram = impact.Scope(diagram, requested)
 		diagram.Scene = impact.SelectScene(diagram.Scene, requested, true)

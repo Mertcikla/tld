@@ -15,7 +15,9 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/internal/mermaid"
 	"github.com/mertcikla/tld/v2/pkg/app"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCompareRepositoryNoCheckout(t *testing.T) {
@@ -43,7 +45,7 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result *pb.ImpactDiagram
+	var result *pb.ImpactScene
 	for stream.Receive() {
 		if found := stream.Msg().GetResult(); found != nil {
 			result = found
@@ -52,14 +54,19 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if result == nil || result.ViewId != 0 || len(result.Nodes) != 1 || len(result.Nodes[0].Symbols.Modified) != 1 {
+	if result == nil || len(result.Files) != 1 || len(result.Symbols) != 1 {
 		t.Fatalf("comparison: %+v", result)
 	}
-	if result.Nodes[0].Distance != 0 {
-		t.Fatalf("direct change distance = %d, want 0", result.Nodes[0].Distance)
+	for _, view := range result.Views {
+		for _, p := range view.Placements {
+			if p.Distance != 0 {
+				t.Fatal("direct change distance is not zero")
+			}
+		}
 	}
+
 	mermaid, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{
-		RepositoryId: repoID, ComparisonKey: result.ComparisonKey, Markdown: true,
+		RepositoryId: repoID, ComparisonKey: result.Comparison.Key, Markdown: true,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +80,7 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 		t.Fatalf("mermaid code missing fallback view: %q", mermaid.Msg.GetCode())
 	}
 	plain, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{
-		RepositoryId: repoID, ComparisonKey: result.ComparisonKey, Plain: true,
+		RepositoryId: repoID, ComparisonKey: result.Comparison.Key, Plain: true,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -84,11 +91,11 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	if !strings.HasPrefix(mermaid.Msg.GetMarkdown(), "```mermaid\n") {
 		t.Fatalf("mermaid markdown: %q", mermaid.Msg.GetMarkdown())
 	}
-	scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+	scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scene.Msg.GetScene() == nil {
+	if scene.Msg == nil {
 		t.Fatal("scene missing")
 	}
 	snapshots, err := idx.Snapshots(ctx, repoID)
@@ -152,7 +159,7 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 			stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{
 				RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}, ContextDepth: radius,
 			}))
-			var result *pb.ImpactDiagram
+			var result *pb.ImpactScene
 			if err == nil {
 				for stream.Receive() {
 					if found := stream.Msg().GetResult(); found != nil {
@@ -170,36 +177,50 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result == nil || len(result.GetNodes()) != int(radius)+1 {
-				t.Fatalf("radius %d: %+v", radius, result)
+			if result == nil {
+				t.Fatal("missing canonical scene")
 			}
-			if result.GetComparisonKey() != impact.ComparisonKey("base", "head", radius, result.GetWorkspaceFingerprint()) {
-				t.Fatal("RPC cache key differs from CLI/service")
-			}
-			for _, node := range result.GetNodes() {
-				if node.GetDistance() > radius {
-					t.Fatalf("node beyond radius: %+v", node)
+			placementsInResult := 0
+			for _, view := range result.Views {
+				for _, p := range view.Placements {
+					placementsInResult++
+					if p.Distance > radius {
+						t.Fatal("node beyond radius")
+					}
 				}
 			}
+			if placementsInResult != int(radius)+1 {
+				t.Fatalf("radius %d: %d placements", radius, placementsInResult)
+			}
+
 			cached, err := (impact.Service{Workspace: ws, Index: idx}).CompareSnapshots(ctx, repoID, "base", "head", radius)
-			if err != nil || cached.GetVersion() != result.GetVersion() {
+			if err != nil || cached.Version != result.GetComparison().GetVersion() || cached.GetComparisonKey() != result.GetComparison().GetKey() {
 				t.Fatalf("comparison cache not shared: %v", err)
 			}
-			scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+			expected := impact.PublicScene(impact.SelectScene(cached.Scene, radius, false), false)
+			if !proto.Equal(expected, result) {
+				t.Fatal("RPC differs from the canonical CLI/service projection")
+			}
+
+			scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key}))
 			if err != nil {
 				t.Fatal(err)
 			}
 			var placements int
-			for _, view := range scene.Msg.GetScene().GetViews() {
+			for _, view := range scene.Msg.GetViews() {
 				placements += len(view.GetPlacements())
 			}
 			if placements != int(radius)+1 {
 				t.Fatalf("scene radius %d: %d placements", radius, placements)
 			}
-			code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+			code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key}))
 			if err != nil {
 				t.Fatal(err)
 			}
+			if code.Msg.Code != mermaid.ExportImpactScene(expected, mermaid.SceneExportOptions{IncludeMetadata: true}) {
+				t.Fatal("RPC Mermaid differs from canonical projection")
+			}
+
 			for hop, path := range []string{"a.go", "b.go", "c.go"} {
 				if strings.Contains(code.Msg.GetCode(), path) != (uint32(hop) <= radius) {
 					t.Fatalf("radius %d, path %s: %s", radius, path, code.Msg.GetCode())
@@ -271,7 +292,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	var key string
 	for stream.Receive() {
 		if found := stream.Msg().GetResult(); found != nil {
-			key = found.GetComparisonKey()
+			key = found.GetComparison().GetKey()
 		}
 	}
 	if err := stream.Err(); err != nil || key == "" {
@@ -282,11 +303,11 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 		t.Fatal(err)
 	}
 	var placements int
-	for _, content := range scene.Msg.GetScene().GetViews() {
+	for _, content := range scene.Msg.GetViews() {
 		placements += len(content.GetPlacements())
 	}
 	if placements != 3 {
-		t.Fatalf("standard scene must preserve authored context, got %d placements: %+v", placements, scene.Msg.GetScene().GetViews())
+		t.Fatalf("standard scene must preserve authored context, got %d placements: %+v", placements, scene.Msg.GetViews())
 	}
 	for _, plain := range []bool{false, true} {
 		code, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{RepositoryId: repoID, ComparisonKey: key, Plain: plain}))

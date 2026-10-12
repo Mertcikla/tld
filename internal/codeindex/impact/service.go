@@ -13,9 +13,9 @@ import (
 	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/ingest"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
-	"google.golang.org/protobuf/proto"
 )
 
 // DefaultBlastRadius is the shared blast radius for CLI, RPC, and live impact.
@@ -68,7 +68,7 @@ type CompareRequest struct {
 
 // Compare prepares both targets (indexing on demand), builds the impact diagram
 // for their snapshot pair, persists it, and returns it.
-func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDiagram, error) {
+func (s Service) Compare(ctx context.Context, req CompareRequest) (*model.Diagram, error) {
 	if err := ValidateBlastRadius(req.BlastRadius); err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 
 // CompareSnapshots shares cached comparisons with callers that already prepared
 // their snapshots, including the live watcher. The caller owns the index lease.
-func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID string, radius uint32, viewFilters ...string) (*pb.ImpactDiagram, error) {
+func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID string, radius uint32, viewFilters ...string) (*model.Diagram, error) {
 	if err := ValidateBlastRadius(radius); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	// A completed comparison is immutable for its snapshot pair and radius,
 	// so a repeat request is a single indexed lookup instead of a rebuild.
 	if cached, err := s.Index.Impact(ctx, repoID, key); err == nil {
-		if cached.Scene != nil {
+		if cached.Scene != nil && cached.Scene.SchemaVersion == PipelineVersion {
 			return cached, nil
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -150,9 +150,8 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	// assembly is cached separately against the captured workspace fingerprint.
 	analysisKey := ComparisonKey(beforeID, afterID, radius, "source-analysis")
 	analysis, err := s.Index.Impact(ctx, repoID, analysisKey)
-	var pairKinds pairKindIndex
 	if errors.Is(err, sql.ErrNoRows) {
-		analysis, pairKinds, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius)
+		analysis, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius)
 		if err == nil {
 			err = s.Index.SaveImpact(ctx, analysis)
 		}
@@ -160,14 +159,14 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	if err != nil {
 		return nil, err
 	}
-	diagram := proto.Clone(analysis).(*pb.ImpactDiagram)
+	diagram := model.Clone(analysis)
 	diagram.ComparisonKey, diagram.Version = key, uuid.NewString()
 	diagram.WorkspaceFingerprint, diagram.ViewFilter = fingerprint, viewFilter
 	repo, err := s.Index.Repository(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
-	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, pairKinds, repositories)
+	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, repositories)
 	if err != nil {
 		return nil, err
 	}

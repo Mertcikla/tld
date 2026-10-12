@@ -9,6 +9,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
@@ -17,15 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "3"
-
-var pipelineStages = [][2]string{
-	{"capture", "Capture inputs"}, {"authored", "Seed authored diagram"},
-	{"ground", "Ground and annotate"}, {"mapped", "Fill mapped gaps"},
-	{"coverage", "Guarantee direct coverage"}, {"dependencies", "Expand dependencies"},
-	{"relationships", "Project relationships"}, {"reduce", "Reduce noise"},
-	{"validate", "Place and validate"}, {"freeze", "Freeze and serve"},
-}
+const PipelineVersion = "6"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -34,7 +27,7 @@ func ConnectorKey(viewID, id int64) string { return fmt.Sprintf("connector|%d|%d
 func ViewKey(id int64) string              { return fmt.Sprintf("view|%d", id) }
 
 type anchorMatch struct {
-	nodes     []*pb.ImpactNode
+	nodes     []*model.Node
 	paths     []string
 	grounding pb.ImpactGrounding
 	partial   bool
@@ -45,7 +38,7 @@ type anchorMatch struct {
 
 type sceneAssembly struct {
 	helper                     *sceneEvidence
-	scene                      *pb.ImpactScene
+	scene                      *model.Assembly
 	views                      map[int64]core.ViewTreeNode
 	mapped                     map[int64]cstore.ResourceMapping
 	mapViews                   map[int64]bool
@@ -53,7 +46,6 @@ type sceneAssembly struct {
 	matches                    map[int64]anchorMatch
 	sources                    map[string]bool
 	sortedSources              []string
-	relationshipEvidence       map[[2]string][]string
 	repositoryRemote           string
 	ambiguousPaths             map[string]bool
 	ambiguousSorted            []string
@@ -64,17 +56,14 @@ type sceneAssembly struct {
 	viewIdx                    *viewIndex
 	full                       map[string][]string
 	all                        map[string][]string
-	stages                     map[string]*pb.ImpactStage
 	nextElement, nextConnector int32
 }
 
 // assemble is the only semantic scene construction pipeline for new comparisons.
-// The diagram's file analysis is immutable; every canvas mutation is recorded.
-// pairKinds carries analysis-captured file dependency kinds so assembly does not
-// repeat the aggregate scan; snapshots missing from it are queried lazily.
-func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, pairKinds pairKindIndex, capturedRepositories ...[]*pb.Repository) (*pb.ImpactScene, error) {
+// Analysis is immutable; only audit-relevant decisions are retained.
+func assemble(ctx context.Context, service Service, diagram *model.Diagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, capturedRepositories ...[]*pb.Repository) (*model.Assembly, error) {
 	helper := &sceneEvidence{diagram: diagram, workspace: workspace, mappings: mappings, root: root, store: service.Index, ctx: ctx}
-	helper.nodes = map[string]*pb.ImpactNode{}
+	helper.nodes = map[string]*model.Node{}
 	helper.sources = map[string]*pb.SourceChange{}
 	for _, node := range diagram.GetNodes() {
 		helper.nodes[normalizeScenePath(node.Path)] = node
@@ -85,19 +74,17 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 	a := &sceneAssembly{
 		helper: helper, views: map[int64]core.ViewTreeNode{}, mapped: map[int64]cstore.ResourceMapping{},
 		mapViews: map[int64]bool{}, mapConnectors: map[int64]cstore.ResourceMapping{}, matches: map[int64]anchorMatch{},
-		sources: map[string]bool{}, relationshipEvidence: map[[2]string][]string{}, full: map[string][]string{}, all: map[string][]string{}, stages: map[string]*pb.ImpactStage{},
+		sources: map[string]bool{}, full: map[string][]string{}, all: map[string][]string{},
 		authoredPaths: map[string]map[string]bool{}, nodePaths: make(map[string]string, len(diagram.GetNodes())),
-		scene: &pb.ImpactScene{SchemaVersion: PipelineVersion, RepositoryId: diagram.RepositoryId, ComparisonKey: diagram.ComparisonKey,
+		scene: &model.Assembly{SchemaVersion: PipelineVersion, RepositoryId: diagram.RepositoryId, ComparisonKey: diagram.ComparisonKey,
 			Version: diagram.Version, FromGitRevision: diagram.GetDiff().GetFromGitRevision(), ToGitRevision: diagram.GetDiff().GetToGitRevision(),
-			Views: map[string]*pb.SceneViewContent{}, Provenance: map[string]*pb.ImpactProvenance{},
+			Views: map[string]*model.ViewContent{}, Provenance: map[string]*model.Metadata{},
 			RequestedRadius: diagram.GetRequestedRadius(), EffectiveRadius: diagram.GetRequestedRadius(),
 			Warnings: append([]string(nil), diagram.Warnings...), ManifestComplete: diagram.ManifestComplete,
-			WorkspaceFingerprint: diagram.WorkspaceFingerprint},
+			AuditReferences: map[string]*model.AuditReference{}, WorkspaceFingerprint: diagram.WorkspaceFingerprint, Comparison: diagram.Comparison, Files: diagram.Files, Dependencies: diagram.Dependencies, BaseSnapshotId: diagram.GetDiff().GetFromSnapshotId(), HeadSnapshotId: diagram.GetDiff().GetToSnapshotId()},
 	}
-	for _, stage := range pipelineStages {
-		entry := &pb.ImpactStage{Id: stage[0], Name: stage[1]}
-		a.stages[entry.Id] = entry
-		a.scene.Stages = append(a.scene.Stages, entry)
+	if a.scene.Comparison != nil {
+		a.scene.Comparison.ViewFilter = diagram.ViewFilter
 	}
 	for _, mapping := range mappings {
 		if strings.HasPrefix(mapping.LogicalKey, "impact|") {
@@ -162,19 +149,6 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 		if err != nil {
 			return nil, err
 		}
-		kinds := pairKinds[snapshotID]
-		if kinds == nil {
-			var loadErr error
-			kinds, loadErr = service.Index.FilePairKinds(ctx, snapshotID)
-			if loadErr != nil {
-				return nil, loadErr
-			}
-		}
-		for pair, values := range kinds {
-			for _, kind := range values {
-				a.relationshipEvidence[pair] = append(a.relationshipEvidence[pair], snapshotID+": "+kind.String())
-			}
-		}
 		for _, source := range snapshot.Sources {
 			a.sources[source.Path] = true
 		}
@@ -185,9 +159,22 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 	for _, node := range diagram.GetNodes() {
 		a.nodePaths[node.Key] = node.Path
 	}
+	for _, file := range diagram.Files {
+		if source := helper.sources[file.Path]; source != nil {
+			clone := proto.Clone(source).(*pb.SourceChange)
+			clone.LinesAdded, clone.LinesRemoved = file.LinesAdded, file.LinesRemoved
+			helper.sources[file.Path] = clone
+		}
+	}
+	for _, kind := range []pb.ChangeKind{pb.ChangeKind_CHANGE_KIND_ADDED, pb.ChangeKind_CHANGE_KIND_REMOVED, pb.ChangeKind_CHANGE_KIND_MODIFIED} {
+		for _, fact := range factsByKind(diagram.GetDiff().GetFacts(), kind) {
+			if fact.Kind != pb.FactKind_FACT_KIND_FILE {
+				a.scene.IndexedSymbols = append(a.scene.IndexedSymbols, symbolChange(kind, fact))
+			}
+		}
+	}
 	a.sortedSources = sortedKeys(a.sources)
 	a.ambiguousSorted = sortedKeys(a.ambiguousPaths)
-	a.record("capture", "reuse", "inputs", "Pinned snapshots, workspace and mappings", nil)
 	if err := a.seedAuthored(); err != nil {
 		return nil, err
 	}
@@ -197,36 +184,44 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 	a.expandDependencies()
 	a.finishHierarchy()
 	a.projectRelationships()
-	a.record("reduce", "reuse", "policy", "Standard preserves the authored skeleton; generated duplicates were suppressed by coverage", nil)
 	a.placeAdditions()
 	if err := a.validate(); err != nil {
 		return nil, err
 	}
-	a.record("freeze", "reuse", "scene", "Frozen portable scene; no workspace resources written", nil)
 	return a.scene, nil
 }
 
-func (a *sceneAssembly) record(stage, action, key, reason string, paths []string) {
-	a.scene.Decisions = append(a.scene.Decisions, &pb.ImpactDecision{Stage: stage, Action: action, Key: key, Reason: reason, Paths: append([]string(nil), paths...)})
-	entry := a.stages[stage]
-	switch action {
-	case "add":
-		entry.Added++
-	case "annotate", "place":
-		entry.Annotated++
-	case "reuse":
-		entry.Reused++
-	case "suppress", "aggregate":
-		entry.Suppressed++
+func (a *sceneAssembly) record(stage, action, key, reason string) {
+	if action != "suppress" && (stage != "dependencies" || !strings.Contains(reason, "Required owner")) {
+		return
 	}
+	if action == "suppress" {
+		parts := strings.Split(key, "|")
+		if len(parts) >= 2 {
+			viewID, _ := strconv.ParseInt(parts[1], 10, 64)
+			ref := &model.AuditReference{ViewName: a.views[viewID].Name}
+			if len(parts) == 2 {
+				ref.Name = ref.ViewName
+			} else if parts[0] == "placement" {
+				for _, element := range a.helper.workspace.Views[parts[1]].Placements {
+					if strconv.FormatInt(element.ElementID, 10) == parts[2] {
+						ref.Name = element.Name
+						break
+					}
+				}
+			}
+			a.scene.AuditReferences[key] = ref
+		}
+	}
+	a.scene.Decisions = append(a.scene.Decisions, &model.Decision{Stage: stage, Action: action, Key: key, Reason: reason})
 }
 
-func (a *sceneAssembly) ensureView(id int64, stage string) *pb.SceneViewContent {
+func (a *sceneAssembly) ensureView(id int64, stage string) *model.ViewContent {
 	key := strconv.FormatInt(id, 10)
 	if content := a.scene.Views[key]; content != nil {
 		return content
 	}
-	a.scene.Views[key] = &pb.SceneViewContent{}
+	a.scene.Views[key] = &model.ViewContent{}
 	name, origin := "Changes", pb.ImpactOrigin_IMPACT_ORIGIN_RAW
 	if view, exists := a.views[id]; exists {
 		name, origin = view.Name, pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED
@@ -234,10 +229,9 @@ func (a *sceneAssembly) ensureView(id int64, stage string) *pb.SceneViewContent 
 			origin = pb.ImpactOrigin_IMPACT_ORIGIN_MAPPED
 		}
 	}
-	provenance := &pb.ImpactProvenance{Key: ViewKey(id), ObjectKind: "view", ViewId: id, ResourceId: id, Name: name, Origin: origin,
-		Role: pb.ImpactRole_IMPACT_ROLE_CONTAINER, Stage: stage, Reason: "Contains retained impact placements"}
+	provenance := &model.Metadata{Key: ViewKey(id), ObjectKind: "view", ViewId: id, ResourceId: id, Name: name, Origin: origin,
+		Role: pb.ImpactRole_IMPACT_ROLE_CONTAINER}
 	a.scene.Provenance[provenance.Key] = provenance
-	a.record(stage, "add", provenance.Key, provenance.Reason, nil)
 	return a.scene.Views[key]
 }
 
@@ -264,6 +258,7 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 		match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_OUTSIDE_REPOSITORY
 		return match
 	}
+	match.scope = base
 	if (element.RepositoryID == nil || *element.RepositoryID == "") && (element.Repo == nil || *element.Repo == "") {
 		if a.ambiguousHas(base, folder) {
 			match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_AMBIGUOUS
@@ -296,7 +291,7 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 			if err != nil {
 				continue
 			}
-			candidate := &pb.ImpactNode{Symbols: &pb.CodeFactDelta{Modified: facts}}
+			candidate := &model.Node{Symbols: &pb.CodeFactDelta{Modified: facts}}
 			if symbolAnchorMatches(candidate, anchor) {
 				resolved = true
 			}
@@ -378,7 +373,7 @@ func (a *sceneAssembly) seedAuthored() error {
 	for _, id := range sortedViewIDs(a.helper.workspace) {
 		if !selected[id] {
 			if !a.mapViews[id] {
-				a.record("authored", "suppress", ViewKey(id), "Outside selected authored view scope", nil)
+				a.record("authored", "suppress", ViewKey(id), "Outside selected authored view scope")
 			}
 			continue
 		}
@@ -390,7 +385,7 @@ func (a *sceneAssembly) seedAuthored() error {
 			}
 			match := a.match(element)
 			if match.grounding == pb.ImpactGrounding_IMPACT_GROUNDING_OUTSIDE_REPOSITORY {
-				a.record("authored", "suppress", PlacementKey(id, element.ElementID), "Placement belongs to another repository", nil)
+				a.record("authored", "suppress", PlacementKey(id, element.ElementID), "Placement belongs to another repository")
 				continue
 			}
 			a.addPlacement(scenePlacement(element), pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED, "authored", "Copied from user's diagram", match)
@@ -416,7 +411,7 @@ func sortedPlacements(elements []core.PlacedElement) []core.PlacedElement {
 	return out
 }
 
-func (a *sceneAssembly) addPlacement(item *pb.ScenePlacement, origin pb.ImpactOrigin, stage, reason string, match anchorMatch) string {
+func (a *sceneAssembly) addPlacement(item *model.Placement, origin pb.ImpactOrigin, stage, reason string, match anchorMatch) string {
 	element := item.Element
 	key := PlacementKey(int64(element.ViewId), int64(element.ElementId))
 	if a.scene.Provenance[key] != nil {
@@ -424,13 +419,11 @@ func (a *sceneAssembly) addPlacement(item *pb.ScenePlacement, origin pb.ImpactOr
 	}
 	content := a.ensureView(int64(element.ViewId), stage)
 	content.Placements = append(content.Placements, item)
-	p := &pb.ImpactProvenance{Key: key, ObjectKind: "placement", ViewId: int64(element.ViewId), ResourceId: int64(element.ElementId), Name: element.Name,
-		Origin: origin, Grounding: match.grounding, Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT, Stage: stage, Reason: reason,
+	p := &model.Metadata{Key: key, ObjectKind: "placement", ViewId: int64(element.ViewId), ResourceId: int64(element.ElementId), Name: element.Name,
+		Origin: origin, Grounding: match.grounding, Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT,
 		Paths: append([]string(nil), match.paths...), Partial: match.partial}
-	if mapping, ok := a.mapped[int64(element.ElementId)]; ok {
-		p.LogicalKey, p.MapSnapshotId = mapping.LogicalKey, mapping.SnapshotID
-	}
 	a.scene.Provenance[key] = p
+	a.captureMatch(item.Element, match, "accepted", reason)
 	if origin == pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED {
 		a.authoredKeys = append(a.authoredKeys, key)
 		paths := make(map[string]bool, len(match.paths))
@@ -439,7 +432,7 @@ func (a *sceneAssembly) addPlacement(item *pb.ScenePlacement, origin pb.ImpactOr
 		}
 		a.authoredPaths[key] = paths
 	}
-	a.record(stage, "add", key, reason, match.paths)
+	a.record(stage, "add", key, reason)
 	if len(match.nodes) > 0 {
 		p.Distance = match.nodes[0].Distance
 		for _, node := range match.nodes {
@@ -465,16 +458,11 @@ func (a *sceneAssembly) addPlacement(item *pb.ScenePlacement, origin pb.ImpactOr
 				p.Grounding = pb.ImpactGrounding_IMPACT_GROUNDING_MANIFEST_ONLY
 			}
 		}
-		annotationStage := stage
-		if origin == pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED {
-			annotationStage = "ground"
-		}
-		a.record(annotationStage, "annotate", key, "Matched source scope against pinned comparison", p.Paths)
 	}
 	return key
 }
 
-func (a *sceneAssembly) matchOverlay(match anchorMatch) *pb.ImpactSceneOverlay {
+func (a *sceneAssembly) matchOverlay(match anchorMatch) *model.Overlay {
 	first := match.nodes[0]
 	out := a.helper.overlay(first)
 	if match.partial {
@@ -485,30 +473,29 @@ func (a *sceneAssembly) matchOverlay(match anchorMatch) *pb.ImpactSceneOverlay {
 			target *[]*pb.CodeFact
 		}{{first.GetSymbols().GetAdded(), &filtered.Added}, {first.GetSymbols().GetRemoved(), &filtered.Removed}, {first.GetSymbols().GetModified(), &filtered.Modified}} {
 			for _, fact := range entry.source {
-				if symbolAnchorMatches(&pb.ImpactNode{Symbols: &pb.CodeFactDelta{Modified: []*pb.CodeFact{fact}}}, match.anchor) {
+				if symbolAnchorMatches(&model.Node{Symbols: &pb.CodeFactDelta{Modified: []*pb.CodeFact{fact}}}, match.anchor) {
 					*entry.target = append(*entry.target, fact)
 				}
 			}
 		}
-		out.Symbols = a.helper.overlay(&pb.ImpactNode{Symbols: filtered}).Symbols
+		out.Symbols = a.helper.overlay(&model.Node{Symbols: filtered}).Symbols
 	}
 	if len(match.nodes) == 1 {
 		if match.contained {
-			out.Reason = pb.OverlayReason_OVERLAY_REASON_CONTAINED
+			out.Contained = true
 			out.Path = match.scope + "/"
 		}
 		return out
 	}
-	out = &pb.ImpactSceneOverlay{Path: strings.Join(match.paths, ", "), Distance: first.Distance, Change: first.Change, Reason: pb.OverlayReason_OVERLAY_REASON_CONTAINED}
+	out = &model.Overlay{Path: strings.Join(match.paths, ", "), Change: first.Change, Contained: true}
 	var added, removed uint32
+	complete := true
 	for _, node := range match.nodes {
-		if node.Distance < out.Distance {
-			out.Distance = node.Distance
-		}
 		if node.Change != out.Change {
 			out.Change = pb.ChangeKind_CHANGE_KIND_MODIFIED
 		}
 		overlay := a.helper.overlay(node)
+		complete = complete && overlay.LinesAdded != nil && overlay.LinesRemoved != nil
 		added += overlay.GetLinesAdded()
 		removed += overlay.GetLinesRemoved()
 		out.Symbols = append(out.Symbols, overlay.Symbols...)
@@ -516,7 +503,9 @@ func (a *sceneAssembly) matchOverlay(match anchorMatch) *pb.ImpactSceneOverlay {
 	if match.contained {
 		out.Path = match.scope + "/"
 	}
-	out.LinesAdded, out.LinesRemoved = proto.Uint32(added), proto.Uint32(removed)
+	if complete {
+		out.LinesAdded, out.LinesRemoved = proto.Uint32(added), proto.Uint32(removed)
+	}
 	return out
 }
 
@@ -532,7 +521,7 @@ func (a *sceneAssembly) fillMapped(contextOnly bool) {
 				continue
 			}
 			match := a.match(element)
-			var relevant []*pb.ImpactNode
+			var relevant []*model.Node
 			for _, node := range match.nodes {
 				if (node.Distance > 0) == contextOnly {
 					relevant = append(relevant, node)
@@ -542,7 +531,8 @@ func (a *sceneAssembly) fillMapped(contextOnly bool) {
 				continue
 			}
 			if mapping.SnapshotID != a.helper.diagram.GetDiff().GetFromSnapshotId() && mapping.SnapshotID != a.helper.diagram.GetDiff().GetToSnapshotId() {
-				a.record(stage, "suppress", PlacementKey(id, element.ElementID), "Stale map snapshot; using verified fallback", match.paths)
+				a.record(stage, "suppress", PlacementKey(id, element.ElementID), "Stale map snapshot; using verified fallback")
+				a.captureMatch(scenePlacement(element).Element, match, "rejected", "stale_map")
 				continue
 			}
 			uncovered := false
@@ -553,7 +543,8 @@ func (a *sceneAssembly) fillMapped(contextOnly bool) {
 				}
 			}
 			if !uncovered {
-				a.record(stage, "suppress", PlacementKey(id, element.ElementID), "Scope already represented at higher priority", match.paths)
+				a.record(stage, "suppress", PlacementKey(id, element.ElementID), "Scope already represented at higher priority")
+				a.captureMatch(scenePlacement(element).Element, match, "rejected", "higher_priority_representative")
 				for _, path := range match.paths {
 					a.scene.Decisions[len(a.scene.Decisions)-1].RepresentativeKeys = append(a.scene.Decisions[len(a.scene.Decisions)-1].RepresentativeKeys, a.full[path]...)
 				}
@@ -565,7 +556,7 @@ func (a *sceneAssembly) fillMapped(contextOnly bool) {
 	}
 }
 
-func (a *sceneAssembly) destination(node *pb.ImpactNode) (int64, string) {
+func (a *sceneAssembly) destination(node *model.Node) (int64, string) {
 	a.prepareDestination()
 	witnessCounts := map[string]int{}
 	for _, witness := range node.Witnesses {
@@ -648,9 +639,9 @@ func (a *sceneAssembly) fillRaw(contextOnly bool) {
 		if id == -1 {
 			a.scene.FallbackViewId = -1
 		}
-		item := &pb.ScenePlacement{Element: &diagv1.PlacedElement{Id: elementID, ElementId: elementID, ViewId: int32(id), Name: transientName(node.Path),
+		item := &model.Placement{Element: &diagv1.PlacedElement{Id: elementID, ElementId: elementID, ViewId: int32(id), Name: transientName(node.Path),
 			Kind: proto.String("component"), FilePath: proto.String(node.Path), RepositoryId: proto.String(a.scene.RepositoryId), Repo: proto.String(a.helper.root)}}
-		match := anchorMatch{nodes: []*pb.ImpactNode{node}, paths: []string{node.Path}, grounding: pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED}
+		match := anchorMatch{nodes: []*model.Node{node}, paths: []string{node.Path}, grounding: pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED}
 		a.addPlacement(item, pb.ImpactOrigin_IMPACT_ORIGIN_RAW, stage, reason, match)
 	}
 }
@@ -718,7 +709,7 @@ func (a *sceneAssembly) projectRelationships() {
 		for _, connector := range connectors {
 			key := ConnectorKey(id, connector.ID)
 			if !visible[int32(connector.SourceElementID)] || !visible[int32(connector.TargetElementID)] {
-				a.record("relationships", "suppress", key, "Connector endpoint is outside the impact scene", nil)
+				a.record("relationships", "suppress", key, "Connector endpoint is outside the impact scene")
 				continue
 			}
 			origin := pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED
@@ -727,10 +718,9 @@ func (a *sceneAssembly) projectRelationships() {
 			}
 			item := sceneConnector(connector)
 			content.Connectors = append(content.Connectors, item)
-			p := &pb.ImpactProvenance{Key: key, ObjectKind: "connector", ViewId: id, ResourceId: connector.ID, Name: filePathValue(connector.Label),
-				Origin: origin, Grounding: pb.ImpactGrounding_IMPACT_GROUNDING_UNRESOLVED, Stage: "relationships", Reason: "Preserved declared workspace relationship"}
+			p := &model.Metadata{Key: key, ObjectKind: "connector", ViewId: id, ResourceId: connector.ID, Name: filePathValue(connector.Label),
+				Origin: origin, Grounding: pb.ImpactGrounding_IMPACT_GROUNDING_UNRESOLVED}
 			a.scene.Provenance[key] = p
-			a.record("relationships", "add", key, p.Reason, nil)
 		}
 	}
 	for _, edge := range a.helper.diagram.Edges {
@@ -739,7 +729,6 @@ func (a *sceneAssembly) projectRelationships() {
 			for _, toKey := range a.full[toPath] {
 				from, to := a.scene.Provenance[fromKey], a.scene.Provenance[toKey]
 				if fromKey == toKey {
-					from.Evidence = appendTagUnique(from.Evidence, fromPath+" → "+toPath+" (internal)")
 					continue
 				}
 				// Preserve true endpoints across views. The renderer uses the
@@ -757,19 +746,13 @@ func (a *sceneAssembly) projectRelationships() {
 					connector = &diagv1.Connector{Id: a.nextConnector, ViewId: int32(from.ViewId), SourceElementId: int32(from.ResourceId), TargetElementId: int32(to.ResourceId), Direction: "forward", Style: "bezier", Label: proto.String("dependency")}
 					content.Connectors = append(content.Connectors, connector)
 					key := ConnectorKey(from.ViewId, int64(connector.Id))
-					a.scene.Provenance[key] = &pb.ImpactProvenance{Key: key, ObjectKind: "connector", ViewId: from.ViewId, ResourceId: int64(connector.Id), Name: "dependency", Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW, Stage: "relationships", Reason: "Observed dependency between chosen source representatives"}
-					a.record("relationships", "add", key, "Projected observed source dependency", []string{fromPath, toPath})
+					a.scene.Provenance[key] = &model.Metadata{Key: key, ObjectKind: "connector", ViewId: from.ViewId, ResourceId: int64(connector.Id), Name: "dependency", Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW}
 				}
 				p := a.scene.Provenance[ConnectorKey(from.ViewId, int64(connector.Id))]
 				p.Grounding = pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED
 				p.EndpointKeys = []string{fromKey, toKey}
-				for _, evidence := range a.relationshipEvidence[[2]string{fromPath, toPath}] {
-					p.Evidence = appendTagUnique(p.Evidence, evidence)
-				}
 				p.Paths = appendTagUnique(appendTagUnique(p.Paths, fromPath), toPath)
-				p.Evidence = appendTagUnique(p.Evidence, fromPath+" → "+toPath+" · "+edge.Change.String()+" · weight="+strconv.FormatFloat(edge.Weight, 'f', -1, 64))
 				connector.Tags = appendTagUnique(connector.Tags, connectorChangeTag(edge.Change))
-				a.record("relationships", "annotate", p.Key, "Source change status is independent of scene addition", []string{fromPath, toPath})
 			}
 		}
 	}
@@ -800,7 +783,6 @@ func (a *sceneAssembly) placeAdditions() {
 			}
 			position := positions[int64(element.ElementId)]
 			element.PositionX, element.PositionY = position.X, position.Y
-			a.record("validate", "place", PlacementKey(int64(element.ViewId), int64(element.ElementId)), "Positioned new primitive around fixed workspace placements", nil)
 		}
 		for _, edge := range content.Connectors {
 			if edge.Id < 0 {
@@ -867,14 +849,14 @@ func (a *sceneAssembly) finishHierarchy() {
 }
 
 func (a *sceneAssembly) validate() error {
-	for _, change := range a.helper.diagram.GetDiff().GetSources() {
-		keys := a.full[change.Path]
+	for _, file := range a.scene.Files {
+		keys := a.full[file.Path]
 		if len(keys) == 0 {
-			return fmt.Errorf("impact coverage missing changed file %s", change.Path)
+			return fmt.Errorf("impact coverage missing changed file %s", file.Path)
 		}
-		covered := proto.Clone(change).(*pb.SourceChange)
-		covered.PlacementKeys = append([]string(nil), keys...)
-		a.scene.Coverage = append(a.scene.Coverage, covered)
+		for _, key := range keys {
+			file.Representatives = append(file.Representatives, placementRef(key))
+		}
 	}
 	visible := map[int32]bool{}
 	for _, content := range a.scene.Views {
@@ -910,6 +892,12 @@ func (a *sceneAssembly) validate() error {
 			}
 		}
 	}
-	a.record("validate", "reuse", "coverage", fmt.Sprintf("%d/%d changed files represented", len(a.scene.Coverage), len(a.helper.diagram.GetDiff().GetSources())), nil)
+	for _, match := range a.scene.Matches {
+		for _, coverage := range a.scene.Files {
+			if coverage.Path == match.Path {
+				match.Representatives = append(match.Representatives, coverage.Representatives...)
+			}
+		}
+	}
 	return nil
 }

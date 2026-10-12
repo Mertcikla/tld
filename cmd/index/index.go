@@ -32,6 +32,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
@@ -39,7 +40,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/proto"
 )
 
 type options struct {
@@ -624,7 +624,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *pb.MapResult, *pb.ImpactDiagram, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *pb.MapResult, *model.Diagram, error) {
 	reportStage := func(stage string) {
 		for _, report := range onStage {
 			report(stage)
@@ -707,7 +707,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		return nil, parity.Report{}, nil, nil, err
 	}
 	// Keep the mutable live alias while sharing the immutable comparison cache.
-	live := proto.Clone(diagram).(*pb.ImpactDiagram)
+	live := model.Clone(diagram)
 	live.ComparisonKey = "live"
 	if err = e.store.SaveImpact(ctx, live); err != nil {
 		return nil, parity.Report{}, nil, nil, err
@@ -758,7 +758,7 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 
 // printDiff summarizes the live comparison the scan already computed, so the
 // watcher never pays for a second full diff just to print counts.
-func (e *engine) printDiff(cmd *cobra.Command, diagram *pb.ImpactDiagram) {
+func (e *engine) printDiff(cmd *cobra.Command, diagram *model.Diagram) {
 	diff := diagram.GetDiff()
 	added := len(diff.GetFacts().GetAdded())
 	removed := len(diff.GetFacts().GetRemoved())

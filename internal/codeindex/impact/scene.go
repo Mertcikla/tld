@@ -2,6 +2,7 @@ package impact
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sort"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
@@ -17,7 +19,7 @@ import (
 )
 
 // SceneSchemaVersion identifies the portable scene contract. Bump it when the
-// scene shape changes so a stored artifact stays readable by later readers.
+// scene shape changes so obsolete comparisons require regeneration.
 const SceneSchemaVersion = PipelineVersion
 
 func transientName(p string) string {
@@ -33,40 +35,26 @@ func transientName(p string) string {
 }
 
 // Scene returns the frozen comparison scene. Artifacts without a canonical
-// scene are assembled through the same pipeline as new comparisons.
-func (s Service) Scene(ctx context.Context, diagram *pb.ImpactDiagram) (*pb.ImpactScene, error) {
+// scene are rejected; historical reads never consult the current workspace.
+func (s Service) Scene(ctx context.Context, diagram *model.Diagram) (*model.Assembly, error) {
 	if diagram == nil {
-		return &pb.ImpactScene{SchemaVersion: SceneSchemaVersion}, nil
+		return &model.Assembly{SchemaVersion: SceneSchemaVersion}, nil
 	}
 	if diagram.Scene != nil && diagram.Scene.SchemaVersion == PipelineVersion {
-		return proto.Clone(diagram.Scene).(*pb.ImpactScene), nil
+		return model.Clone(diagram.Scene), nil
 	}
-	repo, err := s.Index.Repository(ctx, diagram.GetRepositoryId())
-	if err != nil {
-		return nil, err
-	}
-	workspace, err := s.Workspace.Explore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	mappings, err := s.Index.MappingsByRepository(ctx, diagram.GetRepositoryId())
-	if err != nil {
-		return nil, err
-	}
-	captured := proto.Clone(diagram).(*pb.ImpactDiagram)
-	captured.RequestedRadius = proto.Uint32(DiagramRadius(diagram))
-	return assemble(ctx, s, captured, workspace, mappings, repo.Root, nil)
+	return nil, fmt.Errorf("comparison schema is obsolete; run compare again")
 }
 
 // sceneEvidence holds captured analysis and shared source-link conversion helpers.
 type sceneEvidence struct {
-	diagram   *pb.ImpactDiagram
+	diagram   *model.Diagram
 	workspace core.ExploreData
 	root      string
 	mappings  []cstore.ResourceMapping
 	store     *cstore.Store
 	ctx       context.Context
-	nodes     map[string]*pb.ImpactNode
+	nodes     map[string]*model.Node
 	sources   map[string]*pb.SourceChange
 }
 
@@ -155,7 +143,7 @@ func (b *sceneEvidence) repoRelativePath(base string) (string, bool) {
 // anchor by overlap between the author's line range and a changed symbol's
 // anchor lines. Authored line anchors are 1-based (editor convention) while
 // stored fact anchors are 0-based, so the author range is shifted down first.
-func symbolAnchorMatches(node *pb.ImpactNode, anchor sourcelink.Anchor) bool {
+func symbolAnchorMatches(node *model.Node, anchor sourcelink.Anchor) bool {
 	if node == nil {
 		return false
 	}
@@ -197,11 +185,11 @@ func symbolAnchorMatches(node *pb.ImpactNode, anchor sourcelink.Anchor) bool {
 // pre-shaped text has to stay in sync with the underlying fact. Every overlay
 // this helper shapes is a direct hit on its own path; roll-ups set CONTAINED
 // themselves.
-func (b *sceneEvidence) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
+func (b *sceneEvidence) overlay(node *model.Node) *model.Overlay {
 	if node == nil {
 		return nil
 	}
-	overlay := &pb.ImpactSceneOverlay{Change: node.GetChange(), Path: node.GetPath(), Distance: node.GetDistance(), Reason: pb.OverlayReason_OVERLAY_REASON_DIRECT}
+	overlay := &model.Overlay{Change: node.GetChange(), Path: node.GetPath()}
 	if source := b.sources[node.GetPath()]; source != nil {
 		overlay.LinesAdded = source.LinesAdded
 		overlay.LinesRemoved = source.LinesRemoved
@@ -223,22 +211,17 @@ func (b *sceneEvidence) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
 }
 
 // symbolChange keeps only the portable identity of a changed fact: name, kind,
-// anchor lines, and body fingerprint. Snapshot provenance, qualified SCIP
+// source path and lines. Snapshot provenance, qualified SCIP
 // names, evidence, and imports are left behind so a scene carries no
 // index-only weight.
 func symbolChange(kind pb.ChangeKind, fact *pb.CodeFact) *pb.ImpactSymbolChange {
 	change := &pb.ImpactSymbolChange{
-		Change:   kind,
-		Name:     fact.GetName(),
-		Kind:     fact.GetKind(),
-		BodyHash: fact.GetBodyHash(),
+		Change: kind,
+		Name:   fact.GetName(),
+		Kind:   fact.GetKind(),
 	}
 	if anchor := fact.GetAnchor(); anchor != nil {
-		change.Anchor = &pb.ImpactSymbolAnchor{
-			Path:      anchor.GetPath(),
-			StartLine: anchor.GetStartLine(),
-			EndLine:   anchor.GetEndLine(),
-		}
+		change.Path, change.StartLine, change.EndLine = anchor.GetPath(), anchor.GetStartLine(), anchor.GetEndLine()
 	}
 	return change
 }
@@ -257,7 +240,7 @@ func sceneView(view core.ViewTreeNode) *diagv1.View {
 	return out
 }
 
-func scenePlacement(placement core.PlacedElement) *pb.ScenePlacement {
+func scenePlacement(placement core.PlacedElement) *model.Placement {
 	element := &diagv1.PlacedElement{
 		Id: int32(placement.ID), ViewId: int32(placement.ViewID), ElementId: int32(placement.ElementID),
 		PositionX: placement.PositionX, PositionY: placement.PositionY,
@@ -275,7 +258,7 @@ func scenePlacement(placement core.PlacedElement) *pb.ScenePlacement {
 			Type: connector.Type, Slug: &slug, Label: connector.Label, IsPrimaryIcon: connector.IsPrimaryIcon,
 		})
 	}
-	return &pb.ScenePlacement{Element: element}
+	return &model.Placement{Element: element}
 }
 
 func sceneConnector(connector core.Connector) *diagv1.Connector {
@@ -310,7 +293,7 @@ func int32Pointer(value *int64) *int32 {
 // adjustSceneConnectorHandles re-attaches connectors to the handles that yield
 // the shortest anchor distance for the scene's final placements, mirroring the
 // map pipeline's "Adjust Connectors" pass.
-func adjustSceneConnectorHandles(placements []*pb.ScenePlacement, connectors []*diagv1.Connector) {
+func adjustSceneConnectorHandles(placements []*model.Placement, connectors []*diagv1.Connector) {
 	if len(connectors) == 0 {
 		return
 	}

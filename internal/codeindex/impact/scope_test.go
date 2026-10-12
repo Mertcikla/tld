@@ -4,18 +4,19 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func scopeDiagram() *pb.ImpactDiagram {
-	return &pb.ImpactDiagram{
+func scopeDiagram() *model.Diagram {
+	return &model.Diagram{
 		RepositoryId:  "repo",
 		ComparisonKey: "key",
-		Nodes: []*pb.ImpactNode{
+		Nodes: []*model.Node{
 			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
-			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},
-			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
+			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1},
+			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2},
 		},
-		Edges: []*pb.ImpactEdge{
+		Edges: []*model.Edge{
 			{FromKey: "file|a.go", ToKey: "file|a.go", Weight: 1},
 			{FromKey: "file|a.go", ToKey: "context|1", Weight: 2},
 			{FromKey: "context|1", ToKey: "context|2", Weight: 3},
@@ -46,7 +47,7 @@ func TestFitRadiusNarrowsToBudget(t *testing.T) {
 	}
 }
 
-func nodeKeys(diagram *pb.ImpactDiagram) []string {
+func nodeKeys(diagram *model.Diagram) []string {
 	out := make([]string, 0, len(diagram.GetNodes()))
 	for _, node := range diagram.GetNodes() {
 		out = append(out, node.GetKey())

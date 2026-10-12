@@ -11,6 +11,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
@@ -94,14 +95,14 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	if content == nil {
 		t.Fatalf("scene missing view content: %+v", scene.GetViews())
 	}
-	byPath := map[string]*pb.ScenePlacement{}
+	byPath := map[string]*model.Placement{}
 	for _, placement := range content.GetPlacements() {
 		byPath[placement.GetElement().GetFilePath()] = placement
 	}
-	if overlay := byPath["a.go"].GetOverlay(); overlay == nil || overlay.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED || overlay.GetDistance() != 0 {
+	if overlay := byPath["a.go"].GetOverlay(); overlay == nil || overlay.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED || scene.Provenance[PlacementKey(int64(byPath["a.go"].Element.ViewId), int64(byPath["a.go"].Element.ElementId))].Distance != 0 {
 		t.Fatalf("changed overlay = %+v", overlay)
 	}
-	if overlay := byPath["b.go"].GetOverlay(); overlay == nil || overlay.GetDistance() != 1 {
+	if overlay := byPath["b.go"].GetOverlay(); overlay == nil || scene.Provenance[PlacementKey(int64(byPath["b.go"].Element.ViewId), int64(byPath["b.go"].Element.ElementId))].Distance != 1 {
 		t.Fatalf("context overlay = %+v", overlay)
 	}
 	if _, ok := byPath["new.go"]; !ok {
@@ -112,8 +113,8 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	}
 	// A scene is a portable artifact: it names what it compared and carries
 	// enough symbol detail to describe the change without the snapshot.
-	if scene.GetSchemaVersion() != SceneSchemaVersion || scene.GetRepositoryId() != "repo" ||
-		scene.GetComparisonKey() != diagram.GetComparisonKey() || scene.GetFromGitRevision() != "base" || scene.GetToGitRevision() != "head" {
+	if scene.GetSchemaVersion() != SceneSchemaVersion || scene.RepositoryId != "repo" ||
+		scene.ComparisonKey != diagram.GetComparisonKey() || scene.FromGitRevision != "base" || scene.ToGitRevision != "head" {
 		t.Fatalf("scene identity = %+v", scene)
 	}
 	overlay := byPath["a.go"].GetOverlay()
@@ -121,11 +122,8 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	if len(symbols) != 1 || symbols[0].GetName() != "Stable" || symbols[0].GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
 		t.Fatalf("symbol detail = %+v", symbols)
 	}
-	if symbols[0].GetAnchor().GetPath() != "a.go" || symbols[0].GetKind() != pb.FactKind_FACT_KIND_FUNCTION {
+	if symbols[0].GetPath() != "a.go" || symbols[0].GetKind() != pb.FactKind_FACT_KIND_FUNCTION {
 		t.Fatalf("symbol detail lost its anchor or kind: %+v", symbols[0])
-	}
-	if symbols[0].GetBodyHash() == "" {
-		t.Fatalf("symbol detail has no body fingerprint: %+v", symbols[0])
 	}
 }
 
@@ -212,7 +210,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 	if content == nil {
 		t.Fatalf("scene missing authored view: %+v", scene.GetViews())
 	}
-	byName := map[string]*pb.ScenePlacement{}
+	byName := map[string]*model.Placement{}
 	for _, placement := range content.GetPlacements() {
 		byName[placement.GetElement().GetName()] = placement
 	}
@@ -223,7 +221,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 			t.Fatalf("authored placement %q missing: %+v", name, content.GetPlacements())
 		}
 		overlay := placement.GetOverlay()
-		if overlay == nil || overlay.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED || overlay.GetReason() != pb.OverlayReason_OVERLAY_REASON_DIRECT {
+		if overlay == nil || overlay.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED || overlay.GetContained() {
 			t.Fatalf("authored overlay for %q = %+v", name, overlay)
 		}
 	}
@@ -240,7 +238,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 		}
 	}
 	folder := byName["subsystem"].GetOverlay()
-	if folder == nil || folder.GetReason() != pb.OverlayReason_OVERLAY_REASON_CONTAINED || folder.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
+	if folder == nil || !folder.GetContained() || folder.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
 		t.Fatalf("folder roll-up overlay = %+v", folder)
 	}
 	if folder.GetPath() != "sub/" || len(folder.GetSymbols()) == 0 {
@@ -248,7 +246,7 @@ func TestSceneAnnotatesAuthoredViewsAtCoarserGranularity(t *testing.T) {
 	}
 	// A folder link without the trailing slash rolls up the same way.
 	bare := byName["subsystem bare"].GetOverlay()
-	if bare == nil || bare.GetReason() != pb.OverlayReason_OVERLAY_REASON_CONTAINED || bare.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
+	if bare == nil || !bare.GetContained() || bare.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
 		t.Fatalf("bare folder roll-up overlay = %+v", bare)
 	}
 	// The authored elements cover a.go and sub/deep.go, so only new.go may
@@ -488,7 +486,7 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 			if transientID >= 0 {
 				t.Fatalf("attached orphan is not transient: %+v", placement.GetElement())
 			}
-			if overlay := placement.GetOverlay(); overlay == nil || overlay.GetDistance() != 0 {
+			if overlay := placement.GetOverlay(); overlay == nil || scene.Provenance[PlacementKey(int64(placement.Element.ViewId), int64(placement.Element.ElementId))].Distance != 0 {
 				t.Fatalf("attached orphan lost its change overlay: %+v", overlay)
 			}
 		case "lone.go":
@@ -705,17 +703,16 @@ func TestSceneIncludesChildViewsOfImpactedElements(t *testing.T) {
 	}
 }
 
-func scopeScenePlacement(viewID, elementID int32, name string, distance uint32, changed bool) *pb.ScenePlacement {
-	placement := &pb.ScenePlacement{
+func scopeScenePlacement(viewID, elementID int32, name string, changed bool) *model.Placement {
+	placement := &model.Placement{
 		Element: &diagv1.PlacedElement{
 			Id: int32(elementID), ElementId: elementID, ViewId: viewID, Name: name,
 		},
 	}
 	if changed {
-		placement.Overlay = &pb.ImpactSceneOverlay{
-			Change:   pb.ChangeKind_CHANGE_KIND_MODIFIED,
-			Path:     name,
-			Distance: distance,
+		placement.Overlay = &model.Overlay{
+			Change: pb.ChangeKind_CHANGE_KIND_MODIFIED,
+			Path:   name,
 		}
 	}
 	return placement
@@ -724,13 +721,13 @@ func scopeScenePlacement(viewID, elementID int32, name string, distance uint32, 
 // SelectScene at radius 0 keeps directly changed placements only, dropping
 // unimpacted neighbours, dangling connectors, and emptied views.
 func TestSelectSceneKeepsDirectChangesOnly(t *testing.T) {
-	scene := &pb.ImpactScene{
-		Views: map[string]*pb.SceneViewContent{
+	scene := &model.Assembly{
+		Views: map[string]*model.ViewContent{
 			"7": {
-				Placements: []*pb.ScenePlacement{
-					scopeScenePlacement(7, 1, "a.go", 0, true),
-					scopeScenePlacement(7, 2, "b.go", 1, true),
-					scopeScenePlacement(7, 3, "notes", 0, false),
+				Placements: []*model.Placement{
+					scopeScenePlacement(7, 1, "a.go", true),
+					scopeScenePlacement(7, 2, "b.go", true),
+					scopeScenePlacement(7, 3, "notes", false),
 				},
 				Connectors: []*diagv1.Connector{
 					{Id: 1, ViewId: 7, SourceElementId: 1, TargetElementId: 2},
@@ -738,15 +735,15 @@ func TestSelectSceneKeepsDirectChangesOnly(t *testing.T) {
 				},
 			},
 			"8": {
-				Placements: []*pb.ScenePlacement{
-					scopeScenePlacement(8, 9, "z.go", 0, false),
+				Placements: []*model.Placement{
+					scopeScenePlacement(8, 9, "z.go", false),
 				},
 			},
 		},
 		Tree:            []*diagv1.View{{Id: 7, Name: "kept"}, {Id: 8, Name: "dropped"}},
 		AuthoredViewIds: []int64{7, 8},
 	}
-	addSceneProvenance(scene)
+	addSceneProvenance(scene, map[string]uint32{PlacementKey(7, 2): 1})
 	scoped := SelectScene(scene, 0, true)
 	content := scoped.GetViews()["7"]
 	if content == nil || len(content.GetPlacements()) != 1 || content.GetPlacements()[0].GetElement().GetElementId() != 1 {
@@ -774,19 +771,19 @@ func TestSelectSceneKeepsDirectChangesOnly(t *testing.T) {
 // the container elements that own retained drill-down views so nested change
 // evidence never orphans its parent.
 func TestSelectSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
-	scene := &pb.ImpactScene{
-		Views: map[string]*pb.SceneViewContent{
+	scene := &model.Assembly{
+		Views: map[string]*model.ViewContent{
 			"7": {
-				Placements: []*pb.ScenePlacement{
-					scopeScenePlacement(7, 10, "service", 0, false),
-					scopeScenePlacement(7, 11, "other", 0, false),
+				Placements: []*model.Placement{
+					scopeScenePlacement(7, 10, "service", false),
+					scopeScenePlacement(7, 11, "other", false),
 				},
 			},
 			"9": {
-				Placements: []*pb.ScenePlacement{
-					scopeScenePlacement(9, 1, "a.go", 0, true),
-					scopeScenePlacement(9, 2, "b.go", 1, true),
-					scopeScenePlacement(9, 3, "far.go", 2, true),
+				Placements: []*model.Placement{
+					scopeScenePlacement(9, 1, "a.go", true),
+					scopeScenePlacement(9, 2, "b.go", true),
+					scopeScenePlacement(9, 3, "far.go", true),
 				},
 				Connectors: []*diagv1.Connector{
 					{Id: 1, ViewId: 9, SourceElementId: 1, TargetElementId: 2},
@@ -800,7 +797,7 @@ func TestSelectSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 		},
 		AuthoredViewIds: []int64{7, 9},
 	}
-	addSceneProvenance(scene)
+	addSceneProvenance(scene, map[string]uint32{PlacementKey(9, 2): 1, PlacementKey(9, 3): 2})
 	scoped := SelectScene(scene, 1, true)
 	child := scoped.GetViews()["9"]
 	if child == nil || len(child.GetPlacements()) != 2 {
@@ -821,21 +818,21 @@ func TestSelectSceneKeepsNeighboursAndDrilldownContainers(t *testing.T) {
 func int32Ptr(value int32) *int32 { return &value }
 
 // compareSceneSnapshots captures fixtures through the production comparison path.
-func compareSceneSnapshots(ctx context.Context, ws core.Store, idx *cstore.Store, repo, from, to string, radius uint32) (*pb.ImpactDiagram, error) {
+func compareSceneSnapshots(ctx context.Context, ws core.Store, idx *cstore.Store, repo, from, to string, radius uint32) (*model.Diagram, error) {
 	return (Service{Workspace: ws, Index: idx}).CompareSnapshots(ctx, repo, from, to, radius)
 }
 
 // addSceneProvenance supplies canonical roles for selection-only fixtures.
-func addSceneProvenance(scene *pb.ImpactScene) {
+func addSceneProvenance(scene *model.Assembly, distances map[string]uint32) {
 	scene.SchemaVersion = PipelineVersion
-	scene.Provenance = map[string]*pb.ImpactProvenance{}
+	scene.Provenance = map[string]*model.Metadata{}
 	for _, content := range scene.Views {
 		for _, placement := range content.Placements {
 			e := placement.Element
-			p := &pb.ImpactProvenance{Key: PlacementKey(int64(e.ViewId), int64(e.ElementId)), Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT}
+			p := &model.Metadata{Key: PlacementKey(int64(e.ViewId), int64(e.ElementId)), Role: pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT}
 			if placement.Overlay != nil {
 				p.Role = pb.ImpactRole_IMPACT_ROLE_DIRECT
-				p.Distance = placement.Overlay.Distance
+				p.Distance = distances[p.Key]
 				if p.Distance > 0 {
 					p.Role = pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT
 				}

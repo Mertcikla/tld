@@ -4,23 +4,20 @@ import (
 	"fmt"
 	"io"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func writeProvenance(opts compareOptions, scene *pb.ImpactScene, stderr io.Writer) error {
+func writeProvenance(opts compareOptions, scene *model.Assembly, stderr io.Writer) error {
 	if !opts.debugProvenance || scene == nil {
 		return nil
 	}
-	if _, err := fmt.Fprintf(stderr, "impact provenance: %d changed files represented; radius %d/%d; complete manifest=%t\n", len(scene.Coverage), scene.EffectiveRadius, scene.RequestedRadius, scene.ManifestComplete); err != nil {
+	public := impact.PublicScene(scene, true)
+	if _, err := fmt.Fprintf(stderr, "impact provenance: %d changed files represented; radius %d/%d; complete manifest=%t\n", public.GetSummary().GetFiles(), public.GetComparison().GetEffectiveRadius(), public.GetComparison().GetRequestedRadius(), public.GetComparison().GetManifestComplete()); err != nil {
 		return err
 	}
-	for _, stage := range scene.GetStages() {
-		if _, err := fmt.Fprintf(stderr, "  %s: +%d added, %d annotated, %d reused, %d suppressed\n", stage.Name, stage.Added, stage.Annotated, stage.Reused, stage.Suppressed); err != nil {
-			return err
-		}
-	}
-	for _, decision := range scene.GetDecisions() {
-		if _, err := fmt.Fprintf(stderr, "  [%s] %s %s: %s\n", decision.Stage, decision.Action, decision.Key, decision.Reason); err != nil {
+	for _, decision := range public.GetProvenance().GetDecisions() {
+		if _, err := fmt.Fprintf(stderr, "  [%s] %s %s: %s\n", decision.Stage, decision.Action, decision.Target, decision.Reason); err != nil {
 			return err
 		}
 	}

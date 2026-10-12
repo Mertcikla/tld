@@ -39,9 +39,12 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 				parts = append(parts, key+"="+EscapeMetadataValue(trimmed))
 			}
 		}
-		appendEntry("repo", scene.GetRepositoryId())
-		appendEntry("key", scene.GetComparisonKey())
+		appendEntry("repo", scene.GetComparison().GetRepositoryId())
+		appendEntry("key", scene.GetComparison().GetKey())
 		lines = append(lines, strings.Join(parts, " "))
+		if summary := scene.Summary; summary != nil {
+			lines = append(lines, fmt.Sprintf("%%%% impact files=%d added=%d removed=%d complete=%t basis=%s binary=%d affected=%d neighbours=%d authored=%d containers=%d radius=%d", summary.Files, summary.KnownLinesAdded, summary.KnownLinesRemoved, summary.LineCountsComplete, summary.LineCountsBasis, summary.BinaryFiles, summary.AffectedPlacements, summary.DependencyNeighbours, summary.AuthoredContext, summary.Containers, scene.GetComparison().GetEffectiveRadius()))
+		}
 	}
 
 	seen := map[int32]bool{}
@@ -141,8 +144,14 @@ func sceneChangeWord(change codeindexv1.ChangeKind) string {
 
 // sceneProvenanceGlyph renders the recorded origin of a placement.
 func (v *sceneViewer) sceneProvenanceGlyph(viewID int32, element *diagv1.PlacedElement) string {
-	p := v.scene.Provenance[fmt.Sprintf("placement|%d|%d", viewID, element.GetElementId())]
-	switch p.GetOrigin() {
+	origin := codeindexv1.ImpactOrigin_IMPACT_ORIGIN_UNSPECIFIED
+	for _, placement := range v.scene.Views[strconv.Itoa(int(viewID))].Placements {
+		if placement.Element.ElementId == element.ElementId {
+			origin = placement.Origin
+			break
+		}
+	}
+	switch origin {
 	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_RAW:
 		return "◇ "
 	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_MAPPED:
@@ -235,18 +244,11 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 			continue
 		}
 		if !rendered[target] {
-			p := v.scene.Provenance[fmt.Sprintf("connector|%d|%d", viewID, connector.Id)]
-			if len(p.GetEndpointKeys()) == 2 {
-				parts := strings.Split(p.EndpointKeys[1], "|")
-				if len(parts) == 3 {
-					targetView, err := strconv.ParseInt(parts[1], 10, 32)
-					if err == nil {
-						line := v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags())
-						line = strings.ReplaceAll(line, sceneNodeRef(viewID, target), sceneNodeRef(int32(targetView), target))
-						lines = append(lines, pad+line)
-						v.linkIndex++
-					}
-				}
+			if ref := content.ConnectorTargets[strconv.Itoa(int(connector.Id))]; ref != nil {
+				line := v.sceneConnectorLine(viewID, source, target, connector.GetLabel(), connector.GetTags())
+				line = strings.ReplaceAll(line, sceneNodeRef(viewID, target), sceneNodeRef(ref.ViewId, target))
+				lines = append(lines, pad+line)
+				v.linkIndex++
 			}
 			continue
 		}

@@ -11,9 +11,9 @@ const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged', path: s
 const connector = (id: number, source: number, target: number) => ({ id, view_id: 1, source_element_id: source, target_element_id: target, label: null, description: null, relationship: null, direction: 'forward', style: 'bezier', url: null, source_handle: null, target_handle: null, created_at: '', updated_at: '' })
 
 const provenance = (origin: 'authored' | 'mapped' | 'raw'): RepositoryImpactProvenance => ({
-  key: '', objectKind: 'placement', viewId: 1, resourceId: 0, name: '',
-  origin, grounding: 'file', role: 'direct', stage: 'coverage', reason: '', paths: [],
-  distance: 0, witnesses: [], logicalKey: '', mapSnapshotId: '', evidence: [], partial: false, endpointKeys: [],
+  key: '', viewId: 1, resourceId: 0, name: '',
+  origin, grounding: 'file', role: 'direct', paths: [],
+  distance: 0,
 })
 
 const scene: RepositoryImpactScene = {
@@ -87,7 +87,7 @@ describe('repositoryChangeScene', () => {
       ...scene,
       views: { ...scene.views, 1: { placements: [...scene.views[1].placements, transient], connectors: [] } },
       overlays: { ...scene.overlays, [-1]: overlay('added', 'new.go', 0) },
-      provenance: { 'placement|1|-1': provenance('raw') },
+      placements: { 'placement|1|-1': provenance('raw') },
     }
     const rendered = repositoryChangeScene(withTransient)
     const added = rendered.data.views[1].placements.find((element) => element.element_id === -1)!
@@ -171,7 +171,7 @@ it('uses recorded provenance rather than IDs or map-generated tags', () => {
       { ...placement(-1, 'concept'), tags: ['map-generated'] },
       placement(2, 'mapped.go'), placement(3, 'raw.go'),
     ], connectors: [] } },
-    provenance: {
+    placements: {
       'placement|1|-1': provenance('authored'),
       'placement|1|2': provenance('mapped'),
       'placement|1|3': provenance('raw'),

@@ -774,7 +774,7 @@ describe('Repositories map action', () => {
     expect(symbols.findAll((node) => node.props.as === 'details')).toHaveLength(0)
     const editorButton = rows[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
     await act(async () => { await editorButton.props.onClick() })
-    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/file.go', line: 20 })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/file.go', line: 21 })
     act(() => { fileRow.props.onClick() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-symbols' })).toHaveLength(0)
     expect(fileRow.props['aria-expanded']).toBe(false)
@@ -784,7 +784,7 @@ describe('Repositories map action', () => {
   it('groups all changed symbols by file when opening Symbols without selecting a file', async () => {
     const { api } = await import('../api/client')
     const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
-    const added = createMessage(CodeFactSchema, { id: 'added', name: 'Added', anchor: { path: 'src/b.go', startLine: 3 } })
+    const added = createMessage(CodeFactSchema, { id: 'added', name: 'Added', anchor: { path: 'src/b.go', startLine: 0 } })
     const removed = createMessage(CodeFactSchema, { id: 'removed', name: 'Removed', anchor: { path: 'src/a.go', startLine: 7 } })
     const modified = createMessage(CodeFactSchema, { id: 'modified', name: 'Modified', anchor: { path: 'src/b.go', startLine: 8 } })
     vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
@@ -801,7 +801,10 @@ describe('Repositories map action', () => {
     expect(api.repositories.fileSymbols).not.toHaveBeenCalled()
     const editorButton = groups[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
     await act(async () => { await editorButton.props.onClick() })
-    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/a.go', line: 7 })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/a.go', line: 8 })
+    const firstLineButton = groups[1].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
+    await act(async () => { await firstLineButton.props.onClick() })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/b.go', line: 1 })
     await act(async () => { renderer.unmount() })
   })
 

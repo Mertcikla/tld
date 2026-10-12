@@ -38,8 +38,8 @@ export default function RepositorySymbols({ repositoryRoot, path, diagram, inlin
           {fileSymbols.map(({ fact, kind }) => <Box key={`${kind}:${fact.id}`} mb={inline ? 0 : 3} py={inline ? 1 : 0} position="relative" data-symbol-change={kind} tabIndex={0}
           _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '2px' }}
           sx={{ '&:hover .symbol-editor-action, &:focus-within .symbol-editor-action': { display: 'block' } }}>
-          <Text fontSize="xs" color={colors[kind]} overflowWrap="anywhere">{fact.name || fact.qualifiedName}{!!fact.anchor?.startLine && <Text as="span" color="gray.500"> · L{fact.anchor.startLine}</Text>}</Text>
-          <Box className="symbol-editor-action" display="none" position="absolute" right={0} top="-3px" textAlign="right" bg="var(--bg-canvas)"><OpenInEditorButton borderless repo={repositoryRoot} filePath={filePath} line={fact.anchor?.startLine || null} /></Box>
+          <Text fontSize="xs" color={colors[kind]} overflowWrap="anywhere">{fact.name || fact.qualifiedName}{fact.anchor && <Text as="span" color="gray.500"> · L{fact.anchor.startLine + 1}</Text>}</Text>
+          <Box className="symbol-editor-action" display="none" position="absolute" right={0} top="-3px" textAlign="right" bg="var(--bg-canvas)"><OpenInEditorButton borderless repo={repositoryRoot} filePath={filePath} line={fact.anchor ? fact.anchor.startLine + 1 : null} /></Box>
           </Box>)}
         </Box>)}
     </Box>

@@ -1,7 +1,9 @@
 package impact
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
-	"google.golang.org/protobuf/proto"
 )
 
 func pipelineStore(t *testing.T) (context.Context, *app.Store, *cstore.Store) {
@@ -96,8 +97,8 @@ func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	scene := diagram.Scene
-	if !scene.ManifestComplete || len(scene.Coverage) != 4 {
-		t.Fatalf("coverage = %+v", scene.Coverage)
+	if !scene.ManifestComplete || len(scene.Files) != 4 {
+		t.Fatalf("coverage = %+v", scene.Files)
 	}
 	if err := ValidateCoverage(scene); err != nil {
 		t.Fatal(err)
@@ -114,15 +115,16 @@ func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 	if p := scene.Provenance[PlacementKey(authored.ID, partial)]; p == nil || !p.Partial {
 		t.Fatalf("partial anchor = %+v", p)
 	}
-	for _, coverage := range scene.Coverage {
+	for _, coverage := range scene.Files {
 		if coverage.Path == "s.go" {
-			for _, key := range coverage.PlacementKeys {
+			for _, ref := range coverage.Representatives {
+				key := PlacementKey(int64(ref.ViewId), int64(ref.ElementId))
 				if scene.Provenance[key].Partial {
 					t.Fatal("partial symbol consumed full file coverage")
 				}
 			}
 		}
-		if coverage.Path == "asset.bin" && !coverage.FactsUnavailable {
+		if coverage.Path == "asset.bin" && coverage.HeadAnalysis != "manifest_only" {
 			t.Fatal("missing facts were hidden")
 		}
 	}
@@ -155,11 +157,13 @@ func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 	if err := ValidateCoverage(plain); err != nil {
 		t.Fatal(err)
 	}
-	if len(PublicScene(scene, false).Stages) != 0 || len(PublicScene(scene, true).Stages) == 0 {
+	if PublicScene(scene, false).Provenance != nil || PublicScene(scene, true).Provenance == nil {
 		t.Fatal("debug opt-in not respected")
 	}
 	cached, err := service.CompareSnapshots(ctx, "repo", "base", "head", 1)
-	if err != nil || !proto.Equal(cached, diagram) {
+	expectedJSON, _ := json.Marshal(diagram)
+	cachedJSON, _ := json.Marshal(cached)
+	if err != nil || !bytes.Equal(cachedJSON, expectedJSON) {
 		t.Fatalf("immutable cache mismatch: %v", err)
 	}
 	if _, err := ws.UpdateElement(ctx, linked, core.LibraryElement{Name: "Renamed service", FilePath: stringPtr("a.go")}); err != nil {
@@ -195,6 +199,18 @@ func TestPipelineDoesNotTraverseHybridSnapshotPaths(t *testing.T) {
 			t.Fatal("a BASE edge was combined with a HEAD edge")
 		}
 	}
+	public := PublicScene(diagram.Scene, true)
+	for _, witness := range public.Provenance.Witnesses {
+		if witness.Side != "base" || strings.Join(witness.Paths, ",") != "a.go,b.go" {
+			t.Fatalf("hybrid public witness: %v", witness)
+		}
+	}
+	for _, dependency := range public.Provenance.Dependencies {
+		if dependency.Side != "base" || dependency.FromPath != "a.go" || dependency.ToPath != "b.go" {
+			t.Fatalf("hybrid public dependency: %v", dependency)
+		}
+	}
+
 	if len(diagram.Nodes) != 2 || diagram.GetRequestedRadius() != 2 {
 		t.Fatalf("unexpected scope: %+v", diagram.Nodes)
 	}
@@ -213,12 +229,12 @@ func TestPipelineViewFilterKeepsUngroundedSkeletonAndRawCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diagram.Scene.Provenance[PlacementKey(view.ID, id)] == nil || len(diagram.Scene.Coverage) != 1 {
+	if diagram.Scene.Provenance[PlacementKey(view.ID, id)] == nil || len(diagram.Scene.Files) != 1 {
 		t.Fatal("explicit skeleton or uncovered change lost")
 	}
 }
 
-func TestCoverageReusesSourceChangeWithoutMutatingDiff(t *testing.T) {
+func TestFileLedgerCarriesChangeIdentityAndRepresentatives(t *testing.T) {
 	ctx, ws, idx := pipelineStore(t)
 	publishPipeline(t, ctx, idx, "base", map[string]string{"a.go": "before"}, nil)
 	publishPipeline(t, ctx, idx, "head", map[string]string{"a.go": "after"}, nil)
@@ -226,12 +242,9 @@ func TestCoverageReusesSourceChangeWithoutMutatingDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, covered := diagram.Diff.Sources[0], diagram.Scene.Coverage[0]
-	if covered.Change != source.Change || covered.FromHash != source.FromHash || covered.ToHash != source.ToHash || covered.FactsUnavailable != source.FactsUnavailable {
-		t.Fatalf("coverage lost change identity: source=%+v covered=%+v", source, covered)
-	}
-	if len(covered.PlacementKeys) == 0 || len(source.PlacementKeys) != 0 {
-		t.Fatal("scene representatives leaked into the immutable diff")
+	source, covered := diagram.Diff.Sources[0], diagram.Scene.Files[0]
+	if covered.Path != source.Path || covered.Change != source.Change || len(covered.Representatives) == 0 {
+		t.Fatalf("file ledger lost change identity or representatives: source=%+v covered=%+v", source, covered)
 	}
 }
 
@@ -266,7 +279,7 @@ func TestPipelineDoesNotClaimAmbiguousRepositoryAnchors(t *testing.T) {
 	if p := ambiguous.Scene.Provenance[key]; p == nil || p.Grounding != pb.ImpactGrounding_IMPACT_GROUNDING_AMBIGUOUS {
 		t.Fatalf("ambiguous anchor incorrectly grounded: %+v", p)
 	}
-	if ambiguous.Scene.Provenance[ambiguous.Scene.Coverage[0].PlacementKeys[0]].Origin != pb.ImpactOrigin_IMPACT_ORIGIN_RAW {
+	if ambiguous.Scene.Provenance[PlacementKey(int64(ambiguous.Scene.Files[0].Representatives[0].ViewId), int64(ambiguous.Scene.Files[0].Representatives[0].ElementId))].Origin != pb.ImpactOrigin_IMPACT_ORIGIN_RAW {
 		t.Fatal("ambiguous anchor consumed direct coverage")
 	}
 	if err := idx.SetRepositoryRemoteURL(ctx, "repo", "https://github.com/owner/repo"); err != nil {

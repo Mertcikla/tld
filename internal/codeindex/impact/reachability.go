@@ -3,10 +3,10 @@ package impact
 import (
 	"sort"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func dependencyWitnesses(seeds []string, pairs map[[2]string]float64, snapshotID string, radius uint32) map[string]*pb.ImpactWitness {
+func dependencyWitnesses(seeds []string, pairs map[[2]string]float64, snapshotID string, radius uint32) map[string]*model.Witness {
 	adjacency := map[string]map[string]bool{}
 	for pair := range pairs {
 		for _, edge := range [][2]string{pair, {pair[1], pair[0]}} {
@@ -18,9 +18,9 @@ func dependencyWitnesses(seeds []string, pairs map[[2]string]float64, snapshotID
 	}
 	queue := append([]string(nil), seeds...)
 	sort.Strings(queue)
-	out := map[string]*pb.ImpactWitness{}
+	out := map[string]*model.Witness{}
 	for _, seed := range queue {
-		out[seed] = &pb.ImpactWitness{SnapshotId: snapshotID, Paths: []string{seed}}
+		out[seed] = &model.Witness{SnapshotId: snapshotID, Paths: []string{seed}}
 	}
 	for index := 0; index < len(queue); index++ {
 		path := queue[index]
@@ -32,7 +32,7 @@ func dependencyWitnesses(seeds []string, pairs map[[2]string]float64, snapshotID
 			if out[neighbour] != nil {
 				continue
 			}
-			out[neighbour] = &pb.ImpactWitness{SnapshotId: snapshotID, Paths: append(append([]string(nil), witness.Paths...), neighbour)}
+			out[neighbour] = &model.Witness{SnapshotId: snapshotID, Paths: append(append([]string(nil), witness.Paths...), neighbour)}
 			queue = append(queue, neighbour)
 		}
 	}

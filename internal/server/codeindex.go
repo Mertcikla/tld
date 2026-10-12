@@ -310,7 +310,7 @@ func resolveRepositoryRoot(path string) (string, error) {
 	return resolved, nil
 }
 
-func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[codeindexv1.DeleteRepositoryResponse], error) {
+func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[emptypb.Empty], error) {
 	repositoryID := strings.TrimSpace(req.Msg.GetId())
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id is required"))
@@ -354,7 +354,7 @@ func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.R
 	if err := s.store.DeleteRepository(ctx, repositoryID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&codeindexv1.DeleteRepositoryResponse{}), nil
+	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 func (s *repositoryService) stopRepositoryWatches(ctx context.Context, repository *codeindexv1.Repository) error {
@@ -550,7 +550,7 @@ func (s *codeIndexService) DiffSnapshots(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(diff), nil
 }
 
-func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[codeindexv1.DeleteSnapshotResponse], error) {
+func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[emptypb.Empty], error) {
 	snapshotID := strings.TrimSpace(req.Msg.GetId())
 	if snapshotID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("snapshot_id is required"))
@@ -561,7 +561,7 @@ func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Requ
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&codeindexv1.DeleteSnapshotResponse{}), nil
+	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 const defaultPageSize = 200

@@ -23,7 +23,7 @@ export function repositoryChangeScene(scene: RepositoryImpactScene) {
   for (const [viewId, content] of Object.entries(scene.views)) {
     data.views[viewId] = { ...content, placements: content.placements.map((element) => {
       const key = `placement|${viewId}|${element.element_id}`
-      const origin = scene.provenance?.[key]?.origin
+      const origin = scene.placements?.[key]?.origin
       const provenanceTag = origin === 'raw' ? 'augmented' : origin === 'mapped' ? 'generated' : 'authored'
       const tags = [...(element.tags ?? []).filter((tag) => tag !== 'map-generated'), provenanceTag]
       const overlay = scene.overlays[element.element_id]

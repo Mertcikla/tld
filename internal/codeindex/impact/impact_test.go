@@ -8,6 +8,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
@@ -62,7 +63,7 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|file|b", Kind: cstore.MappingElement, ResourceID: contextElement.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
 		t.Fatal(err)
 	}
-	diagram, _, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 0)
+	diagram, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,32 +79,32 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 		}
 	}
 	assertFactFingerprints(t, diagram)
-	expanded, _, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 1)
+	expanded, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(expanded.Nodes) != 3 || expanded.ViewId != diagram.ViewId || len(expanded.Edges) != 1 {
+	if len(expanded.Nodes) != 3 || len(expanded.Edges) != 1 {
 		t.Fatalf("expanded impact: %+v", expanded)
 	}
 	for _, node := range expanded.Nodes {
 		if node.Path == "c.go" {
 			t.Fatal("file beyond the requested radius was introduced")
 		}
-		if node.GetElementId() != 0 {
+		if node == nil {
 			t.Fatal("source analysis must not choose workspace elements")
 		}
 	}
 	if _, err := ws.ElementByID(ctx, contextElement.ID); err != nil {
 		t.Fatal("shared context was deleted")
 	}
-	historical, _, err := buildAnalysis(ctx, idx, "repo", "historical", "base", "head", 0)
+	historical, err := buildAnalysis(ctx, idx, "repo", "historical", "base", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if historical.ViewId != 0 || diagram.ViewId != 0 {
+	if historical.Scene != nil || diagram.Scene != nil {
 		t.Fatal("comparison materialized a view")
 	}
-	empty, _, err := buildAnalysis(ctx, idx, "repo", "live", "head", "head", 0)
+	empty, err := buildAnalysis(ctx, idx, "repo", "live", "head", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func stringPtr(s string) *string { return &s }
 
 // assertBodyFingerprints verifies impact diagrams carry symbol metadata and a
 // content fingerprint, never inline source.
-func assertFactFingerprints(t *testing.T, diagram *pb.ImpactDiagram) {
+func assertFactFingerprints(t *testing.T, diagram *model.Diagram) {
 	t.Helper()
 	for _, facts := range [][]*pb.CodeFact{
 		diagram.GetDiff().GetFacts().GetAdded(),

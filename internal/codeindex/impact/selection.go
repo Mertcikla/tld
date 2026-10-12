@@ -6,10 +6,10 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"google.golang.org/protobuf/proto"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func SceneNodeCount(scene *pb.ImpactScene) int {
+func SceneNodeCount(scene *model.Assembly) int {
 	count := 0
 	for _, content := range scene.GetViews() {
 		count += len(content.Placements)
@@ -20,7 +20,7 @@ func SceneNodeCount(scene *pb.ImpactScene) int {
 // SceneNodeCountInRadius counts the placements SelectScene would retain at the
 // given radius and mode without cloning the scene payload, so budget narrowing
 // stays cheap on multi-megabyte diagrams.
-func SceneNodeCountInRadius(scene *pb.ImpactScene, radius uint32, plain bool) int {
+func SceneNodeCountInRadius(scene *model.Assembly, radius uint32, plain bool) int {
 	if scene == nil {
 		return 0
 	}
@@ -40,7 +40,7 @@ func SceneNodeCountInRadius(scene *pb.ImpactScene, radius uint32, plain bool) in
 // with provenance, dependency context within radius, and authored context
 // unless Plain mode hides it. Containers that still lead to visible child
 // evidence are retained to a fixpoint through the navigation graph.
-func sceneKept(scene *pb.ImpactScene, radius uint32, plain bool) map[string]map[int32]bool {
+func sceneKept(scene *model.Assembly, radius uint32, plain bool) map[string]map[int32]bool {
 	kept := map[string]map[int32]bool{}
 	for key, content := range scene.Views {
 		set := map[int32]bool{}
@@ -79,12 +79,15 @@ func sceneKept(scene *pb.ImpactScene, radius uint32, plain bool) map[string]map[
 
 // SelectScene applies display/budget policy to a frozen scene. Authored context
 // is kept in Standard mode; every suppression is explained in the trace.
-func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactScene {
+func SelectScene(scene *model.Assembly, radius uint32, plain bool) *model.Assembly {
 	if scene == nil {
 		return nil
 	}
-	out := proto.Clone(scene).(*pb.ImpactScene)
+	out := model.Clone(scene)
 	out.EffectiveRadius = radius
+	if out.Comparison != nil {
+		out.Comparison.Plain = plain
+	}
 	kept := sceneKept(out, radius, plain)
 	for _, key := range sortedKeys(out.Views) {
 		content := out.Views[key]
@@ -99,8 +102,12 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 				reason = "Hidden authored context in Plain mode"
 			}
 			if p != nil {
-				out.OmittedContext = append(out.OmittedContext, p.Paths...)
-				selectionDecision(out, p.Key, reason, p.Paths)
+				out.OmittedContext = append(out.OmittedContext, shortRef(p.Key))
+				if out.AuditReferences == nil {
+					out.AuditReferences = map[string]*model.AuditReference{}
+				}
+				out.AuditReferences[p.Key] = &model.AuditReference{Name: p.Name, ViewName: out.Provenance[ViewKey(p.ViewId)].GetName()}
+				selectionDecision(out, p.Key, reason)
 				delete(out.Provenance, p.Key)
 			}
 		}
@@ -113,7 +120,7 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 	}
 	for _, key := range sortedKeys(out.Views) {
 		content := out.Views[key]
-		var placements []*pb.ScenePlacement
+		var placements []*model.Placement
 		for _, placement := range content.Placements {
 			if kept[key][placement.Element.ElementId] {
 				placements = append(placements, placement)
@@ -127,7 +134,7 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 				continue
 			}
 			pkey := ConnectorKey(int64(edge.ViewId), int64(edge.Id))
-			selectionDecision(out, pkey, "Connector endpoint was suppressed by display policy", nil)
+			selectionDecision(out, pkey, "Connector endpoint was suppressed by display policy")
 			delete(out.Provenance, pkey)
 		}
 		content.Connectors = connectors
@@ -158,31 +165,11 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 	return out
 }
 
-func selectionDecision(scene *pb.ImpactScene, key, reason string, paths []string) {
-	if len(scene.Stages) == 0 {
-		return
-	}
-	scene.Decisions = append(scene.Decisions, &pb.ImpactDecision{Stage: "reduce", Action: "suppress", Key: key, Reason: reason, Paths: paths})
-	for _, stage := range scene.Stages {
-		if stage.Id == "reduce" {
-			stage.Suppressed++
-		}
-	}
+func selectionDecision(scene *model.Assembly, key, reason string) {
+	scene.Decisions = append(scene.Decisions, &model.Decision{Stage: "reduce", Action: "suppress", Key: key, Reason: reason})
 }
 
-// PublicScene never exposes the detailed trace unless explicitly requested.
-func PublicScene(scene *pb.ImpactScene, debug bool) *pb.ImpactScene {
-	if scene == nil {
-		return nil
-	}
-	out := proto.Clone(scene).(*pb.ImpactScene)
-	if !debug {
-		out.Stages, out.Decisions = nil, nil
-	}
-	return out
-}
-
-func ValidateCoverage(scene *pb.ImpactScene) error {
+func ValidateCoverage(scene *model.Assembly) error {
 	visible := map[string]bool{}
 	for _, content := range scene.GetViews() {
 		for _, placement := range content.Placements {
@@ -190,11 +177,12 @@ func ValidateCoverage(scene *pb.ImpactScene) error {
 			visible[PlacementKey(int64(e.ViewId), int64(e.ElementId))] = true
 		}
 	}
-	for _, coverage := range scene.GetCoverage() {
-		if len(coverage.PlacementKeys) == 0 {
+	for _, coverage := range scene.GetFiles() {
+		if len(coverage.Representatives) == 0 {
 			return fmt.Errorf("impact coverage missing %s", coverage.Path)
 		}
-		for _, key := range coverage.PlacementKeys {
+		for _, ref := range coverage.Representatives {
+			key := PlacementKey(int64(ref.ViewId), int64(ref.ElementId))
 			if scene.Provenance[key] == nil || !visible[key] {
 				return fmt.Errorf("impact coverage %s references absent placement %s", coverage.Path, key)
 			}

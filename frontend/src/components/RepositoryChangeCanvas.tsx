@@ -100,10 +100,9 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   }, [])
   const selectPrimitive = useCallback((key: string) => {
     setSelectedKey(key)
-    const entry = scene?.provenance?.[key]
+    const entry = scene?.placements?.[key]
     if (!entry) return
-    if (entry.objectKind === 'view') canvas.current?.focusDiagram(entry.viewId)
-    else if (entry.objectKind === 'placement') canvas.current?.focusElement(entry.viewId, entry.resourceId)
+    canvas.current?.focusElement(entry.viewId, entry.resourceId)
   }, [scene])
   const focusSelected = useCallback(() => {
     if (!view || !selectedPath) return
@@ -116,7 +115,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   }, [view, selectedPath, scene, selectPrimitive])
   useEffect(focusSelected, [focusSelected])
   const hiddenChanges = useMemo(() => (scene?.coverage ?? []).filter((entry) => entry.placementKeys.every((key) => {
-    const provenance = scene?.provenance?.[key]
+    const provenance = scene?.placements?.[key]
     if (!provenance || !view) return true
     const element = view.data.views[String(provenance.viewId)]?.placements.find((item) => item.element_id === provenance.resourceId)
     return !element || element.tags.some((tag) => hiddenTags.includes(tag))
