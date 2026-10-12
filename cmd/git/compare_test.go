@@ -19,6 +19,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestCompareHardLimits(t *testing.T) {
@@ -595,5 +596,64 @@ func TestPlainBudgetAndProvenanceUseTheEmittedSelection(t *testing.T) {
 	}
 	if err := impact.ValidateCoverage(result.diagram.Scene); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCompareJSONProvenanceIsOptIn(t *testing.T) {
+	scene := &pb.ImpactScene{
+		SchemaVersion: impact.PipelineVersion,
+		Views: map[string]*pb.SceneViewContent{"1": {Placements: []*pb.ScenePlacement{
+			{Element: &diagv1.PlacedElement{ElementId: 1, ViewId: 1}},
+		}}},
+		Provenance: map[string]*pb.ImpactProvenance{
+			"placement|1|1": {Key: "placement|1|1", Role: pb.ImpactRole_IMPACT_ROLE_DIRECT},
+		},
+		Coverage:  []*pb.SourceChange{{Path: "a.go", PlacementKeys: []string{"placement|1|1"}}},
+		Stages:    []*pb.ImpactStage{{Id: "coverage", Added: 1}},
+		Decisions: []*pb.ImpactDecision{{Stage: "coverage", Action: "add", Key: "placement|1|1"}},
+	}
+	var defaultSummary string
+	for _, tc := range []struct {
+		name  string
+		opts  compareOptions
+		debug bool
+	}{
+		{name: "default"},
+		{name: "debug", opts: compareOptions{debugProvenance: true}, debug: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, size, err := (compareRenderer{opts: tc.opts}).build(&pb.ImpactDiagram{Scene: scene}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if size != len(text) {
+				t.Fatal("byte budget does not match exported JSON")
+			}
+			var bundle struct {
+				Scene    json.RawMessage
+				Grounded json.RawMessage
+			}
+			if err := json.Unmarshal([]byte(text), &bundle); err != nil {
+				t.Fatal(err)
+			}
+			exported := &pb.ImpactScene{}
+			if err := protojson.Unmarshal(bundle.Scene, exported); err != nil {
+				t.Fatal(err)
+			}
+			if (len(exported.Provenance) > 0) != tc.debug || (len(exported.Stages) > 0) != tc.debug || (len(exported.Decisions) > 0) != tc.debug {
+				t.Fatal("provenance must only appear with --debug-provenance")
+			}
+			if impact.SceneNodeCount(exported) != 1 || len(exported.Coverage) != 1 {
+				t.Fatal("provenance filtering changed diagram membership or coverage")
+			}
+			if defaultSummary == "" {
+				defaultSummary = string(bundle.Grounded)
+			} else if defaultSummary != string(bundle.Grounded) {
+				t.Fatal("debug flag changed grounded summary")
+			}
+			if len(scene.Provenance) != 1 || len(scene.Stages) != 1 || len(scene.Decisions) != 1 {
+				t.Fatal("export mutated canonical provenance")
+			}
+		})
 	}
 }

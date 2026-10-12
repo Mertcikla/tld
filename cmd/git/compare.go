@@ -49,7 +49,6 @@ type compareOptions struct {
 	view            string
 	allEdges        bool
 	debugProvenance bool
-	provenanceJSON  string
 }
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
@@ -110,8 +109,7 @@ stderr.`,
 	c.Flags().StringVar(&opts.prepareCommand, "prepare-command", "", "run this Bash command in each uncached revision before indexing; requires Bash")
 	c.Flags().StringVar(&opts.view, "view", "", "restrict the grounded bundle to one authored view (id or name substring)")
 	c.Flags().BoolVar(&opts.allEdges, "all-edges", false, "disable fan-out roll-up in the grounded summary")
-	c.Flags().BoolVar(&opts.debugProvenance, "debug-provenance", false, "show impact pipeline decisions and coverage on stderr")
-	c.Flags().StringVar(&opts.provenanceJSON, "provenance-json", "", "write the detailed impact provenance and decision trace to JSON (implies debug capture)")
+	c.Flags().BoolVar(&opts.debugProvenance, "debug-provenance", false, "include provenance in JSON output and show pipeline decisions and coverage on stderr")
 	return c
 }
 
@@ -452,14 +450,18 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 	if err := impact.ValidateCoverage(scene); err != nil {
 		return "", 0, err
 	}
-	// SelectScene returned a freshly owned scene; strip the detailed trace in
-	// place instead of cloning the whole payload again.
-	scene.Stages, scene.Decisions = nil, nil
+	// Build the summary before removing provenance: grounding and selection
+	// use it internally even when the caller did not request debug output.
+	summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
+	// SelectScene returned a freshly owned scene, so export filtering cannot
+	// mutate the canonical scene used for debug diagnostics.
+	if !r.opts.debugProvenance {
+		scene.Provenance, scene.Stages, scene.Decisions = nil, nil, nil
+	}
 	payload, err := protoJSONOptions.Marshal(scene)
 	if err != nil {
 		return "", 0, err
 	}
-	summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
 	summaryJSON, err := json.MarshalIndent(&summary, "  ", "  ")
 	if err != nil {
 		return "", 0, err
