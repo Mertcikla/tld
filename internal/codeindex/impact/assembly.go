@@ -9,6 +9,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/filelabel"
 	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
@@ -18,7 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "7"
+const PipelineVersion = "8"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -37,6 +38,7 @@ type anchorMatch struct {
 }
 
 type sceneAssembly struct {
+	fileNames                  map[string]string
 	helper                     *sceneEvidence
 	scene                      *model.Assembly
 	views                      map[int64]core.ViewTreeNode
@@ -141,6 +143,7 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 			a.ambiguousPaths[file.Path] = true
 		}
 	}
+	a.fileNames = map[string]string{}
 	for _, snapshotID := range []string{diagram.GetDiff().GetFromSnapshotId(), diagram.GetDiff().GetToSnapshotId()} {
 		if snapshotID == "" {
 			continue
@@ -149,9 +152,17 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 		if err != nil {
 			return nil, err
 		}
+		paths := make([]string, 0, len(snapshot.Sources))
 		for _, source := range snapshot.Sources {
 			a.sources[source.Path] = true
+			paths = append(paths, source.Path)
 		}
+		// HEAD labels take precedence for surviving files; BASE labels remain
+		// available for removals. Mapped and authored names are reused verbatim.
+		for p, name := range filelabel.Names(paths) {
+			a.fileNames[p] = name
+		}
+
 		for _, file := range snapshot.GetManifest().GetFiles() {
 			a.sources[file.Path] = true
 		}
@@ -171,6 +182,13 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 			if fact.Kind != pb.FactKind_FACT_KIND_FILE {
 				a.scene.IndexedSymbols = append(a.scene.IndexedSymbols, symbolChange(kind, fact))
 			}
+		}
+	}
+	// Manifest-only fallback files lack indexed names. Disambiguate them
+	// using the full captured repository, not the selected changed files.
+	for p, name := range filelabel.Names(sortedKeys(a.sources)) {
+		if a.fileNames[p] == "" {
+			a.fileNames[p] = name
 		}
 	}
 	a.sortedSources = sortedKeys(a.sources)
@@ -644,7 +662,7 @@ func (a *sceneAssembly) fillRaw(contextOnly bool) {
 		if id == -1 {
 			a.scene.FallbackViewId = -1
 		}
-		item := &model.Placement{Element: &diagv1.PlacedElement{Id: elementID, ElementId: elementID, ViewId: int32(id), Name: transientName(node.Path),
+		item := &model.Placement{Element: &diagv1.PlacedElement{Id: elementID, ElementId: elementID, ViewId: int32(id), Name: a.rawFileName(node.Path),
 			Kind: proto.String("component"), FilePath: proto.String(node.Path), RepositoryId: proto.String(a.scene.RepositoryId), Repo: proto.String(a.helper.root)}}
 		match := anchorMatch{nodes: []*model.Node{node}, paths: []string{node.Path}, grounding: pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED}
 		a.addPlacement(item, pb.ImpactOrigin_IMPACT_ORIGIN_RAW, stage, reason, match)
@@ -926,4 +944,11 @@ func (a *sceneAssembly) validate() error {
 		}
 	}
 	return nil
+}
+
+func (a *sceneAssembly) rawFileName(p string) string {
+	if name := a.fileNames[p]; name != "" {
+		return name
+	}
+	return transientName(p)
 }
