@@ -67,7 +67,7 @@ func FitRadius(diagram *pb.ImpactDiagram, maxRadius uint32, maxNodes int) (radiu
 	}
 	count := func(r uint32) int {
 		if diagram.Scene != nil {
-			return SceneNodeCount(SelectScene(diagram.Scene, r, false))
+			return SceneNodeCountInRadius(diagram.Scene, r, false)
 		}
 		total := 0
 		for _, node := range diagram.GetNodes() {

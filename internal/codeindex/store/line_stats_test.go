@@ -8,6 +8,55 @@ import (
 	"github.com/mertcikla/codeindex/graph"
 )
 
+func TestSnapshotLineCountsBatchMultipleFiles(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	publish := func(id string, files map[string]string) *pb.Snapshot {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "batch"}
+		g := graph.NewGraph(snap.RepositoryId, snap.Id)
+		for path, text := range files {
+			src := &graph.Source{Path: path, Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[src.Path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: src.Path, Hash: src.Hash})
+		}
+		if err := st.Publish(ctx, "/batch", snap, g); err != nil {
+			t.Fatal(err)
+		}
+		return snap
+	}
+	before := publish("batch-base", map[string]string{
+		"a/file one.go": "one\ntwo\n",
+		"z.go":          "alpha\nbeta\ngamma\n",
+	})
+	after := publish("batch-head", map[string]string{
+		"a/file one.go": "one\ntwo\nthree\n",
+		"z.go":          "alpha\n",
+		"new.txt":       "x\ny\n",
+	})
+	diff, err := st.Diff(ctx, before.Id, after.Id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]uint32{
+		"a/file one.go": {1, 0},
+		"new.txt":       {2, 0},
+		"z.go":          {0, 2},
+	}
+	if len(diff.Sources) != len(want) {
+		t.Fatalf("sources = %d, want %d", len(diff.Sources), len(want))
+	}
+	for _, change := range diff.Sources {
+		expected, ok := want[change.Path]
+		if !ok {
+			t.Fatalf("unexpected changed path %q", change.Path)
+		}
+		if change.GetLinesAdded() != expected[0] || change.GetLinesRemoved() != expected[1] {
+			t.Fatalf("%s: +%d -%d, want +%d -%d", change.Path, change.GetLinesAdded(), change.GetLinesRemoved(), expected[0], expected[1])
+		}
+	}
+}
+
 func TestSnapshotLineCounts(t *testing.T) {
 	ctx := context.Background()
 	st, handle := openTestStore(t)

@@ -9,27 +9,27 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func (s *Store) SaveImpact(ctx context.Context, diagram *pb.ImpactDiagram) error {
-	raw, err := protojson.Marshal(diagram)
+	raw, err := proto.Marshal(diagram)
 	if err != nil {
 		return err
 	}
 	_, err = s.bun.NewRaw(`INSERT INTO codeindex_impacts (repository_id, comparison_key, result_json, org_id) VALUES (?, ?, ?, ?)
- ON CONFLICT(org_id, repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, string(raw), scope(ctx).value()).Exec(ctx)
+ ON CONFLICT(org_id, repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, raw, scope(ctx).value()).Exec(ctx)
 	return err
 }
 
 func (s *Store) Impact(ctx context.Context, repositoryID, key string) (*pb.ImpactDiagram, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
-	var raw string
+	var raw []byte
 	if err := s.bun.NewRaw(`SELECT result_json FROM codeindex_impacts WHERE repository_id = ? AND comparison_key = ?`+where, append([]any{repositoryID, key}, scopeArgs...)...).Scan(ctx, &raw); err != nil {
 		return nil, err
 	}
 	diagram := &pb.ImpactDiagram{}
-	if err := protojson.Unmarshal([]byte(raw), diagram); err != nil {
+	if err := proto.Unmarshal(raw, diagram); err != nil {
 		return nil, err
 	}
 	// Older saved diagrams predate line counts; derive them from their immutable

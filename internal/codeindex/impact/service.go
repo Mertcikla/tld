@@ -150,8 +150,9 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	// assembly is cached separately against the captured workspace fingerprint.
 	analysisKey := ComparisonKey(beforeID, afterID, radius, "source-analysis")
 	analysis, err := s.Index.Impact(ctx, repoID, analysisKey)
+	var pairKinds pairKindIndex
 	if errors.Is(err, sql.ErrNoRows) {
-		analysis, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius)
+		analysis, pairKinds, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius)
 		if err == nil {
 			err = s.Index.SaveImpact(ctx, analysis)
 		}
@@ -166,7 +167,7 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	if err != nil {
 		return nil, err
 	}
-	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, repositories)
+	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, pairKinds, repositories)
 	if err != nil {
 		return nil, err
 	}

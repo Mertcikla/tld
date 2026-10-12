@@ -62,7 +62,7 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|file|b", Kind: cstore.MappingElement, ResourceID: contextElement.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
 		t.Fatal(err)
 	}
-	diagram, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 0)
+	diagram, _, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 		}
 	}
 	assertFactFingerprints(t, diagram)
-	expanded, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 1)
+	expanded, _, err := buildAnalysis(ctx, idx, "repo", "live", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,14 +96,14 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 	if _, err := ws.ElementByID(ctx, contextElement.ID); err != nil {
 		t.Fatal("shared context was deleted")
 	}
-	historical, err := buildAnalysis(ctx, idx, "repo", "historical", "base", "head", 0)
+	historical, _, err := buildAnalysis(ctx, idx, "repo", "historical", "base", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if historical.ViewId != 0 || diagram.ViewId != 0 {
 		t.Fatal("comparison materialized a view")
 	}
-	empty, err := buildAnalysis(ctx, idx, "repo", "live", "head", "head", 0)
+	empty, _, err := buildAnalysis(ctx, idx, "repo", "live", "head", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

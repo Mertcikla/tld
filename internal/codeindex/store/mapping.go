@@ -37,28 +37,25 @@ func (s *Store) SaveMappings(ctx context.Context, mappings []ResourceMapping) er
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	org := scope(ctx).value()
-	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		for _, m := range mappings {
-			if m.LogicalKey == "" {
-				continue
-			}
-			kind := m.Kind
-			if kind == "" {
-				kind = MappingElement
-			}
-			if _, err := tx.NewRaw(`INSERT INTO codeindex_elements (logical_key, resource_type, resource_id, repository_id, snapshot_id, updated_at, org_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(org_id, logical_key) DO UPDATE SET
-					resource_type = excluded.resource_type,
-					resource_id = excluded.resource_id,
-					repository_id = excluded.repository_id,
-					snapshot_id = excluded.snapshot_id,
-					updated_at = excluded.updated_at`,
-				m.LogicalKey, string(kind), m.ResourceID, m.RepositoryID, m.SnapshotID, now, org).Exec(ctx); err != nil {
-				return err
-			}
+	rows := make([][]any, 0, len(mappings))
+	for _, m := range mappings {
+		if m.LogicalKey == "" {
+			continue
 		}
-		return nil
+		kind := m.Kind
+		if kind == "" {
+			kind = MappingElement
+		}
+		rows = append(rows, []any{m.LogicalKey, string(kind), m.ResourceID, m.RepositoryID, m.SnapshotID, now, org})
+	}
+	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return insertRows(ctx, tx, `INSERT INTO codeindex_elements (logical_key, resource_type, resource_id, repository_id, snapshot_id, updated_at, org_id) VALUES `,
+			` ON CONFLICT(org_id, logical_key) DO UPDATE SET
+				resource_type = excluded.resource_type,
+				resource_id = excluded.resource_id,
+				repository_id = excluded.repository_id,
+				snapshot_id = excluded.snapshot_id,
+				updated_at = excluded.updated_at`, 7, rows)
 	})
 }
 

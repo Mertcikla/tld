@@ -17,21 +17,36 @@ func SceneNodeCount(scene *pb.ImpactScene) int {
 	return count
 }
 
-// SelectScene applies display/budget policy to a frozen scene. Authored context
-// is kept in Standard mode; every suppression is explained in the trace.
-func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactScene {
+// SceneNodeCountInRadius counts the placements SelectScene would retain at the
+// given radius and mode without cloning the scene payload, so budget narrowing
+// stays cheap on multi-megabyte diagrams.
+func SceneNodeCountInRadius(scene *pb.ImpactScene, radius uint32, plain bool) int {
 	if scene == nil {
-		return nil
+		return 0
 	}
-	out := proto.Clone(scene).(*pb.ImpactScene)
-	out.EffectiveRadius = radius
+	kept := sceneKept(scene, radius, plain)
+	total := 0
+	for key, content := range scene.Views {
+		for _, placement := range content.Placements {
+			if kept[key][placement.Element.ElementId] {
+				total++
+			}
+		}
+	}
+	return total
+}
+
+// sceneKept decides which placements the display policy retains: placements
+// with provenance, dependency context within radius, and authored context
+// unless Plain mode hides it. Containers that still lead to visible child
+// evidence are retained to a fixpoint through the navigation graph.
+func sceneKept(scene *pb.ImpactScene, radius uint32, plain bool) map[string]map[int32]bool {
 	kept := map[string]map[int32]bool{}
-	for _, key := range sortedKeys(out.Views) {
-		content := out.Views[key]
-		kept[key] = map[int32]bool{}
+	for key, content := range scene.Views {
+		set := map[int32]bool{}
 		for _, placement := range content.Placements {
 			element := placement.Element
-			p := out.Provenance[PlacementKey(int64(element.ViewId), int64(element.ElementId))]
+			p := scene.Provenance[PlacementKey(int64(element.ViewId), int64(element.ElementId))]
 			keep := p != nil
 			if p != nil && p.Role == pb.ImpactRole_IMPACT_ROLE_DEPENDENCY_CONTEXT && p.Distance > radius {
 				keep = false
@@ -40,24 +55,14 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 				keep = false
 			}
 			if keep {
-				kept[key][element.ElementId] = true
-				continue
-			}
-			reason := "Outside effective dependency radius"
-			if plain && p != nil && p.Role == pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT {
-				reason = "Hidden authored context in Plain mode"
-			}
-			if p != nil {
-				out.OmittedContext = append(out.OmittedContext, p.Paths...)
-				selectionDecision(out, p.Key, reason, p.Paths)
-				delete(out.Provenance, p.Key)
+				set[element.ElementId] = true
 			}
 		}
+		kept[key] = set
 	}
-	// Retain only containers that still lead to visible child evidence.
 	for changed := true; changed; {
 		changed = false
-		for _, link := range out.Navigations {
+		for _, link := range scene.Navigations {
 			if link.RelationType != "child" || link.ElementId == nil {
 				continue
 			}
@@ -67,9 +72,36 @@ func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactSce
 			}
 			kept[from][*link.ElementId] = true
 			changed = true
-			key := PlacementKey(int64(link.FromViewId), int64(*link.ElementId))
-			if source := scene.Provenance[key]; source != nil {
-				out.Provenance[key] = proto.Clone(source).(*pb.ImpactProvenance)
+		}
+	}
+	return kept
+}
+
+// SelectScene applies display/budget policy to a frozen scene. Authored context
+// is kept in Standard mode; every suppression is explained in the trace.
+func SelectScene(scene *pb.ImpactScene, radius uint32, plain bool) *pb.ImpactScene {
+	if scene == nil {
+		return nil
+	}
+	out := proto.Clone(scene).(*pb.ImpactScene)
+	out.EffectiveRadius = radius
+	kept := sceneKept(out, radius, plain)
+	for _, key := range sortedKeys(out.Views) {
+		content := out.Views[key]
+		for _, placement := range content.Placements {
+			element := placement.Element
+			if kept[key][element.ElementId] {
+				continue
+			}
+			p := out.Provenance[PlacementKey(int64(element.ViewId), int64(element.ElementId))]
+			reason := "Outside effective dependency radius"
+			if plain && p != nil && p.Role == pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT {
+				reason = "Hidden authored context in Plain mode"
+			}
+			if p != nil {
+				out.OmittedContext = append(out.OmittedContext, p.Paths...)
+				selectionDecision(out, p.Key, reason, p.Paths)
+				delete(out.Provenance, p.Key)
 			}
 		}
 	}

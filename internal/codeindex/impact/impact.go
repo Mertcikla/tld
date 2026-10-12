@@ -13,35 +13,33 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// pairKindIndex maps a snapshot id to its observed file-pair relationship
+// kinds. Analysis captures it once per side so scene assembly never repeats the
+// aggregate dependency scan.
+type pairKindIndex map[string]map[[2]string][]pb.EdgeKind
+
 // buildAnalysis resolves file changes and dependency witnesses from immutable
 // snapshots. Workspace selection and placement belong exclusively to assemble.
-func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*pb.ImpactDiagram, error) {
+func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*pb.ImpactDiagram, pairKindIndex, error) {
 	diff, err := idx.ImpactDiff(ctx, fromID, toID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	oldEdges, err := idx.FilePairCounts(ctx, fromID)
+	oldEdges, oldKinds, err := idx.FilePairStats(ctx, fromID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	newEdges, err := idx.FilePairCounts(ctx, toID)
+	newEdges, newKinds, err := idx.FilePairStats(ctx, toID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	oldKinds, err := idx.FilePairKinds(ctx, fromID)
-	if err != nil {
-		return nil, err
-	}
-	newKinds, err := idx.FilePairKinds(ctx, toID)
-	if err != nil {
-		return nil, err
-	}
+	pairKinds := pairKindIndex{fromID: oldKinds, toID: newKinds}
 	diagram := &pb.ImpactDiagram{RepositoryId: repositoryID, ComparisonKey: key, Diff: diff, Version: uuid.NewString(), RequestedRadius: proto.Uint32(blastRadius)}
 	snapshotPaths := map[string]map[string]bool{}
 	for _, id := range []string{fromID, toID} {
 		snapshot, loadErr := idx.Snapshot(ctx, id)
 		if loadErr != nil {
-			return nil, loadErr
+			return nil, nil, loadErr
 		}
 		snapshotPaths[id] = map[string]bool{}
 		for _, source := range snapshot.Sources {
@@ -147,7 +145,7 @@ func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fr
 		a, b := diagram.Edges[i], diagram.Edges[j]
 		return a.FromKey+"\x00"+a.ToKey < b.FromKey+"\x00"+b.ToKey
 	})
-	return diagram, nil
+	return diagram, pairKinds, nil
 }
 
 func presentSeeds(seeds []string, paths map[string]bool) []string {

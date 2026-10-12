@@ -420,24 +420,16 @@ type compareRenderer struct {
 	summary *grounded.Summary
 }
 
-// groundedBundle is the default protojson payload: the scene the canvas loads
-// plus the authored overlay that pins the user's diagram.
-type groundedBundle struct {
-	Mode     string            `json:"mode"`
-	Scene    json.RawMessage   `json:"scene"`
-	Grounded *grounded.Summary `json:"grounded,omitempty"`
-}
-
 // build renders a scoped diagram at radius, returning the text to write and its
 // size in bytes so --max-bytes describes the payload the caller receives.
 // The scene is pruned to the same radius, so unimpacted sections never reach
 // the payload.
 func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
+	scene, err := r.scene(diagram)
+	if err != nil {
+		return "", 0, err
+	}
 	if r.opts.mermaid || r.opts.markdown {
-		scene, err := r.service.Scene(r.ctx, diagram)
-		if err != nil {
-			return "", 0, err
-		}
 		scene = impact.SelectScene(scene, radius, r.opts.plain)
 		code := mermaid.ExportImpactScene(scene, mermaid.SceneExportOptions{IncludeMetadata: true})
 		summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
@@ -456,30 +448,41 @@ func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string
 		}
 		return code, len(code), nil
 	}
-	scene, err := r.service.Scene(r.ctx, diagram)
-	if err != nil {
-		return "", 0, err
-	}
 	scene = impact.SelectScene(scene, radius, r.opts.plain)
 	if err := impact.ValidateCoverage(scene); err != nil {
 		return "", 0, err
 	}
-	scene = impact.PublicScene(scene, false)
+	// SelectScene returned a freshly owned scene; strip the detailed trace in
+	// place instead of cloning the whole payload again.
+	scene.Stages, scene.Decisions = nil, nil
 	payload, err := protoJSONOptions.Marshal(scene)
 	if err != nil {
 		return "", 0, err
 	}
 	summary := grounded.FromScene(scene, r.opts.view, r.opts.allEdges)
-	bundle, err := json.Marshal(groundedBundle{Mode: "grounded", Scene: payload, Grounded: &summary})
+	summaryJSON, err := json.MarshalIndent(&summary, "  ", "  ")
 	if err != nil {
 		return "", 0, err
 	}
 	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, bundle, "", "  "); err != nil {
-		return "", 0, err
-	}
-	pretty.WriteByte('\n')
+	pretty.Grow(len(payload) + len(summaryJSON) + 64)
+	pretty.WriteString("{\n  \"mode\": \"grounded\",\n  \"scene\": ")
+	pretty.Write(payload)
+	pretty.WriteString(",\n  \"grounded\": ")
+	pretty.Write(summaryJSON)
+	pretty.WriteString("\n}\n")
 	return pretty.String(), pretty.Len(), nil
+}
+
+// scene returns the frozen scene for a diagram, falling back to assembly when
+// the payload predates the current scene schema. The returned scene may be the
+// diagram's own; callers always copy through SelectScene before mutating.
+func (r compareRenderer) scene(diagram *pb.ImpactDiagram) (*pb.ImpactScene, error) {
+	scene := diagram.GetScene()
+	if scene != nil && scene.GetSchemaVersion() == impact.PipelineVersion {
+		return scene, nil
+	}
+	return r.service.Scene(r.ctx, diagram)
 }
 
 // groundedMermaidHeader adds authored summary comments to the selected scene

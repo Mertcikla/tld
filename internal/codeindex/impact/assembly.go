@@ -52,9 +52,16 @@ type sceneAssembly struct {
 	mapConnectors              map[int64]cstore.ResourceMapping
 	matches                    map[int64]anchorMatch
 	sources                    map[string]bool
+	sortedSources              []string
 	relationshipEvidence       map[[2]string][]string
 	repositoryRemote           string
 	ambiguousPaths             map[string]bool
+	ambiguousSorted            []string
+	nodePaths                  map[string]string
+	edgeScores                 map[string]map[string]int
+	authoredKeys               []string
+	authoredPaths              map[string]map[string]bool
+	viewIdx                    *viewIndex
 	full                       map[string][]string
 	all                        map[string][]string
 	stages                     map[string]*pb.ImpactStage
@@ -63,7 +70,9 @@ type sceneAssembly struct {
 
 // assemble is the only semantic scene construction pipeline for new comparisons.
 // The diagram's file analysis is immutable; every canvas mutation is recorded.
-func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, capturedRepositories ...[]*pb.Repository) (*pb.ImpactScene, error) {
+// pairKinds carries analysis-captured file dependency kinds so assembly does not
+// repeat the aggregate scan; snapshots missing from it are queried lazily.
+func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, pairKinds pairKindIndex, capturedRepositories ...[]*pb.Repository) (*pb.ImpactScene, error) {
 	helper := &sceneEvidence{diagram: diagram, workspace: workspace, mappings: mappings, root: root, store: service.Index, ctx: ctx}
 	helper.nodes = map[string]*pb.ImpactNode{}
 	helper.sources = map[string]*pb.SourceChange{}
@@ -77,6 +86,7 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 		helper: helper, views: map[int64]core.ViewTreeNode{}, mapped: map[int64]cstore.ResourceMapping{},
 		mapViews: map[int64]bool{}, mapConnectors: map[int64]cstore.ResourceMapping{}, matches: map[int64]anchorMatch{},
 		sources: map[string]bool{}, relationshipEvidence: map[[2]string][]string{}, full: map[string][]string{}, all: map[string][]string{}, stages: map[string]*pb.ImpactStage{},
+		authoredPaths: map[string]map[string]bool{}, nodePaths: make(map[string]string, len(diagram.GetNodes())),
 		scene: &pb.ImpactScene{SchemaVersion: PipelineVersion, RepositoryId: diagram.RepositoryId, ComparisonKey: diagram.ComparisonKey,
 			Version: diagram.Version, FromGitRevision: diagram.GetDiff().GetFromGitRevision(), ToGitRevision: diagram.GetDiff().GetToGitRevision(),
 			Views: map[string]*pb.SceneViewContent{}, Provenance: map[string]*pb.ImpactProvenance{},
@@ -152,9 +162,13 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 		if err != nil {
 			return nil, err
 		}
-		kinds, err := service.Index.FilePairKinds(ctx, snapshotID)
-		if err != nil {
-			return nil, err
+		kinds := pairKinds[snapshotID]
+		if kinds == nil {
+			var loadErr error
+			kinds, loadErr = service.Index.FilePairKinds(ctx, snapshotID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
 		}
 		for pair, values := range kinds {
 			for _, kind := range values {
@@ -168,6 +182,11 @@ func assemble(ctx context.Context, service Service, diagram *pb.ImpactDiagram, w
 			a.sources[file.Path] = true
 		}
 	}
+	for _, node := range diagram.GetNodes() {
+		a.nodePaths[node.Key] = node.Path
+	}
+	a.sortedSources = sortedKeys(a.sources)
+	a.ambiguousSorted = sortedKeys(a.ambiguousPaths)
 	a.record("capture", "reuse", "inputs", "Pinned snapshots, workspace and mappings", nil)
 	if err := a.seedAuthored(); err != nil {
 		return nil, err
@@ -246,11 +265,9 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 		return match
 	}
 	if (element.RepositoryID == nil || *element.RepositoryID == "") && (element.Repo == nil || *element.Repo == "") {
-		for path := range a.ambiguousPaths {
-			if path == base || (folder && strings.HasPrefix(path, base+"/")) {
-				match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_AMBIGUOUS
-				return match
-			}
+		if a.ambiguousHas(base, folder) {
+			match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_AMBIGUOUS
+			return match
 		}
 	}
 	anchor := sourcelink.Parse(*element.FilePath).Anchor
@@ -258,18 +275,10 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 	match.anchor = anchor
 	match.partial = anchor.Kind == sourcelink.AnchorSymbol || anchor.Kind == sourcelink.AnchorLine
 	if !a.sources[base] {
-		for path := range a.sources {
-			if strings.HasPrefix(path, base+"/") {
-				folder = true
-				break
-			}
-		}
+		folder = a.hasSourceUnder(base)
 	}
 	match.contained = folder
-	for _, path := range sortedKeys(a.sources) {
-		if path != base && (!folder || !strings.HasPrefix(path, base+"/")) {
-			continue
-		}
+	for _, path := range a.sourcesUnder(base, folder) {
 		match.paths = append(match.paths, path)
 		match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED
 		if node := a.helper.nodes[path]; node != nil {
@@ -298,6 +307,46 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 		}
 	}
 	return match
+}
+
+// ambiguousHas reports whether an unqualified path collides with a source from
+// another repository, searching the sorted index instead of scanning it per
+// placement.
+func (a *sceneAssembly) ambiguousHas(base string, folder bool) bool {
+	i := sort.SearchStrings(a.ambiguousSorted, base)
+	if i < len(a.ambiguousSorted) && a.ambiguousSorted[i] == base {
+		return true
+	}
+	if !folder {
+		return false
+	}
+	prefix := base + "/"
+	i = sort.SearchStrings(a.ambiguousSorted, prefix)
+	return i < len(a.ambiguousSorted) && strings.HasPrefix(a.ambiguousSorted[i], prefix)
+}
+
+func (a *sceneAssembly) hasSourceUnder(base string) bool {
+	prefix := base + "/"
+	i := sort.SearchStrings(a.sortedSources, prefix)
+	return i < len(a.sortedSources) && strings.HasPrefix(a.sortedSources[i], prefix)
+}
+
+// sourcesUnder returns the snapshot paths a placement's link covers: the exact
+// path, plus, for folder links, every path beneath it. The sorted source index
+// makes this a range scan instead of a full pass per placement.
+func (a *sceneAssembly) sourcesUnder(base string, folder bool) []string {
+	var out []string
+	if i := sort.SearchStrings(a.sortedSources, base); i < len(a.sortedSources) && a.sortedSources[i] == base {
+		out = append(out, base)
+	}
+	if !folder {
+		return out
+	}
+	prefix := base + "/"
+	for i := sort.SearchStrings(a.sortedSources, prefix); i < len(a.sortedSources) && strings.HasPrefix(a.sortedSources[i], prefix); i++ {
+		out = append(out, a.sortedSources[i])
+	}
+	return out
 }
 
 func (a *sceneAssembly) seedAuthored() error {
@@ -382,6 +431,14 @@ func (a *sceneAssembly) addPlacement(item *pb.ScenePlacement, origin pb.ImpactOr
 		p.LogicalKey, p.MapSnapshotId = mapping.LogicalKey, mapping.SnapshotID
 	}
 	a.scene.Provenance[key] = p
+	if origin == pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED {
+		a.authoredKeys = append(a.authoredKeys, key)
+		paths := make(map[string]bool, len(match.paths))
+		for _, path := range match.paths {
+			paths[path] = true
+		}
+		a.authoredPaths[key] = paths
+	}
 	a.record(stage, "add", key, reason, match.paths)
 	if len(match.nodes) > 0 {
 		p.Distance = match.nodes[0].Distance
@@ -509,30 +566,27 @@ func (a *sceneAssembly) fillMapped(contextOnly bool) {
 }
 
 func (a *sceneAssembly) destination(node *pb.ImpactNode) (int64, string) {
+	a.prepareDestination()
+	witnessCounts := map[string]int{}
+	for _, witness := range node.Witnesses {
+		for _, step := range witness.Paths {
+			witnessCounts[step]++
+		}
+	}
 	best, bestScore := int64(0), 0
-	for _, key := range sortedKeys(a.scene.Provenance) {
+	for _, key := range a.authoredKeys {
 		p := a.scene.Provenance[key]
-		if p.ObjectKind != "placement" || p.Origin != pb.ImpactOrigin_IMPACT_ORIGIN_AUTHORED {
+		paths := a.authoredPaths[key]
+		if p == nil || len(paths) == 0 {
 			continue
 		}
 		score := 0
-		for _, path := range p.Paths {
-			if path == node.Path {
-				score += 100
-			}
-			for _, witness := range node.Witnesses {
-				for _, step := range witness.Paths {
-					if step == path {
-						score++
-					}
-				}
-			}
-			for _, edge := range a.helper.diagram.Edges {
-				from, to := a.nodePath(edge.FromKey), a.nodePath(edge.ToKey)
-				if (from == node.Path && to == path) || (to == node.Path && from == path) {
-					score += 10
-				}
-			}
+		if paths[node.Path] {
+			score += 100
+		}
+		for path := range paths {
+			score += witnessCounts[path]
+			score += 10 * a.edgeScores[node.Path][path]
 		}
 		if score > bestScore || (score > 0 && score == bestScore && p.ViewId < best) {
 			best, bestScore = p.ViewId, score
@@ -541,12 +595,42 @@ func (a *sceneAssembly) destination(node *pb.ImpactNode) (int64, string) {
 	if bestScore > 0 {
 		return best, "Placed beside authored source coverage or dependency witness"
 	}
-	if id := buildViewIndex(a.helper.workspace, a.helper.mappings).closest(node.Path); id != 0 {
+	if a.viewIdx == nil {
+		index := buildViewIndex(a.helper.workspace, a.helper.mappings)
+		a.viewIdx = &index
+	}
+	if id := a.viewIdx.closest(node.Path); id != 0 {
 		if _, ok := a.views[id]; ok {
 			return id, "Placed in nearest mapped source container"
 		}
 	}
 	return -1, "No authored or mapped destination; using Changes view"
+}
+
+// prepareDestination indexes the diagram's file edges once for destination
+// scoring. The previous implementation walked every edge and re-sorted the
+// provenance map per candidate node, which made assembly quadratic on large
+// comparisons.
+func (a *sceneAssembly) prepareDestination() {
+	if a.edgeScores != nil {
+		return
+	}
+	a.edgeScores = map[string]map[string]int{}
+	for _, edge := range a.helper.diagram.Edges {
+		from, to := a.nodePath(edge.FromKey), a.nodePath(edge.ToKey)
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		a.bumpEdgeScore(from, to)
+		a.bumpEdgeScore(to, from)
+	}
+}
+
+func (a *sceneAssembly) bumpEdgeScore(from, to string) {
+	if a.edgeScores[from] == nil {
+		a.edgeScores[from] = map[string]int{}
+	}
+	a.edgeScores[from][to]++
 }
 
 func (a *sceneAssembly) fillRaw(contextOnly bool) {
@@ -579,12 +663,7 @@ func (a *sceneAssembly) expandDependencies() {
 }
 
 func (a *sceneAssembly) nodePath(key string) string {
-	for _, node := range a.helper.diagram.Nodes {
-		if node.Key == key {
-			return node.Path
-		}
-	}
-	return ""
+	return a.nodePaths[key]
 }
 
 func (a *sceneAssembly) expandAuthoredChildren() {

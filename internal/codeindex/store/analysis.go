@@ -64,16 +64,19 @@ func (s *Store) SaveAnalysis(ctx context.Context, run AnalysisRun) error {
 			VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, run.RepositoryID, run.SnapshotID, run.Algorithm, string(params), created, org).Exec(ctx); err != nil {
 			return err
 		}
+		groupRows := make([][]any, 0, len(run.Groups))
+		var memberRows [][]any
 		for _, group := range run.Groups {
-			if _, err := tx.NewRaw(`INSERT INTO codeindex_groups (id, run_id, snapshot_id, label, kind, size, org_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`, group.ID, run.ID, run.SnapshotID, group.Label, int(group.Kind), len(group.Members), org).Exec(ctx); err != nil {
-				return err
-			}
+			groupRows = append(groupRows, []any{group.ID, run.ID, run.SnapshotID, group.Label, int(group.Kind), len(group.Members), org})
 			for _, member := range group.Members {
-				if _, err := tx.NewRaw(`INSERT INTO codeindex_group_members (group_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, group_id, fact_id) DO NOTHING`, group.ID, member, org).Exec(ctx); err != nil {
-					return err
-				}
+				memberRows = append(memberRows, []any{group.ID, member, org})
 			}
+		}
+		if err := insertRows(ctx, tx, `INSERT INTO codeindex_groups (id, run_id, snapshot_id, label, kind, size, org_id) VALUES `, ``, 7, groupRows); err != nil {
+			return err
+		}
+		if err := insertRows(ctx, tx, `INSERT INTO codeindex_group_members (group_id, fact_id, org_id) VALUES `, ` ON CONFLICT(org_id, group_id, fact_id) DO NOTHING`, 3, memberRows); err != nil {
+			return err
 		}
 		return nil
 	})

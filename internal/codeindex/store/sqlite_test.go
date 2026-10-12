@@ -8,6 +8,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
@@ -161,4 +162,43 @@ func TestPublishRoundTrip(t *testing.T) {
 		t.Fatalf("repository summary = %+v", repos[0])
 	}
 
+}
+
+func TestSnapshotRefsSkipsStatistics(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	for i, id := range []string{"ref-a", "ref-b"} {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: "rev-" + id, CreatedUnix: int64(i)}
+		g := graph.NewGraph(snap.RepositoryId, snap.Id)
+		text := "package sample\n\nfunc F" + id + "() {}\n"
+		src := &graph.Source{Path: "file.go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+		g.Sources[src.Path] = src
+		snap.Sources = []*pb.SourceFile{{Path: src.Path, Hash: src.Hash}}
+		if err := st.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs, err := st.SnapshotRefs(ctx, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := st.Snapshots(ctx, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != len(full) {
+		t.Fatalf("refs = %d, want %d", len(refs), len(full))
+	}
+	for i := range refs {
+		if refs[i].Id != full[i].Id || refs[i].GitRevision != full[i].GitRevision || refs[i].Provenance != full[i].Provenance {
+			t.Fatalf("refs[%d] = %+v, full = %+v", i, refs[i], full[i])
+		}
+		if refs[i].Statistics != nil {
+			t.Fatalf("refs[%d] computed statistics: %+v", i, refs[i].Statistics)
+		}
+		if full[i].Statistics == nil {
+			t.Fatalf("full[%d] lost statistics", i)
+		}
+	}
 }

@@ -55,7 +55,7 @@ func (s Service) Scene(ctx context.Context, diagram *pb.ImpactDiagram) (*pb.Impa
 	}
 	captured := proto.Clone(diagram).(*pb.ImpactDiagram)
 	captured.RequestedRadius = proto.Uint32(DiagramRadius(diagram))
-	return assemble(ctx, s, captured, workspace, mappings, repo.Root)
+	return assemble(ctx, s, captured, workspace, mappings, repo.Root, nil)
 }
 
 // sceneEvidence holds captured analysis and shared source-link conversion helpers.

@@ -6,12 +6,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 	"github.com/uptrace/bun"
 )
+
+// insertRows executes a multi-row INSERT for rows of cols values each, chunked
+// so a statement stays well under the bind-parameter limits of both SQLite and
+// Postgres. Row-by-row inserts made publishing a large snapshot dominate cold
+// indexing, because every row cost a separate statement parse and execute.
+func insertRows(ctx context.Context, tx bun.Tx, sqlPrefix, sqlSuffix string, cols int, rows [][]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const maxParams = 4000
+	perChunk := maxParams / cols
+	if perChunk < 1 {
+		perChunk = 1
+	}
+	var b strings.Builder
+	for start := 0; start < len(rows); start += perChunk {
+		end := min(start+perChunk, len(rows))
+		b.Reset()
+		b.WriteString(sqlPrefix)
+		args := make([]any, 0, (end-start)*cols)
+		for i := start; i < end; i++ {
+			if i > start {
+				b.WriteString(",")
+			}
+			b.WriteString("(")
+			for col := 0; col < cols; col++ {
+				if col > 0 {
+					b.WriteString(",")
+				}
+				b.WriteString("?")
+			}
+			b.WriteString(")")
+			args = append(args, rows[i]...)
+		}
+		b.WriteString(sqlSuffix)
+		if _, err := tx.NewRaw(b.String(), args...).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Publish writes an immutable snapshot and its graph in one transaction. A
 // repeat publish replaces snapshot-scoped rows while preserving shared immutable
@@ -76,15 +118,19 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 // small and lets reused entities be shared across snapshots.
 func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
 	org := scope(ctx).value()
+	factRows := make([][]any, 0, len(g.Facts))
 	for id := range g.Facts {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, fact_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
-			return fmt.Errorf("membership fact %s: %w", id, err)
-		}
+		factRows = append(factRows, []any{snap.Id, id, org})
 	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES `, ` ON CONFLICT(org_id, snapshot_id, fact_id) DO NOTHING`, 3, factRows); err != nil {
+		return fmt.Errorf("membership facts: %w", err)
+	}
+	edgeRows := make([][]any, 0, len(g.EdgeFacts))
 	for id := range g.EdgeFacts {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, edge_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
-			return fmt.Errorf("membership edge %s: %w", id, err)
-		}
+		edgeRows = append(edgeRows, []any{snap.Id, id, org})
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id) VALUES `, ` ON CONFLICT(org_id, snapshot_id, edge_id) DO NOTHING`, 3, edgeRows); err != nil {
+		return fmt.Errorf("membership edges: %w", err)
 	}
 	return nil
 }
@@ -126,13 +172,16 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 
 func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
 	org := scope(ctx).value()
-	if g != nil {
+	if g != nil && len(g.ProjectArtifacts) > 0 {
+		artifactRows := make([][]any, 0, len(g.ProjectArtifacts))
 		for key, artifact := range g.ProjectArtifacts {
-			if _, err := tx.NewRaw(`INSERT INTO codeindex_project_artifacts (snapshot_id, project_key, fingerprint, data, org_id) VALUES (?, ?, ?, ?, ?)`, snap.Id, key, artifact.Fingerprint, artifact.Data, org).Exec(ctx); err != nil {
-				return err
-			}
+			artifactRows = append(artifactRows, []any{snap.Id, key, artifact.Fingerprint, artifact.Data, org})
+		}
+		if err := insertRows(ctx, tx, `INSERT INTO codeindex_project_artifacts (snapshot_id, project_key, fingerprint, data, org_id) VALUES `, ``, 5, artifactRows); err != nil {
+			return err
 		}
 	}
+	sourceRows := make([][]any, 0, len(snap.Sources))
 	for _, src := range snap.Sources {
 		var content []byte
 		var language, blob, cache, fileCache string
@@ -143,10 +192,10 @@ func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Gra
 				language, blob, cache, fileCache, dirty = s.Language, s.InputBlob, s.SyntaxCache, s.FileCache, s.Dirty
 			}
 		}
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache, file_cache, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache, fileCache, org).Exec(ctx); err != nil {
-			return fmt.Errorf("insert source %s: %w", src.Path, err)
-		}
+		sourceRows = append(sourceRows, []any{snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache, fileCache, org})
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache, file_cache, org_id) VALUES `, ``, 11, sourceRows); err != nil {
+		return fmt.Errorf("insert sources: %w", err)
 	}
 	return nil
 }
@@ -156,6 +205,7 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		return nil
 	}
 	org := scope(ctx).value()
+	var rows [][]any
 	for _, f := range sortedFacts(g) {
 		if g.Reused[f.Id] {
 			continue
@@ -167,13 +217,15 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		if f.Anchor != nil {
 			path = f.Anchor.Path
 		}
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_facts
-			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
+		rows = append(rows, []any{
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
-			f.Signature, f.Documentation, f.BodyHash, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org).Exec(ctx); err != nil {
-			return fmt.Errorf("insert fact %s: %w", f.Id, err)
-		}
+			f.Signature, f.Documentation, f.BodyHash, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org,
+		})
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_facts
+		(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 18, rows); err != nil {
+		return fmt.Errorf("insert facts: %w", err)
 	}
 	return nil
 }
@@ -183,19 +235,22 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		return nil
 	}
 	org := scope(ctx).value()
+	var rows [][]any
 	for _, e := range sortedEdges(g) {
 		if g.Reused[e.Id] {
 			continue
 		}
 		anchor, _ := marshalJSON(e.Anchor)
 		evidence, _ := marshalJSON(e.Evidence)
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_edges
-			(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
+		rows = append(rows, []any{
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), e.FromFactId, e.ToFactId, e.TargetSymbolKey,
-			e.LogicalKey, e.Weight, anchor, evidence, org).Exec(ctx); err != nil {
-			return fmt.Errorf("insert edge %s: %w", e.Id, err)
-		}
+			e.LogicalKey, e.Weight, anchor, evidence, org,
+		})
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_edges
+		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json, org_id) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 12, rows); err != nil {
+		return fmt.Errorf("insert edges: %w", err)
 	}
 	return nil
 }
@@ -325,6 +380,49 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 			&snap.IngestionStatus, &snap.ConfigHash,
 			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage,
 			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources,
+		); err != nil {
+			return nil, err
+		}
+		snap.CreatedUnix = createdUnix
+		_ = json.Unmarshal([]byte(projects), &snap.Projects)
+		_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
+		_ = json.Unmarshal([]byte(tools), &snap.ToolVersions)
+		out = append(out, &snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SnapshotRefs lists a repository's snapshots oldest first with only the
+// metadata revision resolution needs. Unlike Snapshots it skips the per-record
+// statistics counts, which dominate the listing on large repositories.
+func (s *Store) SnapshotRefs(ctx context.Context, repositoryID string) ([]*pb.Snapshot, error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT
+		id, repository_id, created_unix, git_revision, git_branch,
+		ingestion_status, config_hash,
+		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
+		FROM codeindex_snapshots
+		WHERE repository_id = ?`+where+`
+		ORDER BY created_unix, capture_order, id`, append([]any{repositoryID}, scopeArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*pb.Snapshot, 0)
+	for rows.Next() {
+		var (
+			snap                      pb.Snapshot
+			projects, warnings, tools string
+			createdUnix               int64
+		)
+		if err := rows.Scan(
+			&snap.Id, &snap.RepositoryId, &createdUnix, &snap.GitRevision, &snap.GitBranch,
+			&snap.IngestionStatus, &snap.ConfigHash,
+			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage,
 		); err != nil {
 			return nil, err
 		}

@@ -132,7 +132,7 @@ func TestSceneReassemblesLegacyAnalysisWithCanonicalProvenance(t *testing.T) {
 	ctx, ws, idx := pipelineStore(t)
 	publishPipeline(t, ctx, idx, "base", map[string]string{"a.go": "before"}, nil)
 	publishPipeline(t, ctx, idx, "head", map[string]string{"a.go": "after"}, nil)
-	diagram, err := buildAnalysis(ctx, idx, "repo", "legacy", "base", "head", 0)
+	diagram, _, err := buildAnalysis(ctx, idx, "repo", "legacy", "base", "head", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
