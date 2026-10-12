@@ -304,7 +304,10 @@ describe('Repositories map action', () => {
     })
     const { api } = await import('../api/client')
     expect(renderer.root.findAll((node) => node.props['data-testid'] === 'repositories-map' || node.props['data-testid'] === 'repositories-map-base')).toHaveLength(0)
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Blast radius 2' }).props.onClick() })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': 'Increase comparison context' }).props.onClick()
+      renderer.root.findByProps({ 'aria-label': 'Increase comparison context' }).props.onClick()
+    })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal), blastRadius: 2 }))
     expect(navigateMock).not.toHaveBeenCalled()

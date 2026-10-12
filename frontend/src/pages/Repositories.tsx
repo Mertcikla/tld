@@ -1303,9 +1303,9 @@ export default function Repositories() {
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.100"
                 >
-                  <HStack spacing={0.5} p={0.5} bg="blackAlpha.200" border="1px solid" borderColor="whiteAlpha.50" borderRadius="lg" aria-label="Repository mode">
+                  <HStack spacing={1} h="100%" aria-label="Repository mode">
                     {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
-                      <Button key={value} size="sm" variant="ghost" borderRadius="md" px={3} h="28px" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" isDisabled={adding} bg={mode === value ? 'var(--bg-element)' : 'transparent'} color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: mode === value ? 'var(--bg-element)' : 'whiteAlpha.50' }} _active={{ bg: 'var(--bg-element)' }} transition="color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
+                      <Button key={value} size="sm" variant="ghost" borderRadius="0" borderBottom="2px solid" borderColor={mode === value ? 'var(--accent)' : 'transparent'} px={3} h="100%" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" isDisabled={adding} bg="transparent" color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: 'whiteAlpha.50', color: 'white' }} _active={{ bg: 'transparent' }} transition="color 0.2s, border-color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
                     ))}
                   </HStack>
                 </Flex>
@@ -1408,11 +1408,44 @@ export default function Repositories() {
                           )
                         })}
                       </Flex>
-                      <HStack spacing={2} flexShrink={0} ml="auto" flexWrap="wrap">
-                        <HStack spacing={1} data-testid="repositories-radius">
-                          <Text fontSize="xs" color="gray.400">Hops</Text>
-                          {[0, 1, 2].map((radius) => <Button key={radius} size="xs" variant={blastRadius === radius ? 'solid' : 'ghost'} aria-label={`Blast radius ${radius}`} aria-pressed={blastRadius === radius} isDisabled={busy} onClick={() => setBlastRadius(radius)}>{radius}</Button>)}
-                        </HStack>
+                      <HStack spacing={2} flexShrink={0} ml="auto" flexWrap="wrap">Impact
+                        <VStack spacing={2} data-testid="repositories-radius">
+                          <Text fontSize="9px" lineHeight="10px" color="gray.500" letterSpacing="0.02em">Impact radius</Text>
+                          <HStack spacing={1} h="22px">
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              minW="15px"
+                              h="24px"
+                              px={0}
+                              fontSize="md"
+                              aria-label="Decrease comparison context"
+                              isDisabled={busy || blastRadius === 0}
+                              onClick={() => setBlastRadius((radius) => Math.max(0, radius - 1))}
+                            >−</Button>
+                            <Text minW="12px" textAlign="center" fontSize="sm" fontWeight="semibold" color="gray.200" aria-label={`Comparison context ${blastRadius}`}>
+                              {blastRadius}
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              minW="15px"
+                              h="24px"
+                              px={0}
+                              fontSize="md"
+                              aria-label="Increase comparison context"
+                              isDisabled={busy || blastRadius === 2}
+                              onClick={() => setBlastRadius((radius) => Math.min(2, radius + 1))}
+                            >+</Button>
+                          </HStack>
+                          <svg aria-label={`Comparison context graph, ${blastRadius} hops`} role="img" width="68" height="12" viewBox="0 0 68 14" fill="none">
+                            <path d="M14 7H30" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
+                            <path d="M38 7H54" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
+                            <rect x="1" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--accent)" strokeWidth="1.5" />
+                            <rect x="27" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
+                            <rect x="54" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
+                          </svg>
+                        </VStack>
                         <Button
                           {...accentStyle}
                           size="sm"
