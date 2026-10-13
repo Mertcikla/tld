@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "8"
+const PipelineVersion = "10"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -317,6 +317,18 @@ func (a *sceneAssembly) match(element core.PlacedElement) anchorMatch {
 		if !resolved {
 			match.grounding = pb.ImpactGrounding_IMPACT_GROUNDING_UNRESOLVED
 			match.paths = nil
+		}
+	}
+	// Symbol links retain their navigation target, but v1 impact is file-level.
+	// Once the symbol is verified, the authored placement covers the file even
+	// when the change affected another symbol in it.
+	if anchor.Kind == sourcelink.AnchorSymbol && len(match.paths) > 0 {
+		match.partial = false
+		match.nodes = nil
+		for _, path := range match.paths {
+			if node := a.helper.nodes[path]; node != nil {
+				match.nodes = append(match.nodes, node)
+			}
 		}
 	}
 	return match

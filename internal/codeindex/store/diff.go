@@ -227,20 +227,25 @@ func (s *Store) diffFactsByMembership(ctx context.Context, fromID, toID string) 
 			deltaIDs[id] = true
 		}
 	}
-	// A changed declaration has a new id but shares its logical key with the
-	// removed version; include the matching side so the diff pairs them.
-	fromByKey := map[string]string{}
+	// A logical key can describe several physical declarations (for example
+	// C++ macro expansions). Load the entire affected group on both sides so
+	// unchanged occurrences can be matched before pairing changed ones.
+	changedKeys := map[string]bool{}
 	for id, key := range fromKey {
-		fromByKey[key] = id
+		if deltaIDs[id] {
+			changedKeys[key] = true
+		}
 	}
-	toByKey := map[string]string{}
 	for id, key := range toKey {
-		toByKey[key] = id
+		if deltaIDs[id] {
+			changedKeys[key] = true
+		}
 	}
-	for key, fromFactID := range fromByKey {
-		if toFactID, ok := toByKey[key]; ok && toFactID != fromFactID {
-			deltaIDs[fromFactID] = true
-			deltaIDs[toFactID] = true
+	for _, keys := range []map[string]string{fromKey, toKey} {
+		for id, key := range keys {
+			if changedKeys[key] {
+				deltaIDs[id] = true
+			}
 		}
 	}
 	if len(deltaIDs) == 0 {
@@ -333,27 +338,51 @@ func sameFact(a, b *pb.CodeFact) bool {
 }
 
 func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {
-	fromByKey := make(map[string]*pb.CodeFact, len(from))
+	fromByKey := make(map[string][]*pb.CodeFact, len(from))
 	for _, f := range from {
-		fromByKey[logicalFact(f)] = f
+		fromByKey[logicalFact(f)] = append(fromByKey[logicalFact(f)], f)
 	}
-	toByKey := make(map[string]*pb.CodeFact, len(to))
+	toByKey := make(map[string][]*pb.CodeFact, len(to))
 	for _, f := range to {
-		toByKey[logicalFact(f)] = f
+		toByKey[logicalFact(f)] = append(toByKey[logicalFact(f)], f)
 	}
 	delta := &pb.CodeFactDelta{}
-	for key, f := range toByKey {
-		prev, ok := fromByKey[key]
-		switch {
-		case !ok:
-			delta.Added = append(delta.Added, f)
-		case !sameFact(prev, f):
-			delta.Modified = append(delta.Modified, f)
+	for key, next := range toByKey {
+		previous := fromByKey[key]
+		sortFacts(previous)
+		sortFacts(next)
+		// Match identical content first, including declarations moved by an
+		// insertion. Never collapse repeated keys to a random map entry.
+		used := make([]bool, len(previous))
+		var unmatched []*pb.CodeFact
+		for _, f := range next {
+			match := -1
+			for i, prev := range previous {
+				if !used[i] && sameFact(prev, f) {
+					match = i
+					break
+				}
+			}
+			if match >= 0 {
+				used[match] = true
+			} else {
+				unmatched = append(unmatched, f)
+			}
 		}
+		var remaining []*pb.CodeFact
+		for i, prev := range previous {
+			if !used[i] {
+				remaining = append(remaining, prev)
+			}
+		}
+		paired := min(len(remaining), len(unmatched))
+		delta.Modified = append(delta.Modified, unmatched[:paired]...)
+		delta.Added = append(delta.Added, unmatched[paired:]...)
+		delta.Removed = append(delta.Removed, remaining[paired:]...)
 	}
-	for key, f := range fromByKey {
+	for key, facts := range fromByKey {
 		if _, ok := toByKey[key]; !ok {
-			delta.Removed = append(delta.Removed, f)
+			delta.Removed = append(delta.Removed, facts...)
 		}
 	}
 	sortFacts(delta.Added)
@@ -363,7 +392,19 @@ func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {
 }
 
 func sortFacts(facts []*pb.CodeFact) {
-	sort.Slice(facts, func(i, j int) bool { return logicalFact(facts[i]) < logicalFact(facts[j]) })
+	sort.Slice(facts, func(i, j int) bool {
+		a, b := facts[i], facts[j]
+		if logicalFact(a) != logicalFact(b) {
+			return logicalFact(a) < logicalFact(b)
+		}
+		if a.GetAnchor().GetStartByte() != b.GetAnchor().GetStartByte() {
+			return a.GetAnchor().GetStartByte() < b.GetAnchor().GetStartByte()
+		}
+		if a.GetAnchor().GetEndByte() != b.GetAnchor().GetEndByte() {
+			return a.GetAnchor().GetEndByte() < b.GetAnchor().GetEndByte()
+		}
+		return a.Id < b.Id
+	})
 }
 
 func logicalEdge(e *pb.EdgeFact) string {

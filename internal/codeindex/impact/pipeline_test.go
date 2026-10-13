@@ -69,6 +69,88 @@ func addPipelineElement(t *testing.T, ctx context.Context, ws core.Store, viewID
 	return element.ID
 }
 
+func TestSymbolLinkedAuthoredElementCoversFileChanges(t *testing.T) {
+	for _, classChanged := range []bool{false, true} {
+		for _, mapped := range []bool{false, true} {
+			for _, radius := range []uint32{0, 1} {
+				t.Run(fmt.Sprintf("classChanged=%t/mapped=%t/radius=%d", classChanged, mapped, radius), func(t *testing.T) {
+					ctx, ws, idx := pipelineStore(t)
+					const path = "src/Formatter.php"
+					publish := func(id, value string) {
+						text := "class Formatter {\n function normalize() { return " + value + "; }\n}\n"
+						g := graph.NewGraph("repo", id)
+						source := &graph.Source{Path: path, Language: "php", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+						g.Sources[path] = source
+						end := strings.Index(text, " {")
+						if classChanged {
+							end = len(text)
+						}
+						g.AddFact(pb.FactKind_FACT_KIND_TYPE, "Formatter", "php", source.Anchor(0, end), text[:end], "", nil)
+						start := strings.Index(text, "function normalize")
+						g.AddFact(pb.FactKind_FACT_KIND_METHOD, "normalize", "php", source.Anchor(start, len(text)), text[start:], "", nil)
+						file := &pb.SourceFile{Path: path, Hash: source.Hash, Mode: "100644"}
+						snap := &pb.Snapshot{Id: id, RepositoryId: "repo", IngestionStatus: "complete", Manifest: &pb.SnapshotManifest{Complete: true, Files: []*pb.SourceFile{file}}, Sources: []*pb.SourceFile{file}}
+						if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+							t.Fatal(err)
+						}
+					}
+					publish("base", "1")
+					publish("head", "2")
+					view, err := ws.CreateView(ctx, "Authored pipeline", nil, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					link := path + "#symbol:Formatter"
+					id := addPipelineElement(t, ctx, ws, view.ID, "JSON formatter", link)
+					if mapped {
+						mapView, err := ws.CreateView(ctx, "Code map", nil, nil)
+						if err != nil {
+							t.Fatal(err)
+						}
+						mapID := addPipelineElement(t, ctx, ws, mapView.ID, "Formatter.php", path)
+						if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+							{LogicalKey: "map|file|formatter", Kind: cstore.MappingElement, ResourceID: mapID, RepositoryID: "repo", SnapshotID: "head"},
+							{LogicalKey: "map|view|repo", Kind: cstore.MappingView, ResourceID: mapView.ID, RepositoryID: "repo", SnapshotID: "head"},
+						}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					diagram, err := (Service{Workspace: ws, Index: idx}).CompareSnapshots(ctx, "repo", "base", "head", radius)
+					if err != nil {
+						t.Fatal(err)
+					}
+					scene := diagram.Scene
+					if err := ValidateCoverage(scene); err != nil {
+						t.Fatal(err)
+					}
+					if len(scene.Files) != 1 || len(scene.Files[0].Representatives) != 1 || int64(scene.Files[0].Representatives[0].ElementId) != id || int64(scene.Files[0].Representatives[0].ViewId) != view.ID {
+						t.Fatalf("expected authored file coverage: %+v", scene.Files)
+					}
+					placements := scene.Views[itoa(view.ID)].Placements
+					if len(placements) != 1 {
+						t.Fatalf("duplicate placement: %+v", placements)
+					}
+					placement := placements[0]
+					if placement.Element.FilePath == nil || *placement.Element.FilePath != link || placement.Element.PositionX != 17 || placement.Element.PositionY != 29 {
+						t.Fatalf("authored placement changed: %+v", placement.Element)
+					}
+					if placement.Overlay == nil || placement.Overlay.LinesAdded == nil || placement.Overlay.LinesRemoved == nil || len(placement.Overlay.Symbols) == 0 {
+						t.Fatalf("missing file overlay: %+v", placement.Overlay)
+					}
+					if len(scene.Matches) == 0 || scene.Matches[0].Kind != "symbol" || scene.Matches[0].Partial || scene.Matches[0].SourceLink != link {
+						t.Fatalf("symbol navigation and file coverage missing from audit: %+v", scene.Matches)
+					}
+					for _, p := range scene.Provenance {
+						if p.ObjectKind == "placement" && p.Key != PlacementKey(view.ID, id) {
+							t.Fatalf("redundant representative: %+v", p)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 	ctx, ws, idx := pipelineStore(t)
 	base := map[string]string{"a.go": "old a", "b.go": "old b", "s.go": "old s", "d.go": "stable d", "e.go": "stable e", "asset.bin": "old"}
@@ -86,7 +168,7 @@ func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 	}
 	linked := addPipelineElement(t, ctx, ws, authored.ID, "Service A", "a.go")
 	concept := addPipelineElement(t, ctx, ws, authored.ID, "Conceptual queue", "")
-	partial := addPipelineElement(t, ctx, ws, authored.ID, "First symbol", "s.go#function:First")
+	symbol := addPipelineElement(t, ctx, ws, authored.ID, "First symbol", "s.go#function:First")
 	mapped := addPipelineElement(t, ctx, ws, mappedView.ID, "Mapped B", "b.go")
 	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|file|b", Kind: cstore.MappingElement, ResourceID: mapped, RepositoryID: "repo", SnapshotID: "head"}, {LogicalKey: "map|view|repo", Kind: cstore.MappingView, ResourceID: mappedView.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
 		t.Fatal(err)
@@ -112,16 +194,13 @@ func TestPipelineMixesSourcesAndPreservesCoverage(t *testing.T) {
 	if p := scene.Provenance[PlacementKey(authored.ID, concept)]; p == nil || p.Grounding != pb.ImpactGrounding_IMPACT_GROUNDING_UNLINKED {
 		t.Fatalf("concept lost = %+v", p)
 	}
-	if p := scene.Provenance[PlacementKey(authored.ID, partial)]; p == nil || !p.Partial {
-		t.Fatalf("partial anchor = %+v", p)
+	if p := scene.Provenance[PlacementKey(authored.ID, symbol)]; p == nil || p.Partial {
+		t.Fatalf("file-level symbol coverage = %+v", p)
 	}
 	for _, coverage := range scene.Files {
 		if coverage.Path == "s.go" {
-			for _, ref := range coverage.Representatives {
-				key := PlacementKey(int64(ref.ViewId), int64(ref.ElementId))
-				if scene.Provenance[key].Partial {
-					t.Fatal("partial symbol consumed full file coverage")
-				}
+			if len(coverage.Representatives) != 1 || int64(coverage.Representatives[0].ElementId) != symbol || int64(coverage.Representatives[0].ViewId) != authored.ID {
+				t.Fatalf("symbol-linked authored placement did not cover the file: %+v", coverage.Representatives)
 			}
 		}
 		if coverage.Path == "asset.bin" && coverage.HeadAnalysis != "manifest_only" {

@@ -9,6 +9,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/model"
+	"github.com/mertcikla/tld/v2/internal/sourcelink"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,7 +18,7 @@ func (a *sceneAssembly) captureMatch(element *diagv1.PlacedElement, match anchor
 	if match.contained {
 		kind = "folder"
 	}
-	if match.partial {
+	if match.anchor.Kind == sourcelink.AnchorSymbol || match.partial {
 		kind = "symbol"
 		if match.anchor.StartLine > 0 {
 			kind = "line"
@@ -31,7 +32,7 @@ func (a *sceneAssembly) captureMatch(element *diagv1.PlacedElement, match anchor
 		case "folder":
 			reason = "Changed path is within linked folder scope"
 		case "symbol":
-			reason = "Changed symbol matches the linked symbol"
+			reason = "Verified symbol link represents changes in the linked file"
 		case "line":
 			reason = "Changed symbol overlaps the linked line range"
 		case "file":
