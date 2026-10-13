@@ -99,6 +99,7 @@ func main() {
 	}
 
 	desktopBridge := NewDesktopBridge()
+	desktopBridge.openSceneArgs(os.Args[1:])
 	err = wails.Run(&options.App{
 		Title:     "tlDiagram",
 		Width:     1200,
@@ -113,6 +114,10 @@ func main() {
 		},
 		Bind: []any{
 			desktopBridge,
+		},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "dc817119-5db1-4362-9d77-a6671453168b",
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) { desktopBridge.openSceneArgs(data.Args) },
 		},
 		AssetServer: &assetserver.Options{
 			Assets:  distFS,
@@ -172,7 +177,8 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 255},
 		Mac: &mac.Options{
-			TitleBar: mac.TitleBarHiddenInset(),
+			TitleBar:  mac.TitleBarHiddenInset(),
+			OnUrlOpen: desktopBridge.openSceneURL,
 		},
 		Windows: &windows.Options{
 			Theme:        windows.Dark,

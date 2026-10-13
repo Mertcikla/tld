@@ -1,0 +1,31 @@
+{
+  "comparison": { "repositoryId": "repo:one", "key": "comparison=one", "schemaVersion": "10", "base": "base", "head": "head", "manifestComplete": true },
+  "tree": [{ "id": 1, "name": "Root & services", "children": [{ "id": 2, "name": "Child \"view\"", "ownerElementId": 10 }] }],
+  "views": {
+    "1": {
+      "placements": [
+        { "element": { "id": 100, "viewId": 1, "elementId": 10, "name": "Child", "kind": "system" }, "origin": "IMPACT_ORIGIN_AUTHORED", "role": "IMPACT_ROLE_CONTAINER" },
+        { "element": { "id": 101, "viewId": 1, "elementId": 11, "name": "Service Ç", "filePath": "src/service.go", "kind": "component", "positionX": 42.25 }, "origin": "IMPACT_ORIGIN_AUTHORED", "role": "IMPACT_ROLE_DIRECT", "grounding": "IMPACT_GROUNDING_RESOLVED", "overlay": { "change": "CHANGE_KIND_MODIFIED", "path": "src/service.go", "linesAdded": 3, "linesRemoved": 2, "symbolRefs": ["s1"] } },
+        { "element": { "id": 102, "viewId": 1, "elementId": 12, "name": "Mapped\ncontext", "kind": "component" }, "origin": "IMPACT_ORIGIN_MAPPED", "role": "IMPACT_ROLE_DEPENDENCY_CONTEXT", "overlay": {} }
+      ],
+      "connectors": [
+        { "id": 1, "viewId": 1, "sourceElementId": 11, "targetElementId": 12, "label": "A \"quoted\" & link", "direction": "forward" },
+        { "id": 2, "viewId": 1, "sourceElementId": 11, "targetElementId": -21, "label": "cross-view", "tags": ["change:removed"] }
+      ],
+      "connectorTargets": { "2": { "viewId": 2, "elementId": -21 } }
+    },
+    "2": {
+      "placements": [
+        { "element": { "id": -21, "viewId": 2, "elementId": -21, "name": "raw.go", "filePath": "src/raw.go", "kind": "component" }, "origin": "IMPACT_ORIGIN_RAW", "role": "IMPACT_ROLE_DIRECT", "grounding": "IMPACT_GROUNDING_MANIFEST_ONLY", "overlay": { "change": "CHANGE_KIND_ADDED", "path": "src/raw.go" } },
+        { "element": { "id": 122, "viewId": 2, "elementId": 22, "name": "Database", "kind": "database" }, "origin": "IMPACT_ORIGIN_AUTHORED", "role": "IMPACT_ROLE_AUTHORED_CONTEXT" }
+      ],
+      "connectors": [{ "id": -1, "viewId": 2, "sourceElementId": -21, "targetElementId": 22, "label": "writes", "tags": ["change:added"] }]
+    }
+  },
+  "files": [
+    { "path": "src/service.go", "change": "CHANGE_KIND_MODIFIED", "linesAdded": 3, "linesRemoved": 2, "baseAnalysis": "captured", "headAnalysis": "captured", "representatives": [{ "viewId": 1, "elementId": 11 }], "symbols": ["s1"] },
+    { "path": "src/raw.go", "change": "CHANGE_KIND_ADDED", "baseAnalysis": "absent", "headAnalysis": "manifest_only", "representatives": [{ "viewId": 2, "elementId": -21 }] }
+  ],
+  "symbols": { "s1": { "change": "CHANGE_KIND_MODIFIED", "name": "Serve", "kind": "FACT_KIND_FUNCTION", "path": "src/service.go", "startLine": 0, "endLine": 8 } },
+  "summary": { "files": 2, "knownLinesAdded": 3, "knownLinesRemoved": 2, "lineCountsComplete": false, "affectedPlacements": 2, "dependencyNeighbours": 1, "authoredContext": 1, "containers": 1, "indexedSymbolChanges": 1, "displayedSymbolChanges": 1, "lineCountsBasis": "net_tree" }
+}

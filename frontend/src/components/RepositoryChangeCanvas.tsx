@@ -22,16 +22,19 @@ const seedTagColors = (): Record<string, Tag> =>
   Object.fromEntries(
     Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
   )
-export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false }: {
+export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded }: {
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
   busy?: boolean
+  /** A frozen imported scene; disables all API reads and backend selection. */
+  embedded?: { scene: RepositoryImpactScene; markdown: string }
 }) {
   const canvas = useRef<ZUICanvasHandle>(null)
   const splitRef = useRef<HTMLDivElement | null>(null)
-  const [scene, setScene] = useState<RepositoryImpactScene | null>(null)
+  const [loadedScene, setScene] = useState<RepositoryImpactScene | null>(null)
+  const scene = embedded?.scene ?? loadedScene
   const [error, setError] = useState('')
   const [selectedKey, setSelectedKey] = useState('')
-  const [inspectorEnabled] = useState(() => new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
+  const [inspectorEnabled] = useState(() => !embedded && new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
   const [debug, setDebug] = useState(inspectorEnabled)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [tagColors, setTagColors] = useState<Record<string, Tag>>(seedTagColors)
@@ -54,15 +57,15 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     const controller = new AbortController()
     setError('')
     setScene(null)
-    if (!repositoryId || !comparisonKey) return undefined
+    if (embedded || !repositoryId || !comparisonKey) return undefined
     void api.repositories.impactScene(repositoryId, comparisonKey, controller.signal, { debugProvenance: debug, plain: displayMode === 'plain' })
       .then((result) => { if (active) setScene(result) })
       .catch((err: unknown) => { if (active && !controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
     return () => { active = false; controller.abort() }
-  }, [repositoryId, comparisonKey, version, debug, displayMode])
+  }, [repositoryId, comparisonKey, version, debug, displayMode, embedded])
   const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
   useEffect(() => {
-    if (!diagram) return
+    if (!diagram || embedded) return
     let cancelled = false
     try {
       const pending = api.workspace?.orgs?.tagColors?.list?.()
@@ -75,7 +78,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
       if (!cancelled) setTagColors({})
     }
     return () => { cancelled = true }
-  }, [diagram])
+  }, [diagram, embedded])
   const tagMetrics = useMemo(() => {
     const tagSet = new Set<string>()
     const tagCounts: Record<string, number> = {}
@@ -122,13 +125,14 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   })).length, [scene, view, hiddenTags])
   return (
     <Flex direction="column" flex={1} minW={0} minH="240px" data-testid="repository-change-overlay">
-      {!diagram ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
+      {!diagram && !embedded ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
         {error && <Text p={3} color="red.300">{error}</Text>}
-        {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
+        {!(embedded ? embedded.scene.files?.length : diagram?.nodes.length) && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
             {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} onSelectObject={inspectorEnabled ? (selection) => setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') : undefined} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
+              showViewMode={!embedded}
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
@@ -178,6 +182,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             onExpand={sidePane.expand}
             onDock={sidePane.dock}
           /> : <RepositoryChangeMermaid
+            embeddedMarkdown={embedded?.markdown}
             repositoryId={repositoryId}
             comparisonKey={comparisonKey}
             plain={displayMode === 'plain'}

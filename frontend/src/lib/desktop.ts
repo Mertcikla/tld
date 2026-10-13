@@ -34,6 +34,7 @@ export interface DesktopUpdateStatus {
 type FileDropCallback = (x: number, y: number, paths: string[]) => void
 
 interface DesktopBridge {
+  DrainSceneLinks(): Promise<{ route: string; error?: string }[]>
   SaveFile(defaultFilename: string, filters: DialogFilter[], base64Content: string): Promise<SaveFileResult>
   OpenTextFile(filters: DialogFilter[]): Promise<FileDialogResult>
   PickWritableMarkdownFile(): Promise<FileDialogResult>
@@ -51,6 +52,7 @@ declare global {
       }
     }
     runtime?: {
+      EventsOn?: (name: string, callback: () => void) => (() => void)
       BrowserOpenURL?: (url: string) => void
       OnFileDrop?: (callback: FileDropCallback, useDropTarget: boolean) => void
       OnFileDropOff?: () => void

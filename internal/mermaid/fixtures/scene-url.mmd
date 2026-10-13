@@ -1,0 +1,19 @@
+flowchart LR
+%% tld-scene repo=repo\:one key=comparison\=one
+%% impact files=2 added=3 removed=2 complete=false basis=net_tree binary=0 affected=2 neighbours=1 authored=1 containers=1 radius=0
+
+subgraph view_1["Root &amp; services"]
+  el_1_11["Service Ç<br/>modified +3 −2"]
+  el_1_12["▦ Mapped context<br/>(context)"]
+
+  subgraph view_2["Child &quot;view&quot;"]
+    el_2_neg21["◇ raw.go<br/>added"]
+    el_2_22["Database"]
+    el_2_neg21 ==>|"writes"| el_2_22
+  end
+  el_1_11 -- "A &quot;quoted&quot; &amp; link" --> el_1_12
+  el_1_11--x|"cross-view"|el_2_neg21
+end
+
+linkStyle 0 stroke:#48bb78
+linkStyle 2 stroke:#fc8181,stroke-dasharray:5 5

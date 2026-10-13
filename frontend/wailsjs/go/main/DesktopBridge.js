@@ -6,6 +6,10 @@ export function CheckForUpdate() {
   return window['go']['main']['DesktopBridge']['CheckForUpdate']();
 }
 
+export function DrainSceneLinks() {
+  return window['go']['main']['DesktopBridge']['DrainSceneLinks']();
+}
+
 export function InstallUpdate() {
   return window['go']['main']['DesktopBridge']['InstallUpdate']();
 }

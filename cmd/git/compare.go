@@ -24,6 +24,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
+	"github.com/mertcikla/tld/v2/internal/sceneurl"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -33,6 +34,9 @@ import (
 )
 
 type compareOptions struct {
+	url             bool
+	urlLocal        bool
+	urlBase         string
 	mermaid         bool
 	markdown        bool
 	verbose         bool
@@ -93,6 +97,9 @@ stderr.`,
 	}
 	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of the scene")
 	c.Flags().BoolVar(&opts.markdown, "markdown", false, "wrap the Mermaid diagram in a Markdown code fence")
+	c.Flags().BoolVar(&opts.url, "url", false, "emit a self-contained comparison URL for the local web server (maximum 10000 characters)")
+	c.Flags().BoolVar(&opts.urlLocal, "url-local", false, "emit a self-contained tld:// comparison URL (maximum 10000 characters)")
+	c.Flags().StringVar(&opts.urlBase, "url-base", "", "application base URL for --url (e.g. https://tldiagram.com/app)")
 	c.Flags().BoolVar(&opts.plain, "plain", false, "hide placements without change impact from the Mermaid diagram")
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
@@ -109,6 +116,12 @@ stderr.`,
 }
 
 func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head string) error {
+	if (opts.url && opts.urlLocal) || ((opts.url || opts.urlLocal) && (opts.mermaid || opts.markdown)) {
+		return fmt.Errorf("--url and --url-local cannot be combined with each other, --mermaid, or --markdown")
+	}
+	if opts.urlBase != "" && !opts.url {
+		return fmt.Errorf("--url-base requires --url")
+	}
 	if opts.maxElements < 0 || opts.maxConnectors < 0 {
 		return fmt.Errorf("--max-elements and --max-connectors must be nonnegative")
 	}
@@ -123,6 +136,12 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	dataDir, err := workspace.ResolveDataDir(global, opts.dataDir)
 	if err != nil {
 		return err
+	}
+	if opts.url {
+		opts.urlBase, err = compareURLBase(global, dataDir, opts.urlBase)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
@@ -251,15 +270,40 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		notice("notice: debug provenance exceeds the normal byte budget; canvas selection is unchanged")
 	}
 	report = comparisonReport(result.diagram, opts)
+	return writeCompareOutput(cmd, opts, result, report)
+}
+
+func writeCompareOutput(cmd *cobra.Command, opts compareOptions, result scopedDiagram, report CompareReport) error {
+	if opts.url || opts.urlLocal {
+		var link string
+		var encodeErr error
+		if opts.urlLocal {
+			link, encodeErr = sceneurl.Encode([]byte(result.text), true)
+		} else {
+			link, encodeErr = sceneurl.EncodeAt([]byte(result.text), opts.urlBase)
+		}
+		if encodeErr != nil {
+			report.Status, report.Reason = "skipped", encodeErr.Error()
+			if err := writeCompareReport(opts.reportJSON, report); err != nil {
+				return err
+			}
+			return encodeErr
+		}
+		if err := writeCompareReport(opts.reportJSON, report); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), link)
+		return err
+	}
 	if err := writeCompareReport(opts.reportJSON, report); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
 	if opts.mermaid || opts.markdown {
-		_, err = fmt.Fprint(out, result.text)
+		_, err := fmt.Fprint(out, result.text)
 		return err
 	}
-	_, err = fmt.Fprintln(out, result.text)
+	_, err := fmt.Fprintln(out, result.text)
 	return err
 }
 

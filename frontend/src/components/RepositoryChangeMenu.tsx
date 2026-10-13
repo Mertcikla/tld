@@ -5,6 +5,7 @@ import { EyeIcon, EyeOffIcon, TagsIcon } from './Icons'
 export type RepositoryChangeViewMode = 'standard' | 'plain'
 
 export default function RepositoryChangeMenu({
+  showViewMode = true,
   busy = false,
   viewMode,
   onViewModeChange,
@@ -15,6 +16,7 @@ export default function RepositoryChangeMenu({
   onHoverTag,
   onToggleTagVisibility,
 }: {
+  showViewMode?: boolean
   busy?: boolean
   viewMode: RepositoryChangeViewMode
   onViewModeChange: (mode: RepositoryChangeViewMode) => void
@@ -48,7 +50,7 @@ export default function RepositoryChangeMenu({
         px={1.5}
         py={1.5}
       >
-        <HStack spacing={1} align="center" data-testid="repositories-view-mode" px={1}>
+        {showViewMode && <HStack spacing={1} align="center" data-testid="repositories-view-mode" px={1}>
           {(['standard', 'plain'] as const).map((option) => (
             <Button
               key={option}
@@ -65,10 +67,10 @@ export default function RepositoryChangeMenu({
               {option === 'standard' ? 'Standard' : 'Plain'}
             </Button>
           ))}
-        </HStack>
+        </HStack>}
         {allTags.length > 0 && onHoverTag && onToggleTagVisibility && (
           <>
-            <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+            {showViewMode && <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />}
             <Popover
               onClose={() => onHoverTag(null)}
               placement="top"

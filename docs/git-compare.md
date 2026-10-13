@@ -29,6 +29,15 @@ tld git compare HEAD~1 HEAD --mermaid
 # Mermaid inside a Markdown code fence
 tld git compare HEAD~1 HEAD --markdown
 
+# Self-contained link for the local web viewer (no upload)
+tld git compare HEAD~1 HEAD --url
+
+# Link using the hosted viewer for sharing with other people
+tld git compare HEAD~1 HEAD --url --url-base https://tldiagram.com/app
+
+# Open the same comparison in the installed desktop app
+tld git compare HEAD~1 HEAD --url-local
+
 # Compare a remote repo (cloned + indexed on demand)
 tld git compare github.com/owner/repo v1.2.0 v1.3.0
 
@@ -42,6 +51,9 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 |---|---|---|
 | `--mermaid` | off | Emit the Mermaid change diagram instead of the scene |
 | `--markdown` | off | Wrap the Mermaid diagram in a Markdown code fence |
+| `--url` | off | Emit a self-contained link for the local web viewer; maximum 10,000 characters |
+| `--url-base URL` | local server | Override the application base URL for `--url`, such as `https://tldiagram.com/app` |
+| `--url-local` | off | Emit a self-contained `tld://compare` link for the desktop app; maximum 10,000 characters |
 | `--plain` | off | Hide unrelated authored context in the selected scene; retain changes, dependency neighbours and required containers |
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
@@ -56,6 +68,29 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
+
+URL exports gzip and base64url-encode the existing selected JSON scene, including
+optional debug provenance, in a `#v1=` fragment. No data is uploaded. The standalone
+viewer renders the frozen canvas and Mermaid diagram without login, a repository,
+or a cached comparison. Web links offer **Open in TLD**; local links require an
+installed desktop app registered for the `tld` protocol (macOS application or
+Windows NSIS installation).
+
+`--url` uses `serve.public_url` when explicitly configured; otherwise it uses a
+running local server registered for the selected data directory, or the configured
+`tld serve` host/port (default `http://127.0.0.1:8060`). It does not use the cloud
+`server_url` setting or start a server. Run `tld serve` to open a local link. Use
+`--url --url-base https://tldiagram.com/app` for a hosted share link, or pass another
+HTTP(S) application base URL, including its `/app` prefix when applicable.
+
+The complete URL, excluding its trailing newline, must be at most **10,000
+characters**. Longer exports fail with a nonzero exit code and no stdout; indexed
+snapshots and cached comparisons remain available. An optional JSON report records
+`skipped` and the failure reason. Existing node/byte budgets apply before encoding;
+the command does not narrow the scene further to meet the URL limit. Both export
+and import limit the decoded document to 16 MiB. URL output flags cannot be combined
+with each other or with `--mermaid`/`--markdown`. The encoded scene is complete and
+is not encrypted; anyone with the link can read its contents.
 
 - **Default:** the canonical `ImpactScene` directly, with `comparison`, `files`,
   `symbols`, `summary`, `tree`, `views` and `navigations`. Standard

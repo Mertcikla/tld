@@ -17,6 +17,7 @@ type MermaidPaneState =
 // The pane stays thin on purpose: the backend renders the same change scene
 // the canvas draws, and this only fetches and displays the markdown.
 export default function RepositoryChangeMermaid({
+  embeddedMarkdown,
   repositoryId,
   comparisonKey,
   plain,
@@ -26,6 +27,7 @@ export default function RepositoryChangeMermaid({
   onExpand,
   onDock,
 }: {
+  embeddedMarkdown?: string
   repositoryId: string
   comparisonKey: string
   /** Mirrors the canvas plain toggle so the pane never disagrees with it. */
@@ -38,11 +40,12 @@ export default function RepositoryChangeMermaid({
   onExpand?: () => void
   onDock?: () => void
 }) {
-  const [state, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', warnings: [], error: '' })
+  const [remoteState, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', warnings: [], error: '' })
+  const state: MermaidPaneState = embeddedMarkdown == null ? remoteState : { status: 'ready', markdown: embeddedMarkdown, warnings: [], error: '' }
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    if (!open || !repositoryId || !comparisonKey) return undefined
+    if (embeddedMarkdown != null || !open || !repositoryId || !comparisonKey) return undefined
     const controller = new AbortController()
     setState({ status: 'loading', markdown: '', warnings: [], error: '' })
     void api.repositories
@@ -55,7 +58,7 @@ export default function RepositoryChangeMermaid({
         setState({ status: 'error', markdown: '', warnings: [], error: err instanceof Error ? err.message : 'Could not load the change diagram' })
       })
     return () => controller.abort()
-  }, [open, repositoryId, comparisonKey, plain])
+  }, [open, repositoryId, comparisonKey, plain, embeddedMarkdown])
 
   useEffect(() => {
     setCopied(false)
