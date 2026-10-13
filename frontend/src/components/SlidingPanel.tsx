@@ -53,6 +53,7 @@ export default function SlidingPanel({
   const context = useViewEditorContext()
   const isMarkdownOpen = context?.isMarkdownOpen ?? false
   const markdownPaneWidth = context?.markdownPaneWidth ?? 0
+  const isFlat = context?.sidePanelStyle === 'flat'
 
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
   const rightOffset = (!isMobileLayout && isMarkdownOpen && side === 'right')
@@ -111,13 +112,13 @@ export default function SlidingPanel({
             exit={{ x: offset, opacity: 0 }}
             transition={{ duration: 0.2, ease: EASE }}
             style={{
-              position: 'fixed',
-              left: side === 'left' ? '1rem' : undefined,
-              right: side === 'right' ? `calc(1rem + ${rightOffset})` : undefined,
+              position: isFlat ? 'absolute' : 'fixed',
+              left: side === 'left' ? (isFlat ? 0 : '1rem') : undefined,
+              right: side === 'right' ? (isFlat ? rightOffset : `calc(1rem + ${rightOffset})`) : undefined,
               top: 0,
               bottom: 0,
               display: 'flex',
-              alignItems: 'center',
+              alignItems: isFlat ? 'stretch' : 'center',
               zIndex,
               pointerEvents: 'none',
             }}
@@ -128,19 +129,21 @@ export default function SlidingPanel({
               pointerEvents="auto"
               w={width}
               minW={minWidth}
-              maxW="calc(100vw - 24px)"
-              h={height}
-              maxH={maxHeight}
+              maxW={isFlat ? '100%' : 'calc(100vw - 24px)'}
+              h={isFlat ? '100%' : height}
+              maxH={isFlat ? '100%' : maxHeight}
               overflow="hidden"
               display="flex"
               flexDir="column"
-              bg="var(--bg-panel)"
-              bgImage="var(--grad-panel)"
-              backdropFilter="blur(24px)"
-              border="1px solid"
+              bg={isFlat ? 'var(--bg-main)' : 'var(--bg-panel)'}
+              bgImage={isFlat ? 'none' : 'var(--grad-panel)'}
+              backdropFilter={isFlat ? 'none' : 'blur(24px)'}
+              border={isFlat ? 'none' : '1px solid'}
+              borderLeft={isFlat && side === 'right' ? '1px solid' : undefined}
+              borderRight={isFlat && side === 'left' ? '1px solid' : undefined}
               borderColor="whiteAlpha.100"
-              rounded="xl"
-              shadow="panel"
+              rounded={isFlat ? 'none' : 'xl'}
+              shadow={isFlat ? 'none' : 'panel'}
               sx={{
                 '& > div:not([data-focus-guard])': {
                   display: 'flex',

@@ -62,6 +62,7 @@ import CodePreviewPanel from '../../components/CodePreviewPanel'
 import ConnectorPanel from '../../components/ConnectorPanel'
 import ConnectorPanelCollaboration from '../../components/ConnectorPanelCollaboration'
 import ElementLibrary from '../../components/ElementInventory'
+import { usePanelStyle } from '../../context/ThemeContext'
 import ViewExplorer from '../../components/ViewExplorer'
 import ViewMarkdownPanel from '../../components/ViewMarkdownPanel'
 import ViewPanel from '../../components/ViewPanel'
@@ -786,6 +787,7 @@ function ViewEditorInner({
     const stored = localStorage.getItem('diag:libraryOpen')
     return stored !== null ? stored === 'true' : window.innerWidth >= 768
   })
+  const { flatPanels } = usePanelStyle()
   const [isExplorerOpen, setIsExplorerOpen] = useState(() => {
     if (typeof window === 'undefined') return false
     const stored = localStorage.getItem('diag:explorerOpen')
@@ -4259,9 +4261,9 @@ function ViewEditorInner({
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
-      isMarkdownOpen, markdownPaneWidth
+      isMarkdownOpen, markdownPaneWidth, sidePanelStyle: flatPanels ? 'flat' : undefined
     }}>
-      <Box h="100%" display="flex" flexDir="column">
+      <Box data-testid="vieweditor-page" h="100%" minH={0} position="relative" overflow="hidden" display="flex" flexDir="column">
         <Flex ref={editorSplitRef} flex={1} overflow="hidden">
           <Box
             ref={containerRef}
@@ -4281,7 +4283,7 @@ function ViewEditorInner({
               <VStack
                 position="absolute"
                 top="50%"
-                left={libraryOpen ? '328px' : 3}
+                left={libraryOpen ? (flatPanels ? '312px' : '328px') : 3}
                 transform="translateY(-50%)"
                 spacing={1}
                 zIndex={1200}
@@ -4310,7 +4312,7 @@ function ViewEditorInner({
               <VStack
                 position="absolute"
                 top="50%"
-                right={isExplorerOpen ? '328px' : 3}
+                right={isExplorerOpen ? (flatPanels ? '312px' : '328px') : 3}
                 transform="translateY(-50%)"
                 spacing={1}
                 zIndex={5}
@@ -4424,31 +4426,6 @@ function ViewEditorInner({
                 </Box>
               )}
             </Box>
-
-            <ViewExplorer
-              treeNodes={treeData}
-              linksMap={linksMap} viewElements={viewElements}
-              onNavigate={canvas.stableOnNavigateToView}
-              onHoverZoom={handleExplorerHoverZoom}
-              isOpen={isExplorerOpen} onToggle={handleToggleExplorer}
-              isMobile={isMobileLayout}
-              activeTags={activeTags}
-              setActiveTags={handleSetActiveTags}
-              hiddenLayerTags={hiddenLayerTags}
-              setHiddenLayerTags={handleSetHiddenLayerTags}
-              availableTags={availableTags}
-              layers={layers}
-              onHoverLayer={handleHoverLayer}
-              onCreateLayer={handleCreateLayer}
-              onUpdateLayer={handleUpdateLayer}
-              onDeleteLayer={handleDeleteLayer}
-              tagColors={tagColors}
-              selectedElement={selectedElement}
-              onUpdateTags={handleUpdateTags}
-              onCreateTag={handleCreateTag}
-              suppressed={elementPanel.isOpen || connectorPanel.isOpen || viewDetails.isOpen}
-              noFocusLock={!!pendingElement || !!textEditorState}
-            />
 
             <EditorOverlays
               clickConnectMode={clickConnectMode}
@@ -4717,6 +4694,31 @@ function ViewEditorInner({
             </>
           )}
         </Flex>
+
+        <ViewExplorer
+          treeNodes={treeData}
+          linksMap={linksMap} viewElements={viewElements}
+          onNavigate={canvas.stableOnNavigateToView}
+          onHoverZoom={handleExplorerHoverZoom}
+          isOpen={isExplorerOpen} onToggle={handleToggleExplorer}
+          isMobile={isMobileLayout}
+          activeTags={activeTags}
+          setActiveTags={handleSetActiveTags}
+          hiddenLayerTags={hiddenLayerTags}
+          setHiddenLayerTags={handleSetHiddenLayerTags}
+          availableTags={availableTags}
+          layers={layers}
+          onHoverLayer={handleHoverLayer}
+          onCreateLayer={handleCreateLayer}
+          onUpdateLayer={handleUpdateLayer}
+          onDeleteLayer={handleDeleteLayer}
+          tagColors={tagColors}
+          selectedElement={selectedElement}
+          onUpdateTags={handleUpdateTags}
+          onCreateTag={handleCreateTag}
+          suppressed={elementPanel.isOpen || connectorPanel.isOpen || viewDetails.isOpen}
+          noFocusLock={!!pendingElement || !!textEditorState}
+        />
 
         <ElementLibrary
           existingElementIds={existingElementIds}
