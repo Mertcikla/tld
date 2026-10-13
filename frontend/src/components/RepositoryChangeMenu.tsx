@@ -1,6 +1,7 @@
-import { Box, Button, HStack, IconButton, Popover, PopoverBody, PopoverContent, PopoverTrigger, Portal, Text, VStack } from '@chakra-ui/react'
+import { TagFilterReset, TagFilterRow } from './TagFilterControls'
+import { Box, Button, HStack, Popover, PopoverBody, PopoverContent, PopoverTrigger, Portal, Text, VStack } from '@chakra-ui/react'
 import type { Tag } from '../types'
-import { EyeIcon, EyeOffIcon, TagsIcon } from './Icons'
+import { TagsIcon } from './Icons'
 
 export type RepositoryChangeViewMode = 'standard' | 'plain'
 
@@ -13,6 +14,9 @@ export default function RepositoryChangeMenu({
   tagCounts = {},
   tagColors = {},
   hiddenTags = [],
+  selectedTags = [],
+  onToggleTagSelection,
+  onResetTagFilters,
   onHoverTag,
   onToggleTagVisibility,
 }: {
@@ -24,6 +28,9 @@ export default function RepositoryChangeMenu({
   tagCounts?: Record<string, number>
   tagColors?: Record<string, Tag>
   hiddenTags?: string[]
+  selectedTags?: string[]
+  onToggleTagSelection?: (tag: string) => void
+  onResetTagFilters?: () => void
   onHoverTag?: (tag: string | null) => void
   onToggleTagVisibility?: (tag: string) => void
 }) {
@@ -103,39 +110,20 @@ export default function RepositoryChangeMenu({
                   onMouseLeave={() => onHoverTag(null)}
                 >
                   <PopoverBody p={2} maxH="360px" overflowY="auto">
-                    {allTags.map((tag) => {
-                      const isHidden = hiddenTags.includes(tag)
-                      return (
-                        <HStack
-                          key={`tag-${tag}`}
-                          px={2}
-                          py={1}
-                          spacing={2}
-                          borderRadius="md"
-                          onMouseEnter={() => onHoverTag(tag)}
-                          opacity={isHidden ? 0.4 : 1}
-                          transition="opacity 0.15s"
-                        >
-                          <Box w="8px" h="8px" rounded="full" bg={tagColors[tag]?.color || '#A0AEC0'} flexShrink={0} />
-                          <Text fontSize="xs" fontWeight="600" color="gray.300" flex={1} isTruncated>
-                            {tag}
-                          </Text>
-                          <Text fontSize="10px" color="gray.600" flexShrink={0}>
-                            {tagCounts[tag] ?? 0}
-                          </Text>
-                          <IconButton
-                            aria-label={isHidden ? 'Show tag' : 'Hide tag'}
-                            icon={isHidden ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
-                            size="xs"
-                            variant="ghost"
-                            color={isHidden ? 'whiteAlpha.300' : 'whiteAlpha.600'}
-                            _hover={{ color: 'white', bg: 'whiteAlpha.200' }}
-                            onClick={(e) => { e.stopPropagation(); onToggleTagVisibility(tag) }}
-                            flexShrink={0}
-                          />
-                        </HStack>
-                      )
-                    })}
+                    <TagFilterReset active={selectedTags.length > 0 || hiddenTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); onHoverTag(null) } : undefined} />
+                    {allTags.map((tag) => (
+                      <TagFilterRow
+                        key={`tag-${tag}`}
+                        tag={tag}
+                        count={tagCounts[tag] ?? 0}
+                        color={tagColors[tag]?.color}
+                        hidden={hiddenTags.includes(tag)}
+                        selected={selectedTags.includes(tag)}
+                        onSelect={onToggleTagSelection}
+                        onHover={() => onHoverTag(tag)}
+                        onToggleVisibility={onToggleTagVisibility}
+                      />
+                    ))}
                   </PopoverBody>
                 </PopoverContent>
               </Portal>

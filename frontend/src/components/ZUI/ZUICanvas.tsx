@@ -6,6 +6,7 @@ import type { ExploreData, ViewLayer } from '../../types'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import { computeLayout } from './layout'
+import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
@@ -53,6 +54,7 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  selectedTags?: string[]
   tagColors?: Record<string, { color?: string } | string>
   groupLayers?: ViewLayer[]
   crossBranchSettings: CrossBranchContextSettings
@@ -71,6 +73,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  selectedTags,
   tagColors,
   groupLayers = [],
   crossBranchSettings,
@@ -91,6 +94,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     const base = computeLayout(data)
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   }, [data, changeOverlays])
+  const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags), [layout, selectedTags, hiddenTags])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
 
@@ -115,7 +119,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
     canvasRef,
     undefined,
-    layout.groups,
+    visibleLayout.groups,
     layout.bbox,
     handleZoom,
     handlePan,
@@ -127,6 +131,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     onSelectObject,
     handleNodeClick,
   )
+
+  useEffect(() => {
+    setHoveredItem(null, true)
+  }, [visibleLayout, setHoveredItem])
 
   const viewportBounds = useMemo(() => {
     const zoom = Math.max(0.0001, viewState.zoom)
@@ -146,7 +154,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [containerSize.h, containerSize.w, viewState])
 
   const proxyState = useZUIProxyConnectors(
-    layout.groups,
+    visibleLayout.groups,
     workspaceSnapshot,
     viewState,
     containerSize.w,
@@ -186,7 +194,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     setContainerSize,
     fitInitialView,
     onReady,
-    layout,
+    layout: visibleLayout,
     viewState,
     viewStateRef,
     crossBranchSettings,
@@ -216,7 +224,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   if (debugTestState && debugStateReady && typeof window !== 'undefined') {
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
-      groups: layout.groups,
+      groups: visibleLayout.groups,
       lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
   }
@@ -225,10 +233,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     if (!debugTestState || !debugStateReady || typeof window === 'undefined') return
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
-      groups: layout.groups,
+      groups: visibleLayout.groups,
       lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
-  }, [debugStateReady, debugTestState, layout.groups, viewState])
+  }, [debugStateReady, debugTestState, visibleLayout.groups, viewState])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -296,8 +304,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [viewState])
 
   const currentPath = useMemo(() => {
-    return getPathAt(breadcrumbView, layout.groups, containerSize.w, containerSize.h)
-  }, [breadcrumbView, layout.groups, containerSize])
+    return getPathAt(breadcrumbView, visibleLayout.groups, containerSize.w, containerSize.h)
+  }, [breadcrumbView, visibleLayout.groups, containerSize])
 
 
   useImperativeHandle(

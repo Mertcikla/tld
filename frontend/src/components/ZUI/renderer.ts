@@ -1078,13 +1078,13 @@ function drawSceneNode(
   }
 
   // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
-  // idle = tag-colored dots bottom-left; tag-menu hover = vertical stack of
-  // pills (color dot + name) on matching nodes.
+  // idle = tag-colored dots bottom-left; element or tag-menu hover = vertical
+  // stack of pills (color dot + name).
   {
     const tags = visibleNodeTags(layout.tags)
     if (tags.length > 0 && parentAlpha > 0.05) {
       const highlighted = isTagHighlighted(tags)
-      if (highlighted && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
+      if ((isHovered || highlighted) && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
         const pillH = 18 / drawZoom
         const pillGap = 4 / drawZoom
         const pillPadX = 8 / drawZoom

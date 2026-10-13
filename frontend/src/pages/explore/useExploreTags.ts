@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { api } from '../../api/client'
+import { useTagFilters } from '../../hooks/useTagFilters'
 import type { ExploreData, Tag, ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
@@ -15,6 +16,9 @@ export interface ExploreTagsState {
   highlightColor: string
   setHighlightColor: Dispatch<SetStateAction<string>>
   hiddenTags: string[]
+  selectedTags: string[]
+  toggleTagSelection: (tag: string) => void
+  resetFilters: () => void
   toggleLayerVisibility: (layer: ViewLayer) => void
   toggleTagVisibility: (tag: string) => void
 }
@@ -67,7 +71,8 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
   const [layers, setLayers] = useState<ViewLayer[]>([])
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
   const [highlightColor, setHighlightColor] = useState('')
-  const [hiddenTags, setHiddenTags] = useState<string[]>([])
+  const filters = useTagFilters()
+  const { toggleTagsVisibility } = filters
 
   useEffect(() => {
     if (!data || sharedToken) return
@@ -115,18 +120,8 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
   const metrics = useMemo(() => deriveExploreTagMetrics(data, layers), [data, layers])
 
   const toggleLayerVisibility = useCallback((layer: ViewLayer) => {
-    if (layer.tags.length === 0) return
-    setHiddenTags((prev) => {
-      const allHidden = layer.tags.every((tag) => prev.includes(tag))
-      return allHidden
-        ? prev.filter((tag) => !layer.tags.includes(tag))
-        : Array.from(new Set([...prev, ...layer.tags]))
-    })
-  }, [])
-
-  const toggleTagVisibility = useCallback((tag: string) => {
-    setHiddenTags((prev) => prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag])
-  }, [])
+    toggleTagsVisibility(layer.tags)
+  }, [toggleTagsVisibility])
 
   return {
     ...metrics,
@@ -136,8 +131,7 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
     setHighlightedTags,
     highlightColor,
     setHighlightColor,
-    hiddenTags,
+    ...filters,
     toggleLayerVisibility,
-    toggleTagVisibility,
   }
 }

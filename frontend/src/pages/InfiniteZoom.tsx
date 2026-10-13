@@ -151,6 +151,7 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
             highlightedTags={tags.highlightedTags}
             highlightColor={tags.highlightColor}
             hiddenTags={tags.hiddenTags}
+            selectedTags={tags.selectedTags}
             tagColors={tags.tagColors}
             groupLayers={tags.layers}
             crossBranchSettings={crossBranchSettings}
@@ -174,6 +175,9 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
             layerElementCounts={tags.layerElementCounts}
             tagCounts={tags.tagCounts}
             hiddenTags={tags.hiddenTags}
+            selectedTags={tags.selectedTags}
+            onToggleTagSelection={tags.toggleTagSelection}
+            onResetTagFilters={tags.resetFilters}
             isTagsOpen={isTagsOpen}
             onTagsClose={onTagsClose}
             onTagsToggle={onTagsToggle}
