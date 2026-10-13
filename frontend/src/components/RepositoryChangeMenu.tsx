@@ -110,7 +110,6 @@ export default function RepositoryChangeMenu({
                   onMouseLeave={() => onHoverTag(null)}
                 >
                   <PopoverBody p={2} maxH="360px" overflowY="auto">
-                    <TagFilterReset active={selectedTags.length > 0 || hiddenTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); onHoverTag(null) } : undefined} />
                     {allTags.map((tag) => (
                       <TagFilterRow
                         key={`tag-${tag}`}
@@ -128,6 +127,7 @@ export default function RepositoryChangeMenu({
                 </PopoverContent>
               </Portal>
             </Popover>
+            <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); onHoverTag(null) } : undefined} />
           </>
         )}
       </HStack>

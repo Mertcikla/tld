@@ -1085,26 +1085,32 @@ function drawSceneNode(
     if (tags.length > 0 && parentAlpha > 0.05) {
       const highlighted = isTagHighlighted(tags)
       if ((isHovered || highlighted) && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
-        const pillH = 18 / drawZoom
-        const pillGap = 4 / drawZoom
-        const pillPadX = 8 / drawZoom
-        const dotR = 3 / drawZoom
-        const fontSize = 10 / drawZoom
+        // Scale chips gently with the visible card, and keep them clear of its
+        // rounded corners even when the card is much larger than the editor size.
+        const chipScale = clamp(h * drawZoom / VIEW_EDITOR_NODE_H, 1, 1.6)
+        const chipUnit = chipScale / drawZoom
+        const insetX = Math.max(w * TAG_DOT_INSET_X_TO_NODE_W, 6 * chipUnit)
+        const insetY = Math.max(h * TAG_DOT_INSET_Y_TO_NODE_H, 6 * chipUnit)
+        const pillH = 18 * chipUnit
+        const pillGap = 4 * chipUnit
+        const pillPadX = 8 * chipUnit
+        const dotR = 3 * chipUnit
+        const fontSize = 10 * chipUnit
         ctx.save()
         ctx.font = `700 ${fontSize}px ${ZUI_FONT_FAMILY}`
         ctx.textAlign = 'left'
         ctx.textBaseline = 'middle'
         const pillWidths = tags.map((tag) => {
           const textW = ctx.measureText(tag).width
-          return pillPadX * 2 + dotR * 2 + 4 / drawZoom + textW
+          return pillPadX * 2 + dotR * 2 + 4 * chipUnit + textW
         })
-        let pillBottom = y + h - 6 / drawZoom
+        let pillBottom = y + h - insetY
         for (let i = 0; i < tags.length; i += 1) {
           const tag = tags[i]
-          const pillW = Math.min(pillWidths[i], w - 8 / drawZoom)
-          const pillX = x + 6 / drawZoom
+          const pillW = Math.min(pillWidths[i], w - insetX * 2)
+          const pillX = x + insetX
           const pillY = pillBottom - pillH
-          if (pillY < y + 2 / drawZoom) break
+          if (pillY < y + insetY) break
           ctx.globalAlpha = parentAlpha
           ctx.beginPath()
           ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2)
@@ -1120,7 +1126,7 @@ function drawSceneNode(
           ctx.fillStyle = tagColorFor(tag, accent)
           ctx.fill()
           ctx.fillStyle = '#fff'
-          const textX = dotCX + dotR + 4 / drawZoom
+          const textX = dotCX + dotR + 4 * chipUnit
           ctx.fillText(tag, textX, dotCY + 0.5 / drawZoom, Math.max(0, pillW - (textX - pillX) - pillPadX))
           pillBottom = pillY - pillGap
         }

@@ -450,7 +450,6 @@ function ViewFloatingMenu({
                   onMouseLeave={() => { setHighlightedTags(null); setHighlightColor(null) }}
                 >
                   <PopoverBody p={2} maxH="360px" overflowY="auto">
-                    <TagFilterReset active={selectedTags.length > 0 || hiddenTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags(null); setHighlightColor(null) } : undefined} />
                     {layers.map(layer => {
                       const isHidden = layer.tags.length > 0 && layer.tags.every(t => hiddenTags.includes(t))
                       return (
@@ -505,6 +504,7 @@ function ViewFloatingMenu({
                 </PopoverContent>
               </Portal>
             </Popover>
+            <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags(null); setHighlightColor(null) } : undefined} />
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
           </>
         )}

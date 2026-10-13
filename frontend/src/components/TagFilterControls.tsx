@@ -1,15 +1,16 @@
 import { Box, Button, HStack, IconButton, Text } from '@chakra-ui/react'
-import { EyeIcon, EyeOffIcon } from './Icons'
+import { CloseIcon, EyeIcon, EyeOffIcon } from './Icons'
 
 export function TagFilterReset({ active, onReset }: { active: boolean; onReset?: () => void }) {
-  if (!onReset) return null
+  if (!active || !onReset) return null
   return (
-    <HStack justify="flex-end" mb={1}>
-      {/* Keep focus after Reset so disabling it does not blur-close the popover. */}
-      <Button size="xs" h="22px" px={2} variant="ghost" color="gray.400" aria-label="Reset tag filters" aria-disabled={!active} onClick={() => { if (active) onReset() }}>
-        Reset
-      </Button>
-    </HStack>
+    <IconButton
+      size="xs" h="22px" minW="22px" mr={1} variant="ghost" color="gray.400"
+      aria-label="Reset tag filters" title="Clear selected tags"
+      icon={<CloseIcon size={10} />}
+      _hover={{ bg: 'whiteAlpha.100', color: 'white' }}
+      onClick={onReset}
+    />
   )
 }
 

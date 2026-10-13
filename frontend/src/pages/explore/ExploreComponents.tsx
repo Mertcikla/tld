@@ -196,7 +196,6 @@ export function ExploreToolbar({
                   onMouseLeave={() => { setHighlightedTags([]); setHighlightColor('') }}
                 >
                   <PopoverBody p={2} maxH="360px" overflowY="auto">
-                    <TagFilterReset active={selectedTags.length > 0 || hiddenTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags([]); setHighlightColor('') } : undefined} />
                     {layers.map((layer) => {
                       const isHidden = layer.tags.length > 0 && layer.tags.every((tag) => hiddenTags.includes(tag))
                       return (
@@ -249,6 +248,7 @@ export function ExploreToolbar({
                 </PopoverContent>
               </Portal>
             </Popover>
+            <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags([]); setHighlightColor('') } : undefined} />
           </>
         )}
       </HStack>

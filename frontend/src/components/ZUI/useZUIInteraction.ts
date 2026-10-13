@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIObjectSelection, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes, type ZUIHitTestNodeResult } from './hitTest'
+import { isWithinHoverSafeArea, preserveHoverAnchor } from './hoverFeedback'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
 import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../utils/wheel'
 import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../utils/safariGesture'
@@ -203,6 +204,7 @@ export interface ZUIInteraction {
   setHoveredItem: (item: HoveredItem | null, force?: boolean) => void
   /** Set to true to prevent clearing hoveredItem while the mouse is over the hover popover. */
   setHoverLocked: (locked: boolean) => void
+  setHoverPopoverElement: (element: HTMLElement | null) => void
 }
 
 export function useZUIInteraction(
@@ -222,6 +224,11 @@ export function useZUIInteraction(
 ): ZUIInteraction {
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
+  const hoveredItemRef = useRef<HoveredItem | null>(null)
+  const hoverPopoverRef = useRef<HTMLElement | null>(null)
+  const setHoverPopoverElement = useCallback((element: HTMLElement | null) => {
+    hoverPopoverRef.current = element
+  }, [])
   const popoverHoverLockedRef = useRef(false)
   const externalHoverLockedRef = useRef(hoverLocked)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -229,28 +236,31 @@ export function useZUIInteraction(
     return externalHoverLockedRef.current || popoverHoverLockedRef.current
   }, [])
 
-  const setHoveredItem = useCallback((item: HoveredItem | null, force = false) => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current)
-      hoverTimeoutRef.current = null
-    }
+  const clearHoverTimeout = useCallback(() => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    hoverTimeoutRef.current = null
+  }, [])
 
+  const setHoveredItem = useCallback((item: HoveredItem | null, force = false) => {
     if (canvasRef.current) canvasRef.current.style.cursor = item ? 'pointer' : 'grab'
-    if (item === null) {
-      if (force) {
-        setHoveredItemInternal(null)
-        return
-      }
-      // Grace period before clearing hover to allow mouse to reach popover
+    if (item === null && !force) {
+      // Start one grace period; repeated moves away should not keep it open forever.
+      if (hoverTimeoutRef.current) return
       hoverTimeoutRef.current = setTimeout(() => {
+        hoverTimeoutRef.current = null
         if (!isHoverLocked()) {
+          hoveredItemRef.current = null
           setHoveredItemInternal(null)
         }
-      }, 100)
-    } else {
-      setHoveredItemInternal(item)
+      }, 200)
+      return
     }
-  }, [canvasRef, isHoverLocked])
+    clearHoverTimeout()
+    const next = force ? item : preserveHoverAnchor(hoveredItemRef.current, item)
+    if (next === hoveredItemRef.current) return
+    hoveredItemRef.current = next
+    setHoveredItemInternal(next)
+  }, [canvasRef, clearHoverTimeout, isHoverLocked])
 
   const setHoverLocked = useCallback((locked: boolean) => {
     const wasLocked = popoverHoverLockedRef.current
@@ -540,6 +550,19 @@ export function useZUIInteraction(
         return
       }
 
+      const hovered = hoveredItemRef.current
+      const popover = hoverPopoverRef.current
+      if (hovered?.type === 'edge' && popover && isWithinHoverSafeArea(
+        { x: e.clientX, y: e.clientY },
+        {
+          x: rect.left + worldToScreenX(hovered.absX, viewStateRef.current),
+          y: rect.top + worldToScreenY(hovered.absY, viewStateRef.current),
+        },
+        popover.getBoundingClientRect(),
+      )) {
+        clearHoverTimeout()
+        return
+      }
       if (isHoverLocked()) return
       if (screenX < 0 || screenY < 0 || screenX > rect.width || screenY > rect.height) {
         setHoveredItem(null)
@@ -814,7 +837,7 @@ export function useZUIInteraction(
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem]) // groupsRef handles groups updates without re-binding!
+  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, clearHoverTimeout, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem]) // groupsRef handles groups updates without re-binding!
 
-  return { viewState, viewStateRef, setViewState, fitView, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked }
+  return { viewState, viewStateRef, setViewState, fitView, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement }
 }

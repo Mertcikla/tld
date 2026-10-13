@@ -249,11 +249,13 @@ export function ZUIHoverPopover({
   hoveredScreenRect,
   isHoveredItemFullyVisible,
   onHoverLock,
+  onPopoverElement,
 }: {
   hoveredItem: HoveredItem | null
   hoveredScreenRect: { sx: number; sy: number; sw: number; sh: number } | null
   isHoveredItemFullyVisible: boolean
   onHoverLock: (locked: boolean) => void
+  onPopoverElement?: (element: HTMLElement | null) => void
 }) {
   const isOpen = isHoveredItemFullyVisible
 
@@ -286,6 +288,7 @@ export function ZUIHoverPopover({
       </PopoverTrigger>
       <Portal>
         <PopoverContent
+          ref={isOpen ? onPopoverElement : undefined}
           data-testid="zui-hover-popover"
           bg="glass.bg"
           border="1px solid"

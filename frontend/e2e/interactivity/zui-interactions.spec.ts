@@ -234,6 +234,44 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
   await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
 })
 
+test('connector popovers stay anchored and remain reachable across the safe hover corridor', async ({ page }) => {
+  const { root, parent, sibling } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: sibling.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const start = {
+    x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.25,
+    y: connector.sourcePoint.y,
+  }
+  await page.mouse.move(start.x, start.y)
+  const popover = page.getByTestId('zui-hover-popover')
+  await expect(popover).toContainText('Parent Link')
+  await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
+  const anchor = page.getByTestId('zui-hover-anchor')
+  const initialAnchor = await anchor.boundingBox()
+  const initialPopup = await popover.boundingBox()
+  await page.mouse.move(start.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.3, start.y, { steps: 8 })
+  expect(await anchor.boundingBox()).toEqual(initialAnchor)
+  expect(await popover.boundingBox()).toEqual(initialPopup)
+
+  const action = page.getByRole('link', { name: `Go to ${sibling.name}` })
+  const button = await action.boundingBox()
+  const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
+  // Move slowly through the gap, longer than the dismissal grace period.
+  // Hovering must keep the original target instead of chasing the pointer.
+  for (let step = 1; step <= 20; step += 1) {
+    await page.mouse.move(start.x + (destination.x - start.x) * step / 20, start.y + (destination.y - start.y) * step / 20)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  }
+  await expect(popover).toContainText('Parent Link')
+  expect(await anchor.boundingBox()).toEqual(initialAnchor)
+  await action.click()
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}.*element=${sibling.id}`))
+})
+
 test('clicking an element jumps into its contents while dragging only pans', async ({ page }, testInfo) => {
   const { root, parent, childSource } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)

@@ -13,7 +13,7 @@ vi.mock('@chakra-ui/react', () => {
 function Harness() {
   const filters = useTagFilters()
   return <>
-    <TagFilterReset active={filters.selectedTags.length > 0 || filters.hiddenTags.length > 0} onReset={filters.resetFilters} />
+    <TagFilterReset active={filters.selectedTags.length > 0} onReset={filters.resetFilters} />
     {['go', 'javascript'].map((tag) => <TagFilterRow key={tag} tag={tag} count={1} selected={filters.selectedTags.includes(tag)} hidden={filters.hiddenTags.includes(tag)} onSelect={filters.toggleTagSelection} onHover={vi.fn()} onToggleVisibility={filters.toggleTagVisibility} />)}
   </>
 }
@@ -22,7 +22,7 @@ describe('tag filter controls', () => {
   it('keeps multiple selections and switches modes when the separate eye is clicked', () => {
     const renderer = create(<Harness />)
     const button = (label: string) => renderer.root.findAllByType('button').find((item) => item.props['aria-label'] === label)!
-    expect(button('Reset tag filters').props['aria-disabled']).toBe(true)
+    expect(button('Reset tag filters')).toBeUndefined()
     act(() => button('Filter by tag go').props.onClick())
     act(() => button('Filter by tag javascript').props.onClick())
     expect(button('Filter by tag go').props['aria-pressed']).toBe(true)
@@ -33,10 +33,11 @@ describe('tag filter controls', () => {
     expect(button('Filter by tag go').props['aria-pressed']).toBe(false)
     expect(button('Filter by tag javascript').props['aria-pressed']).toBe(false)
     expect(button('Show tag')).toBeDefined()
+    expect(button('Reset tag filters')).toBeUndefined()
     act(() => button('Filter by tag javascript').props.onClick())
     expect(renderer.root.findAllByType('button').some((item) => item.props['aria-label'] === 'Show tag')).toBe(false)
     act(() => button('Reset tag filters').props.onClick())
-    expect(button('Reset tag filters').props['aria-disabled']).toBe(true)
+    expect(button('Reset tag filters')).toBeUndefined()
     act(() => renderer.unmount())
   })
 })

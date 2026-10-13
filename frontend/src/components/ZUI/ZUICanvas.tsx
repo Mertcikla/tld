@@ -116,7 +116,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     onPan?.()
   }, [onPan])
 
-  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
+  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
     canvasRef,
     undefined,
     visibleLayout.groups,
@@ -348,6 +348,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         hoveredScreenRect={hoveredScreenRect}
         isHoveredItemFullyVisible={isHoveredItemFullyVisible}
         onHoverLock={setHoverLocked}
+        onPopoverElement={setHoverPopoverElement}
       />
     </div>
   )
