@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIObjectSelection, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes, type ZUIHitTestNodeResult } from './hitTest'
-import { isWithinHoverSafeArea, preserveHoverAnchor } from './hoverFeedback'
+import { getHoverScreenRect, isWithinHoverSafeArea, preserveHoverAnchor } from './hoverFeedback'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
 import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../utils/wheel'
 import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../utils/safariGesture'
@@ -225,6 +225,7 @@ export function useZUIInteraction(
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
   const hoveredItemRef = useRef<HoveredItem | null>(null)
+  const nodeHoverAnchorRef = useRef<{ node: LayoutNode; x: number; y: number } | null>(null)
   const hoverPopoverRef = useRef<HTMLElement | null>(null)
   const setHoverPopoverElement = useCallback((element: HTMLElement | null) => {
     hoverPopoverRef.current = element
@@ -250,12 +251,14 @@ export function useZUIInteraction(
         hoverTimeoutRef.current = null
         if (!isHoverLocked()) {
           hoveredItemRef.current = null
+          nodeHoverAnchorRef.current = null
           setHoveredItemInternal(null)
         }
       }, 200)
       return
     }
     clearHoverTimeout()
+    if (item === null) nodeHoverAnchorRef.current = null
     const next = force ? item : preserveHoverAnchor(hoveredItemRef.current, item)
     if (next === hoveredItemRef.current) return
     hoveredItemRef.current = next
@@ -552,13 +555,28 @@ export function useZUIInteraction(
 
       const hovered = hoveredItemRef.current
       const popover = hoverPopoverRef.current
-      if (hovered?.type === 'edge' && popover && isWithinHoverSafeArea(
-        { x: e.clientX, y: e.clientY },
-        {
+      let safeAnchor: { x: number; y: number } | null = null
+      if (hovered?.type === 'edge') {
+        safeAnchor = {
           x: rect.left + worldToScreenX(hovered.absX, viewStateRef.current),
           y: rect.top + worldToScreenY(hovered.absY, viewStateRef.current),
-        },
-        popover.getBoundingClientRect(),
+        }
+      } else if (hovered?.type === 'node') {
+        const nodeRect = getHoverScreenRect(hovered, viewStateRef.current)!
+        const insideNode = screenX >= nodeRect.sx && screenX <= nodeRect.sx + nodeRect.sw &&
+          screenY >= nodeRect.sy && screenY <= nodeRect.sy + nodeRect.sh
+        // Keep hit-testing inside the card so nested elements remain reachable.
+        // Outside it, protect travel from the last hovered point to the popover.
+        if (!insideNode) {
+          const lastNodePoint = nodeHoverAnchorRef.current
+          safeAnchor = lastNodePoint?.node === hovered.data ? lastNodePoint : {
+            x: rect.left + nodeRect.sx + nodeRect.sw / 2,
+            y: rect.top + nodeRect.sy + nodeRect.sh / 2,
+          }
+        }
+      }
+      if (safeAnchor && popover && isWithinHoverSafeArea(
+        { x: e.clientX, y: e.clientY }, safeAnchor, popover.getBoundingClientRect(),
       )) {
         clearHoverTimeout()
         return
@@ -578,6 +596,7 @@ export function useZUIInteraction(
       const deepest = hitTestZUIRenderedNode(worldX, worldY, groupsRef.current, view, thresholds, hiddenTagsRef.current)
       if (deepest) {
         const { node, absX, absY, absW, absH } = deepest
+        nodeHoverAnchorRef.current = { node, x: e.clientX, y: e.clientY }
         setHoveredItem({
           type: 'node',
           data: node,

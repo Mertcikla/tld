@@ -147,7 +147,7 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   const { root, parent } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForStableZuiCamera(page)
+  await waitForHoverCamera(page)
 
   const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
     node: { x: number; y: number; width: number; height: number }
@@ -234,6 +234,44 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
   await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
 })
 
+test('element popovers keep hover while crossing a connector behind the gap', async ({ page }) => {
+  const { root, parent } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+  const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
+    node: { x: number; y: number; width: number; height: number }
+  }
+  // The connector leaves the middle of this card's right edge and passes
+  // directly behind the gap into its right-aligned popover.
+  const start = { x: node.x + node.width - 4, y: node.y + node.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  const popover = page.getByTestId('zui-hover-popover')
+  await expect(popover).toContainText(parent.name)
+  await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
+  const initialAnchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+  const initialPopup = await popover.boundingBox()
+  const action = page.getByRole('link', { name: 'Open in Editor' })
+  const button = await action.boundingBox()
+  const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
+  for (let step = 1; step <= 20; step += 1) {
+    await page.mouse.move(start.x + (destination.x - start.x) * step / 20, start.y + (destination.y - start.y) * step / 20)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(action).toBeVisible()
+  }
+  expect(await page.getByTestId('zui-hover-anchor').boundingBox()).toEqual(initialAnchor)
+  expect(await popover.boundingBox()).toEqual(initialPopup)
+  // Moving away still releases hover, allowing another object to be targeted.
+  const box = await canvasBox(page)
+  await page.mouse.move(box.x + 4, box.y + box.height - 4)
+  await expect(popover).toBeHidden()
+  await page.mouse.move(start.x, start.y)
+  await expect(popover).toContainText(parent.name)
+  await expect(action).toHaveAttribute('href', `/views/${root.id}?element=${parent.id}`)
+  await action.click()
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}(?:\\?|$)`))
+})
+
 test('connector popovers stay anchored and remain reachable across the safe hover corridor', async ({ page }) => {
   const { root, parent, sibling } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
@@ -268,8 +306,9 @@ test('connector popovers stay anchored and remain reachable across the safe hove
   }
   await expect(popover).toContainText('Parent Link')
   expect(await anchor.boundingBox()).toEqual(initialAnchor)
+  await expect(action).toHaveAttribute('href', `/views/${root.id}?element=${sibling.id}`)
   await action.click()
-  await expect(page).toHaveURL(new RegExp(`/views/${root.id}.*element=${sibling.id}`))
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}(?:\\?|$)`))
 })
 
 test('clicking an element jumps into its contents while dragging only pans', async ({ page }, testInfo) => {

@@ -593,20 +593,35 @@ function drawCycleIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size
   ctx.restore()
 }
 
-function unitVector(fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number; len: number } {
-  const dx = toX - fromX
-  const dy = toY - fromY
-  const len = Math.hypot(dx, dy)
-  if (len <= 0) return { x: 0, y: 0, len: 0 }
-  return { x: dx / len, y: dy / len, len }
-}
+function clipConnectorTip(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number): void {
+  const transform = ctx.getTransform()
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const halfWidth = size * 0.6 + ctx.lineWidth / 2
+  const front = ctx.lineWidth / 2
+  const mask = new Path2D()
+  mask.rect(0, 0, ctx.canvas.width, ctx.canvas.height)
 
-function trimDelta(x: number, y: number, towardX: number, towardY: number, dist: number): { dx: number; dy: number } {
-  if (dist <= 0) return { dx: 0, dy: 0 }
-  const u = unitVector(x, y, towardX, towardY)
-  if (u.len <= 0) return { dx: 0, dy: 0 }
-  const d = Math.min(dist, u.len * 0.9)
-  return { dx: u.x * d, dy: u.y * d }
+  // Stop the stroke at the arrow's base without changing the underlying route.
+  const corners = [
+    [-size * 1.6, -halfWidth],
+    [front, -halfWidth],
+    [front, halfWidth],
+    [-size * 1.6, halfWidth],
+  ]
+  corners.forEach(([along, across], index) => {
+    const localX = x + along * cos - across * sin
+    const localY = y + along * sin + across * cos
+    const screenX = transform.a * localX + transform.c * localY + transform.e
+    const screenY = transform.b * localX + transform.d * localY + transform.f
+    if (index === 0) mask.moveTo(screenX, screenY)
+    else mask.lineTo(screenX, screenY)
+  })
+  mask.closePath()
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.clip(mask, 'evenodd')
+  ctx.setTransform(transform)
 }
 
 function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string): void {
@@ -1447,9 +1462,9 @@ function drawEdges(
       const drawSourceArrow = (dir === 'backward' || dir === 'both' || dir === 'bidirectional') && sourceConnectorDetailVisible
       const targetArrowSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2) / zoom
       const sourceArrowSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2) / zoom
-      const targetTrim = drawTargetArrow ? targetArrowSize * 1.6 : 0
-      const sourceTrim = drawSourceArrow ? sourceArrowSize * 1.6 : 0
 
+      // Keep route geometry independent of arrow visibility.
+      const connectorPath = new Path2D()
       if (type === 'bezier') {
         const curvature = 0.5
         let cp1x = sH.x, cp1y = sH.y, cp2x = tH.x, cp2y = tH.y
@@ -1480,33 +1495,21 @@ function drawEdges(
         finalAngleT = Math.atan2(tH.y - cp2y, tH.x - cp2x)
         finalAngleS = Math.atan2(sH.y - cp1y, sH.x - cp1x)
 
-        const endDelta = trimDelta(tH.x, tH.y, cp2x, cp2y, targetTrim)
-        const startDelta = trimDelta(sH.x, sH.y, cp1x, cp1y, sourceTrim)
-
-        ctx.beginPath()
-        ctx.moveTo(sH.x + startDelta.dx, sH.y + startDelta.dy)
-        ctx.bezierCurveTo(
-          cp1x + startDelta.dx,
-          cp1y + startDelta.dy,
-          cp2x + endDelta.dx,
-          cp2y + endDelta.dy,
-          tH.x + endDelta.dx,
-          tH.y + endDelta.dy,
+        connectorPath.moveTo(sH.x, sH.y)
+        connectorPath.bezierCurveTo(
+          cp1x,
+          cp1y,
+          cp2x,
+          cp2y,
+          tH.x,
+          tH.y,
         )
-        ctx.stroke()
-
       } else if (type === 'straight') {
         finalAngleT = Math.atan2(tH.y - sH.y, tH.x - sH.x)
         finalAngleS = Math.atan2(sH.y - tH.y, sH.x - tH.x)
 
-        const { x: ux, y: uy, len } = unitVector(sH.x, sH.y, tH.x, tH.y)
-        const startTrim = Math.min(sourceTrim, len * 0.45)
-        const endTrim = Math.min(targetTrim, len * 0.45)
-
-        ctx.beginPath()
-        ctx.moveTo(sH.x + ux * startTrim, sH.y + uy * startTrim)
-        ctx.lineTo(tH.x - ux * endTrim, tH.y - uy * endTrim)
-        ctx.stroke()
+        connectorPath.moveTo(sH.x, sH.y)
+        connectorPath.lineTo(tH.x, tH.y)
 
       } else if (type === 'step' || type === 'smoothstep') {
         const borderRadius = type === 'smoothstep' ? 6 / zoom : 0
@@ -1552,19 +1555,12 @@ function drawEdges(
         finalAngleS = Math.atan2(first.y - firstNext.y, first.x - firstNext.x)
         finalAngleT = Math.atan2(last.y - lastPrev.y, last.x - lastPrev.x)
 
-        const linePoints = points.slice()
-        const startDelta = trimDelta(first.x, first.y, firstNext.x, firstNext.y, sourceTrim)
-        const endDelta = trimDelta(last.x, last.y, lastPrev.x, lastPrev.y, targetTrim)
-        linePoints[0] = { x: first.x + startDelta.dx, y: first.y + startDelta.dy }
-        linePoints[linePoints.length - 1] = { x: last.x + endDelta.dx, y: last.y + endDelta.dy }
+        connectorPath.moveTo(first.x, first.y)
 
-        ctx.beginPath()
-        ctx.moveTo(linePoints[0].x, linePoints[0].y)
-
-        for (let i = 1; i < linePoints.length; i++) {
-          const curr = linePoints[i]
-          const prev = linePoints[i - 1]
-          const next = linePoints[i + 1]
+        for (let i = 1; i < points.length; i++) {
+          const curr = points[i]
+          const prev = points[i - 1]
+          const next = points[i + 1]
 
           if (borderRadius > 0 && next) {
             const dPrevX = curr.x - prev.x
@@ -1572,20 +1568,25 @@ function drawEdges(
             const dPrevLen = Math.sqrt(dPrevX * dPrevX + dPrevY * dPrevY)
             const r = Math.min(borderRadius, dPrevLen / 2)
 
-            ctx.lineTo(curr.x - (dPrevX / dPrevLen) * r, curr.y - (dPrevY / dPrevLen) * r)
+            connectorPath.lineTo(curr.x - (dPrevX / dPrevLen) * r, curr.y - (dPrevY / dPrevLen) * r)
 
             const dNextX = next.x - curr.x
             const dNextY = next.y - curr.y
             const dNextLen = Math.sqrt(dNextX * dNextX + dNextY * dNextY)
             const rNext = Math.min(borderRadius, dNextLen / 2)
 
-            ctx.arcTo(curr.x, curr.y, curr.x + (dNextX / dNextLen) * rNext, curr.y + (dNextY / dNextLen) * rNext, r)
+            connectorPath.arcTo(curr.x, curr.y, curr.x + (dNextX / dNextLen) * rNext, curr.y + (dNextY / dNextLen) * rNext, r)
           } else {
-            ctx.lineTo(curr.x, curr.y)
+            connectorPath.lineTo(curr.x, curr.y)
           }
         }
-        ctx.stroke()
       }
+
+      ctx.save()
+      if (drawTargetArrow) clipConnectorTip(ctx, tH.x, tH.y, finalAngleT, targetArrowSize)
+      if (drawSourceArrow) clipConnectorTip(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize)
+      ctx.stroke(connectorPath)
+      ctx.restore()
 
       if (drawTargetArrow) {
         drawArrowHead(ctx, tH.x, tH.y, finalAngleT, targetArrowSize, strokeColor)

@@ -27,7 +27,11 @@ vi.mock('@chakra-ui/react', async () => {
     Popover: BoxLike,
     PopoverArrow: BoxLike,
     PopoverBody: BoxLike,
-    PopoverContent: ({ children, ...props }: { children?: React.ReactNode }) => ReactModule.createElement('div', { 'data-testid': 'zui-popover-content', ...props }, children),
+    PopoverContent: ReactModule.forwardRef<HTMLDivElement, { children?: React.ReactNode }>(function MockPopoverContent({ children, ...props }, ref) {
+      // Match the motion component retaining its initial forwarded ref.
+      const initialRef = ReactModule.useRef(ref)
+      return ReactModule.createElement('div', { 'data-testid': 'zui-popover-content', ...props, ref: initialRef.current }, children)
+    }),
     PopoverHeader: BoxLike,
     PopoverTrigger: BoxLike,
     Portal: BoxLike,
@@ -162,5 +166,33 @@ describe('ZUIHoverPopover edge change', () => {
       />,
     )
     expect(renderer.root.findAllByProps({ 'data-testid': 'zui-edge-change' })).toHaveLength(0)
+  })
+})
+
+
+describe('ZUIHoverPopover safe corridor bounds', () => {
+  it('reports the mounted content when opening without replacing its forwarded ref', () => {
+    const onPopoverElement = vi.fn()
+    const onHoverLock = vi.fn()
+    const element = {} as HTMLDivElement
+    const render = (open: boolean) => (
+      <ZUIHoverPopover
+        hoveredItem={open ? hoveredNode() : null}
+        hoveredScreenRect={open ? { sx: 0, sy: 0, sw: 100, sh: 80 } : null}
+        isHoveredItemFullyVisible={open}
+        onHoverLock={onHoverLock}
+        onPopoverElement={onPopoverElement}
+      />
+    )
+    const renderer = create(render(false), { createNodeMock: () => element })
+    expect(onPopoverElement).toHaveBeenLastCalledWith(null)
+    act(() => { renderer.update(render(true)) })
+    expect(onPopoverElement).toHaveBeenLastCalledWith(element)
+    act(() => { renderer.update(render(false)) })
+    expect(onPopoverElement).toHaveBeenLastCalledWith(null)
+    act(() => { renderer.update(render(true)) })
+    expect(onPopoverElement).toHaveBeenLastCalledWith(element)
+    act(() => { renderer.unmount() })
+    expect(onPopoverElement).toHaveBeenLastCalledWith(null)
   })
 })

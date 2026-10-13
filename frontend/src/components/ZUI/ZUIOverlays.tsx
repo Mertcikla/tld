@@ -20,7 +20,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
@@ -258,6 +258,18 @@ export function ZUIHoverPopover({
   onPopoverElement?: (element: HTMLElement | null) => void
 }) {
   const isOpen = isHoveredItemFullyVisible
+  const contentElementRef = useRef<HTMLElement | null>(null)
+  const isOpenRef = useRef(isOpen)
+  isOpenRef.current = isOpen
+  // Keep the ref callback stable across opening/closing: the motion component
+  // retains its initial forwarded ref. Report visibility separately.
+  const registerPopoverElement = useCallback((element: HTMLElement | null) => {
+    contentElementRef.current = element
+    onPopoverElement?.(isOpenRef.current ? element : null)
+  }, [onPopoverElement])
+  useLayoutEffect(() => {
+    onPopoverElement?.(isOpen ? contentElementRef.current : null)
+  }, [isOpen, onPopoverElement])
 
   useEffect(() => {
     if (!isOpen) onHoverLock(false)
@@ -288,7 +300,7 @@ export function ZUIHoverPopover({
       </PopoverTrigger>
       <Portal>
         <PopoverContent
-          ref={isOpen ? onPopoverElement : undefined}
+          ref={registerPopoverElement}
           data-testid="zui-hover-popover"
           bg="glass.bg"
           border="1px solid"
