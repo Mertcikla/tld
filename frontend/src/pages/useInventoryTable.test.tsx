@@ -216,6 +216,21 @@ describe('inventory table state', () => {
     app.close()
   })
 
+  it('keeps shared quality filters and drops incompatible ones when switching types', () => {
+    const app = harness(
+      [row(1)],
+      '/inventory?type=elements&qualities=missing%20kind,missing%20description,duplicate%20name,has%20child%20view',
+    )
+    act(() => app.state.updateParams({ type: 'views' }))
+    expect(app.params.get('qualities')).toBe('missing description,duplicate name')
+    act(() => app.state.updateParams({ type: 'connectors' }))
+    expect(app.params.get('qualities')).toBe('missing description')
+    act(() => app.state.updateParams({ qualities: 'self connection' }))
+    act(() => app.state.updateParams({ type: 'elements' }))
+    expect(app.params.get('qualities')).toBeNull()
+    app.close()
+  })
+
   it('preserves requested pages while loading, reveals deep links, and clamps after deletions', () => {
     const app = harness([], '/inventory?page=2&pageSize=25', true)
     expect(app.params.get('page')).toBe('2')

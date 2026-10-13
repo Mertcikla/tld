@@ -60,7 +60,7 @@ import {
   TriangleUpIcon,
 } from '@chakra-ui/icons'
 import type { InventoryRow, InventoryObjectType } from './inventoryData'
-import { filterInventoryRows } from './inventoryData'
+import { filterInventoryRows, getInventoryQualityOptions } from './inventoryData'
 import { INVENTORY_PAGE_SIZES, type InventoryTableState } from './useInventoryTable'
 import { inventoryCreatedAt, inventoryKindLabel } from './inventoryColumns'
 import { resolveElementIconUrl } from '../utils/elementIcon'
@@ -72,14 +72,6 @@ const types = [
   ['views', 'Views'],
   ['connectors', 'Connectors'],
 ] as const
-const qualities = [
-  'untagged',
-  'missing description',
-  'has child view',
-  'unused element',
-  'empty view',
-  'missing label',
-]
 
 type Props = {
   state: InventoryTableState
@@ -268,10 +260,11 @@ export default function InventoryList({
           <FilterPicker
             title="Quality"
             selected={filters.qualities}
-            options={qualities.map((quality) => ({
-              value: quality,
-              label: quality,
-              count: qualityRows.filter((row) => row.qualityFlags.includes(quality)).length,
+            options={getInventoryQualityOptions(selectedType).map((quality) => ({
+              value: quality.value,
+              label: quality.value,
+              description: quality.description,
+              count: qualityRows.filter((row) => row.qualityFlags.includes(quality.value)).length,
             }))}
             onToggle={(quality) => toggleFilter('qualities', quality)}
           />
@@ -980,7 +973,7 @@ function FilterPicker({
   multiple?: boolean
   trigger?: 'button' | 'icon'
   title: string
-  options: { value: string; label: string; count: number }[]
+  options: { value: string; label: string; count: number; description?: string }[]
   selected: string[]
   onToggle: (value: string) => void
   onDelete?: (value: string) => void
@@ -1091,6 +1084,11 @@ function FilterPicker({
                         ({option.count})
                       </Box>
                     </Text>
+                    {option.description && (
+                      <Text fontSize="xs" color="var(--chakra-colors-chakra-subtle-text)" mt={0.5}>
+                        {option.description}
+                      </Text>
+                    )}
                   </Checkbox>
                   {onDelete && (
                     <IconButton

@@ -10,6 +10,7 @@ import {
 import type { RowSelectionState, SortingState, VisibilityState } from '@tanstack/react-table'
 import {
   filterInventoryRows,
+  getInventoryQualityOptions,
   type InventoryFilters,
   type InventoryRow,
   type InventoryType,
@@ -74,6 +75,16 @@ export function useInventoryTable(rows: InventoryRow[], loading = false) {
         })
         if ('type' in values && (previous.get('type') ?? '') !== values.type) {
           next.delete('kind')
+          const availableQualities = getInventoryQualityOptions(
+            values.type === 'elements' || values.type === 'views' || values.type === 'connectors'
+              ? values.type
+              : 'all',
+          )
+          const retainedQualities = (next.get('qualities')?.split(',') ?? []).filter((value) =>
+            availableQualities.some((option) => option.value === value),
+          )
+          if (retainedQualities.length) next.set('qualities', retainedQualities.join(','))
+          else next.delete('qualities')
           const nextType =
             values.type === 'elements' || values.type === 'views' || values.type === 'connectors'
               ? values.type
