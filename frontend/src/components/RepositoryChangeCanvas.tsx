@@ -1,5 +1,8 @@
+import { computeLayout } from './ZUI/layout'
+import { filterLayoutByTags, visiblePlacementKeys } from './ZUI/tagVisibility'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Flex, Text } from '@chakra-ui/react'
+import { useTagFilters } from '../hooks/useTagFilters'
 import { api, type RepositoryImpact as ImpactDiagram, type RepositoryImpactScene } from '../api/client'
 import type { Tag } from '../types'
 import { isElementGroupTag } from '../utils/elementGroups'
@@ -40,7 +43,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [tagColors, setTagColors] = useState<Record<string, Tag>>(seedTagColors)
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
-  const [hiddenTags, setHiddenTags] = useState<string[]>([])
+  const { hiddenTags, selectedTags, toggleTagSelection, toggleTagVisibility, resetFilters } = useTagFilters()
   const sidePane = useResizableColumn({
     storageKey: inspectorEnabled ? 'tld:repositories:impactInspectorWidth' : 'tld:repositories:mermaidPaneWidth',
     defaultWidth: SIDE_PANE_DEFAULT_WIDTH,
@@ -99,9 +102,6 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const handleHoverTag = useCallback((tag: string | null) => {
     setHighlightedTags(tag ? [tag] : [])
   }, [])
-  const handleToggleTagVisibility = useCallback((tag: string) => {
-    setHiddenTags((prev) => prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag])
-  }, [])
   const selectPrimitive = useCallback((key: string) => {
     setSelectedKey(key)
     const entry = scene?.placements?.[key]
@@ -118,12 +118,16 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     }
   }, [view, selectedPath, scene, selectPrimitive])
   useEffect(focusSelected, [focusSelected])
-  const hiddenChanges = useMemo(() => (scene?.coverage ?? []).filter((entry) => entry.placementKeys.every((key) => {
-    const provenance = scene?.placements?.[key]
-    if (!provenance || !view) return true
-    const element = view.data.views[String(provenance.viewId)]?.placements.find((item) => item.element_id === provenance.resourceId)
-    return !element || element.tags.some((tag) => hiddenTags.includes(tag))
-  })).length, [scene, view, hiddenTags])
+  const coverageLayout = useMemo(() => view && inspectorEnabled ? computeLayout(view.data) : null, [view, inspectorEnabled])
+  const hiddenChanges = useMemo(() => {
+    if (!coverageLayout) return 0
+    const visible = visiblePlacementKeys(filterLayoutByTags(coverageLayout, selectedTags, hiddenTags))
+    return (scene?.coverage ?? []).filter((entry) => entry.placementKeys.every((key) => {
+      const placement = scene?.placements?.[key]
+      return !placement || !visible.has(`${placement.viewId}:${placement.resourceId}`)
+    })).length
+  }, [scene, coverageLayout, selectedTags, hiddenTags])
+
   return (
     <Flex direction="column" flex={1} minW={0} minH="240px" data-testid="repository-change-overlay">
       {!diagram && !embedded ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
@@ -131,7 +135,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!(embedded ? embedded.scene.files?.length : diagram?.nodes.length) && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} onSelectObject={inspectorEnabled ? (selection) => setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') : undefined} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} onSelectObject={inspectorEnabled ? (selection) => setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') : undefined} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               showViewMode={!embedded}
               busy={busy}
@@ -141,8 +145,11 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
               tagCounts={tagMetrics.tagCounts}
               tagColors={tagColors}
               hiddenTags={hiddenTags}
+              selectedTags={selectedTags}
+              onToggleTagSelection={toggleTagSelection}
+              onResetTagFilters={resetFilters}
               onHoverTag={handleHoverTag}
-              onToggleTagVisibility={handleToggleTagVisibility}
+              onToggleTagVisibility={toggleTagVisibility}
             />
           </Box>
           {!sidePane.isCollapsed && <ColumnResizeHandle

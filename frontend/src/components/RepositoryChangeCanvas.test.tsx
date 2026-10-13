@@ -1,7 +1,9 @@
 import React from 'react'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RepositoryImpact as ImpactDiagram } from '../api/client'
+import type { RepositoryImpact as ImpactDiagram, RepositoryImpactScene } from '../api/client'
+import type { PlacedElement, ViewTreeNode } from '../types'
+import { ZUICanvas } from './ZUI'
 import { PANEL_COLLAPSE_SNAP, PANEL_OVERLAY_SNAP, PANEL_RAIL_WIDTH } from '../hooks/useResizableColumn'
 import RepositoryChangeCanvas from './RepositoryChangeCanvas'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
@@ -120,6 +122,62 @@ describe('RepositoryChangeCanvas side panel', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  const taggedScene = (): RepositoryImpactScene => ({
+    repositoryId: 'repo-1', comparisonKey: 'pair', version: 'v1', schemaVersion: '2',
+    fromGitRevision: 'a', toGitRevision: 'b', fallbackViewId: -1, overlays: {}, authoredViewIds: [], navigations: [],
+    tree: [{ id: 1, name: 'Root', children: [], parent_view_id: null } as unknown as ViewTreeNode],
+    views: { 1: { placements: [
+      { element_id: 1, name: 'Go', tags: ['go'], position_x: 0, position_y: 0 } as PlacedElement,
+      { element_id: 2, name: 'JavaScript', tags: ['javascript'], position_x: 200, position_y: 0 } as PlacedElement,
+    ], connectors: [] } },
+    placements: Object.fromEntries([1, 2].map((id) => [`placement|1|${id}`, {
+      key: `placement|1|${id}`, viewId: 1, resourceId: id, name: '', origin: 'authored' as const,
+      grounding: 'file', role: 'direct', paths: [], distance: 0,
+    }])),
+    coverage: [1, 2].map((id) => ({ path: `${id}.txt`, placementKeys: [`placement|1|${id}`], factsUnavailable: false })),
+  })
+
+  it('updates inspector coverage when selected tags hide changes', async () => {
+    stubEnvironment(undefined, '?debugImpact=1')
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.impactScene).mockResolvedValueOnce(taggedScene())
+    const renderer = await renderCanvas()
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    const hiddenChanges = () => renderer.root.findByType(RepositoryImpactInspector).props.hiddenChanges
+    expect(hiddenChanges()).toBe(0)
+    await act(async () => menu().props.onToggleTagSelection('go'))
+    expect(hiddenChanges()).toBe(1)
+    expect(renderer.root.findByType(ZUICanvas).props.selectedTags).toEqual(['go'])
+    await act(async () => menu().props.onToggleTagSelection('javascript'))
+    expect(hiddenChanges()).toBe(0)
+    await act(async () => menu().props.onToggleTagVisibility('go'))
+    expect(menu().props.selectedTags).toEqual([])
+    expect(hiddenChanges()).toBe(1)
+    await act(async () => menu().props.onResetTagFilters())
+    expect(hiddenChanges()).toBe(0)
+    renderer.unmount()
+  })
+
+  it('filters frozen embedded scenes without API reads or changing Mermaid content', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<RepositoryChangeCanvas diagram={null} selectedPath="" embedded={{ scene: taggedScene(), markdown: 'Frozen diagram' }} />)
+    })
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    await act(async () => menu().props.onToggleTagSelection('go'))
+    expect(renderer.root.findByType(ZUICanvas).props.selectedTags).toEqual(['go'])
+    expect(renderer.root.findByType(RepositoryChangeMermaid).props.embeddedMarkdown).toBe('Frozen diagram')
+    expect(api.repositories.impactScene).not.toHaveBeenCalled()
+    await act(async () => menu().props.onToggleTagVisibility('javascript'))
+    expect(menu().props.selectedTags).toEqual([])
+    expect(menu().props.hiddenTags).toEqual(['javascript'])
+    await act(async () => menu().props.onResetTagFilters())
+    expect(menu().props.hiddenTags).toEqual([])
+    renderer.unmount()
   })
 
   it('defaults to Mermaid without requesting debug provenance', async () => {

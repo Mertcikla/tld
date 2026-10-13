@@ -82,6 +82,27 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof ViewFloatingM
 }
 
 describe('ViewFloatingMenu noise gate toggle', () => {
+  it('exposes tag selection and reset independently of the eye action', () => {
+    const onToggleTagSelection = vi.fn()
+    const onResetTagFilters = vi.fn()
+    const toggleTagVisibility = vi.fn()
+    const renderer = renderMenu({
+      allTags: ['go'], tagCounts: { go: 6 }, selectedTags: ['go'],
+      onToggleTagSelection, onResetTagFilters, toggleTagVisibility,
+    })
+    const row = renderer.root.findByProps({ 'aria-label': 'Filter by tag go' })
+    expect(row.props['aria-pressed']).toBe(true)
+    act(() => row.props.onClick())
+    expect(onToggleTagSelection).toHaveBeenCalledWith('go')
+    const stopPropagation = vi.fn()
+    act(() => renderer.root.findByProps({ 'data-testid': 'vieweditor-toolbar-tag-toggle' }).props.onClick({ stopPropagation }))
+    expect(toggleTagVisibility).toHaveBeenCalledWith('go')
+    expect(onToggleTagSelection).toHaveBeenCalledOnce()
+    act(() => renderer.root.findByProps({ 'aria-label': 'Reset tag filters' }).props.onClick())
+    expect(onResetTagFilters).toHaveBeenCalledOnce()
+    act(() => renderer.unmount())
+  })
+
   it('renders Mermaid copy and generic export actions in the extras menu', () => {
     const onCopyMermaid = vi.fn()
     const onExport = vi.fn()

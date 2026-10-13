@@ -1,3 +1,4 @@
+import { TagFilterReset, TagFilterRow } from './TagFilterControls'
 import React, { memo } from 'react'
 import type { ViewFloatingMenuSlots } from '../slots'
 
@@ -79,6 +80,9 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   layers: ViewLayer[]
   tagColors: Record<string, Tag>
   hiddenTags: string[]
+  selectedTags?: string[]
+  onToggleTagSelection?: (tag: string) => void
+  onResetTagFilters?: () => void
   toggleTagVisibility: (tag: string) => void
   toggleLayerVisibility: (layer: ViewLayer) => void
   tagCounts: Record<string, number>
@@ -129,6 +133,9 @@ function ViewFloatingMenu({
   layers,
   tagColors,
   hiddenTags,
+  selectedTags = [],
+  onToggleTagSelection,
+  onResetTagFilters,
   toggleTagVisibility,
   toggleLayerVisibility,
   tagCounts,
@@ -479,44 +486,25 @@ function ViewFloatingMenu({
                       )
                     })}
 
-                    {visibleTags.map(tag => {
-                      const isHidden = hiddenTags.includes(tag)
-                      return (
-                        <HStack
-                          key={`tag-${tag}`}
-                          px={2}
-                          py={1}
-                          spacing={2}
-                          borderRadius="md"
-                          onMouseEnter={() => { setHighlightedTags([tag]); setHighlightColor(tagColors[tag]?.color || '') }}
-                          opacity={isHidden ? 0.4 : 1}
-                          transition="opacity 0.15s"
-                        >
-                          <Box w="8px" h="8px" rounded="full" bg={tagColors[tag]?.color || '#A0AEC0'} flexShrink={0} />
-                          <Text fontSize="xs" fontWeight="600" color="gray.300" flex={1} isTruncated>
-                            {tag}
-                          </Text>
-                          <Text fontSize="10px" color="gray.600" flexShrink={0}>
-                            {tagCounts[tag] ?? 0}
-                          </Text>
-                          <IconButton
-                            aria-label={isHidden ? 'Show tag' : 'Hide tag'}
-                            data-testid="vieweditor-toolbar-tag-toggle"
-                            icon={isHidden ? <EyeOffSvg size={12} /> : <EyeSvg size={12} />}
-                            size="xs"
-                            variant="ghost"
-                            color={isHidden ? 'whiteAlpha.300' : 'whiteAlpha.600'}
-                            _hover={{ color: 'white', bg: 'whiteAlpha.200' }}
-                            onClick={(e) => { e.stopPropagation(); toggleTagVisibility(tag) }}
-                            flexShrink={0}
-                          />
-                        </HStack>
-                      )
-                    })}
+                    {visibleTags.map((tag) => (
+                      <TagFilterRow
+                        key={`tag-${tag}`}
+                        tag={tag}
+                        count={tagCounts[tag] ?? 0}
+                        color={tagColors[tag]?.color}
+                        hidden={hiddenTags.includes(tag)}
+                        selected={selectedTags.includes(tag)}
+                        onSelect={onToggleTagSelection}
+                        onHover={() => { setHighlightedTags([tag]); setHighlightColor(tagColors[tag]?.color || '') }}
+                        onToggleVisibility={toggleTagVisibility}
+                        eyeTestId="vieweditor-toolbar-tag-toggle"
+                      />
+                    ))}
                   </PopoverBody>
                 </PopoverContent>
               </Portal>
             </Popover>
+            <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags(null); setHighlightColor(null) } : undefined} />
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
           </>
         )}

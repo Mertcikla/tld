@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeLayout } from './layout'
-import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
+import { viewportForNodeRevealTarget, findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
 import { calculateMaxZoom, constrainViewState } from './useZUIInteraction'
 import { getCameraRebase, getExpandThresholds, rawCameraView, updateScene, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { buildSceneGraph } from './sceneGraph'
@@ -509,6 +509,28 @@ describe('ZUI focus targets', () => {
     }
   })
 
+  it('fully reveals a linked diagram even when the current zoom limit would leave its parent covering connectors', () => {
+    const parent = testNode('parent', [testNode('child1'), testNode('child2')])
+    const target: ZUIFocusTarget = {
+      id: parent.id,
+      label: parent.label,
+      type: 'node',
+      absX: 0,
+      absY: 0,
+      absW: parent.worldW,
+      absH: parent.worldH,
+      absScale: 1,
+      node: parent,
+    }
+
+    for (const [canvasW, canvasH, mobile] of [[1280, 680, false], [393, 700, true]] as const) {
+      const thresholds = getExpandThresholds(canvasW)
+      const limitedZoom = (thresholds.end - 32) / parent.worldW
+      const viewport = viewportForDiagramFocusTarget(target, canvasW, canvasH, limitedZoom, mobile)!
+      expect(parent.worldW * viewport.zoom).toBeGreaterThan(thresholds.end)
+    }
+  })
+
   it('can navigate and zoom to every linked view target without losing the content center', () => {
     const data = focusMatrixExploreData(6)
     const layout = computeLayout(data)
@@ -555,5 +577,28 @@ describe('ZUI focus targets', () => {
 
     expect(rawCameraView(constrained).x).toBeCloseTo(targetView.x)
     expect(rawCameraView(constrained).y).toBeCloseTo(targetView.y)
+  })
+})
+
+
+describe('clicking an element to reveal its contents', () => {
+  it.each([
+    { w: 1200, h: 800, mobile: false },
+    { w: 390, h: 720, mobile: true },
+  ])('fully expands nested elements on a $w pixel canvas', ({ w, h, mobile }) => {
+    const layout = computeLayout(focusMatrixExploreData(6))
+    for (const { viewId, elementId } of placementsIn(focusMatrixExploreData(6))) {
+      const target = findElementFocusTarget(layout.groups, viewId, elementId)!
+      if (!target.node?.children.length) continue
+      const view = viewportForNodeRevealTarget(target, w, h, calculateMaxZoom(layout.groups, w), mobile)!
+      expectFiniteViewport(view, `reveal ${viewId}/${elementId}`)
+      expect(target.absW * view.zoom).toBeGreaterThan(getExpandThresholds(w).end)
+      const content = target.contentRect!
+      const constrained = constrainViewState(view, w, h, layout.bbox)
+      const centerX = worldToScreenX(content.x + content.w / 2, constrained)
+      const centerY = worldToScreenY(content.y + content.h / 2, constrained)
+      expect(centerX).toBeCloseTo(w / 2, 1)
+      expect(centerY).toBeCloseTo(h / 2, 1)
+    }
   })
 })

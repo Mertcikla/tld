@@ -77,9 +77,12 @@ function nodeTarget(
 ): ZUIFocusTarget {
   const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
   const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
-  const absW = node.worldW * parentAbsScale
-  const absH = node.worldH * parentAbsScale
+  return focusTargetForNode(node, absX, absY, parentAbsScale)
+}
 
+export function focusTargetForNode(node: LayoutNode, absX: number, absY: number, absScale: number): ZUIFocusTarget {
+  const absW = node.worldW * absScale
+  const absH = node.worldH * absScale
   return {
     id: node.id,
     label: node.linkedDiagramLabel || node.label,
@@ -89,9 +92,9 @@ function nodeTarget(
     absY,
     absW,
     absH,
-    absScale: parentAbsScale,
+    absScale,
     node,
-    contentRect: childContentRect(node, absX, absY, parentAbsScale) ?? undefined,
+    contentRect: childContentRect(node, absX, absY, absScale) ?? undefined,
   }
 }
 
@@ -266,7 +269,9 @@ export function viewportForDiagramFocusTarget(
     isMobileLayout ? 0.18 : 0.16,
     {
       preferContent: true,
-      minTargetScreenW: isMobileLayout ? 180 : 260,
+      minTargetScreenW: target.node?.children.length
+        ? getExpandThresholds(canvasW).end * 1.02
+        : isMobileLayout ? 180 : 260,
       minChildScreenW: isMobileLayout ? 76 : 104,
     },
   )
@@ -290,4 +295,18 @@ export function viewportForElementFocusTarget(
       keepParentVisible: true,
     },
   )
+}
+
+export function viewportForNodeRevealTarget(
+  target: ZUIFocusTarget,
+  canvasW: number,
+  canvasH: number,
+  maxZoom: number,
+  isMobileLayout: boolean,
+): ZUIViewState | null {
+  return viewportForFocusTarget(target, canvasW, canvasH, maxZoom, isMobileLayout ? 0.18 : 0.16, {
+    preferContent: true,
+    minTargetScreenW: getExpandThresholds(canvasW).end * 1.02,
+    minChildScreenW: isMobileLayout ? 76 : 104,
+  })
 }

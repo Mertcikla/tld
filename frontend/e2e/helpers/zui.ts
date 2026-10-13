@@ -74,17 +74,18 @@ function cameraDelta(left: ZUIViewState, right: ZUIViewState) {
   )
 }
 
-export async function waitForStableZuiCamera(page: Page, tolerance = 1) {
+export async function waitForStableZuiCamera(page: Page, tolerance = 0.01) {
   await waitForZuiFrame(page)
   let previous = await zuiViewState(page)
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await waitForZuiFrame(page)
+  let stableSamples = 0
+  // Focus transitions last 520 ms; adjacent frames can look stable before
+  // they finish. Require sustained stability and fail if the camera never settles.
+  await expect.poll(async () => {
     const next = await zuiViewState(page)
-    if (cameraDelta(previous, next) <= tolerance) {
-      return next
-    }
+    stableSamples = cameraDelta(previous, next) <= tolerance ? stableSamples + 1 : 0
     previous = next
-  }
+    return stableSamples
+  }, { intervals: [100] }).toBeGreaterThanOrEqual(3)
   return previous
 }
 

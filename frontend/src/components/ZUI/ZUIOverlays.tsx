@@ -20,7 +20,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
@@ -249,13 +249,27 @@ export function ZUIHoverPopover({
   hoveredScreenRect,
   isHoveredItemFullyVisible,
   onHoverLock,
+  onPopoverElement,
 }: {
   hoveredItem: HoveredItem | null
   hoveredScreenRect: { sx: number; sy: number; sw: number; sh: number } | null
   isHoveredItemFullyVisible: boolean
   onHoverLock: (locked: boolean) => void
+  onPopoverElement?: (element: HTMLElement | null) => void
 }) {
   const isOpen = isHoveredItemFullyVisible
+  const contentElementRef = useRef<HTMLElement | null>(null)
+  const isOpenRef = useRef(isOpen)
+  isOpenRef.current = isOpen
+  // Keep the ref callback stable across opening/closing: the motion component
+  // retains its initial forwarded ref. Report visibility separately.
+  const registerPopoverElement = useCallback((element: HTMLElement | null) => {
+    contentElementRef.current = element
+    onPopoverElement?.(isOpenRef.current ? element : null)
+  }, [onPopoverElement])
+  useLayoutEffect(() => {
+    onPopoverElement?.(isOpen ? contentElementRef.current : null)
+  }, [isOpen, onPopoverElement])
 
   useEffect(() => {
     if (!isOpen) onHoverLock(false)
@@ -265,13 +279,17 @@ export function ZUIHoverPopover({
   return (
     <Popover
       isOpen={isOpen}
-      placement="right-start"
+      placement={hoveredItem?.type === 'edge' ? 'bottom-start' : 'right-start'}
+      autoFocus={false}
+      returnFocusOnClose={false}
+      modifiers={[{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }]}
       closeOnBlur={false}
       gutter={12}
       isLazy
     >
       <PopoverTrigger>
         <Box
+          data-testid="zui-hover-anchor"
           position="absolute"
           left={hoveredScreenRect?.sx ?? 0}
           top={hoveredScreenRect?.sy ?? 0}
@@ -282,6 +300,7 @@ export function ZUIHoverPopover({
       </PopoverTrigger>
       <Portal>
         <PopoverContent
+          ref={registerPopoverElement}
           data-testid="zui-hover-popover"
           bg="glass.bg"
           border="1px solid"

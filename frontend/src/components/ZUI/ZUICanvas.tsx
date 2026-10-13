@@ -6,14 +6,17 @@ import type { ExploreData, ViewLayer } from '../../types'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import { computeLayout } from './layout'
-import { getCameraRebase, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY } from './layoutEngine'
+import { filterLayoutByTags } from './tagVisibility'
+import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
+import type { ZUIHitTestNodeResult } from './hitTest'
 import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
+import { getHoverScreenRect } from './hoverFeedback'
 import { applyChangeOverlays } from './changeOverlay'
 import type { ZUIChangeOverlay } from './types'
 
@@ -51,6 +54,7 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  selectedTags?: string[]
   tagColors?: Record<string, { color?: string } | string>
   groupLayers?: ViewLayer[]
   crossBranchSettings: CrossBranchContextSettings
@@ -69,6 +73,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  selectedTags,
   tagColors,
   groupLayers = [],
   crossBranchSettings,
@@ -89,6 +94,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     const base = computeLayout(data)
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   }, [data, changeOverlays])
+  const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags), [layout, selectedTags, hiddenTags])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
 
@@ -97,20 +103,38 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return proxyResolverRef.current?.(worldX, worldY, view, canvasW) ?? null
   }, [])
 
-  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
+  const cameraActionsRef = useRef<ReturnType<typeof useZUICamera> | null>(null)
+  const handleNodeClick = useCallback((hit: ZUIHitTestNodeResult) => {
+    cameraActionsRef.current?.revealNode(hit)
+  }, [])
+  const handleZoom = useCallback(() => {
+    cameraActionsRef.current?.cancelTransition()
+    onZoom?.()
+  }, [onZoom])
+  const handlePan = useCallback(() => {
+    cameraActionsRef.current?.cancelTransition()
+    onPan?.()
+  }, [onPan])
+
+  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
     canvasRef,
     undefined,
-    layout.groups,
+    visibleLayout.groups,
     layout.bbox,
-    onZoom,
-    onPan,
+    handleZoom,
+    handlePan,
     suppressWheelPan,
     resolveHoveredProxyItem,
     hiddenTags,
     containerSize.w,
     hoverLocked,
     onSelectObject,
+    handleNodeClick,
   )
+
+  useEffect(() => {
+    setHoveredItem(null, true)
+  }, [visibleLayout, setHoveredItem])
 
   const viewportBounds = useMemo(() => {
     const zoom = Math.max(0.0001, viewState.zoom)
@@ -130,7 +154,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [containerSize.h, containerSize.w, viewState])
 
   const proxyState = useZUIProxyConnectors(
-    layout.groups,
+    visibleLayout.groups,
     workspaceSnapshot,
     viewState,
     containerSize.w,
@@ -152,6 +176,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     viewStateRef,
     setHoveredItem,
   })
+  cameraActionsRef.current = camera
   const {
     fitInitialView,
     fitCurrentView,
@@ -169,7 +194,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     setContainerSize,
     fitInitialView,
     onReady,
-    layout,
+    layout: visibleLayout,
     viewState,
     viewStateRef,
     crossBranchSettings,
@@ -179,6 +204,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     hiddenTags,
     tagColors,
     groupLayers,
+    hoveredItem,
   })
 
   useEffect(() => {
@@ -198,7 +224,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   if (debugTestState && debugStateReady && typeof window !== 'undefined') {
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
-      groups: layout.groups,
+      groups: visibleLayout.groups,
       lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
   }
@@ -207,10 +233,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     if (!debugTestState || !debugStateReady || typeof window === 'undefined') return
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
-      groups: layout.groups,
+      groups: visibleLayout.groups,
       lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
-  }, [debugStateReady, debugTestState, layout.groups, viewState])
+  }, [debugStateReady, debugTestState, visibleLayout.groups, viewState])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -256,33 +282,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     })
   }, [containerSize.h, containerSize.w, debugViewport, viewState, viewportBounds])
 
-  const hoveredScreenRect = useMemo(() => {
-    if (!hoveredItem) return null
-    let absX: number
-    let absY: number
-    let absW: number
-    let absH: number
-    if (hoveredItem.type === 'node') {
-      ({ absX, absY, absW, absH } = hoveredItem)
-    } else if (hoveredItem.type === 'edge') {
-      ({ absX, absY } = hoveredItem)
-      absW = 0
-      absH = 0
-    } else {
-      const group = hoveredItem.data
-      absW = 200 / viewState.zoom
-      absH = 50 / viewState.zoom
-      absX = group.worldX + group.diagramX + group.diagramW / 2 - absW / 2
-      absY = group.worldY + group.diagramY - absH
-    }
-
-    return {
-      sx: worldToScreenX(absX, viewState),
-      sy: worldToScreenY(absY, viewState),
-      sw: absW * viewState.zoom,
-      sh: absH * viewState.zoom,
-    }
-  }, [hoveredItem, viewState])
+  const hoveredScreenRect = useMemo(() => getHoverScreenRect(hoveredItem, viewState), [hoveredItem, viewState])
 
   const isHoveredItemFullyVisible = useMemo(() => {
     if (!hoveredScreenRect || containerSize.w === 0) return false
@@ -304,8 +304,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [viewState])
 
   const currentPath = useMemo(() => {
-    return getPathAt(breadcrumbView, layout.groups, containerSize.w, containerSize.h)
-  }, [breadcrumbView, layout.groups, containerSize])
+    return getPathAt(breadcrumbView, visibleLayout.groups, containerSize.w, containerSize.h)
+  }, [breadcrumbView, visibleLayout.groups, containerSize])
 
 
   useImperativeHandle(
@@ -348,6 +348,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         hoveredScreenRect={hoveredScreenRect}
         isHoveredItemFullyVisible={isHoveredItemFullyVisible}
         onHoverLock={setHoverLocked}
+        onPopoverElement={setHoverPopoverElement}
       />
     </div>
   )

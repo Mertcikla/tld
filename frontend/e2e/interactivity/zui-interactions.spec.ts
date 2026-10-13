@@ -1,5 +1,9 @@
 import { expect, test } from '../fixtures'
 import {
+  createApiView,
+  createConnector,
+  createPlacedElement,
+  uniqueName,
   dispatchTouchEventOnLocator,
   dispatchWheelOnLocator,
 } from '../helpers/vieweditor'
@@ -168,6 +172,203 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   const beforeBreadcrumb = await waitForStableZuiCamera(page)
   await page.getByTestId('zui-breadcrumb').getByText(root.name).click()
   await expect.poll(async () => stateDelta(await zuiViewState(page), beforeBreadcrumb)).toBeGreaterThan(8)
+})
+
+test('highlights connector hover, anchors its popover near the pointer, and supports nested connectors', async ({ page }) => {
+  const { root, parent, sibling, child, childSource, childTarget } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: sibling.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const pointer = {
+    x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.25,
+    y: connector.sourcePoint.y,
+  }
+  const canvas = page.locator('canvas')
+  const pixelNearConnector = () => canvas.evaluate((element: HTMLCanvasElement, point) => {
+    const rect = element.getBoundingClientRect()
+    const dpr = element.width / rect.width
+    const ctx = element.getContext('2d')!
+    return Array.from(ctx.getImageData((point.x - rect.left) * dpr, (point.y - rect.top + 1.5) * dpr, 1, 1).data)
+  }, pointer)
+  const before = await pixelNearConnector()
+  await page.mouse.move(pointer.x, pointer.y)
+  await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
+  await expect(page.getByTestId('zui-hover-popover')).toContainText('Parent Link')
+  await expect(canvas).toHaveCSS('cursor', 'pointer')
+  await expect.poll(pixelNearConnector).not.toEqual(before)
+  const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+  expect(anchor).not.toBeNull()
+  expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
+  expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
+
+  await page.getByTestId('zui-hover-popover').hover()
+  await expect(page.getByRole('link', { name: `Go to ${sibling.name}` })).toBeVisible()
+
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${child.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+  const nested = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: childSource.id, targetElementId: childTarget.id },
+  }) as { connector: { midPoint: { x: number; y: number } } }
+  await page.mouse.move(nested.connector.midPoint.x, nested.connector.midPoint.y)
+  await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
+  await expect(page.getByTestId('zui-hover-popover')).toContainText('Child Link')
+  await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
+})
+
+test('element popovers keep hover while crossing a connector behind the gap', async ({ page }) => {
+  const { root, parent } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+  const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
+    node: { x: number; y: number; width: number; height: number }
+  }
+  // The connector leaves the middle of this card's right edge and passes
+  // directly behind the gap into its right-aligned popover.
+  const start = { x: node.x + node.width - 4, y: node.y + node.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  const popover = page.getByTestId('zui-hover-popover')
+  await expect(popover).toContainText(parent.name)
+  await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
+  const initialAnchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+  const initialPopup = await popover.boundingBox()
+  const action = page.getByRole('link', { name: 'Open in Editor' })
+  const button = await action.boundingBox()
+  const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
+  for (let step = 1; step <= 20; step += 1) {
+    await page.mouse.move(start.x + (destination.x - start.x) * step / 20, start.y + (destination.y - start.y) * step / 20)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(action).toBeVisible()
+  }
+  expect(await page.getByTestId('zui-hover-anchor').boundingBox()).toEqual(initialAnchor)
+  expect(await popover.boundingBox()).toEqual(initialPopup)
+  // Moving away still releases hover, allowing another object to be targeted.
+  const box = await canvasBox(page)
+  await page.mouse.move(box.x + 4, box.y + box.height - 4)
+  await expect(popover).toBeHidden()
+  await page.mouse.move(start.x, start.y)
+  await expect(popover).toContainText(parent.name)
+  await expect(action).toHaveAttribute('href', `/views/${root.id}?element=${parent.id}`)
+  await action.click()
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}(?:\\?|$)`))
+})
+
+test('connector popovers stay anchored and remain reachable across the safe hover corridor', async ({ page }) => {
+  const { root, parent, sibling } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: sibling.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const start = {
+    x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.25,
+    y: connector.sourcePoint.y,
+  }
+  await page.mouse.move(start.x, start.y)
+  const popover = page.getByTestId('zui-hover-popover')
+  await expect(popover).toContainText('Parent Link')
+  await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
+  const anchor = page.getByTestId('zui-hover-anchor')
+  const initialAnchor = await anchor.boundingBox()
+  const initialPopup = await popover.boundingBox()
+  await page.mouse.move(start.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.3, start.y, { steps: 8 })
+  expect(await anchor.boundingBox()).toEqual(initialAnchor)
+  expect(await popover.boundingBox()).toEqual(initialPopup)
+
+  const action = page.getByRole('link', { name: `Go to ${sibling.name}` })
+  const button = await action.boundingBox()
+  const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
+  // Move slowly through the gap, longer than the dismissal grace period.
+  // Hovering must keep the original target instead of chasing the pointer.
+  for (let step = 1; step <= 20; step += 1) {
+    await page.mouse.move(start.x + (destination.x - start.x) * step / 20, start.y + (destination.y - start.y) * step / 20)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  }
+  await expect(popover).toContainText('Parent Link')
+  expect(await anchor.boundingBox()).toEqual(initialAnchor)
+  await expect(action).toHaveAttribute('href', `/views/${root.id}?element=${sibling.id}`)
+  await action.click()
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}(?:\\?|$)`))
+})
+
+test('clicking an element jumps into its contents while dragging only pans', async ({ page }, testInfo) => {
+  const { root, parent, childSource } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+  const geometry = () => zuiScreenGeometry(page, { nodeElementId: parent.id }) as Promise<{
+    node: { x: number; y: number; width: number; height: number }
+  }>
+  const before = await zuiViewState(page)
+  const initial = (await geometry()).node
+  await dispatchZuiMousePan(page,
+    { x: initial.x + initial.width / 2, y: initial.y + initial.height / 2 },
+    { x: initial.x + initial.width / 2 + 30, y: initial.y + initial.height / 2 + 20 },
+  )
+  await waitForStableZuiCamera(page)
+  expect((await zuiViewState(page)).zoom).toBeCloseTo(before.zoom, 5)
+
+  const node = (await geometry()).node
+  const point = { x: node.x + node.width / 2, y: node.y + node.height / 2 }
+  if (testInfo.project.use.hasTouch) await page.touchscreen.tap(point.x, point.y)
+  else await page.mouse.click(point.x, point.y)
+  const box = await canvasBox(page)
+  const revealThreshold = Math.min(640, Math.max(200, box.width * 0.4))
+  await expect.poll(async () => (await geometry()).node.width).toBeGreaterThan(revealThreshold)
+  await waitForStableZuiCamera(page)
+  expect((await zuiViewState(page)).zoom).toBeGreaterThan(before.zoom)
+  const { node: child } = await zuiScreenGeometry(page, { nodeElementId: childSource.id }) as {
+    node: { x: number; y: number; width: number; height: number }
+  }
+  await page.mouse.move(child.x + child.width / 2, child.y + child.height / 2)
+  await expect(page.getByTestId('zui-hover-popover')).toContainText(childSource.name)
+})
+
+test('anchors off-view connector popovers at either hovered end of the route', async ({ page }) => {
+  const root = await createApiView(page, uniqueName('Proxy Hover Root'))
+  const parent = await createPlacedElement(page, root.id, { name: uniqueName('Parent') }, 120, 140)
+  const target = await createPlacedElement(page, root.id, { name: uniqueName('Target') }, 720, 140)
+  const child = await createApiView(page, uniqueName('Proxy Hover Child'), parent.id)
+  const source = await createPlacedElement(page, child.id, { name: uniqueName('Source') }, 120, 140)
+  await createConnector(page, root.id, source.id, target.id, { label: 'Off-view call' })
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForStableZuiCamera(page)
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: target.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const box = await canvasBox(page)
+  for (const progress of [0.2, 0.8]) {
+    await page.mouse.move(box.x + 5, box.y + 5)
+    await expect(page.getByTestId('zui-hover-popover')).toBeHidden()
+    const pointer = {
+      x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * progress,
+      y: connector.sourcePoint.y,
+    }
+    await page.mouse.move(pointer.x, pointer.y)
+    const popover = page.getByTestId('zui-hover-popover')
+    await expect(popover).toBeVisible()
+    await expect(popover).toContainText('Off-View Connector')
+    await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
+    const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+    expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
+    expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
+    // Popper can flip start/end alignment or shift inward on narrow screens.
+    // Measure placement and bounds together after its positioning update.
+    await expect.poll(() => popover.evaluate((element, reference) => {
+      const popup = element.getBoundingClientRect()
+      const placement = element.closest('[data-popper-placement]')?.getAttribute('data-popper-placement')
+      const alignedLeft = placement?.endsWith('-end') ? reference.x + reference.width - popup.width : reference.x
+      const expectedLeft = Math.max(8, Math.min(alignedLeft, document.documentElement.clientWidth - popup.width - 8))
+      return Math.abs(popup.x - expectedLeft)
+    }, { x: anchor!.x, width: anchor!.width })).toBeLessThan(2)
+  }
 })
 
 test('handles one-finger touch pan, two-finger pinch, and transition back to touch pan', async ({ page }, testInfo) => {

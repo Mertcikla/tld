@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CoreUISlots } from '../../slots'
+import { resetTagFilters, toggleHiddenTags, toggleSelectedTag } from '../../utils/tagFilters'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { parseNumericId } from '../../utils/ids'
 import { copyTextToClipboard } from '../../utils/clipboard'
@@ -980,10 +981,12 @@ function ViewEditorInner({
 
   const handleSetActiveTags = useCallback((tags: string[]) => {
     setActiveTags(tags)
+    setHiddenLayerTags([])
   }, [])
 
   const handleSetHiddenLayerTags = useCallback((tags: string[]) => {
     setHiddenLayerTags(tags)
+    setActiveTags([])
   }, [])
 
   // stableOnConnectTo is wired after canvasInteractions is declared
@@ -1939,20 +1942,24 @@ function ViewEditorInner({
     return counts
   }, [viewElements, layers])
 
+  const toggleTagSelection = useCallback((tag: string) => {
+    const next = toggleSelectedTag(activeTagsRef.current, tag)
+    handleSetActiveTags(next.selectedTags)
+  }, [handleSetActiveTags])
+
+  const resetFilters = useCallback(() => {
+    const next = resetTagFilters()
+    setActiveTags(next.selectedTags)
+    setHiddenLayerTags(next.hiddenTags)
+  }, [])
+
   const toggleLayerVisibility = useCallback((layer: import('../../types').ViewLayer) => {
     if (layer.tags.length === 0) return
-    const prev = hiddenLayerTagsRef.current
-    const allHidden = layer.tags.every(t => prev.includes(t))
-    const next = allHidden
-      ? prev.filter(t => !layer.tags.includes(t))
-      : Array.from(new Set([...prev, ...layer.tags]))
-    handleSetHiddenLayerTags(next)
+    handleSetHiddenLayerTags(toggleHiddenTags(hiddenLayerTagsRef.current, layer.tags).hiddenTags)
   }, [handleSetHiddenLayerTags])
 
   const toggleTagVisibility = useCallback((tag: string) => {
-    const prev = hiddenLayerTagsRef.current
-    const next = prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
-    handleSetHiddenLayerTags(next)
+    handleSetHiddenLayerTags(toggleHiddenTags(hiddenLayerTagsRef.current, [tag]).hiddenTags)
   }, [handleSetHiddenLayerTags])
 
   // ── VS Code Integration ───────────────────────────────────────────────────
@@ -4580,6 +4587,7 @@ function ViewEditorInner({
               name={viewName ?? undefined}
               isOpen={viewDetails.isOpen}
               onToggle={viewDetails.onToggle}
+              onOpenExplorer={viewId != null ? () => navigate(`/views?view=explore&focus=${viewId}`) : undefined}
               supportsZoomOut={supportsZoomOut}
               supportsZoomIn={supportsZoomIn}
             />
@@ -4613,6 +4621,9 @@ function ViewEditorInner({
               layers={layers}
               tagColors={tagColors}
               hiddenTags={hiddenLayerTags}
+              selectedTags={activeTags}
+              onToggleTagSelection={toggleTagSelection}
+              onResetTagFilters={resetFilters}
               toggleTagVisibility={toggleTagVisibility}
               toggleLayerVisibility={toggleLayerVisibility}
               tagCounts={tagCounts}

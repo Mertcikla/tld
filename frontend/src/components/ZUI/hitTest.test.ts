@@ -118,6 +118,14 @@ describe('ZUI node hit testing', () => {
 
     expect(hit?.node.id).toBe('top')
   })
+  it('limits deep-zoom leaf hit areas to the visible capped card', () => {
+    const leaf = node('leaf', 1, 0, 0)
+    const view = { x: 0, y: 0, zoom: 10 }
+    expect(hitTestZUIRenderedNode(5, 40, [group([leaf])], view, thresholds)).toBeNull()
+    const hit = hitTestZUIRenderedNode(50, 40, [group([leaf])], view, thresholds)
+    expect(hit).toMatchObject({ absX: 30, absY: 24, absW: 40, absH: 32 })
+  })
+
 })
 
 describe('ZUI gesture zoom', () => {

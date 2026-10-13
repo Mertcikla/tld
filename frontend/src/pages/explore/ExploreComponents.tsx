@@ -1,3 +1,4 @@
+import { TagFilterReset, TagFilterRow } from '../../components/TagFilterControls'
 import {
   Box,
   Button,
@@ -77,6 +78,9 @@ export function ExploreToolbar({
   layerElementCounts,
   tagCounts,
   hiddenTags,
+  selectedTags = [],
+  onToggleTagSelection,
+  onResetTagFilters,
   isTagsOpen,
   onTagsClose,
   onTagsToggle,
@@ -99,6 +103,9 @@ export function ExploreToolbar({
   layerElementCounts: Record<number, number>
   tagCounts: Record<string, number>
   hiddenTags: string[]
+  selectedTags?: string[]
+  onToggleTagSelection?: (tag: string) => void
+  onResetTagFilters?: () => void
   isTagsOpen: boolean
   onTagsClose: () => void
   onTagsToggle: () => void
@@ -224,43 +231,24 @@ export function ExploreToolbar({
                       )
                     })}
 
-                    {allTags.map((tag) => {
-                      const isHidden = hiddenTags.includes(tag)
-                      return (
-                        <HStack
-                          key={`tag-${tag}`}
-                          px={2}
-                          py={1}
-                          spacing={2}
-                          borderRadius="md"
-                          onMouseEnter={() => { setHighlightedTags([tag]); setHighlightColor(tagColors[tag]?.color || '') }}
-                          opacity={isHidden ? 0.4 : 1}
-                          transition="opacity 0.15s"
-                        >
-                          <Box w="8px" h="8px" rounded="full" bg={tagColors[tag]?.color || '#A0AEC0'} flexShrink={0} />
-                          <Text fontSize="xs" fontWeight="600" color="gray.300" flex={1} isTruncated>
-                            {tag}
-                          </Text>
-                          <Text fontSize="10px" color="gray.600" flexShrink={0}>
-                            {tagCounts[tag] ?? 0}
-                          </Text>
-                          <IconButton
-                            aria-label={isHidden ? 'Show tag' : 'Hide tag'}
-                            icon={isHidden ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
-                            size="xs"
-                            variant="ghost"
-                            color={isHidden ? 'whiteAlpha.300' : 'whiteAlpha.600'}
-                            _hover={{ color: 'white', bg: 'whiteAlpha.200' }}
-                            onClick={(e) => { e.stopPropagation(); toggleTagVisibility(tag) }}
-                            flexShrink={0}
-                          />
-                        </HStack>
-                      )
-                    })}
+                    {allTags.map((tag) => (
+                      <TagFilterRow
+                        key={`tag-${tag}`}
+                        tag={tag}
+                        count={tagCounts[tag] ?? 0}
+                        color={tagColors[tag]?.color}
+                        hidden={hiddenTags.includes(tag)}
+                        selected={selectedTags.includes(tag)}
+                        onSelect={onToggleTagSelection}
+                        onHover={() => { setHighlightedTags([tag]); setHighlightColor(tagColors[tag]?.color || '') }}
+                        onToggleVisibility={toggleTagVisibility}
+                      />
+                    ))}
                   </PopoverBody>
                 </PopoverContent>
               </Portal>
             </Popover>
+            <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags([]); setHighlightColor('') } : undefined} />
           </>
         )}
       </HStack>
