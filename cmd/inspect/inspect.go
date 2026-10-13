@@ -62,11 +62,7 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 			report, err := inspection.Build(cmd.Context(), opts)
 			if err != nil {
 				if wantsJSON(*format) {
-					return writeJSON(cmd.OutOrStdout(), *compact, map[string]any{
-						"command": "inspect",
-						"status":  "error",
-						"errors":  []string{err.Error()},
-					})
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "inspect", err)
 				}
 				return err
 			}

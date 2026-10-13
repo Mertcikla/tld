@@ -225,7 +225,7 @@ func applyIgnore(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 
 func fail(cmd *cobra.Command, opts linkOptions, err error) error {
 	if cmdutil.WantsJSON(opts.format) {
-		_ = cmdutil.WriteCommandError(cmd.OutOrStdout(), opts.compact, "link", err)
+		return cmdutil.WriteCommandError(cmd.OutOrStdout(), opts.compact, "link", err)
 	}
 	return err
 }

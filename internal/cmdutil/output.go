@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -40,12 +41,17 @@ func WriteJSON(w io.Writer, compact bool, payload JSONOutput) error {
 	return enc.Encode(payload)
 }
 
+// WriteCommandError writes a JSON error response and returns the operation's
+// failure so a successfully written response cannot make the command succeed.
 func WriteCommandError(w io.Writer, compact bool, command string, err error) error {
-	return WriteJSON(w, compact, JSONOutput{
+	if writeErr := WriteJSON(w, compact, JSONOutput{
 		Command: command,
 		Status:  "error",
 		Errors:  []string{err.Error()},
-	})
+	}); writeErr != nil {
+		return errors.Join(err, writeErr)
+	}
+	return err
 }
 
 func WriteMutation(w io.Writer, compact bool, command, action, ref string) error {
