@@ -23,28 +23,35 @@ import (
 // migration drifts from what the store expects. A dedicated schema isolates
 // this test from others sharing the same DSN.
 func TestPostgresTenantScopeCollidingKeys(t *testing.T) {
+	st := openPostgresTestStore(t)
+	t.Run("colliding keys", func(t *testing.T) { testTenantScopeCollidingKeys(t, st) })
+	t.Run("lease and watch claims", func(t *testing.T) { testTenantScopeLeaseAndWatchClaims(t, st) })
+}
+
+func openPostgresTestStore(t *testing.T) *Store {
+	t.Helper()
 	dsn := os.Getenv("TLD_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Fatal("TLD_TEST_POSTGRES_URL must be set for integration tests")
 	}
 	ctx := context.Background()
 	admin := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	defer func() { _ = admin.Close() }()
-	schema := "tenant_keys_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := "codeindex_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if _, err := admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
 			t.Error(err)
 		}
-	}()
+	})
 
 	// Point the session at the isolated schema. This must run on the same
 	// connection the migrator uses, so the pool is capped at one connection.
 	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	db.SetMaxOpenConns(1)
-	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.ExecContext(ctx, `SET search_path TO "`+schema+`", public`); err != nil {
 		t.Fatalf("set search path: %v", err)
 	}
@@ -54,7 +61,5 @@ func TestPostgresTenantScopeCollidingKeys(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	st := NewStore(db, bunDB, dbrepo.DialectPostgres)
-	t.Run("colliding keys", func(t *testing.T) { testTenantScopeCollidingKeys(t, st) })
-	t.Run("lease and watch claims", func(t *testing.T) { testTenantScopeLeaseAndWatchClaims(t, st) })
+	return NewStore(db, bunDB, dbrepo.DialectPostgres)
 }
