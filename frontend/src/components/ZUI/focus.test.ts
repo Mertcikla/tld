@@ -509,6 +509,28 @@ describe('ZUI focus targets', () => {
     }
   })
 
+  it('fully reveals a linked diagram even when the current zoom limit would leave its parent covering connectors', () => {
+    const parent = testNode('parent', [testNode('child1'), testNode('child2')])
+    const target: ZUIFocusTarget = {
+      id: parent.id,
+      label: parent.label,
+      type: 'node',
+      absX: 0,
+      absY: 0,
+      absW: parent.worldW,
+      absH: parent.worldH,
+      absScale: 1,
+      node: parent,
+    }
+
+    for (const [canvasW, canvasH, mobile] of [[1280, 680, false], [393, 700, true]] as const) {
+      const thresholds = getExpandThresholds(canvasW)
+      const limitedZoom = (thresholds.end - 32) / parent.worldW
+      const viewport = viewportForDiagramFocusTarget(target, canvasW, canvasH, limitedZoom, mobile)!
+      expect(parent.worldW * viewport.zoom).toBeGreaterThan(thresholds.end)
+    }
+  })
+
   it('can navigate and zoom to every linked view target without losing the content center', () => {
     const data = focusMatrixExploreData(6)
     const layout = computeLayout(data)

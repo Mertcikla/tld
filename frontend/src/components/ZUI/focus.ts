@@ -269,7 +269,9 @@ export function viewportForDiagramFocusTarget(
     isMobileLayout ? 0.18 : 0.16,
     {
       preferContent: true,
-      minTargetScreenW: isMobileLayout ? 180 : 260,
+      minTargetScreenW: target.node?.children.length
+        ? getExpandThresholds(canvasW).end * 1.02
+        : isMobileLayout ? 180 : 260,
       minChildScreenW: isMobileLayout ? 76 : 104,
     },
   )

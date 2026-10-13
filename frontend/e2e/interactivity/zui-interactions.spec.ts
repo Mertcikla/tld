@@ -147,7 +147,7 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   const { root, parent } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
 
   const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
     node: { x: number; y: number; width: number; height: number }
@@ -174,25 +174,11 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   await expect.poll(async () => stateDelta(await zuiViewState(page), beforeBreadcrumb)).toBeGreaterThan(8)
 })
 
-async function waitForHoverCamera(page: Parameters<typeof zuiViewState>[0]) {
-  let previous = await zuiViewState(page)
-  let stableSamples = 0
-  // Focus animates for 520 ms. Require consecutive samples so hover coordinates
-  // are measured after that animation, rather than between its first two frames.
-  await expect.poll(async () => {
-    const next = await zuiViewState(page)
-    const delta = stateDelta(previous, next) + Math.abs(previous.zoom - next.zoom) * 100
-    stableSamples = delta < 0.01 ? stableSamples + 1 : 0
-    previous = next
-    return stableSamples
-  }, { intervals: [100] }).toBeGreaterThanOrEqual(3)
-}
-
 test('highlights connector hover, anchors its popover near the pointer, and supports nested connectors', async ({ page }) => {
   const { root, parent, sibling, child, childSource, childTarget } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
 
   const { connector } = await zuiScreenGeometry(page, {
     connector: { sourceElementId: parent.id, targetElementId: sibling.id },
@@ -224,7 +210,7 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
 
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${child.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   const nested = await zuiScreenGeometry(page, {
     connector: { sourceElementId: childSource.id, targetElementId: childTarget.id },
   }) as { connector: { midPoint: { x: number; y: number } } }
@@ -238,7 +224,7 @@ test('element popovers keep hover while crossing a connector behind the gap', as
   const { root, parent } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
     node: { x: number; y: number; width: number; height: number }
   }
@@ -276,7 +262,7 @@ test('connector popovers stay anchored and remain reachable across the safe hove
   const { root, parent, sibling } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   const { connector } = await zuiScreenGeometry(page, {
     connector: { sourceElementId: parent.id, targetElementId: sibling.id },
   }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
@@ -315,7 +301,7 @@ test('clicking an element jumps into its contents while dragging only pans', asy
   const { root, parent, childSource } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   const geometry = () => zuiScreenGeometry(page, { nodeElementId: parent.id }) as Promise<{
     node: { x: number; y: number; width: number; height: number }
   }>
@@ -325,7 +311,7 @@ test('clicking an element jumps into its contents while dragging only pans', asy
     { x: initial.x + initial.width / 2, y: initial.y + initial.height / 2 },
     { x: initial.x + initial.width / 2 + 30, y: initial.y + initial.height / 2 + 20 },
   )
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   expect((await zuiViewState(page)).zoom).toBeCloseTo(before.zoom, 5)
 
   const node = (await geometry()).node
@@ -335,7 +321,7 @@ test('clicking an element jumps into its contents while dragging only pans', asy
   const box = await canvasBox(page)
   const revealThreshold = Math.min(640, Math.max(200, box.width * 0.4))
   await expect.poll(async () => (await geometry()).node.width).toBeGreaterThan(revealThreshold)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   expect((await zuiViewState(page)).zoom).toBeGreaterThan(before.zoom)
   const { node: child } = await zuiScreenGeometry(page, { nodeElementId: childSource.id }) as {
     node: { x: number; y: number; width: number; height: number }
@@ -353,7 +339,7 @@ test('anchors off-view connector popovers at either hovered end of the route', a
   await createConnector(page, root.id, source.id, target.id, { label: 'Off-view call' })
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
-  await waitForHoverCamera(page)
+  await waitForStableZuiCamera(page)
   const { connector } = await zuiScreenGeometry(page, {
     connector: { sourceElementId: parent.id, targetElementId: target.id },
   }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
@@ -369,11 +355,19 @@ test('anchors off-view connector popovers at either hovered end of the route', a
     const popover = page.getByTestId('zui-hover-popover')
     await expect(popover).toBeVisible()
     await expect(popover).toContainText('Off-View Connector')
+    await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
     const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
     expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
     expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
-    const popup = await popover.boundingBox()
-    expect(Math.min(Math.abs(popup!.x - pointer.x), Math.abs(popup!.x + popup!.width - pointer.x))).toBeLessThan(40)
+    // Popper can flip start/end alignment or shift inward on narrow screens.
+    // Measure placement and bounds together after its positioning update.
+    await expect.poll(() => popover.evaluate((element, reference) => {
+      const popup = element.getBoundingClientRect()
+      const placement = element.closest('[data-popper-placement]')?.getAttribute('data-popper-placement')
+      const alignedLeft = placement?.endsWith('-end') ? reference.x + reference.width - popup.width : reference.x
+      const expectedLeft = Math.max(8, Math.min(alignedLeft, document.documentElement.clientWidth - popup.width - 8))
+      return Math.abs(popup.x - expectedLeft)
+    }, { x: anchor!.x, width: anchor!.width })).toBeLessThan(2)
   }
 })
 
