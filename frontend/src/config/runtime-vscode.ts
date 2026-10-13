@@ -31,6 +31,8 @@ export const wailsPlatform = undefined
 export const tldVersion = 'dev'
 export const isWailsMac = false
 export const isWailsWindows = false
+export const isMacPlatform = typeof navigator !== 'undefined'
+  && /mac/i.test(navigator.platform || navigator.userAgent)
 
 export const apiBase = `${serverUrl}/api`
 
