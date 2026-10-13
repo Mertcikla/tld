@@ -1,6 +1,9 @@
 package mermaid
 
 import (
+	"encoding/json"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,6 +14,53 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestExportImpactSceneConnectorDirections(t *testing.T) {
+	raw, err := os.ReadFile("fixtures/connector-directions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Direction  string
+		Change     string
+		Label      string
+		TargetView int32
+		Line       string
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range cases {
+		t.Run(test.Direction+"/"+test.Change, func(t *testing.T) {
+			content := &codeindexv1.SceneViewContent{
+				Placements: []*codeindexv1.ScenePlacement{{Element: &diagv1.PlacedElement{ElementId: 10, ViewId: 1, Name: "Source"}}},
+				Connectors: []*diagv1.Connector{{Id: 1, ViewId: 1, SourceElementId: 10, TargetElementId: 20, Direction: test.Direction, Label: proto.String(test.Label)}},
+			}
+			if test.Change != "" {
+				content.Connectors[0].Tags = []string{"change:" + test.Change}
+			}
+			scene := &codeindexv1.ImpactScene{Views: map[string]*codeindexv1.SceneViewContent{"1": content}}
+			target := &codeindexv1.ScenePlacement{Element: &diagv1.PlacedElement{ElementId: 20, ViewId: test.TargetView, Name: "Target"}}
+			if test.TargetView == 1 {
+				content.Placements = append(content.Placements, target)
+			} else {
+				scene.Views[strconv.Itoa(int(test.TargetView))] = &codeindexv1.SceneViewContent{Placements: []*codeindexv1.ScenePlacement{target}}
+				content.ConnectorTargets = map[string]*codeindexv1.ImpactPlacementRef{"1": {ViewId: test.TargetView, ElementId: 20}}
+			}
+			got := ExportImpactScene(scene, SceneExportOptions{})
+			if !strings.Contains(got, "\n  "+test.Line+"\n") {
+				t.Fatalf("missing connector %q:\n%s", test.Line, got)
+			}
+			parsed, err := Parse(got)
+			if err != nil {
+				t.Fatalf("invalid Mermaid: %v\n%s", err, got)
+			}
+			if len(parsed.Warnings) > 0 {
+				t.Fatalf("invalid Mermaid connectors: %v\n%s", parsed.Warnings, got)
+			}
+		})
+	}
+}
 
 func sceneNode(elementID int32, viewID int32, name string, overlay *model.Overlay) *model.Placement {
 	return &model.Placement{

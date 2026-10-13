@@ -65,20 +65,26 @@ export function impactSceneMermaid(scene: ImpactScene): string {
     }
     return escapeLabel(label)
   }
-  const connectorLine = (sourceView: number, source: number, targetView: number, target: number, label: string, tags: string[]) => {
-    const from = nodeRef(sourceView, source), to = nodeRef(targetView, target)
+  const connectorLine = (sourceView: number, source: number, targetView: number, target: number, label: string, tags: string[], direction: string) => {
+    let from = nodeRef(sourceView, source), to = nodeRef(targetView, target)
+    direction = direction.trim().toLowerCase()
+    if (direction === 'backward') [from, to] = [to, from]
+    const both = direction === 'both' || direction === 'bidirectional', none = direction === 'none'
     const change = tags.find((tag) => ['change:added', 'change:removed', 'change:modified'].includes(tag))
     const text = escapeLabel(label.trim())
+    let arrow = both ? '<-->' : none ? '---' : '-->'
     if (change === 'change:added') {
       linkStyles.push(`linkStyle ${linkIndex} stroke:#48bb78`)
-      return text ? `${from} ==>|"${text}"| ${to}` : `${from} ==> ${to}`
-    }
-    if (change === 'change:removed') {
+      arrow = both ? '<==>' : none ? '===' : '==>'
+    } else if (change === 'change:removed') {
       linkStyles.push(`linkStyle ${linkIndex} stroke:#fc8181,stroke-dasharray:5 5`)
-      return text ? `${from}--x|"${text}"|${to}` : `${from}--x${to}`
+      arrow = both ? 'x--x' : none ? '---' : '--x'
+      if (!both && !none) return text ? `${from}--x|"${text}"|${to}` : `${from}--x${to}`
+    } else if (change === 'change:modified') {
+      linkStyles.push(`linkStyle ${linkIndex} stroke:#ecc94b`)
     }
-    if (change === 'change:modified') linkStyles.push(`linkStyle ${linkIndex} stroke:#ecc94b`)
-    return text ? `${from} -- "${text}" --> ${to}` : `${from} --> ${to}`
+    if (text) return arrow === '-->' ? `${from} -- "${text}" --> ${to}` : `${from} ${arrow}|"${text}"| ${to}`
+    return `${from} ${arrow} ${to}`
   }
   const renderNested = (viewId: number, depth: number, kids: View[]) => {
     const content = scene.views[String(viewId)]
@@ -106,7 +112,7 @@ export function impactSceneMermaid(scene: ImpactScene): string {
         if (!ref) continue
         targetView = ref.viewId
       }
-      lines.push(pad + connectorLine(viewId, connector.sourceElementId, targetView, connector.targetElementId, connector.label ?? '', connector.tags))
+      lines.push(pad + connectorLine(viewId, connector.sourceElementId, targetView, connector.targetElementId, connector.label ?? '', connector.tags, connector.direction))
       linkIndex++
     }
     lines.push(head + 'end')

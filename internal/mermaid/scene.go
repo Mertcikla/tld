@@ -267,13 +267,13 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		}
 		if !rendered[target] {
 			if ref := content.ConnectorTargets[strconv.Itoa(int(connector.Id))]; ref != nil {
-				line := v.sceneConnectorLine(viewID, source, ref.ViewId, target, connector.GetLabel(), connector.GetTags())
+				line := v.sceneConnectorLine(viewID, source, ref.ViewId, target, connector.GetLabel(), connector.GetTags(), connector.GetDirection())
 				lines = append(lines, pad+line)
 				v.linkIndex++
 			}
 			continue
 		}
-		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, viewID, target, connector.GetLabel(), connector.GetTags()))
+		lines = append(lines, pad+v.sceneConnectorLine(viewID, source, viewID, target, connector.GetLabel(), connector.GetTags(), connector.GetDirection()))
 		// Mermaid numbers linkStyle statements over every rendered link line
 		// in order, so the counter advances for each emitted connector, not
 		// just the changed ones styleLink records.
@@ -313,37 +313,54 @@ func (v *sceneViewer) viewName(viewID int32) string {
 // thick arrows for added edges, crossed arrows for removed ones, and link
 // styles carrying the change palette (modified keeps its arrow, color does
 // the talking).
-func (v *sceneViewer) sceneConnectorLine(sourceView, source, targetView, target int32, label string, tags []string) string {
+func (v *sceneViewer) sceneConnectorLine(sourceView, source, targetView, target int32, label string, tags []string, direction string) string {
 	from, to := sceneNodeRef(sourceView, source), sceneNodeRef(targetView, target)
+	direction = strings.ToLower(strings.TrimSpace(direction))
+	if direction == "backward" {
+		from, to = to, from
+	}
+	both, none := direction == "both" || direction == "bidirectional", direction == "none"
 	change := edgeChangeFromTags(tags)
 	text := strings.TrimSpace(label)
+	arrow := "-->"
+	if both {
+		arrow = "<-->"
+	} else if none {
+		arrow = "---"
+	}
 	switch change {
 	case "added":
-		line := fmt.Sprintf(`%s ==> %s`, from, to)
-		if text != "" {
-			line = fmt.Sprintf(`%s ==>|"%s"| %s`, from, escapeMermaidLabel(text), to)
+		arrow = "==>"
+		if both {
+			arrow = "<==>"
+		} else if none {
+			arrow = "==="
 		}
 		v.styleLink("#48bb78", "")
-		return line
 	case "removed":
-		line := fmt.Sprintf(`%s--x%s`, from, to)
-		if text != "" {
-			line = fmt.Sprintf(`%s--x|"%s"|%s`, from, escapeMermaidLabel(text), to)
-		}
 		v.styleLink("#fc8181", "5 5")
-		return line
+		arrow = "--x"
+		if both {
+			arrow = "x--x"
+		} else if none {
+			arrow = "---"
+		}
+		if !both && !none {
+			if text != "" {
+				return fmt.Sprintf(`%s--x|"%s"|%s`, from, escapeMermaidLabel(text), to)
+			}
+			return fmt.Sprintf(`%s--x%s`, from, to)
+		}
 	case "modified":
 		v.styleLink("#ecc94b", "")
-		if text != "" {
-			return fmt.Sprintf(`%s -- "%s" --> %s`, from, escapeMermaidLabel(text), to)
-		}
-		return fmt.Sprintf("%s --> %s", from, to)
-	default:
-		if text != "" {
-			return fmt.Sprintf(`%s -- "%s" --> %s`, from, escapeMermaidLabel(text), to)
-		}
-		return fmt.Sprintf("%s --> %s", from, to)
 	}
+	if text != "" {
+		if arrow == "-->" {
+			return fmt.Sprintf(`%s -- "%s" --> %s`, from, escapeMermaidLabel(text), to)
+		}
+		return fmt.Sprintf(`%s %s|"%s"| %s`, from, arrow, escapeMermaidLabel(text), to)
+	}
+	return fmt.Sprintf("%s %s %s", from, arrow, to)
 }
 
 // styleLink records a linkStyle statement for the connector line just

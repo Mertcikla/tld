@@ -37,6 +37,11 @@ func (s *Store) sourceLineStats(ctx context.Context, changes []*pb.SourceChange)
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	beforeDir, afterDir := filepath.Join(directory, "before"), filepath.Join(directory, "after")
+	for _, root := range []string{beforeDir, afterDir} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return err
+		}
+	}
 	names := make(map[*pb.SourceChange]string, len(pending))
 	byName := make(map[string]*pb.SourceChange, len(pending))
 	for i, change := range pending {
@@ -49,12 +54,12 @@ func (s *Store) sourceLineStats(ctx context.Context, changes []*pb.SourceChange)
 	}
 	for _, change := range pending {
 		for i, hash := range []string{change.FromHash, change.ToHash} {
-			var contents []byte
-			if hash != "" {
-				contents, err = s.Source(ctx, hash)
-				if err != nil {
-					return fmt.Errorf("read %s for line counts: %w", change.Path, err)
-				}
+			if hash == "" {
+				continue
+			}
+			contents, err := s.Source(ctx, hash)
+			if err != nil {
+				return fmt.Errorf("read %s for line counts: %w", change.Path, err)
 			}
 			root := beforeDir
 			if i == 1 {
@@ -103,25 +108,30 @@ func safeMirrorName(path string) string {
 	return rel
 }
 
-// parseNumstat reads git's -z numstat stream: each record is a header token
-// "added\tremoved\t" followed by NUL-terminated source and destination paths
-// (git reports both because the mirror roots differ), so paths with tabs or
-// braces never need unquoting.
+// parseNumstat reads git's -z numstat stream. Added/removed files carry a path
+// in the header; paired paths have an empty header path followed by two tokens
+// because the mirror roots differ. Paths with tabs or braces need no unquoting.
 func parseNumstat(raw []byte, beforeDir, afterDir string) map[string][2]uint32 {
 	counts := map[string][2]uint32{}
 	tokens := strings.Split(string(raw), "\x00")
 	for i := 0; i < len(tokens); i++ {
 		parts := strings.SplitN(tokens[i], "\t", 3)
-		if len(parts) != 3 || parts[2] != "" {
+		if len(parts) != 3 {
 			continue
 		}
 		added, addedErr := strconv.ParseUint(parts[0], 10, 32)
 		removed, removedErr := strconv.ParseUint(parts[1], 10, 32)
-		if addedErr != nil || removedErr != nil || i+2 >= len(tokens) {
+		if addedErr != nil || removedErr != nil {
 			continue
 		}
-		src, dst := tokens[i+1], tokens[i+2]
-		i += 2
+		src, dst := parts[2], ""
+		if src == "" {
+			if i+2 >= len(tokens) {
+				continue
+			}
+			src, dst = tokens[i+1], tokens[i+2]
+			i += 2
+		}
 		rel, ok := clipMirrorPath(src, beforeDir, afterDir)
 		if !ok {
 			rel, ok = clipMirrorPath(dst, beforeDir, afterDir)

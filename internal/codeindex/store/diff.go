@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,6 +33,8 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 			_ = rows.Close()
 			return nil, err
 		}
+		src.SyntaxCache = sourceCache(src.SyntaxCache, snap.RepositoryId, src.Path)
+		src.FileCache = sourceCache(src.FileCache, snap.RepositoryId, src.Path)
 		g.Sources[src.Path] = src
 	}
 	err = rows.Err()
@@ -76,6 +79,34 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		g.EdgeFacts[e.Id] = e
 	}
 	return g, nil
+}
+
+// Shared blobs can carry caches extracted from another identical file. Facts
+// retain source-specific names, logical keys and IDs even when re-anchored, so
+// only reuse a cache for its original repository and path. The indexer rebuilds
+// rejected caches from the captured source without losing content deduplication.
+func sourceCache(raw, repositoryID, path string) string {
+	var cache struct {
+		Fact  *pb.CodeFact
+		Decls []struct{ Fact *pb.CodeFact }
+	}
+	if json.Unmarshal([]byte(raw), &cache) != nil {
+		// The indexer owns cache format/version validation and ignores malformed
+		// caches; only source identity needs checking here.
+		return raw
+	}
+	matches := func(fact *pb.CodeFact) bool {
+		return fact == nil || (fact.RepositoryId == repositoryID && fact.GetAnchor().GetPath() == path)
+	}
+	if !matches(cache.Fact) {
+		return ""
+	}
+	for _, declaration := range cache.Decls {
+		if !matches(declaration.Fact) {
+			return ""
+		}
+	}
+	return raw
 }
 
 // SnapshotSources returns a path-to-hash map for a snapshot's captured sources.

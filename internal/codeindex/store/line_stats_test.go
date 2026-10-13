@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
 func TestSnapshotLineCountsBatchMultipleFiles(t *testing.T) {
@@ -27,22 +27,30 @@ func TestSnapshotLineCountsBatchMultipleFiles(t *testing.T) {
 		return snap
 	}
 	before := publish("batch-base", map[string]string{
-		"a/file one.go": "one\ntwo\n",
-		"z.go":          "alpha\nbeta\ngamma\n",
+		"a/file one.go":     "one\ntwo\n",
+		"z.go":              "alpha\nbeta\ngamma\n",
+		"replace":           "old\n",
+		"collapse/child.go": "old\nchild\n",
 	})
 	after := publish("batch-head", map[string]string{
-		"a/file one.go": "one\ntwo\nthree\n",
-		"z.go":          "alpha\n",
-		"new.txt":       "x\ny\n",
+		"a/file one.go":          "one\ntwo\nthree\n",
+		"z.go":                   "alpha\n",
+		"new.txt":                "x\ny\n",
+		"replace/child {one}.go": "new\nchild\n",
+		"collapse":               "new\n",
 	})
 	diff, err := st.Diff(ctx, before.Id, after.Id, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string][2]uint32{
-		"a/file one.go": {1, 0},
-		"new.txt":       {2, 0},
-		"z.go":          {0, 2},
+		"a/file one.go":          {1, 0},
+		"new.txt":                {2, 0},
+		"z.go":                   {0, 2},
+		"replace":                {0, 1},
+		"replace/child {one}.go": {2, 0},
+		"collapse/child.go":      {0, 2},
+		"collapse":               {1, 0},
 	}
 	if len(diff.Sources) != len(want) {
 		t.Fatalf("sources = %d, want %d", len(diff.Sources), len(want))
