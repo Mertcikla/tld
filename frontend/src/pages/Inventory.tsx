@@ -30,7 +30,7 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, DeleteIcon, EditIcon, SearchIcon, SmallCloseIcon, TriangleDownIcon, TriangleUpIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, ChevronUpIcon, DeleteIcon, EditIcon, SearchIcon, SmallCloseIcon, TriangleDownIcon, TriangleUpIcon } from '@chakra-ui/icons'
 import { ZoomInIcon } from '../components/Icons'
 import { api } from '../api/client'
 import { isElementGroupTag, elementGroupTagForLayer } from '../utils/elementGroups'

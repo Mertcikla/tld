@@ -10,9 +10,14 @@ on:
         description: Existing v* tag to publish release assets to
         required: true
         type: string
+      npm_only:
+        description: Retry only npm publishing using the tagged source and this workflow revision's declaration config
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.release_tag || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.release_tag || github.ref }}-${{ inputs.npm_only && 'npm' || 'all' }}
   cancel-in-progress: true
 
 permissions:
@@ -24,6 +29,7 @@ env:
 
 jobs:
   verify-binaries:
+    if: ${{ !inputs.npm_only }}
     name: Verify binary (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -84,6 +90,7 @@ jobs:
         run: bash scripts/ci/smoke-binary.sh
 
   goreleaser:
+    if: ${{ !inputs.npm_only }}
     needs: verify-binaries
     runs-on: ubuntu-latest
     environment: release
@@ -176,6 +183,56 @@ jobs:
           file_pattern: 'frontend/package.json frontend/package-lock.json cmd/version/version.go go.mod go.sum'
 
       - name: Publish @tldiagram/core-ui to npm
+        working-directory: frontend
+        shell: bash
+        run: |
+          npm run build
+          NPM_TAG=latest
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            NPM_TAG=beta
+          fi
+          npm publish --access public --tag "$NPM_TAG" --provenance
+
+  npm-retry:
+    name: Retry npm publish
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_only }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      # Keep product source at the existing tag, while allowing declaration-build
+      # fixes from the branch used to dispatch this workflow. Do not move the tag.
+      - name: Use declaration config from workflow revision
+        env:
+          BUILD_CONFIG_SHA: ${{ github.workflow_sha }}
+        run: git show "${BUILD_CONFIG_SHA}:frontend/tsconfig.lib.json" > frontend/tsconfig.lib.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Set npm package version from release tag
+        working-directory: frontend
+        shell: bash
+        run: npm version "${RELEASE_TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Build and publish npm package
         working-directory: frontend
         shell: bash
         run: |
