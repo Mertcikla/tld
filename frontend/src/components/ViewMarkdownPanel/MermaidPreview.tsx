@@ -47,6 +47,8 @@ function bodyTextColor() {
 
 function mermaidThemeVariables() {
   const elementBackground = themeColor('--bg-element', 'Canvas')
+  const panelBackground = themeColor('--bg-panel', 'Canvas')
+  const border = themeColor('--border-main', 'GrayText')
   const accent = themeColor('--accent', 'Highlight')
   const text = bodyTextColor()
 
@@ -56,6 +58,18 @@ function mermaidThemeVariables() {
     primaryColor: elementBackground,
     primaryTextColor: text,
     primaryBorderColor: accent,
+    secondaryColor: elementBackground,
+    secondaryTextColor: text,
+    secondaryBorderColor: border,
+    tertiaryColor: panelBackground,
+    tertiaryTextColor: text,
+    tertiaryBorderColor: border,
+    clusterBkg: panelBackground,
+    clusterBorder: border,
+    titleColor: text,
+    noteBkgColor: elementBackground,
+    noteTextColor: text,
+    noteBorderColor: border,
     lineColor: accent,
     edgeLabelBackground: 'transparent',
     textColor: text,

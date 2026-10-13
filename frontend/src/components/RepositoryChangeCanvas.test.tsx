@@ -187,11 +187,13 @@ describe('RepositoryChangeCanvas side panel', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: '380px' })
     expect(slot.props.position).toBe('relative')
+    expect(handle.props.position).toBe('relative')
+    expect(handle.props.right).toBeUndefined()
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('false')
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
   })
 
-  it('keeps the resize handle above the canvas-covering pane', async () => {
+  it('keeps the resize handle at the left edge above the canvas-covering pane', async () => {
     stubEnvironment(String(PANEL_OVERLAY_SNAP + 50))
     const renderer = await renderCanvas()
 
@@ -199,6 +201,10 @@ describe('RepositoryChangeCanvas side panel', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(handle.props.zIndex).toBe(40)
     expect(handle.props.zIndex).toBeGreaterThan(slot.props.zIndex)
+    expect(handle.props.position).toBe('absolute')
+    expect(handle.props.right).toBe(`${PANEL_OVERLAY_SNAP + 50}px`)
+    expect(handle.props.top).toBe(0)
+    expect(handle.props.bottom).toBe(0)
   })
 
   it('resizes through a pointer drag on the handle', async () => {
@@ -236,8 +242,7 @@ describe('RepositoryChangeCanvas side panel', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_RAIL_WIDTH}px` })
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('true')
-    // the rail stays grabbable so it can be dragged back open
-    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(0)
   })
 
   it('covers the canvas with an expanded change diagram past 650px', async () => {
@@ -247,7 +252,7 @@ describe('RepositoryChangeCanvas side panel', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_OVERLAY_SNAP + 50}px` })
     expect(slot.props.position).toEqual({ base: 'relative', lg: 'absolute' })
-    expect(slot.props.boxShadow).toBeTruthy()
+    expect(slot.props.boxShadow).toBeUndefined()
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-overlay']).toBe('true')
   })
 
@@ -261,6 +266,28 @@ describe('RepositoryChangeCanvas side panel', () => {
     const atOverlay = await renderCanvas()
     expect(hostNodes(atOverlay, 'repository-change-mermaid-slot')[0].props.position).toBe('relative')
     expect(hostNodes(atOverlay, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
+  })
+
+  it.each([380, PANEL_OVERLAY_SNAP + 50])('collapses a %ipx pane fully to the rail and expands it again', async (width) => {
+    stubEnvironment(String(width))
+    const renderer = await renderCanvas()
+
+    await act(async () => { renderer.root.findByType(RepositoryChangeMermaid).props.onDock() })
+
+    const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
+    expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_RAIL_WIDTH}px` })
+    expect(slot.props.h).toEqual({ base: `${PANEL_RAIL_WIDTH}px`, lg: 'auto' })
+    expect(slot.props.position).toBe('relative')
+    expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('true')
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(0)
+    expect(window.localStorage.getItem(storageKey)).toBe(String(PANEL_RAIL_WIDTH))
+
+    await act(async () => { renderer.root.findByType(RepositoryChangeMermaid).props.onExpand() })
+
+    expect(hostNodes(renderer, 'repository-change-mermaid-slot')[0].props.w).toEqual({ base: 'full', lg: '380px' })
+    expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('false')
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(1)
+    renderer.unmount()
   })
 
   it('renders a single grounded diagram with no scope toggle', async () => {

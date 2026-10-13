@@ -12,7 +12,7 @@ vi.mock('./ViewMarkdownPanel/MarkdownPreview', () => ({
   MarkdownPreview: ({ markdown }: { markdown: string }) => React.createElement('pre', { 'data-testid': 'mock-markdown' }, markdown),
 }))
 vi.mock('./ViewMarkdownPanel/styles', () => ({ markdownPanelBodySx: {} }))
-vi.mock('@chakra-ui/icons', () => ({ CheckIcon: () => null, ChevronLeftIcon: () => null, CopyIcon: () => null }))
+vi.mock('@chakra-ui/icons', () => ({ CheckIcon: () => null, ChevronRightIcon: () => null, CopyIcon: () => null }))
 
 vi.mock('@chakra-ui/react', async () => {
   const ReactModule = await import('react')
@@ -131,7 +131,7 @@ describe('RepositoryChangeMermaid', () => {
     expect(onExpand).toHaveBeenCalled()
   })
 
-  it('offers a way back to the docked form while covering the canvas', async () => {
+  it('offers a collapse control while covering the canvas', async () => {
     vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
     const onDock = vi.fn()
     let renderer!: ReturnType<typeof create>
@@ -148,14 +148,14 @@ describe('RepositoryChangeMermaid', () => {
     expect(onDock).toHaveBeenCalled()
   })
 
-  it('hides the dock control when docked beside the canvas', async () => {
+  it('keeps the collapse control when docked beside the canvas', async () => {
     vi.mocked(api.repositories.impactMermaid).mockResolvedValue({ code: 'flowchart LR', markdown, warnings: [] })
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = renderPane()
     })
 
-    expect(hostNodes(renderer, 'repository-change-mermaid-dock')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repository-change-mermaid-dock')).toHaveLength(1)
     expect(hostNodes(renderer, 'repository-change-mermaid')).toHaveLength(1)
   })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Box, Button, Flex, IconButton, Spinner, Text, Tooltip } from '@chakra-ui/react'
-import { CheckIcon, ChevronLeftIcon, CopyIcon } from '@chakra-ui/icons'
+import { CheckIcon, ChevronRightIcon, CopyIcon } from '@chakra-ui/icons'
 import { api } from '../api/client'
 import { copyTextToClipboard } from '../utils/clipboard'
 import { toast } from '../utils/toast'
@@ -23,7 +23,6 @@ export default function RepositoryChangeMermaid({
   plain,
   open,
   collapsed = false,
-  overlay = false,
   onExpand,
   onDock,
 }: {
@@ -35,7 +34,7 @@ export default function RepositoryChangeMermaid({
   open: boolean
   /** Rail form: show only the Markdown expand button. */
   collapsed?: boolean
-  /** Canvas-covering form: offer a way back to the docked form. */
+  /** Whether the pane is covering the canvas. */
   overlay?: boolean
   onExpand?: () => void
   onDock?: () => void
@@ -121,6 +120,7 @@ export default function RepositoryChangeMermaid({
       borderColor="whiteAlpha.100"
       data-testid="repository-change-mermaid-pane"
     >
+
       <Flex
         px={3}
         h="40px"
@@ -130,22 +130,18 @@ export default function RepositoryChangeMermaid({
         borderBottom="1px solid"
         borderColor="whiteAlpha.100"
       >
-        <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.06em" whiteSpace="nowrap" minW={0} overflow="hidden" textOverflow="ellipsis">
-          Change diagram
-        </Text>
+        <Tooltip label="Collapse change diagram to rail" placement="bottom" openDelay={200}>
+          <IconButton
+            size="xs"
+            variant="ghost"
+            aria-label="Collapse change diagram to rail"
+            icon={<ChevronRightIcon />}
+            onClick={onDock}
+            data-testid="repository-change-mermaid-dock"
+          />
+        </Tooltip>
         <Box flex={1} />
-        {overlay && (
-          <Tooltip label="Dock to the canvas edge" placement="bottom" openDelay={200}>
-            <IconButton
-              size="xs"
-              variant="ghost"
-              aria-label="Dock change diagram to the canvas edge"
-              icon={<ChevronLeftIcon />}
-              onClick={onDock}
-              data-testid="repository-change-mermaid-dock"
-            />
-          </Tooltip>
-        )}
+
         <Button
           size="xs"
           variant="ghost"

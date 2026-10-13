@@ -9,6 +9,7 @@ import { REPOSITORY_TAG_COLORS, repositoryChangeScene } from '../utils/repositor
 import {
   PANEL_COLLAPSE_SNAP,
   PANEL_OVERLAY_SNAP,
+  PANEL_RAIL_WIDTH,
   useResizableColumn,
 } from '../hooks/useResizableColumn'
 import ColumnResizeHandle from './ColumnResizeHandle'
@@ -144,20 +145,19 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
               onToggleTagVisibility={handleToggleTagVisibility}
             />
           </Box>
-          {/* The side panel is docked beside the canvas; shrinking it
-              below the collapse threshold is what hides its contents. */}
-          <ColumnResizeHandle
+          {!sidePane.isCollapsed && <ColumnResizeHandle
           label={inspectorEnabled ? 'Resize impact inspector' : 'Resize change diagram'}
           dataTestId={inspectorEnabled ? 'repository-impact-inspector-resize' : 'repository-change-mermaid-resize'}
           display={{ base: 'none', lg: 'block' }}
           zIndex={sidePane.isOverlay ? 40 : 0}
+          overlayWidth={sidePane.isOverlay ? sidePane.renderedWidth : undefined}
           isActive={sidePane.isResizing}
           onPointerDown={sidePane.startResize}
-        />
+        />}
         <Box
           data-testid={inspectorEnabled ? 'repository-impact-inspector-slot' : 'repository-change-mermaid-slot'}
           w={{ base: 'full', lg: `${sidePane.renderedWidth}px` }}
-          h={{ base: '360px', lg: 'auto' }}
+          h={{ base: sidePane.isCollapsed ? `${PANEL_RAIL_WIDTH}px` : '360px', lg: 'auto' }}
           minH={0}
           flexShrink={0}
           position={sidePane.isOverlay ? { base: 'relative', lg: 'absolute' } : 'relative'}
@@ -165,7 +165,6 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
           right={{ lg: 0 }}
           bottom={{ lg: 0 }}
           zIndex={sidePane.isOverlay ? 30 : undefined}
-          boxShadow={sidePane.isOverlay ? '-12px 0 32px rgba(0,0,0,0.55)' : undefined}
           borderTop={{ base: '1px solid', lg: 'none' }}
           borderColor="whiteAlpha.100"
         >
@@ -190,7 +189,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             collapsed={sidePane.isCollapsed}
             overlay={sidePane.isOverlay}
             onExpand={sidePane.expand}
-            onDock={sidePane.dock}
+            onDock={sidePane.collapse}
           />}
         </Box>
         </Flex>
