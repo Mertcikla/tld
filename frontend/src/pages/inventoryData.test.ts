@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Connector, LibraryElement, ViewTreeNode } from '../types'
-import { buildInventoryRows, dependencyConnectorToConnector, filterInventoryRows, flattenInventoryViews } from './inventoryData'
+import { buildInventoryRows, dependencyConnectorToConnector, filterInventoryRows, flattenInventoryViews, getInventoryQualityOptions } from './inventoryData'
 
 const element = (id: number, name: string, tags: string[] = [], overrides: Partial<LibraryElement> = {}): LibraryElement => ({
   id,
@@ -223,6 +223,70 @@ describe('inventoryData', () => {
       viewName: 'View 999',
       usageLabel: 'View 999',
     })
+  })
+
+  it('provides view hierarchy names and separate content counts for inventory columns', () => {
+    const child = view(11, 'Container', [], { parent_view_id: 10, owner_element_id: 1 })
+    const rows = buildInventoryRows(
+      [element(1, 'API')],
+      [view(10, 'System', [], { children: [child] }), child],
+      [],
+      { 11: { placements: 12, connectors: 2 } },
+    )
+    expect(rows.find(row => row.key === 'view:11')).toMatchObject({
+      parentViewName: 'System', ownerElementName: 'API', viewCounts: { placements: 12, connectors: 2 },
+    })
+    expect(rows.find(row => row.key === 'view:10')).toMatchObject({ parentViewName: '', ownerElementName: '', viewCounts: { placements: 0, connectors: 0 } })
+  })
+
+  it('detects blank metadata without flagging technology supplied through links', () => {
+    const rows = buildInventoryRows([
+      element(1, 'Blank metadata', [], { kind: '  ', technology: '  ', description: '  ' }),
+      element(2, 'Catalog technology', [], { technology: '', technology_connectors: [{ type: 'catalog', slug: 'go' }] }),
+      element(3, 'Custom technology', [], { technology: null, technology_connectors: [{ type: 'custom', label: 'Legacy engine' }] }),
+      element(4, 'Empty technology link', [], { technology: null, technology_connectors: [{ type: 'catalog' }] }),
+    ], [], [], {})
+    expect(rows.find(row => row.key === 'element:1')?.qualityFlags).toEqual(expect.arrayContaining(['missing kind', 'missing technology', 'missing description']))
+    expect(rows.find(row => row.key === 'element:2')?.qualityFlags).not.toContain('missing technology')
+    expect(rows.find(row => row.key === 'element:3')?.qualityFlags).not.toContain('missing technology')
+    expect(rows.find(row => row.key === 'element:4')?.qualityFlags).toContain('missing technology')
+  })
+
+  it('finds duplicate names within each type without counting empty names or connector labels', () => {
+    const rows = buildInventoryRows([
+      element(1, 'API'), element(2, ' api '), element(3, ''), element(4, '  '),
+    ], [view(10, 'System'), view(11, ' system '), view(12, 'API')], [connector(20), connector(21)], {})
+    expect(keys(filterInventoryRows(rows, { type: 'all', query: '', tags: [], kind: '', qualities: ['duplicate name'] }))).toEqual(['element:1', 'element:2', 'view:10', 'view:11'])
+  })
+
+  it('distinguishes empty views from populated views without connections', () => {
+    const rows = buildInventoryRows([], [
+      view(10, 'Isolated', [], { level_label: '  ' }), view(11, 'Empty'), view(12, 'Connected'),
+    ], [], { 10: { placements: 2, connectors: 0 }, 11: { placements: 0, connectors: 0 }, 12: { placements: 2, connectors: 1 } })
+    expect(rows.find(row => row.key === 'view:10')?.qualityFlags).toEqual(expect.arrayContaining(['missing level', 'unconnected view']))
+    expect(rows.find(row => row.key === 'view:10')?.qualityFlags).not.toContain('empty view')
+    expect(rows.find(row => row.key === 'view:11')?.qualityFlags).not.toContain('unconnected view')
+    expect(rows.find(row => row.key === 'view:12')?.qualityFlags).not.toContain('unconnected view')
+  })
+
+  it('identifies incomplete and self-referencing connectors', () => {
+    const rows = buildInventoryRows([element(1, 'API'), element(2, 'Database')], [view(10, 'System')], [
+      connector(20, [], { label: '  ', description: '  ', relationship: '  ', target_element_id: 1 }),
+      connector(22),
+    ], {})
+    expect(rows.find(row => row.key === 'connector:20')?.qualityFlags).toEqual(expect.arrayContaining(['missing label', 'missing description', 'missing relationship', 'self connection']))
+    for (const flag of ['missing relationship', 'self connection']) expect(rows.find(row => row.key === 'connector:22')?.qualityFlags).not.toContain(flag)
+  })
+
+  it('offers only quality checks that apply to the selected object type', () => {
+    const values = (type: 'all' | 'elements' | 'views' | 'connectors') => getInventoryQualityOptions(type).map(option => option.value)
+    expect(values('elements')).toContain('missing technology')
+    expect(values('elements')).not.toContain('empty view')
+    expect(values('views')).toContain('duplicate name')
+    expect(values('views')).not.toContain('self connection')
+    expect(values('connectors')).toContain('missing relationship')
+    expect(values('connectors')).not.toContain('duplicate name')
+    expect(values('all')).toHaveLength(13)
   })
 
   it('converts dependency connectors into editable connectors with tags', () => {

@@ -5,6 +5,41 @@ import { isGroundingIgnoreTag } from '../utils/groundingTags'
 export type InventoryType = 'all' | 'elements' | 'views' | 'connectors'
 export type InventoryObjectType = 'element' | 'view' | 'connector'
 
+interface InventoryQualityOption {
+  value: string
+  description: string
+  types: InventoryObjectType[]
+}
+
+const qualityOptions: InventoryQualityOption[] = [
+  { value: 'untagged', description: 'No tags assigned.', types: ['element', 'view', 'connector'] },
+  { value: 'missing description', description: 'Description is empty or only whitespace.', types: ['element', 'view', 'connector'] },
+  { value: 'duplicate name', description: 'Another object of the same type has this name (ignoring case and surrounding spaces).', types: ['element', 'view'] },
+  { value: 'has child view', description: 'An element with its own child view.', types: ['element'] },
+  { value: 'unused element', description: 'An element with no incoming or outgoing connectors.', types: ['element'] },
+  { value: 'missing kind', description: 'Element kind is not set.', types: ['element'] },
+  { value: 'missing technology', description: 'Neither technology text nor technology links are set.', types: ['element'] },
+  { value: 'empty view', description: 'A view with no placed elements or connectors.', types: ['view'] },
+  { value: 'missing level', description: 'View level label is not set.', types: ['view'] },
+  { value: 'unconnected view', description: 'Contains placed elements but no connectors.', types: ['view'] },
+  { value: 'missing label', description: 'Connector label is empty or only whitespace.', types: ['connector'] },
+  { value: 'missing relationship', description: 'Connector relationship type is not set.', types: ['connector'] },
+  { value: 'self connection', description: 'Source and target are the same element.', types: ['connector'] },
+]
+
+export function getInventoryQualityOptions(type: InventoryType) {
+  return qualityOptions.filter(option => type === 'all' || option.types.some(objectType => `${objectType}s` === type))
+}
+
+function duplicateNames(items: { name: string }[]) {
+  const counts = new Map<string, number>()
+  for (const item of items) {
+    const name = item.name.trim().toLowerCase()
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
+}
+
 export interface InventoryViewContentCounts {
   placements: number
   connectors: number
@@ -20,6 +55,7 @@ export interface InventoryRow {
   filterTags: string[]
   updatedAt: string
   typeLabel: string
+  usageCount?: number
   usageLabel: string
   searchableText: string
   qualityFlags: string[]
@@ -29,6 +65,9 @@ export interface InventoryRow {
   sourceName?: string
   targetName?: string
   viewName?: string
+  parentViewName?: string
+  ownerElementName?: string
+  viewCounts?: InventoryViewContentCounts
 }
 
 export interface InventoryFilters {
@@ -79,6 +118,8 @@ export function buildInventoryRows(
 ): InventoryRow[] {
   const elementById = new Map(elements.map((element) => [element.id, element]))
   const viewById = new Map(views.map((view) => [view.id, view]))
+  const duplicateElementNames = duplicateNames(elements)
+  const duplicateViewNames = duplicateNames(views)
   const connectorCountsByElement = new Map<number, number>()
   connectors.forEach((connector) => {
     connectorCountsByElement.set(connector.source_element_id, (connectorCountsByElement.get(connector.source_element_id) ?? 0) + 1)
@@ -90,7 +131,10 @@ export function buildInventoryRows(
     const connectorCount = connectorCountsByElement.get(element.id) ?? 0
     const qualityFlags = [
       ...(visibleTags.length === 0 ? ['untagged'] : []),
-      ...(!element.description ? ['missing description'] : []),
+      ...(!element.description?.trim() ? ['missing description'] : []),
+      ...(!element.kind?.trim() ? ['missing kind'] : []),
+      ...(!element.technology?.trim() && !element.technology_connectors.some(link => link.slug?.trim() || link.label?.trim()) ? ['missing technology'] : []),
+      ...(duplicateElementNames.has(element.name.trim().toLowerCase()) ? ['duplicate name'] : []),
       ...(connectorCount === 0 ? ['unused element'] : []),
       ...(element.has_view ? ['has child view'] : []),
     ]
@@ -115,6 +159,7 @@ export function buildInventoryRows(
       filterTags: element.tags,
       updatedAt: element.updated_at,
       typeLabel: element.kind || 'element',
+      usageCount: connectorCount,
       usageLabel: `${connectorCount} connectors${element.has_view ? ', child view' : ''}`,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,
@@ -126,7 +171,10 @@ export function buildInventoryRows(
     const counts = countsByView[view.id] ?? { placements: 0, connectors: 0 }
     const qualityFlags = [
       ...((view.tags ?? []).length === 0 ? ['untagged'] : []),
-      ...(!view.description ? ['missing description'] : []),
+      ...(!view.description?.trim() ? ['missing description'] : []),
+      ...(!view.level_label?.trim() ? ['missing level'] : []),
+      ...(counts.placements > 0 && counts.connectors === 0 ? ['unconnected view'] : []),
+      ...(duplicateViewNames.has(view.name.trim().toLowerCase()) ? ['duplicate name'] : []),
       ...(counts.placements === 0 && counts.connectors === 0 ? ['empty view'] : []),
     ]
     const searchableParts = [
@@ -145,10 +193,14 @@ export function buildInventoryRows(
       filterTags: view.tags ?? [],
       updatedAt: view.updated_at,
       typeLabel: view.level_label || 'view',
+      usageCount: counts.placements,
       usageLabel: `${counts.placements} elements, ${counts.connectors} connectors`,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,
       view,
+      viewCounts: counts,
+      parentViewName: view.parent_view_id == null ? '' : viewById.get(view.parent_view_id)?.name ?? `View ${view.parent_view_id}`,
+      ownerElementName: view.owner_element_id == null ? '' : elementById.get(view.owner_element_id)?.name ?? `Element ${view.owner_element_id}`,
     }
   })
 
@@ -159,8 +211,10 @@ export function buildInventoryRows(
     const name = connector.label || ''
     const qualityFlags = [
       ...((connector.tags ?? []).length === 0 ? ['untagged'] : []),
-      ...(!connector.description ? ['missing description'] : []),
-      ...(!connector.label ? ['missing label'] : []),
+      ...(!connector.description?.trim() ? ['missing description'] : []),
+      ...(!connector.label?.trim() ? ['missing label'] : []),
+      ...(!connector.relationship?.trim() ? ['missing relationship'] : []),
+      ...(connector.source_element_id === connector.target_element_id ? ['self connection'] : []),
     ]
     const searchableParts = [
       name,
@@ -182,7 +236,7 @@ export function buildInventoryRows(
       tags: connector.tags ?? [],
       filterTags: connector.tags ?? [],
       updatedAt: connector.updated_at,
-      typeLabel: connector.relationship || connector.direction || 'connector',
+      typeLabel: connector.relationship || 'connector',
       usageLabel: viewName,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,

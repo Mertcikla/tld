@@ -22,6 +22,7 @@ test('bulk inventory actions add remove tags and delete only selected rows', asy
   await expect(page.locator(`[data-inventory-key="element:${second.id}"]`)).toBeVisible()
   await expect(page.locator(`[data-inventory-key="element:${survivor.id}"]`)).toBeVisible()
 
+  await expect(page.getByTestId(`inventory-row-select-element:${first.id}`).locator('input')).toBeEnabled()
   await page.getByTestId(`inventory-row-select-element:${first.id}`).click({ force: true })
   await page.getByTestId(`inventory-row-select-element:${second.id}`).click({ force: true })
   await expect(page.getByText('2 selected', { exact: true })).toBeVisible()
@@ -42,6 +43,7 @@ test('bulk inventory actions add remove tags and delete only selected rows', asy
     ]
   }).toEqual([true, true, false])
 
+  await expect(page.getByTestId(`inventory-row-select-element:${first.id}`).locator('input')).toBeEnabled()
   await page.getByTestId(`inventory-row-select-element:${first.id}`).click({ force: true })
   await page.getByTestId(`inventory-row-select-element:${second.id}`).click({ force: true })
   await page.getByTestId('inventory-bulk-remove-tag').click()
@@ -58,6 +60,7 @@ test('bulk inventory actions add remove tags and delete only selected rows', asy
     ]
   }).toEqual([false, false])
 
+  await expect(page.getByTestId(`inventory-row-select-element:${first.id}`).locator('input')).toBeEnabled()
   await page.getByTestId(`inventory-row-select-element:${first.id}`).click({ force: true })
   await page.getByTestId(`inventory-row-select-element:${second.id}`).click({ force: true })
   await page.getByTestId('inventory-bulk-delete').click()
@@ -78,4 +81,18 @@ test('bulk inventory actions add remove tags and delete only selected rows', asy
       hasSurvivor: names.includes(survivor.name),
     }
   }).toEqual({ hasFirst: false, hasSecond: false, hasSurvivor: true })
+})
+
+test('select all matching replaces selections outside the current filters', async ({ page }) => {
+  const prefix = uniqueName('Inventory Selection')
+  const graph = await createConnectorGraph(page, prefix)
+  await page.goto(`/inventory?type=elements&q=${encodeURIComponent(prefix)}`)
+  await page.getByTestId(`inventory-row-select-element:${graph.center.id}`).click()
+  await page.getByTestId('inventory-search').fill(graph.incoming.name)
+  await expect(page.getByText('1 outside current filters', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Select all 1 matching', exact: true }).click()
+  await expect(page.getByText('1 outside current filters', { exact: true })).toHaveCount(0)
+  await page.getByTestId('inventory-search').fill(prefix)
+  await expect(page.getByTestId(`inventory-row-select-element:${graph.center.id}`).locator('input')).not.toBeChecked()
+  await expect(page.getByTestId(`inventory-row-select-element:${graph.incoming.id}`).locator('input')).toBeChecked()
 })
