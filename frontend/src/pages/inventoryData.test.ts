@@ -225,6 +225,20 @@ describe('inventoryData', () => {
     })
   })
 
+  it('provides view hierarchy names and separate content counts for inventory columns', () => {
+    const child = view(11, 'Container', [], { parent_view_id: 10, owner_element_id: 1 })
+    const rows = buildInventoryRows(
+      [element(1, 'API')],
+      [view(10, 'System', [], { children: [child] }), child],
+      [],
+      { 11: { placements: 12, connectors: 2 } },
+    )
+    expect(rows.find(row => row.key === 'view:11')).toMatchObject({
+      parentViewName: 'System', ownerElementName: 'API', viewCounts: { placements: 12, connectors: 2 },
+    })
+    expect(rows.find(row => row.key === 'view:10')).toMatchObject({ parentViewName: '', ownerElementName: '', viewCounts: { placements: 0, connectors: 0 } })
+  })
+
   it('converts dependency connectors into editable connectors with tags', () => {
     expect(dependencyConnectorToConnector({
       id: '5',

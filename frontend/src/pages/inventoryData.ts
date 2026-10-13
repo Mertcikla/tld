@@ -20,6 +20,7 @@ export interface InventoryRow {
   filterTags: string[]
   updatedAt: string
   typeLabel: string
+  usageCount?: number
   usageLabel: string
   searchableText: string
   qualityFlags: string[]
@@ -29,6 +30,9 @@ export interface InventoryRow {
   sourceName?: string
   targetName?: string
   viewName?: string
+  parentViewName?: string
+  ownerElementName?: string
+  viewCounts?: InventoryViewContentCounts
 }
 
 export interface InventoryFilters {
@@ -115,6 +119,7 @@ export function buildInventoryRows(
       filterTags: element.tags,
       updatedAt: element.updated_at,
       typeLabel: element.kind || 'element',
+      usageCount: connectorCount,
       usageLabel: `${connectorCount} connectors${element.has_view ? ', child view' : ''}`,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,
@@ -145,10 +150,14 @@ export function buildInventoryRows(
       filterTags: view.tags ?? [],
       updatedAt: view.updated_at,
       typeLabel: view.level_label || 'view',
+      usageCount: counts.placements,
       usageLabel: `${counts.placements} elements, ${counts.connectors} connectors`,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,
       view,
+      viewCounts: counts,
+      parentViewName: view.parent_view_id == null ? '' : viewById.get(view.parent_view_id)?.name ?? `View ${view.parent_view_id}`,
+      ownerElementName: view.owner_element_id == null ? '' : elementById.get(view.owner_element_id)?.name ?? `Element ${view.owner_element_id}`,
     }
   })
 
@@ -182,7 +191,7 @@ export function buildInventoryRows(
       tags: connector.tags ?? [],
       filterTags: connector.tags ?? [],
       updatedAt: connector.updated_at,
-      typeLabel: connector.relationship || connector.direction || 'connector',
+      typeLabel: connector.relationship || 'connector',
       usageLabel: viewName,
       searchableText: searchableParts.filter(Boolean).join(' ').toLowerCase(),
       qualityFlags,

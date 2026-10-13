@@ -38,7 +38,7 @@ test('search empty state can be cleared in inventory', async ({ page }) => {
   await page.getByTestId('inventory-search').fill(uniqueName('no-match'))
 
   await expect(page.getByText('No matching objects')).toBeVisible()
-  await expect(page.getByText(/^0 \//)).toBeVisible()
+  await expect(page.getByTestId('inventory-pagination-summary')).toHaveText('0–0 of 0')
   await page.getByTestId('inventory-search').fill('')
   await expect(page.getByTestId('inventory-search')).toHaveValue('')
 })
