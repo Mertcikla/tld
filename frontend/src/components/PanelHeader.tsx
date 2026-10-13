@@ -55,7 +55,6 @@ export default function PanelHeader({ title, onClose, hasCloseButton = true, isI
         pb={3}
         justify="space-between"
         flexShrink={0}
-        bgGradient="linear(to-b, whiteAlpha.50, transparent)"
       >
         {headerContent}
       </HStack>

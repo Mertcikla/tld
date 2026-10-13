@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   Box,
   Button,
+  FormControl,
   FormLabel,
   Input,
   Menu,
   MenuButton,
   MenuItem,
   MenuList,
+  Switch,
   Text,
   Tooltip,
   VStack,
@@ -17,7 +19,7 @@ import {
 } from '@chakra-ui/react'
 import { getCollaborationIdentity, saveCollaborationIdentity } from '../api/collaborationIdentity'
 import { ACCENT_OPTIONS, BACKGROUND_OPTIONS, ELEMENT_OPTIONS } from '../constants/colors'
-import { useTheme } from '../context/ThemeContext'
+import { usePanelStyle, useTheme } from '../context/ThemeContext'
 import { useSourceEditor } from '../utils/sourceEditor'
 import { CONNECTOR_STYLE_OPTIONS, useConnectorStyle } from '../context/ConnectorStyleContext'
 import { ChevronDownIcon } from '../components/Icons'
@@ -84,6 +86,8 @@ export default function AppearanceSettings({ compact = false }: { compact?: bool
   const { accent, setAccent, background, setBackground, elementColor, setElementColor } = useTheme()
   const { editor, setEditor } = useSourceEditor()
   const { defaultConnectorStyle, setDefaultConnectorStyle } = useConnectorStyle()
+  const { flatPanels, setFlatPanels } = usePanelStyle()
+  const flatPanelsId = useId()
   const swatchSize = compact ? '21px' : '32px'
   const sectionGap = compact ? 5 : 8
   const selectedConnectorStyleLabel = defaultConnectorStyle === null ? 'Default (Bezier)' : CONNECTOR_STYLE_LABELS[defaultConnectorStyle] ?? 'Bezier'
@@ -202,6 +206,23 @@ export default function AppearanceSettings({ compact = false }: { compact?: bool
             )
           })}
         </Wrap>
+      </Box>
+
+      <Box w="full">
+        <FormControl display="flex" alignItems="center" justifyContent="space-between" gap={3}>
+          <FormLabel htmlFor={flatPanelsId} mb={0} fontSize={compact ? 'xs' : 'sm'} textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
+            Flat editor panels
+          </FormLabel>
+          <Switch
+            id={flatPanelsId}
+            data-testid="appearance-flat-panels"
+            size="sm"
+            colorScheme="blue"
+            isChecked={flatPanels}
+            onChange={(event) => setFlatPanels(event.target.checked)}
+          />
+        </FormControl>
+        <Text mt={2} fontSize="xs" color="gray.500">Full-height side panels with square corners.</Text>
       </Box>
 
       {compact && <CompactUsernameSetting />}
