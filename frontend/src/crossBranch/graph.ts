@@ -1,5 +1,6 @@
-import type { Connector, ExploreData, PlacedElement, ViewTreeNode } from '../types'
+import type { Connector, ExploreData, LibraryElement, PlacedElement, ViewTreeNode } from '../types'
 import type { GraphPlacementRef, WorkspaceGraphSnapshot } from './types'
+import { withUnplacedElements, withoutUnplacedElements } from './unplacedElements'
 
 function cloneViewTree(nodes: ViewTreeNode[]): ViewTreeNode[] {
   return nodes.map((node) => ({
@@ -33,6 +34,7 @@ function viewNameOf(viewById: Record<number, ViewTreeNode>, viewId: number): str
 
 function deepCloneExploreData(data: ExploreData): ExploreData {
   return {
+    elements: data.elements ? [...data.elements] : undefined,
     tree: cloneViewTree(data.tree ?? []),
     navigations: [...(data.navigations ?? [])],
     views: Object.fromEntries(
@@ -48,7 +50,10 @@ function deepCloneExploreData(data: ExploreData): ExploreData {
 }
 
 export function buildWorkspaceGraphSnapshot(data: ExploreData): WorkspaceGraphSnapshot {
-  const tree = cloneViewTree(data.tree ?? [])
+  const source = deepCloneExploreData(withoutUnplacedElements(data))
+  const graphData = withUnplacedElements(source)
+  source.elements = graphData.elements
+  const tree = cloneViewTree(graphData.tree)
   const flatTree = flattenTree(tree)
   const viewById = Object.fromEntries(flatTree.map((view) => [view.id, view])) as Record<number, ViewTreeNode>
 
@@ -57,7 +62,7 @@ export function buildWorkspaceGraphSnapshot(data: ExploreData): WorkspaceGraphSn
   const placementsByElementId: Record<number, GraphPlacementRef[]> = {}
 
   for (const view of flatTree) {
-    const content = data.views?.[String(view.id)]
+    const content = graphData.views[String(view.id)]
     const placements = [...(content?.placements ?? [])]
     const connectors = [...(content?.connectors ?? [])]
     placementsByViewId[view.id] = placements
@@ -104,7 +109,7 @@ export function buildWorkspaceGraphSnapshot(data: ExploreData): WorkspaceGraphSn
   }, {})
 
   return {
-    source: deepCloneExploreData(data),
+    source,
     tree,
     views,
     viewById,
@@ -152,9 +157,14 @@ export function allConnectors(snapshot: WorkspaceGraphSnapshot): Connector[] {
   return Object.values(snapshot.connectorsByViewId).flat()
 }
 
-export function upsertConnectorInSnapshot(snapshot: WorkspaceGraphSnapshot | null, connector: Connector): WorkspaceGraphSnapshot | null {
+function mergeElements(existing: LibraryElement[] = [], incoming: LibraryElement[] = []): LibraryElement[] {
+  return [...new Map([...existing, ...incoming].map((element) => [element.id, element])).values()]
+}
+
+export function upsertConnectorInSnapshot(snapshot: WorkspaceGraphSnapshot | null, connector: Connector, elements?: LibraryElement[]): WorkspaceGraphSnapshot | null {
   if (!snapshot) return snapshot
   const next = deepCloneExploreData(snapshot.source)
+  if (elements) next.elements = mergeElements(next.elements, elements)
   const viewKey = String(connector.view_id)
   next.views[viewKey] ??= { placements: [], connectors: [] }
   next.views[viewKey].connectors = [
@@ -196,9 +206,10 @@ export function removePlacementFromSnapshot(snapshot: WorkspaceGraphSnapshot | n
   return buildWorkspaceGraphSnapshot(next)
 }
 
-export function overrideViewContentInSnapshot(snapshot: WorkspaceGraphSnapshot | null, viewId: number, placements: PlacedElement[], connectors: Connector[]): WorkspaceGraphSnapshot | null {
+export function overrideViewContentInSnapshot(snapshot: WorkspaceGraphSnapshot | null, viewId: number, placements: PlacedElement[], connectors: Connector[], elements?: LibraryElement[]): WorkspaceGraphSnapshot | null {
   if (!snapshot) return snapshot
   const next = deepCloneExploreData(snapshot.source)
+  if (elements) next.elements = mergeElements(next.elements, elements)
   const visibleElementIds = new Set(placements.map((placement) => placement.element_id))
   const explicitConnectorIds = new Set(connectors.map((connector) => connector.id))
   const preservedOffViewConnectors = (next.views[String(viewId)]?.connectors ?? []).filter((connector) => {

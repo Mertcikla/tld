@@ -212,11 +212,22 @@ test('connects to an off-view element by default and can switch to add and conne
   const input = page.getByTestId('pending-element-label-input')
   await input.fill(unplaced.name)
   const unplacedOption = page.getByTestId('pending-element-existing-option').filter({ hasText: unplaced.name })
-  await expect(unplacedOption).toHaveAttribute('aria-disabled', 'true')
+  await expect(unplacedOption).toHaveAttribute('aria-disabled', 'false')
   await expect(page.getByTestId('pending-element-create-option')).toHaveCount(0)
   await input.press('Enter')
-  await expect(input).toBeVisible()
-  expect(await listConnectors(page, diagram.id)).toHaveLength(0)
+  await expectConnector(page, {
+    sourceElementId: elements[0].id,
+    targetElementId: unplaced.id,
+  }, true, 0)
+  expect((await listPlacements(page, diagram.id)).map((placement) => placement.elementId)).toEqual([elements[0].id])
+  await expect(page.locator('button[aria-label="Expand Unplaced elements"]')).toBeVisible()
+  await reloadView(page)
+  await closeViewEditorPanels(page)
+  await page.locator('button[aria-label="Expand Unplaced elements"]').click()
+  await page.keyboard.press('f')
+  await expect(page.locator('.react-flow__node-contextNeighborNode').filter({ hasText: unplaced.name })).toBeVisible()
+
+  await openPicker()
 
   await input.fill(external.name)
   const externalOption = page.getByTestId('pending-element-existing-option').filter({ hasText: external.name })
@@ -227,7 +238,7 @@ test('connects to an off-view element by default and can switch to add and conne
     targetElementId: external.id,
   }, true, 0)
   expect((await listPlacements(page, diagram.id)).map((placement) => placement.elementId)).toEqual([elements[0].id])
-  await expect(page.locator('.react-flow__edge-proxyConnectorEdge')).toBeAttached()
+  await expect(page.locator('.react-flow__edge-proxyConnectorEdge').first()).toBeAttached()
 
   await openPicker()
   await input.fill(external.name)

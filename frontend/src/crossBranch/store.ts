@@ -54,8 +54,8 @@ export function useWorkspaceGraphSnapshot(enabled = true) {
   return snapshot
 }
 
-export function upsertConnectorGraphSnapshot(connector: Parameters<typeof upsertConnectorInSnapshot>[1]) {
-  publish(upsertConnectorInSnapshot(cachedSnapshot, connector))
+export function upsertConnectorGraphSnapshot(connector: Parameters<typeof upsertConnectorInSnapshot>[1], elements?: Parameters<typeof upsertConnectorInSnapshot>[2]) {
+  publish(upsertConnectorInSnapshot(cachedSnapshot, connector, elements))
 }
 
 export function removeConnectorGraphSnapshot(viewId: number, connectorId: number) {

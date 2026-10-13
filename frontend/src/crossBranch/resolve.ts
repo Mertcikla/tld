@@ -12,6 +12,7 @@ import type {
   WorkspaceGraphSnapshot,
 } from './types'
 import { allConnectors, findLowestCommonAncestorViewId, isDescendantView, relativeOwnerElementPath, viewName } from './graph'
+import { UNPLACED_ELEMENTS_BOUNDARY_ID, UNPLACED_ELEMENTS_NAME, UNPLACED_ELEMENTS_VIEW_ID } from './unplacedElements'
 
 const connectorsBySnapshotCache = new WeakMap<WorkspaceGraphSnapshot, Connector[]>()
 const endpointPathCacheBySnapshot = new WeakMap<WorkspaceGraphSnapshot, Map<string, number[]>>()
@@ -143,6 +144,25 @@ function buildProxyEndpoint(
 
   const actualPlacement = elementDisplayPlacement(snapshot, elementId, chosenPlacement.viewId)
   const actualName = actualPlacement?.element.name ?? `Element ${elementId}`
+  if (chosenPlacement.viewId === UNPLACED_ELEMENTS_VIEW_ID) {
+    return {
+      actualElementId: elementId,
+      actualElementName: actualName,
+      anchorElementId: elementId,
+      anchorElementName: actualName,
+      anchorViewId: null,
+      anchorViewName: UNPLACED_ELEMENTS_NAME,
+      placementViewId: null,
+      placementViewName: null,
+      depth: 1,
+      externalToView: true,
+      currentBranchElementId: null,
+      commonAncestorViewId: null,
+      commonAncestorViewName: null,
+      contextPathElementIds: [],
+      branchPathElementIds: [UNPLACED_ELEMENTS_BOUNDARY_ID, elementId],
+    }
+  }
   const forceExplicitOffViewContext = ownerViewId === currentViewId &&
     chosenPlacement.viewId !== currentViewId &&
     snapshot.childViewIdByOwnerElementId[elementId] != null

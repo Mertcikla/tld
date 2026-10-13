@@ -89,6 +89,7 @@ export type ConnectorDragTarget = {
 
 function resolveElementIdFromNode(node: RFNode | null | undefined) {
   if (!node) return null
+  if ((node.data as { isSyntheticBoundary?: boolean } | undefined)?.isSyntheticBoundary) return null
   const numericId = parseNumericId(node.id)
   if (numericId !== null) return numericId
 
@@ -969,9 +970,9 @@ export function useCanvasInteractions({
     } catch { /* intentionally empty */ }
   }, [autoLayoutEnabled, canEdit, getInteractionNodes, onPlacementMoved, setRfNodes, updateElementPosition, viewElementsRef, viewId])
 
-  const finalizeConnectorCreate = useCallback(async (connector: Connector) => {
+  const finalizeConnectorCreate = useCallback(async (connector: Connector, elements?: LibraryElement[]) => {
     await relocateConnectedTarget(connector)
-    upsertConnectorGraphSnapshot(connector)
+    upsertConnectorGraphSnapshot(connector, elements)
     upsertConnector(connector)
     onConnectorSaved?.(connector)
     await refreshElements()
@@ -1096,7 +1097,7 @@ export function useCanvasInteractions({
           style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
-        await finalizeConnectorCreate(connector)
+        await finalizeConnectorCreate(connector, [obj])
       }
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
@@ -1139,7 +1140,7 @@ export function useCanvasInteractions({
           style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
-        await finalizeConnectorCreate(connector)
+        await finalizeConnectorCreate(connector, [obj])
       }
       if (addPlacement || sourceIds.length > 0) onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }

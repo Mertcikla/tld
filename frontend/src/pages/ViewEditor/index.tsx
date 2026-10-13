@@ -2034,8 +2034,8 @@ function ViewEditorInner({
 
   const effectiveWorkspaceSnapshot = useMemo(() => {
     if (viewId == null) return workspaceGraphSnapshot
-    return overrideViewContentInSnapshot(workspaceGraphSnapshot, viewId, viewElements, connectors)
-  }, [workspaceGraphSnapshot, viewId, viewElements, connectors])
+    return overrideViewContentInSnapshot(workspaceGraphSnapshot, viewId, viewElements, connectors, allElements)
+  }, [workspaceGraphSnapshot, viewId, viewElements, connectors, allElements])
 
   const placementSummaryByElementId = useMemo(() => {
     const summary: Record<number, string> = {}
@@ -2997,11 +2997,6 @@ function ViewEditorInner({
           getSecondaryLabel: pending.sourceElementIds.length > 0
             ? (obj: WorkspaceElement) => placementSummaryByElementId[obj.id] ?? obj.technology ?? null
             : undefined,
-          getDisabledReason: pending.mode === 'connect'
-            ? (obj: WorkspaceElement) => existingElementIds.has(obj.id) || effectiveWorkspaceSnapshot?.placementsByElementId[obj.id]?.length
-              ? null
-              : effectiveWorkspaceSnapshot ? 'Not placed in any view. Use Add & connect.' : 'Loading view locations…'
-            : undefined,
           onConfirmNew: canvas.handleConfirmNewElement,
           onConfirmExisting: canvas.handleConfirmExistingElement,
           onCancel: canvas.cancelPendingElement,
@@ -3015,7 +3010,6 @@ function ViewEditorInner({
     canvas.handleConfirmNewElement,
     canvas.pendingElement,
     canvas.setPendingElementMode,
-    effectiveWorkspaceSnapshot,
     existingElementIds,
     placementSummaryByElementId,
     viewId,

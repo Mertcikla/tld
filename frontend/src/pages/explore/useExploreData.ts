@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import type { ExploreData } from '../../types'
 import { primeWorkspaceGraphSnapshot } from '../../crossBranch/store'
+import { withUnplacedElements } from '../../crossBranch/unplacedElements'
 
 export interface ExploreDataState {
   data: ExploreData | null
@@ -39,7 +40,7 @@ export function useExploreData(sharedToken?: string): ExploreDataState {
 
   const hasPlacements = useMemo(() => {
     if (!data || !data.views) return false
-    return Object.values(data.views).some((view) => (view?.placements ?? []).length > 0)
+    return Object.values(withUnplacedElements(data).views).some((view) => (view?.placements ?? []).length > 0)
   }, [data])
 
   return {
