@@ -6,7 +6,7 @@ import type { ExploreData, ViewLayer } from '../../types'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import { computeLayout } from './layout'
-import { getCameraRebase, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY } from './layoutEngine'
+import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
@@ -14,6 +14,7 @@ import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
+import { getHoverScreenRect } from './hoverFeedback'
 import { applyChangeOverlays } from './changeOverlay'
 import type { ZUIChangeOverlay } from './types'
 
@@ -179,6 +180,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     hiddenTags,
     tagColors,
     groupLayers,
+    hoveredItem,
   })
 
   useEffect(() => {
@@ -256,33 +258,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     })
   }, [containerSize.h, containerSize.w, debugViewport, viewState, viewportBounds])
 
-  const hoveredScreenRect = useMemo(() => {
-    if (!hoveredItem) return null
-    let absX: number
-    let absY: number
-    let absW: number
-    let absH: number
-    if (hoveredItem.type === 'node') {
-      ({ absX, absY, absW, absH } = hoveredItem)
-    } else if (hoveredItem.type === 'edge') {
-      ({ absX, absY } = hoveredItem)
-      absW = 0
-      absH = 0
-    } else {
-      const group = hoveredItem.data
-      absW = 200 / viewState.zoom
-      absH = 50 / viewState.zoom
-      absX = group.worldX + group.diagramX + group.diagramW / 2 - absW / 2
-      absY = group.worldY + group.diagramY - absH
-    }
-
-    return {
-      sx: worldToScreenX(absX, viewState),
-      sy: worldToScreenY(absY, viewState),
-      sw: absW * viewState.zoom,
-      sh: absH * viewState.zoom,
-    }
-  }, [hoveredItem, viewState])
+  const hoveredScreenRect = useMemo(() => getHoverScreenRect(hoveredItem, viewState), [hoveredItem, viewState])
 
   const isHoveredItemFullyVisible = useMemo(() => {
     if (!hoveredScreenRect || containerSize.w === 0) return false

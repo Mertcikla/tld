@@ -59,12 +59,23 @@ export function useZUIProxyConnectors(
     crossBranchSettings.maxProxyConnectorGroups ?? '',
   ].join(':')
 
-  // Connector topology follows visible anchor identity and cross-branch settings.
-  // The string signatures intentionally avoid pan state, so panning never rebuilds topology.
+  const viewportReady = canvasW > 0 && viewportBounds.maxY > viewportBounds.minY
+  const viewportElementSig = useMemo(() => Array.from(anchors.visibleAnchors.entries())
+    .filter(([, anchor]) => {
+      const x = anchor.worldX + anchor.worldW / 2
+      const y = anchor.worldY + anchor.worldH / 2
+      return x >= viewportBounds.minX && x <= viewportBounds.maxX && y >= viewportBounds.minY && y <= viewportBounds.maxY
+    })
+    .map(([id]) => id)
+    .sort((a, b) => a - b)
+    .join(','), [anchors.visibleAnchors, viewportBounds])
+
+  // Rebuild when anchors enter or leave the viewport, including camera focus changes.
+  // Panning within the same set of anchors reuses topology without another graph walk.
   const proxyConnectors = useMemo(() => {
-    return buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings, viewportBounds)
+    return buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings, viewportReady ? viewportBounds : undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSnapshot, visibleElementSig, proxySettingsSig])
+  }, [workspaceSnapshot, visibleElementSig, proxySettingsSig, viewportReady, viewportElementSig])
 
   const proxyConnectorRenderState = useMemo(() => (
     buildProxyConnectorRenderState(proxyConnectors.connectors)

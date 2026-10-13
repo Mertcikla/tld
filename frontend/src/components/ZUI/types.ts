@@ -177,6 +177,9 @@ export type HoveredItem =
   | { type: 'node'; data: LayoutNode; absX: number; absY: number; absW: number; absH: number }
   | {
     type: 'edge';
+    /** Hit-tested route in world coordinates. */
+    route?: Array<{ x: number; y: number }>;
+    clip?: BBox;
     data: {
       id?: number;
       sourceId: string;

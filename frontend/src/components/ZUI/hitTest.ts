@@ -167,7 +167,16 @@ function hitTestNodes(
 
     if (selfAlpha < SELF_HOVER_ALPHA_MIN) continue
 
-    return { node, absX, absY, absW, absH, cumulativeScale: parentAbsScale }
+    const cap = !hasChildren ? Math.min(1, thresholds.end / screenW) : 1
+    const visualW = absW * cap
+    const visualH = absH * cap
+    const visualX = absX + (absW - visualW) / 2
+    const visualY = absY + (absH - visualH) / 2
+    // Leaf cards stop growing at the detail threshold; their hit area must stop too.
+    const localX = parentAbsX + (worldX - parentChildOffsetX) * parentAbsScale
+    const localY = parentAbsY + (worldY - parentChildOffsetY) * parentAbsScale
+    if (localX < visualX || localX > visualX + visualW || localY < visualY || localY > visualY + visualH) continue
+    return { node, absX: visualX, absY: visualY, absW: visualW, absH: visualH, cumulativeScale: parentAbsScale }
   }
 
   return null

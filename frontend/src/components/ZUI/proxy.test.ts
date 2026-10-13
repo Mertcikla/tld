@@ -3,6 +3,7 @@ import {
   buildProxyConnectorRenderState,
   buildProxyConnectorSpatialIndex,
   collectVisibleNodeAnchors,
+  drawVisibleProxyConnectors,
   findHoveredProxyConnector,
   getProxyBezierBadgeGeometry,
   type VisibleNodeAnchor,
@@ -203,5 +204,44 @@ describe('buildProxyConnectorRenderState', () => {
 
     expect(findHoveredProxyConnector(200, 250, hoverIndex, { x: 0, y: 0, zoom: 1 })).toBeNull()
     expect(findHoveredProxyConnector(200, 50, hoverIndex, { x: 0, y: 0, zoom: 1 })?.data.label).toBe('Visible connector')
+    const hovered = findHoveredProxyConnector(130, 55, hoverIndex, { x: 0, y: 0, zoom: 1 })
+    expect(hovered).toMatchObject({ absX: 130, absY: 55, type: 'edge' })
+    if (hovered?.type === 'edge') expect(hovered.route).toEqual([{ x: 100, y: 50 }, { x: 300, y: 50 }])
+  })
+})
+
+
+describe('off-view connector hover rendering', () => {
+  it.each([
+    { hoveredKey: undefined, width: 0.5, dash: [0.5, 2] },
+    { hoveredKey: 'other', width: 0.5, dash: [0.5, 2] },
+    { hoveredKey: 'proxy', width: 1.5, dash: [] },
+  ])('uses the original path with hover key $hoveredKey', ({ hoveredKey, width, dash }) => {
+    const connector = proxyConnector({ key: 'proxy', details: proxyDetails('proxy') })
+    const anchors = new Map([
+      ['source', anchor({ nodeId: 'source', elementId: 1, worldX: 0, worldY: 0 })],
+      ['target', anchor({ nodeId: 'target', elementId: 2, worldX: 300, worldY: 0 })],
+    ])
+    let currentDash: number[] = []
+    const strokes: Array<{ width: number; dash: number[] }> = []
+    const points: number[][] = []
+    const ctx = {
+      lineWidth: 0,
+      save() {}, restore() {}, beginPath() {},
+      setLineDash(value: number[]) { currentDash = value },
+      moveTo(x: number, y: number) { points.push([x, y]) },
+      lineTo(x: number, y: number) { points.push([x, y]) },
+      stroke() { strokes.push({ width: this.lineWidth, dash: currentDash }) },
+    }
+    drawVisibleProxyConnectors(
+      ctx as unknown as CanvasRenderingContext2D,
+      buildProxyConnectorRenderState([connector]), anchors, 2, '#000', '#123456', [], false, undefined,
+      hoveredKey ? {
+        type: 'edge', absX: 150, absY: 50,
+        data: { sourceId: 'source', targetId: 'target', label: '', diagramId: 1, isProxy: true, details: proxyDetails(hoveredKey) },
+      } : null,
+    )
+    expect(strokes).toEqual([{ width, dash }])
+    expect(points).toEqual([[100, 50], [300, 50]])
   })
 })

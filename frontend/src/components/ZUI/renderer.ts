@@ -1,7 +1,7 @@
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
-import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import { CHANGE_RING_COLORS } from './changeOverlay'
 import { EDGE_CHANGE_META } from './edgeChange'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
@@ -164,6 +164,7 @@ export interface RenderContext {
   thresholds: { start: number; end: number }
   lowDetail: boolean
   groupLayersByDiagram: Map<number, ViewLayer[]>
+  hoveredItem?: HoveredItem | null
 }
 
 const imageCache = new Map<string, HTMLImageElement>()
@@ -836,6 +837,7 @@ function drawSceneNode(
   const parentAlpha = state.parentAlpha
   const inheritedAlpha = state.inheritedAlpha
 
+  const isHovered = renderCtx.hoveredItem?.type === 'node' && renderCtx.hoveredItem.data === layout
   const borderColor = typeBorderColor(layout.type)
 
   const traceShape = (ox = 0, oy = 0) => {
@@ -937,10 +939,10 @@ function drawSceneNode(
     traceShape()
     if (layout.isPortal) {
       ctx.strokeStyle = accent
-      ctx.lineWidth = 1 / drawZoom
+      ctx.lineWidth = (isHovered ? 1.5 : 1) / drawZoom
       ctx.setLineDash([])
     } else {
-      ctx.strokeStyle = borderColor
+      ctx.strokeStyle = isHovered ? accent : borderColor
       ctx.lineWidth = 1.5 / drawZoom
       if (t > 0.15) {
         const dashLen = 6
@@ -1330,6 +1332,7 @@ function drawEdges(
   lowDetail: boolean,
   originX?: number,
   originY?: number,
+  hoveredItem?: HoveredItem | null,
 ): void {
   if (alpha < 0.05) return
 
@@ -1416,7 +1419,9 @@ function drawEdges(
       ctx.save()
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
-      ctx.lineWidth = CONNECTOR_LINE_PX / zoom
+      const isHovered = hoveredItem?.type === 'edge' && !hoveredItem.data.isProxy &&
+        hoveredItem.data.id === edge.id && hoveredItem.data.diagramId === node.diagramId
+      ctx.lineWidth = (isHovered ? 4 : CONNECTOR_LINE_PX) / zoom
 
       if (edge.change === 'removed') {
         ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))
@@ -1671,7 +1676,7 @@ function drawNodeTree(
           renderCtx.lowDetail,
         )
       }
-      drawEdges(ctx, node.children, node.state.childAlpha * 0.8, childZoom, renderCtx.thresholds, renderCtx.accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail)
+      drawEdges(ctx, node.children, node.state.childAlpha * 0.8, childZoom, renderCtx.thresholds, renderCtx.accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, undefined, undefined, renderCtx.hoveredItem)
     }
 
     for (const child of node.children) {
@@ -1745,7 +1750,7 @@ export function renderFrame(
       renderCtx.lowDetail,
     )
 
-    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, renderCtx.thresholds, accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, rebase.originX, rebase.originY)
+    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, renderCtx.thresholds, accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, rebase.originX, rebase.originY, renderCtx.hoveredItem)
 
     for (const node of group.nodes) {
       if (!node.state.isVisible) continue

@@ -265,13 +265,17 @@ export function ZUIHoverPopover({
   return (
     <Popover
       isOpen={isOpen}
-      placement="right-start"
+      placement={hoveredItem?.type === 'edge' ? 'bottom-start' : 'right-start'}
+      autoFocus={false}
+      returnFocusOnClose={false}
+      modifiers={[{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }]}
       closeOnBlur={false}
       gutter={12}
       isLazy
     >
       <PopoverTrigger>
         <Box
+          data-testid="zui-hover-anchor"
           position="absolute"
           left={hoveredScreenRect?.sx ?? 0}
           top={hoveredScreenRect?.sy ?? 0}

@@ -234,6 +234,7 @@ export function useZUIInteraction(
       hoverTimeoutRef.current = null
     }
 
+    if (canvasRef.current) canvasRef.current.style.cursor = item ? 'pointer' : 'grab'
     if (item === null) {
       if (force) {
         setHoveredItemInternal(null)
@@ -248,19 +249,17 @@ export function useZUIInteraction(
     } else {
       setHoveredItemInternal(item)
     }
-  }, [isHoverLocked])
+  }, [canvasRef, isHoverLocked])
 
   const setHoverLocked = useCallback((locked: boolean) => {
+    const wasLocked = popoverHoverLockedRef.current
     popoverHoverLockedRef.current = locked
     if (locked && hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current)
       hoverTimeoutRef.current = null
     }
-    if (!locked) {
-      // If we unlock and there is no item currently being "detected" by mouse,
-      // it should ideally clear soon. The next mouse move will handle it.
-    }
-  }, [])
+    if (!locked && wasLocked) setHoveredItem(null)
+  }, [setHoveredItem])
 
   useEffect(() => {
     externalHoverLockedRef.current = hoverLocked
@@ -270,14 +269,19 @@ export function useZUIInteraction(
     }
   }, [hoverLocked])
 
+  useEffect(() => () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+  }, [])
+
   // ── Refs for stable event handlers ──────────────────────────────
   const viewStateRef = useRef<ZUIViewState>(initialView)
   const groupsRef = useRef<DiagramGroupLayout[]>(groups)
   const hiddenTagsRef = useRef<ReadonlySet<string>>(new Set(hiddenTags))
   const edgeSpatialIndexRef = useRef<EdgeSpatialIndex | null>(null)
-  if (edgeSpatialIndexRef.current === null) {
-    edgeSpatialIndexRef.current = buildEdgeSpatialIndex(groups)
-  }
+  const edgeSpatialIndex = useMemo(() => buildEdgeSpatialIndex(
+    groups, viewState.zoom, getExpandThresholds(canvasWidth || 1200), new Set(hiddenTags),
+  ), [groups, viewState.zoom, canvasWidth, hiddenTags])
+  edgeSpatialIndexRef.current = edgeSpatialIndex
   const bboxRef = useRef<BBox | undefined>(bbox)
   const onZoomRef = useRef(onZoom)
   const onPanRef = useRef(onPan)
@@ -286,7 +290,6 @@ export function useZUIInteraction(
 
   useEffect(() => {
     groupsRef.current = groups
-    edgeSpatialIndexRef.current = buildEdgeSpatialIndex(groups)
     for (const group of groups) {
       warmZUIHitTestIndexes(group.nodes)
     }
@@ -503,8 +506,8 @@ export function useZUIInteraction(
       lastMouse.current.x = e.clientX
       lastMouse.current.y = e.clientY
       lastPointerClient.current = { x: e.clientX, y: e.clientY }
-      el!.style.cursor = 'grabbing'
       setHoveredItem(null, true) // Hide popover immediately while dragging
+      el!.style.cursor = 'grabbing'
     }
 
     function onMouseMove(e: MouseEvent) {
@@ -533,6 +536,10 @@ export function useZUIInteraction(
       }
 
       if (isHoverLocked()) return
+      if (screenX < 0 || screenY < 0 || screenX > rect.width || screenY > rect.height) {
+        setHoveredItem(null)
+        return
+      }
 
       // Hover detection
       const view = viewStateRef.current
@@ -598,7 +605,7 @@ export function useZUIInteraction(
     }
 
     function onMouseOut() {
-      setHoveredItem(null)
+      if (!dragging.current) setHoveredItem(null)
     }
 
     function onDblClick(e: MouseEvent) {

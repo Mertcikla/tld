@@ -1,5 +1,9 @@
 import { expect, test } from '../fixtures'
 import {
+  createApiView,
+  createConnector,
+  createPlacedElement,
+  uniqueName,
   dispatchTouchEventOnLocator,
   dispatchWheelOnLocator,
 } from '../helpers/vieweditor'
@@ -168,6 +172,99 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   const beforeBreadcrumb = await waitForStableZuiCamera(page)
   await page.getByTestId('zui-breadcrumb').getByText(root.name).click()
   await expect.poll(async () => stateDelta(await zuiViewState(page), beforeBreadcrumb)).toBeGreaterThan(8)
+})
+
+async function waitForHoverCamera(page: Parameters<typeof zuiViewState>[0]) {
+  let previous = await zuiViewState(page)
+  let stableSamples = 0
+  // Focus animates for 520 ms. Require consecutive samples so hover coordinates
+  // are measured after that animation, rather than between its first two frames.
+  await expect.poll(async () => {
+    const next = await zuiViewState(page)
+    const delta = stateDelta(previous, next) + Math.abs(previous.zoom - next.zoom) * 100
+    stableSamples = delta < 0.01 ? stableSamples + 1 : 0
+    previous = next
+    return stableSamples
+  }, { intervals: [100] }).toBeGreaterThanOrEqual(3)
+}
+
+test('highlights connector hover, anchors its popover near the pointer, and supports nested connectors', async ({ page }) => {
+  const { root, parent, sibling, child, childSource, childTarget } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: sibling.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const pointer = {
+    x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * 0.25,
+    y: connector.sourcePoint.y,
+  }
+  const canvas = page.locator('canvas')
+  const pixelNearConnector = () => canvas.evaluate((element: HTMLCanvasElement, point) => {
+    const rect = element.getBoundingClientRect()
+    const dpr = element.width / rect.width
+    const ctx = element.getContext('2d')!
+    return Array.from(ctx.getImageData((point.x - rect.left) * dpr, (point.y - rect.top + 1.5) * dpr, 1, 1).data)
+  }, pointer)
+  const before = await pixelNearConnector()
+  await page.mouse.move(pointer.x, pointer.y)
+  await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
+  await expect(page.getByTestId('zui-hover-popover')).toContainText('Parent Link')
+  await expect(canvas).toHaveCSS('cursor', 'pointer')
+  await expect.poll(pixelNearConnector).not.toEqual(before)
+  const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+  expect(anchor).not.toBeNull()
+  expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
+  expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
+
+  await page.getByTestId('zui-hover-popover').hover()
+  await expect(page.getByRole('link', { name: `Go to ${sibling.name}` })).toBeVisible()
+
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${child.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+  const nested = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: childSource.id, targetElementId: childTarget.id },
+  }) as { connector: { midPoint: { x: number; y: number } } }
+  await page.mouse.move(nested.connector.midPoint.x, nested.connector.midPoint.y)
+  await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
+  await expect(page.getByTestId('zui-hover-popover')).toContainText('Child Link')
+  await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
+})
+
+test('anchors off-view connector popovers at either hovered end of the route', async ({ page }) => {
+  const root = await createApiView(page, uniqueName('Proxy Hover Root'))
+  const parent = await createPlacedElement(page, root.id, { name: uniqueName('Parent') }, 120, 140)
+  const target = await createPlacedElement(page, root.id, { name: uniqueName('Target') }, 720, 140)
+  const child = await createApiView(page, uniqueName('Proxy Hover Child'), parent.id)
+  const source = await createPlacedElement(page, child.id, { name: uniqueName('Source') }, 120, 140)
+  await createConnector(page, root.id, source.id, target.id, { label: 'Off-view call' })
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+  const { connector } = await zuiScreenGeometry(page, {
+    connector: { sourceElementId: parent.id, targetElementId: target.id },
+  }) as { connector: { sourcePoint: { x: number; y: number }; targetPoint: { x: number; y: number } } }
+  const box = await canvasBox(page)
+  for (const progress of [0.2, 0.8]) {
+    await page.mouse.move(box.x + 5, box.y + 5)
+    await expect(page.getByTestId('zui-hover-popover')).toBeHidden()
+    const pointer = {
+      x: connector.sourcePoint.x + (connector.targetPoint.x - connector.sourcePoint.x) * progress,
+      y: connector.sourcePoint.y,
+    }
+    await page.mouse.move(pointer.x, pointer.y)
+    const popover = page.getByTestId('zui-hover-popover')
+    await expect(popover).toBeVisible()
+    await expect(popover).toContainText('Off-View Connector')
+    const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
+    expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
+    expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
+    const popup = await popover.boundingBox()
+    expect(Math.min(Math.abs(popup!.x - pointer.x), Math.abs(popup!.x + popup!.width - pointer.x))).toBeLessThan(40)
+  }
 })
 
 test('handles one-finger touch pan, two-finger pinch, and transition back to touch pan', async ({ page }, testInfo) => {

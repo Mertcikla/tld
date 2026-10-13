@@ -594,6 +594,7 @@ export function drawVisibleProxyConnectors(
   occupiedLabelRects: ScreenRect[],
   showBadges = true,
   viewport?: ZUIViewportBounds,
+  hoveredItem?: HoveredItem | null,
 ) {
   const pointInViewport = (x: number, y: number): boolean => {
     if (!viewport) return true
@@ -655,9 +656,10 @@ export function drawVisibleProxyConnectors(
     ctx.save()
     ctx.globalAlpha = connectorAlpha(alpha) * 0.8
     ctx.strokeStyle = accent
-    ctx.lineWidth = 1 / zoom
+    const isHovered = hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details?.key === connector.key
+    ctx.lineWidth = (isHovered ? 3 : 1) / zoom
     ctx.lineCap = 'round'
-    ctx.setLineDash([1 / zoom, 4 / zoom])
+    ctx.setLineDash(isHovered ? [] : [1 / zoom, 4 / zoom])
     ctx.beginPath()
     ctx.moveTo(sourcePoint.x, sourcePoint.y)
     ctx.lineTo(targetPoint.x, targetPoint.y)
@@ -675,7 +677,7 @@ export function drawVisibleProxyConnectors(
         targetPoint.y - sourcePoint.y,
         occupiedLabelRects,
       )
-      drawFixedScreenProxyBadge(ctx, label, labelPos, badge.badgeCssW, badge.badgeCssH, labelBg, accent, [1, 4])
+      drawFixedScreenProxyBadge(ctx, label, labelPos, badge.badgeCssW, badge.badgeCssH, labelBg, accent, isHovered ? [] : [1, 4])
     }
 
     ctx.restore()
@@ -809,7 +811,8 @@ export function findHoveredProxyConnector(
       isProxy: true,
       details: connector.details,
     },
-    absX: bestConnector.midX,
-    absY: bestConnector.midY,
+    absX: worldX,
+    absY: worldY,
+    route: [{ x: bestConnector.x1, y: bestConnector.y1 }, { x: bestConnector.x2, y: bestConnector.y2 }],
   }
 }

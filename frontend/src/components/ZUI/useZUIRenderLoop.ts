@@ -25,7 +25,7 @@ import {
   type RenderContext,
 } from './renderer'
 import { buildSceneGraph, type SceneGraph } from './sceneGraph'
-import type { ZUILayout, ZUIViewState } from './types'
+import type { HoveredItem, ZUILayout, ZUIViewState } from './types'
 import type { ZUIProxyConnectorState } from './useZUIProxyConnectors'
 import { subscribeElementNameFontsChanged } from '../../utils/elementName'
 
@@ -92,6 +92,7 @@ interface UseZUIRenderLoopArgs {
   highlightColor?: string
   hiddenTags?: string[]
   tagColors?: Record<string, { color?: string } | string>
+  hoveredItem?: HoveredItem | null
   groupLayers: ViewLayer[]
 }
 
@@ -113,7 +114,10 @@ export function useZUIRenderLoop({
   hiddenTags,
   tagColors,
   groupLayers,
+  hoveredItem = null,
 }: UseZUIRenderLoopArgs): ZUIRenderInvalidator {
+  const hoveredItemRef = useRef(hoveredItem)
+  hoveredItemRef.current = hoveredItem
   const needsRedrawRef = useRef(true)
   const labelBgRef = useRef('#171923')
   const accentRef = useRef('#63b3ed')
@@ -158,7 +162,7 @@ export function useZUIRenderLoop({
 
   useEffect(() => subscribeElementNameFontsChanged(invalidate), [invalidate])
 
-  useEffect(invalidate, [invalidate, viewState, crossBranchSettings])
+  useEffect(invalidate, [invalidate, viewState, crossBranchSettings, hoveredItem])
 
   useEffect(() => {
     sceneGraphRef.current = buildSceneGraph(layout)
@@ -291,6 +295,7 @@ export function useZUIRenderLoop({
         thresholds,
         lowDetail,
         groupLayersByDiagram,
+        hoveredItem: hoveredItemRef.current,
       }
 
       const occupiedLabelRects = renderFrame(ctx, graph, renderCtx, currentView, transitionRebaseRef.current)
@@ -323,6 +328,7 @@ export function useZUIRenderLoop({
         occupiedLabelRects,
         !lowDetail,
         rebasedViewport,
+        hoveredItemRef.current,
       )
       if (!lowDetail) {
         drawVisibleDirectProxyBadges(
