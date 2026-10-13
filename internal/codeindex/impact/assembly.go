@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "10"
+const PipelineVersion = "11"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -778,10 +778,10 @@ func (a *sceneAssembly) projectRelationships() {
 				}
 				if connector == nil {
 					a.nextConnector--
-					connector = &diagv1.Connector{Id: a.nextConnector, ViewId: int32(from.ViewId), SourceElementId: int32(from.ResourceId), TargetElementId: int32(to.ResourceId), Direction: "forward", Style: "bezier", Label: proto.String("dependency")}
+					connector = &diagv1.Connector{Id: a.nextConnector, ViewId: int32(from.ViewId), SourceElementId: int32(from.ResourceId), TargetElementId: int32(to.ResourceId), Direction: "forward", Style: "bezier"}
 					content.Connectors = append(content.Connectors, connector)
 					key := ConnectorKey(from.ViewId, int64(connector.Id))
-					a.scene.Provenance[key] = &model.Metadata{Key: key, ObjectKind: "connector", ViewId: from.ViewId, ResourceId: int64(connector.Id), Name: "dependency", Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW}
+					a.scene.Provenance[key] = &model.Metadata{Key: key, ObjectKind: "connector", ViewId: from.ViewId, ResourceId: int64(connector.Id), Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW}
 				}
 				p := a.scene.Provenance[ConnectorKey(from.ViewId, int64(connector.Id))]
 				p.Grounding = pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED

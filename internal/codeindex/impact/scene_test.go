@@ -501,8 +501,8 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 	for _, connector := range content.GetConnectors() {
 		if connector.GetSourceElementId() == transientID && connector.GetTargetElementId() == int32(cover.ID) {
 			wired = true
-			if label := connector.GetLabel(); !strings.Contains(label, "dependency") {
-				t.Fatalf("attachment connector lost its weight label: %q", label)
+			if label := connector.GetLabel(); label != "" {
+				t.Fatalf("attachment connector should be unlabeled: %q", label)
 			}
 		}
 	}
