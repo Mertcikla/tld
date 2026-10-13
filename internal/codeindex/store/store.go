@@ -11,7 +11,8 @@ import (
 	"fmt"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
+	codeindexstore "github.com/mertcikla/codeindex/store"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 	"github.com/uptrace/bun"
 )
@@ -56,6 +57,10 @@ type Store struct {
 }
 
 var _ CodeIndexStore = (*Store)(nil)
+
+// Store satisfies the codeindex module's thin persistence contract, so the
+// engine's ingest and identity layers run unmodified against this database.
+var _ codeindexstore.Store = (*Store)(nil)
 
 // NewStore wraps an existing handle. Tables are created by the embedded
 // migrations when the database is opened.

@@ -178,6 +178,51 @@ func AppendConnectors(dir string, specs []*Connector) error {
 	return Save(ws)
 }
 
+// SetPlacementPosition updates (or creates) the placement of ref in parentRef's
+// view, preserving every other element field and placement. It is the
+// write-through counterpart to a server-side placement move.
+func SetPlacementPosition(dir, ref, parentRef string, x, y float64) error {
+	if err := ValidateElementRef(ref); err != nil {
+		return err
+	}
+	if err := ValidateParentRef(parentRef); err != nil {
+		return err
+	}
+	if parentRef == "" {
+		parentRef = RootRef
+	}
+	ws, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	element := ws.Elements[ref]
+	if element == nil {
+		return fmt.Errorf("element %q not found", ref)
+	}
+	for i := range element.Placements {
+		existingParent := element.Placements[i].ParentRef
+		if existingParent == "" {
+			existingParent = RootRef
+		}
+		if existingParent == parentRef {
+			element.Placements[i].ParentRef = parentRef
+			element.Placements[i].PositionX = x
+			element.Placements[i].PositionY = y
+			element.Placements[i].PositionXSet = true
+			element.Placements[i].PositionYSet = true
+			return Save(ws)
+		}
+	}
+	element.Placements = append(element.Placements, ViewPlacement{
+		ParentRef:    parentRef,
+		PositionX:    x,
+		PositionY:    y,
+		PositionXSet: true,
+		PositionYSet: true,
+	})
+	return Save(ws)
+}
+
 // Save writes the entire workspace state to YAML files in ws.Dir.
 func Save(ws *Workspace) error {
 	if useElementWorkspaceFiles(ws) {

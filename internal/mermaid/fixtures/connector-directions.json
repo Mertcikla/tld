@@ -1,0 +1,16 @@
+[
+  { "direction": "forward", "change": "", "label": "calls", "targetView": 1, "line": "el_1_10 -- \"calls\" --> el_1_20" },
+  { "direction": "backward", "change": "", "label": "", "targetView": 1, "line": "el_1_20 --> el_1_10" },
+  { "direction": "backward", "change": "added", "label": "calls", "targetView": 2, "line": "el_2_20 ==>|\"calls\"| el_1_10" },
+  { "direction": "backward", "change": "removed", "label": "calls", "targetView": 2, "line": "el_2_20--x|\"calls\"|el_1_10" },
+  { "direction": "backward", "change": "modified", "label": "calls", "targetView": 2, "line": "el_2_20 -- \"calls\" --> el_1_10" },
+  { "direction": "both", "change": "", "label": "calls", "targetView": 1, "line": "el_1_10 <-->|\"calls\"| el_1_20" },
+  { "direction": "both", "change": "added", "label": "", "targetView": 1, "line": "el_1_10 <==> el_1_20" },
+  { "direction": "both", "change": "removed", "label": "calls", "targetView": 2, "line": "el_1_10 x--x|\"calls\"| el_2_20" },
+  { "direction": "both", "change": "modified", "label": "", "targetView": 1, "line": "el_1_10 <--> el_1_20" },
+  { "direction": "bidirectional", "change": "", "label": "", "targetView": 2, "line": "el_1_10 <--> el_2_20" },
+  { "direction": "none", "change": "", "label": "calls", "targetView": 2, "line": "el_1_10 ---|\"calls\"| el_2_20" },
+  { "direction": "none", "change": "added", "label": "calls", "targetView": 1, "line": "el_1_10 ===|\"calls\"| el_1_20" },
+  { "direction": "none", "change": "removed", "label": "", "targetView": 2, "line": "el_1_10 --- el_2_20" },
+  { "direction": "none", "change": "modified", "label": "calls", "targetView": 1, "line": "el_1_10 ---|\"calls\"| el_1_20" }
+]

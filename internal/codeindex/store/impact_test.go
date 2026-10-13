@@ -5,8 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 )
 
 func TestLeaseAndImpactDeletion(t *testing.T) {
@@ -30,7 +31,7 @@ func TestLeaseAndImpactDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	if err := idx.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: "repo", ComparisonKey: "live", ViewId: 5}); err != nil {
+	if err := idx.SaveImpact(ctx, &model.Diagram{RepositoryId: "repo", ComparisonKey: "live", Version: "saved"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := idx.UpsertWatchState(ctx, WatchState{
@@ -40,7 +41,7 @@ func TestLeaseAndImpactDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, err := idx.LiveImpact(ctx, "repo")
-	if err != nil || !live.Watching || live.Error != "retry" || live.Diagram.ViewId != 5 {
+	if err != nil || !live.Watching || live.Error != "retry" || live.Diagram.Version != "saved" {
 		t.Fatalf("live state: %+v %v", live, err)
 	}
 	if err := idx.DeleteRepository(ctx, "repo"); err != nil {

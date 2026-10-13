@@ -5,10 +5,20 @@ import type { RepositoryImpact as ImpactDiagram } from '../api/client'
 import { PANEL_COLLAPSE_SNAP, PANEL_OVERLAY_SNAP, PANEL_RAIL_WIDTH } from '../hooks/useResizableColumn'
 import RepositoryChangeCanvas from './RepositoryChangeCanvas'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
+import RepositoryImpactInspector from './RepositoryImpactInspector'
+import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const storageKey = 'tld:repositories:mermaidPaneWidth'
 
 vi.mock('./ZUI', () => ({ ZUICanvas: () => null }))
+vi.mock('./RepositoryImpactInspector', () => ({
+  default: (props: Record<string, unknown>) =>
+    React.createElement('div', {
+      'data-testid': 'mock-inspector',
+      'data-collapsed': String(!!props.collapsed),
+      'data-overlay': String(!!props.overlay),
+    }),
+}))
 vi.mock('./RepositoryChangeMermaid', () => ({
   default: (props: Record<string, unknown>) =>
     React.createElement('div', {
@@ -33,6 +43,12 @@ vi.mock('@chakra-ui/react', async () => {
     Button: BoxLike,
     Flex: BoxLike,
     HStack: BoxLike,
+    IconButton: BoxLike,
+    Popover: BoxLike,
+    PopoverBody: BoxLike,
+    PopoverContent: BoxLike,
+    PopoverTrigger: BoxLike,
+    Portal: ({ children }: { children?: React.ReactNode }) => ReactModule.createElement('div', null, children),
     Text: BoxLike,
     Tooltip: ({ children }: { children?: React.ReactNode }) => ReactModule.createElement('div', null, children),
     VStack: BoxLike,
@@ -44,16 +60,16 @@ const diagram = {
   comparisonKey: 'pair',
   version: 'v1',
   viewId: 9,
-  maxRadius: 2,
   nodes: [],
   edges: [],
   diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
 } as unknown as ImpactDiagram
 
-function stubEnvironment(storedWidth?: string) {
+function stubEnvironment(storedWidth?: string, search = '') {
   const values = new Map<string, string>()
   if (storedWidth != null) values.set(storageKey, storedWidth)
   vi.stubGlobal('window', {
+    location: { search },
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     localStorage: {
@@ -97,7 +113,7 @@ async function renderCanvas() {
   return renderer
 }
 
-describe('RepositoryChangeCanvas mermaid pane', () => {
+describe('RepositoryChangeCanvas side panel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -106,23 +122,53 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     vi.unstubAllGlobals()
   })
 
-  it('starts each comparison at radius zero and caps backend context at two', async () => {
+  it('defaults to Mermaid without requesting debug provenance', async () => {
+    stubEnvironment()
+    const renderer = await renderCanvas()
+    const { api } = await import('../api/client')
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryImpactInspector)).toHaveLength(0)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: false, plain: false })
+    renderer.unmount()
+  })
+
+  it('enables the inspector only with the explicit developer flag', async () => {
+    stubEnvironment(undefined, '?debugImpact=1')
+    const renderer = await renderCanvas()
+    const { api } = await import('../api/client')
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(0)
+    expect(hostNodes(renderer, 'mock-inspector')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repository-impact-inspector-resize')).toHaveLength(1)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: true, plain: false })
+
+    await act(async () => { renderer.root.findByType(RepositoryImpactInspector).props.onDebugChange(false) })
+    expect(hostNodes(renderer, 'mock-inspector')).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryChangeMermaid)).toHaveLength(0)
+    expect(api.repositories.impactScene).toHaveBeenLastCalledWith('repo-1', 'pair', expect.any(AbortSignal), { debugProvenance: false, plain: false })
+    renderer.unmount()
+  })
+
+  it('keeps Mermaid for a disabled developer flag', async () => {
+    stubEnvironment(undefined, '?debugImpact=0')
+    const renderer = await renderCanvas()
+    expect(hostNodes(renderer, 'mock-mermaid')).toHaveLength(1)
+    expect(renderer.root.findAllByType(RepositoryImpactInspector)).toHaveLength(0)
+    renderer.unmount()
+  })
+
+  it('renders the grounded diagram with view-mode toggle and legend', async () => {
     stubEnvironment()
     let renderer!: ReturnType<typeof create>
     await act(async () => {
-      renderer = create(<RepositoryChangeCanvas diagram={{ ...diagram, maxRadius: 3 }} selectedPath="" />)
+      renderer = create(<RepositoryChangeCanvas diagram={diagram} selectedPath="" />)
     })
     const menu = () => renderer.root.findByType(RepositoryChangeMenu)
-    expect(menu().props.radius).toBe(0)
-    expect(menu().props.maxRadius).toBe(2)
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-radius-3' })).toHaveLength(0)
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'repositories-view-mode-standard')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-radius')).toHaveLength(0)
 
-    await act(async () => { menu().props.onRadiusChange(2) })
-    expect(menu().props.radius).toBe(2)
-    await act(async () => {
-      renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'next', maxRadius: 3 }} selectedPath="" />)
-    })
-    expect(menu().props.radius).toBe(0)
+    await act(async () => { menu().props.onViewModeChange('plain') })
+    expect(menu().props.viewMode).toBe('plain')
     renderer.unmount()
   })
 
@@ -141,11 +187,13 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: '380px' })
     expect(slot.props.position).toBe('relative')
+    expect(handle.props.position).toBe('relative')
+    expect(handle.props.right).toBeUndefined()
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('false')
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
   })
 
-  it('keeps the resize handle above the canvas-covering pane', async () => {
+  it('keeps the resize handle at the left edge above the canvas-covering pane', async () => {
     stubEnvironment(String(PANEL_OVERLAY_SNAP + 50))
     const renderer = await renderCanvas()
 
@@ -153,6 +201,10 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(handle.props.zIndex).toBe(40)
     expect(handle.props.zIndex).toBeGreaterThan(slot.props.zIndex)
+    expect(handle.props.position).toBe('absolute')
+    expect(handle.props.right).toBe(`${PANEL_OVERLAY_SNAP + 50}px`)
+    expect(handle.props.top).toBe(0)
+    expect(handle.props.bottom).toBe(0)
   })
 
   it('resizes through a pointer drag on the handle', async () => {
@@ -190,8 +242,7 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_RAIL_WIDTH}px` })
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('true')
-    // the rail stays grabbable so it can be dragged back open
-    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(0)
   })
 
   it('covers the canvas with an expanded change diagram past 650px', async () => {
@@ -201,7 +252,7 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
     expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_OVERLAY_SNAP + 50}px` })
     expect(slot.props.position).toEqual({ base: 'relative', lg: 'absolute' })
-    expect(slot.props.boxShadow).toBeTruthy()
+    expect(slot.props.boxShadow).toBeUndefined()
     expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-overlay']).toBe('true')
   })
 
@@ -215,5 +266,67 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     const atOverlay = await renderCanvas()
     expect(hostNodes(atOverlay, 'repository-change-mermaid-slot')[0].props.position).toBe('relative')
     expect(hostNodes(atOverlay, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
+  })
+
+  it.each([380, PANEL_OVERLAY_SNAP + 50])('collapses a %ipx pane fully to the rail and expands it again', async (width) => {
+    stubEnvironment(String(width))
+    const renderer = await renderCanvas()
+
+    await act(async () => { renderer.root.findByType(RepositoryChangeMermaid).props.onDock() })
+
+    const slot = hostNodes(renderer, 'repository-change-mermaid-slot')[0]
+    expect(slot.props.w).toEqual({ base: 'full', lg: `${PANEL_RAIL_WIDTH}px` })
+    expect(slot.props.h).toEqual({ base: `${PANEL_RAIL_WIDTH}px`, lg: 'auto' })
+    expect(slot.props.position).toBe('relative')
+    expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('true')
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(0)
+    expect(window.localStorage.getItem(storageKey)).toBe(String(PANEL_RAIL_WIDTH))
+
+    await act(async () => { renderer.root.findByType(RepositoryChangeMermaid).props.onExpand() })
+
+    expect(hostNodes(renderer, 'repository-change-mermaid-slot')[0].props.w).toEqual({ base: 'full', lg: '380px' })
+    expect(hostNodes(renderer, 'mock-mermaid')[0].props['data-collapsed']).toBe('false')
+    expect(hostNodes(renderer, 'repository-change-mermaid-resize')).toHaveLength(1)
+    renderer.unmount()
+  })
+
+  it('renders a single grounded diagram with no scope toggle', async () => {
+    stubEnvironment()
+    const renderer = await renderCanvas()
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'repositories-diagram-scope')).toHaveLength(0)
+    renderer.unmount()
+  })
+
+  it('keeps the Mermaid panel alongside the loaded scene', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    const impactScene = api.repositories.impactScene as unknown as ReturnType<typeof vi.fn>
+    impactScene.mockResolvedValueOnce({
+      tree: [{ id: 10, name: 'Workspace', children: [{ id: 51, name: 'Mine', children: [] }] }],
+      views: {
+        10: { placements: [], connectors: [] },
+        51: { placements: [{ element_id: 7, tags: [], file_path: 'x' }], connectors: [] },
+      },
+      navigations: [],
+      fallbackViewId: 0,
+      repositoryId: 'repo-1',
+      comparisonKey: 'pair',
+      version: 'v1',
+      schemaVersion: '1',
+      fromGitRevision: 'a',
+      toGitRevision: 'b',
+      overlays: { 7: { change: 'modified', path: 'x', symbols: [], distance: 0 } },
+      authoredViewIds: [51],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<RepositoryChangeCanvas diagram={diagram} selectedPath="" />)
+    })
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    expect(menu().props.viewMode).toBe('standard')
+    expect(hostNodes(renderer, 'mock-mermaid')).toHaveLength(1)
+    renderer.unmount()
   })
 })

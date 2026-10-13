@@ -15,7 +15,6 @@ import {
   ExportIcon,
   ExpandExtrasIcon as ExpandExtrasSvg,
   CollapseExtrasIcon as CollapseExtrasSvg,
-  FocusIcon as FocusSvg,
   NoiseGateIcon,
   TagsIcon,
   ChevronDownIcon,

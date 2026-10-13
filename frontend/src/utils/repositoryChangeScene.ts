@@ -1,69 +1,38 @@
 import type { RepositoryImpactScene } from '../api/client'
-import type { ExploreData, PlacedElement, ViewTreeNode } from '../types'
+import type { ExploreData } from '../types'
 import type { ZUIChangeOverlay } from '../components/ZUI/types'
+import { CHANGE_RING_COLORS } from '../components/ZUI/changeOverlay'
+import { PROVENANCE_META } from '../components/ZUI/provenance'
 
-export { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
-import { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
+export const CHANGE_STATE_TAGS = ['added', 'removed', 'unchanged'] as const
+export const PROVENANCE_TAGS = ['authored', 'augmented', 'generated'] as const
 
-// repositoryChangeScene adapts the backend-assembled impact scene to the ZUI
-// canvas contract. Membership, transient placements and connector routing are
-// owned by the backend; this only applies the client-side blast radius and
-// standard/plain view filters, both of which never require a server call.
-export function repositoryChangeScene(scene: RepositoryImpactScene, options: { radius: number; plain?: boolean }) {
-  const plain = options.plain ?? false
-  const radius = options.radius
+/** Seed colors for overlay tags; workspace tagColors take precedence. */
+export const REPOSITORY_TAG_COLORS: Record<string, string> = {
+  ...CHANGE_RING_COLORS,
+  authored: PROVENANCE_META.authored.color,
+  augmented: PROVENANCE_META.augmented.color,
+  generated: PROVENANCE_META.generated.color,
+}
+
+// The backend selects membership and display mode before freezing the scene.
+// This adapter only supplies renderer colors and annotations.
+export function repositoryChangeScene(scene: RepositoryImpactScene) {
   const overlays: Record<number, ZUIChangeOverlay> = {}
-  const impacted = new Set<number>()
-  for (const [elementId, overlay] of Object.entries(scene.overlays)) {
-    if (overlay.distance <= radius) impacted.add(Number(elementId))
+  const data: ExploreData = { tree: scene.tree, views: {}, navigations: scene.navigations }
+  for (const [viewId, content] of Object.entries(scene.views)) {
+    data.views[viewId] = { ...content, placements: content.placements.map((element) => {
+      const key = `placement|${viewId}|${element.element_id}`
+      const origin = scene.placements?.[key]?.origin
+      const provenanceTag = origin === 'raw' ? 'augmented' : origin === 'mapped' ? 'generated' : 'authored'
+      const tags = [...(element.tags ?? []).filter((tag) => tag !== 'map-generated'), provenanceTag]
+      const overlay = scene.overlays[element.element_id]
+      if (overlay) {
+        overlays[element.element_id] = { change: overlay.change, path: overlay.path, linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols, reason: overlay.reason }
+        if (overlay.change !== 'modified') tags.push(overlay.change)
+      }
+      return { ...element, tags }
+    }) }
   }
-  const shown = (element: PlacedElement) => plain ? impacted.has(element.element_id) : true
-  const retained = new Set<number>()
-  const keep = (tree: ViewTreeNode[]): ViewTreeNode[] => tree.flatMap((view) => {
-    // Retired impact views are excluded while an older watcher is still running.
-    if (view.name.includes(' impact · ')) return []
-    const children = keep(view.children ?? [])
-    const placements = scene.views[String(view.id)]?.placements ?? []
-    if (!children.length && !placements.some(shown)) return []
-    retained.add(view.id)
-    return [{ ...view, children }]
-  })
-  const data: ExploreData = { tree: keep(scene.tree), views: {}, navigations: [] }
-  // Plain mode still needs the container elements that own retained child views;
-  // without them the hierarchy can't be traversed. They are structural only and
-  // are never annotated as changes.
-  const linkElements = new Map<number, Set<number>>()
-  if (plain) {
-    for (const link of scene.navigations ?? []) {
-      if (link.relation_type !== 'child' || link.element_id == null || !retained.has(link.to_view_id)) continue
-      const elements = linkElements.get(link.from_view_id) ?? new Set<number>()
-      elements.add(link.element_id)
-      linkElements.set(link.from_view_id, elements)
-    }
-  }
-  for (const id of retained) {
-    const view = scene.views[String(id)]
-    if (!view) continue
-    const links = linkElements.get(id)
-    const placements = plain ? view.placements.filter((element) => shown(element) || links?.has(element.element_id)) : view.placements
-    const visibleIds = new Set(placements.map((element) => element.element_id))
-    const connectors = plain ? (view.connectors ?? []).filter((item) => visibleIds.has(item.source_element_id) && visibleIds.has(item.target_element_id)) : view.connectors
-    data.views[id] = {
-      ...view,
-      placements: placements.map((element) => {
-        const overlay = scene.overlays[element.element_id]
-        // Only direct changes glow; blast-radius context keeps its outline but no
-        // spotlight so it reads as surrounding context.
-        if (!overlay || overlay.distance > radius) return element
-        overlays[element.element_id] = {
-          change: overlay.change, path: overlay.path,
-          linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols,
-        }
-        return overlay.change === 'unchanged' ? element : { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
-      }),
-      connectors,
-    }
-  }
-  data.navigations = (scene.navigations ?? []).filter((link) => retained.has(link.from_view_id) && retained.has(link.to_view_id))
   return { data, overlays }
 }

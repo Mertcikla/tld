@@ -6,7 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	"github.com/mertcikla/codeindex/community"
+	"github.com/mertcikla/tld/v2/internal/codeindex/filelabel"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
@@ -133,6 +134,7 @@ type MapResult struct {
 const mapKeyPrefix = "map|"
 
 type mapMaterializer struct {
+	fileNames        map[string]string
 	ctx              context.Context
 	ws               core.Store
 	idx              IndexStore
@@ -1055,11 +1057,19 @@ func (m *mapMaterializer) advance(detail string) {
 func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
 	fact := m.input.Files[member]
 	kind := "file"
-	// File facts carry their path as the display name; show only the file name
-	// and keep the full path on FilePath for source linking.
+	// Compute against all repository files so labels do not depend on which
+	// community view contains a file. Existing mapped/user names are preserved
+	// by elementPatch when resources are reused.
+	if m.fileNames == nil {
+		paths := make([]string, 0, len(m.input.Files))
+		for _, file := range m.input.Files {
+			paths = append(paths, file.Path)
+		}
+		m.fileNames = filelabel.Names(paths)
+	}
 	name := fact.DisplayName
 	if fact.Path != "" {
-		name = folderName(fact.Path)
+		name = m.fileNames[fact.Path]
 	}
 	input := core.LibraryElement{
 		Name: name,
@@ -1171,19 +1181,6 @@ func workspaceRootViewID(ctx context.Context, ws core.Store, exclude int64) (int
 		return 0, fmt.Errorf("create workspace root view: %w", err)
 	}
 	return view.ID, nil
-}
-
-// folderName is the last path segment of a file path, so a file nested under
-// A/B is shown as c.go rather than src/deep/c.go.
-func folderName(path string) string {
-	if path == "." || path == "" {
-		return "root"
-	}
-	path = strings.ReplaceAll(path, "\\", "/")
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	return path
 }
 
 func strPtr(value string) *string { return &value }

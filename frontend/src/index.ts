@@ -8,6 +8,7 @@
  */
 
 // ─── Pages ───────────────────────────────────────────────────────────────────
+export { default as ComparisonScenePage } from './pages/ComparisonScene'
 export { default as ViewEditor, type ViewEditorPermissions, type ViewEditorProps } from './pages/ViewEditor'
 export { default as ViewsPage } from './pages/Views'
 export { default as ViewsGrid } from './pages/ViewsGrid'

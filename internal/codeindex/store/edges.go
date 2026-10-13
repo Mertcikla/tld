@@ -88,34 +88,50 @@ func (s *Store) FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, e
 	return out, rows.Err()
 }
 
-// FilePairCounts aggregates a snapshot's symbol-to-symbol edges into the number
-// of observations crossing each ordered pair of distinct files. It is the SQL
-// equivalent of walking a loaded graph's facts and edges, without materializing
-// either, so change overlays can build file adjacency cheaply.
-func (s *Store) FilePairCounts(ctx context.Context, snapshotID string) (map[[2]string]float64, error) {
+// FilePairStats aggregates a snapshot's symbol-to-symbol edges in one pass: the
+// number of observations crossing each ordered pair of distinct files plus the
+// relationship kinds observed for that pair, ordered by kind. Run per side, it
+// replaces the two separate aggregate scans a comparison used to issue.
+func (s *Store) FilePairStats(ctx context.Context, snapshotID string) (map[[2]string]float64, map[[2]string][]pb.EdgeKind, error) {
 	where, scopeArgs := scope(ctx).clause("e.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
-		SELECT sf.path, tf.path, COUNT(*)
+		SELECT sf.path, tf.path, e.kind, COUNT(*)
 		FROM codeindex_edges e
 		JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
 		WHERE m.snapshot_id = ? AND sf.path <> '' AND tf.path <> '' AND sf.path <> tf.path`+where+`
-		GROUP BY sf.path, tf.path`, append([]any{snapshotID}, scopeArgs...)...)
+		GROUP BY sf.path, tf.path, e.kind
+		ORDER BY sf.path, tf.path, e.kind`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[[2]string]float64{}
+	counts := map[[2]string]float64{}
+	kinds := map[[2]string][]pb.EdgeKind{}
 	for rows.Next() {
 		var from, to string
-		var count int
-		if err := rows.Scan(&from, &to, &count); err != nil {
-			return nil, err
+		var kind, count int
+		if err := rows.Scan(&from, &to, &kind, &count); err != nil {
+			return nil, nil, err
 		}
-		out[[2]string{from, to}] = float64(count)
+		pair := [2]string{from, to}
+		counts[pair] += float64(count)
+		kinds[pair] = append(kinds[pair], pb.EdgeKind(kind))
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return counts, kinds, nil
+}
+
+// FilePairCounts aggregates a snapshot's symbol-to-symbol edges into the number
+// of observations crossing each ordered pair of distinct files. It is the SQL
+// equivalent of walking a loaded graph's facts and edges, without materializing
+// either, so change overlays can build file adjacency cheaply.
+func (s *Store) FilePairCounts(ctx context.Context, snapshotID string) (map[[2]string]float64, error) {
+	counts, _, err := s.FilePairStats(ctx, snapshotID)
+	return counts, err
 }
 
 // FileImport is one external import declared by a file fact.
@@ -307,4 +323,11 @@ func (s *Store) FileImports(ctx context.Context, snapshotID string) ([]FileImpor
 
 func isRelativeImport(path string) bool {
 	return strings.HasPrefix(path, ".") || strings.HasPrefix(path, "/")
+}
+
+// FilePairKinds retains the observed relationship kinds behind each ordered
+// file dependency for impact provenance; containment is never a dependency hop.
+func (s *Store) FilePairKinds(ctx context.Context, snapshotID string) (map[[2]string][]pb.EdgeKind, error) {
+	_, kinds, err := s.FilePairStats(ctx, snapshotID)
+	return kinds, err
 }

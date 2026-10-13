@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	"github.com/mertcikla/codeindex/community"
 )
 
 func TestMapFileElementStampsRepositoryID(t *testing.T) {

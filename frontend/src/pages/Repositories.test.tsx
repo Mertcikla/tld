@@ -212,10 +212,18 @@ describe('Repositories map action', () => {
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
   })
 
+  it('starts with the repository list collapsed when repositories already exist', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(renderer.root.findByProps({ 'aria-label': 'Expand repositories' })).toBeTruthy()
+    await act(async () => { renderer.unmount() })
+  })
+
   it('hides history in Watch and hosts repository information in settings', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-delete-repo-1' })).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
@@ -296,8 +304,12 @@ describe('Repositories map action', () => {
     })
     const { api } = await import('../api/client')
     expect(renderer.root.findAll((node) => node.props['data-testid'] === 'repositories-map' || node.props['data-testid'] === 'repositories-map-base')).toHaveLength(0)
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': 'Increase comparison context' }).props.onClick()
+      renderer.root.findByProps({ 'aria-label': 'Increase comparison context' }).props.onClick()
+    })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
-    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
+    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal), blastRadius: 2 }))
     expect(navigateMock).not.toHaveBeenCalled()
     renderer.unmount()
   })
@@ -310,6 +322,7 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
 
     act(() => {
@@ -388,6 +401,9 @@ describe('Repositories map action', () => {
           node.props['data-testid'] === 'repositories-add',
       )[0]
 
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick()
+    })
     act(() => {
       renderer.root.findByProps({ 'aria-label': 'Collapse repositories' }).props.onClick()
     })
@@ -600,6 +616,7 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'repositories-delete-repo-1' }).props.onClick({ stopPropagation: () => {} })
@@ -773,7 +790,7 @@ describe('Repositories map action', () => {
     expect(symbols.findAll((node) => node.props.as === 'details')).toHaveLength(0)
     const editorButton = rows[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
     await act(async () => { await editorButton.props.onClick() })
-    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/file.go', line: 20 })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/file.go', line: 21 })
     act(() => { fileRow.props.onClick() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-symbols' })).toHaveLength(0)
     expect(fileRow.props['aria-expanded']).toBe(false)
@@ -783,7 +800,7 @@ describe('Repositories map action', () => {
   it('groups all changed symbols by file when opening Symbols without selecting a file', async () => {
     const { api } = await import('../api/client')
     const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
-    const added = createMessage(CodeFactSchema, { id: 'added', name: 'Added', anchor: { path: 'src/b.go', startLine: 3 } })
+    const added = createMessage(CodeFactSchema, { id: 'added', name: 'Added', anchor: { path: 'src/b.go', startLine: 0 } })
     const removed = createMessage(CodeFactSchema, { id: 'removed', name: 'Removed', anchor: { path: 'src/a.go', startLine: 7 } })
     const modified = createMessage(CodeFactSchema, { id: 'modified', name: 'Modified', anchor: { path: 'src/b.go', startLine: 8 } })
     vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
@@ -800,7 +817,10 @@ describe('Repositories map action', () => {
     expect(api.repositories.fileSymbols).not.toHaveBeenCalled()
     const editorButton = groups[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
     await act(async () => { await editorButton.props.onClick() })
-    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/a.go', line: 7 })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/a.go', line: 8 })
+    const firstLineButton = groups[1].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
+    await act(async () => { await firstLineButton.props.onClick() })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/b.go', line: 1 })
     await act(async () => { renderer.unmount() })
   })
 
@@ -830,6 +850,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')

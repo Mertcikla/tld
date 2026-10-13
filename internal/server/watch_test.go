@@ -10,10 +10,9 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
@@ -58,13 +57,6 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 		got.GetChangedFiles() != 2 || got.GetPendingFiles() != 1 || got.GetLastScanMs() != 42 ||
 		got.GetPollIntervalMs() != 2000 || got.GetDebounceMs() != 350 || got.GetGitBranch() != "main" {
 		t.Fatalf("status: %+v", got)
-	}
-	list, err := client.ListWatches(ctx, connect.NewRequest(&emptypb.Empty{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list.Msg.GetWatchers()) != 1 || list.Msg.GetWatchers()[0].GetRepositoryId() != repoID {
-		t.Fatalf("list: %+v", list.Msg)
 	}
 }
 

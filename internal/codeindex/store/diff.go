@@ -2,12 +2,13 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 )
 
 // LoadGraph reconstructs a published snapshot's code graph so an incremental
@@ -18,8 +19,11 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		return nil, err
 	}
 	g := graph.NewGraph(snap.RepositoryId, snap.Id)
-	sourceWhere, sourceScopeArgs := scope(ctx).clause("org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, content, language, input_blob, dirty, syntax_cache, file_cache FROM codeindex_sources WHERE snapshot_id = ?`+sourceWhere, append([]any{snap.Id}, sourceScopeArgs...)...)
+	sourceWhere, sourceScopeArgs := scope(ctx).clause("s.org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT s.path, s.hash, b.content, s.language, s.input_blob, s.dirty, COALESCE(b.syntax_cache, ''), COALESCE(b.file_cache, '')
+		FROM codeindex_sources s
+		LEFT JOIN codeindex_blobs b ON b.org_id = s.org_id AND b.hash = s.hash AND b.language = s.language
+		WHERE s.snapshot_id = ?`+sourceWhere, append([]any{snap.Id}, sourceScopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +33,8 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 			_ = rows.Close()
 			return nil, err
 		}
+		src.SyntaxCache = sourceCache(src.SyntaxCache, snap.RepositoryId, src.Path)
+		src.FileCache = sourceCache(src.FileCache, snap.RepositoryId, src.Path)
 		g.Sources[src.Path] = src
 	}
 	err = rows.Err()
@@ -36,8 +42,11 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	if err != nil {
 		return nil, err
 	}
-	artifactWhere, artifactScopeArgs := scope(ctx).clause("org_id")
-	rows, err = s.bun.QueryContext(ctx, `SELECT project_key, fingerprint, data FROM codeindex_project_artifacts WHERE snapshot_id = ?`+artifactWhere, append([]any{snap.Id}, artifactScopeArgs...)...)
+	artifactWhere, artifactScopeArgs := scope(ctx).clause("p.org_id")
+	rows, err = s.bun.QueryContext(ctx, `SELECT p.project_key, p.fingerprint, a.data
+		FROM codeindex_project_artifacts p
+		JOIN codeindex_artifacts a ON a.org_id = p.org_id AND a.project_key = p.project_key AND a.fingerprint = p.fingerprint
+		WHERE p.snapshot_id = ?`+artifactWhere, append([]any{snap.Id}, artifactScopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +79,34 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		g.EdgeFacts[e.Id] = e
 	}
 	return g, nil
+}
+
+// Shared blobs can carry caches extracted from another identical file. Facts
+// retain source-specific names, logical keys and IDs even when re-anchored, so
+// only reuse a cache for its original repository and path. The indexer rebuilds
+// rejected caches from the captured source without losing content deduplication.
+func sourceCache(raw, repositoryID, path string) string {
+	var cache struct {
+		Fact  *pb.CodeFact
+		Decls []struct{ Fact *pb.CodeFact }
+	}
+	if json.Unmarshal([]byte(raw), &cache) != nil {
+		// The indexer owns cache format/version validation and ignores malformed
+		// caches; only source identity needs checking here.
+		return raw
+	}
+	matches := func(fact *pb.CodeFact) bool {
+		return fact == nil || (fact.RepositoryId == repositoryID && fact.GetAnchor().GetPath() == path)
+	}
+	if !matches(cache.Fact) {
+		return ""
+	}
+	for _, declaration := range cache.Decls {
+		if !matches(declaration.Fact) {
+			return ""
+		}
+	}
+	return raw
 }
 
 // SnapshotSources returns a path-to-hash map for a snapshot's captured sources.
@@ -113,6 +150,12 @@ func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, skip
 	if from.RepositoryId != to.RepositoryId {
 		return nil, fmt.Errorf("snapshots must belong to the same repository")
 	}
+	if err := s.EnsureManifest(ctx, from); err != nil {
+		return nil, err
+	}
+	if err := s.EnsureManifest(ctx, to); err != nil {
+		return nil, err
+	}
 	diff := &pb.SnapshotDiff{
 		RepositoryId:    to.RepositoryId,
 		FromSnapshotId:  from.Id,
@@ -155,6 +198,9 @@ func diffSources(from, to *pb.Snapshot) []*pb.SourceChange {
 	toHashes := map[string]string{}
 	for _, src := range to.Sources {
 		toHashes[src.Path] = src.Hash
+	}
+	if from.GetManifest().GetComplete() && to.GetManifest().GetComplete() {
+		return diffManifest(from, to, fromHashes, toHashes)
 	}
 	paths := make([]string, 0, len(fromHashes)+len(toHashes))
 	seen := map[string]bool{}
@@ -212,20 +258,25 @@ func (s *Store) diffFactsByMembership(ctx context.Context, fromID, toID string) 
 			deltaIDs[id] = true
 		}
 	}
-	// A changed declaration has a new id but shares its logical key with the
-	// removed version; include the matching side so the diff pairs them.
-	fromByKey := map[string]string{}
+	// A logical key can describe several physical declarations (for example
+	// C++ macro expansions). Load the entire affected group on both sides so
+	// unchanged occurrences can be matched before pairing changed ones.
+	changedKeys := map[string]bool{}
 	for id, key := range fromKey {
-		fromByKey[key] = id
+		if deltaIDs[id] {
+			changedKeys[key] = true
+		}
 	}
-	toByKey := map[string]string{}
 	for id, key := range toKey {
-		toByKey[key] = id
+		if deltaIDs[id] {
+			changedKeys[key] = true
+		}
 	}
-	for key, fromFactID := range fromByKey {
-		if toFactID, ok := toByKey[key]; ok && toFactID != fromFactID {
-			deltaIDs[fromFactID] = true
-			deltaIDs[toFactID] = true
+	for _, keys := range []map[string]string{fromKey, toKey} {
+		for id, key := range keys {
+			if changedKeys[key] {
+				deltaIDs[id] = true
+			}
 		}
 	}
 	if len(deltaIDs) == 0 {
@@ -318,27 +369,51 @@ func sameFact(a, b *pb.CodeFact) bool {
 }
 
 func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {
-	fromByKey := make(map[string]*pb.CodeFact, len(from))
+	fromByKey := make(map[string][]*pb.CodeFact, len(from))
 	for _, f := range from {
-		fromByKey[logicalFact(f)] = f
+		fromByKey[logicalFact(f)] = append(fromByKey[logicalFact(f)], f)
 	}
-	toByKey := make(map[string]*pb.CodeFact, len(to))
+	toByKey := make(map[string][]*pb.CodeFact, len(to))
 	for _, f := range to {
-		toByKey[logicalFact(f)] = f
+		toByKey[logicalFact(f)] = append(toByKey[logicalFact(f)], f)
 	}
 	delta := &pb.CodeFactDelta{}
-	for key, f := range toByKey {
-		prev, ok := fromByKey[key]
-		switch {
-		case !ok:
-			delta.Added = append(delta.Added, f)
-		case !sameFact(prev, f):
-			delta.Modified = append(delta.Modified, f)
+	for key, next := range toByKey {
+		previous := fromByKey[key]
+		sortFacts(previous)
+		sortFacts(next)
+		// Match identical content first, including declarations moved by an
+		// insertion. Never collapse repeated keys to a random map entry.
+		used := make([]bool, len(previous))
+		var unmatched []*pb.CodeFact
+		for _, f := range next {
+			match := -1
+			for i, prev := range previous {
+				if !used[i] && sameFact(prev, f) {
+					match = i
+					break
+				}
+			}
+			if match >= 0 {
+				used[match] = true
+			} else {
+				unmatched = append(unmatched, f)
+			}
 		}
+		var remaining []*pb.CodeFact
+		for i, prev := range previous {
+			if !used[i] {
+				remaining = append(remaining, prev)
+			}
+		}
+		paired := min(len(remaining), len(unmatched))
+		delta.Modified = append(delta.Modified, unmatched[:paired]...)
+		delta.Added = append(delta.Added, unmatched[paired:]...)
+		delta.Removed = append(delta.Removed, remaining[paired:]...)
 	}
-	for key, f := range fromByKey {
+	for key, facts := range fromByKey {
 		if _, ok := toByKey[key]; !ok {
-			delta.Removed = append(delta.Removed, f)
+			delta.Removed = append(delta.Removed, facts...)
 		}
 	}
 	sortFacts(delta.Added)
@@ -348,7 +423,19 @@ func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {
 }
 
 func sortFacts(facts []*pb.CodeFact) {
-	sort.Slice(facts, func(i, j int) bool { return logicalFact(facts[i]) < logicalFact(facts[j]) })
+	sort.Slice(facts, func(i, j int) bool {
+		a, b := facts[i], facts[j]
+		if logicalFact(a) != logicalFact(b) {
+			return logicalFact(a) < logicalFact(b)
+		}
+		if a.GetAnchor().GetStartByte() != b.GetAnchor().GetStartByte() {
+			return a.GetAnchor().GetStartByte() < b.GetAnchor().GetStartByte()
+		}
+		if a.GetAnchor().GetEndByte() != b.GetAnchor().GetEndByte() {
+			return a.GetAnchor().GetEndByte() < b.GetAnchor().GetEndByte()
+		}
+		return a.Id < b.Id
+	})
 }
 
 func logicalEdge(e *pb.EdgeFact) string {

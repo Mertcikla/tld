@@ -293,6 +293,7 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "validation.allow_low_insight", Description: "Allow low-insight generated warning groups."},
 	{Key: "validation.include_rules", Description: "Additional architectural warning rule codes to include."},
 	{Key: "validation.exclude_rules", Description: "Architectural warning rule codes to suppress."},
+	{Key: "validation.link_coverage_percent", Description: "Directory coverage (0-100) of the indexed code that ARC206 requires from source-linked elements."},
 	{Key: "serve.host", Env: []string{"TLD_HOST", "TLD_ADDR"}, Description: "Host address for the local web server."},
 	{Key: "serve.port", Env: []string{"PORT", "TLD_ADDR"}, Description: "Port for the local web server."},
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
@@ -549,6 +550,12 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Validation.IncludeRules = parseStringList(value)
 	case "validation.exclude_rules":
 		cfg.Validation.ExcludeRules = parseStringList(value)
+	case "validation.link_coverage_percent":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Validation.LinkCoveragePercent = v
 	case "serve.host":
 		cfg.Serve.Host = strings.TrimSpace(value)
 	case "serve.port":
@@ -711,6 +718,8 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Validation.IncludeRules
 	case "validation.exclude_rules":
 		return cfg.Validation.ExcludeRules
+	case "validation.link_coverage_percent":
+		return cfg.Validation.LinkCoveragePercent
 	case "serve.host":
 		return cfg.Serve.Host
 	case "serve.port":
@@ -811,7 +820,8 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addScalar(validation, "allow_low_insight", cfg.Validation.AllowLowInsight, desc("validation.allow_low_insight"))
 	addStringSeq(validation, "include_rules", cfg.Validation.IncludeRules, desc("validation.include_rules"))
 	addStringSeq(validation, "exclude_rules", cfg.Validation.ExcludeRules, desc("validation.exclude_rules"))
-	appendUnknownEntries(validation, mappingValueNode(existing, "validation"), setOf("level", "allow_low_insight", "include_rules", "exclude_rules"))
+	addScalar(validation, "link_coverage_percent", cfg.Validation.LinkCoveragePercent, desc("validation.link_coverage_percent"))
+	appendUnknownEntries(validation, mappingValueNode(existing, "validation"), setOf("level", "allow_low_insight", "include_rules", "exclude_rules", "link_coverage_percent"))
 	addMap(mapping, "validation", validation, "Workspace validation and architectural warning settings.")
 
 	serve := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

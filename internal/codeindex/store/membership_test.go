@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
 )
 
 // TestSnapshotMembershipSharesReusedFacts verifies that an unchanged fact is
@@ -95,5 +95,55 @@ func snapFor(repo, id string, src *graph.Source) *pb.Snapshot {
 	return &pb.Snapshot{
 		Id: id, RepositoryId: repo, IngestionStatus: "complete",
 		Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(src.Text))}},
+	}
+}
+
+func TestImpactDiffRepeatedKeyMembership(t *testing.T) {
+	ctx := context.Background()
+	idx, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	src := &graph.Source{Path: "macro.cc", Language: "cpp", Text: []byte("THROW(a);\nTHROW(b);\nTHROW(c);\n")}
+	base := graph.NewGraph("repo", "base")
+	base.Sources[src.Path] = src
+	for i := range 2 {
+		f := base.AddFact(pb.FactKind_FACT_KIND_TYPE, "THROW", "cpp", src.Anchor(i*10, i*10+9), string(src.Text[i*10:i*10+9]), "", nil)
+		f.LogicalKey = "macro-expansion"
+	}
+	if err := idx.Publish(ctx, "/repo", snapFor("repo", "base", src), base); err != nil {
+		t.Fatal(err)
+	}
+	next := graph.NewGraph("repo", "next")
+	next.Sources[src.Path] = src
+	for _, f := range base.Facts {
+		next.AdoptFactAnchored(f, f.Anchor, f.BodyHash, f.Signature)
+	}
+	if err := idx.Publish(ctx, "/repo", snapFor("repo", "next", src), next); err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		diff, err := idx.ImpactDiff(ctx, "base", "next")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(diff.Facts.Added)+len(diff.Facts.Modified)+len(diff.Facts.Removed) != 0 {
+			t.Fatalf("shared repeated declarations changed: %v", diff.Facts)
+		}
+	}
+	added := graph.NewGraph("repo", "added")
+	added.Sources[src.Path] = src
+	for _, f := range base.Facts {
+		added.AdoptFactAnchored(f, f.Anchor, f.BodyHash, f.Signature)
+	}
+	f := added.AddFact(pb.FactKind_FACT_KIND_TYPE, "THROW", "cpp", src.Anchor(20, 29), "THROW(c);", "", nil)
+	f.LogicalKey = "macro-expansion"
+	if err := idx.Publish(ctx, "/repo", snapFor("repo", "added", src), added); err != nil {
+		t.Fatal(err)
+	}
+	diff, err := idx.ImpactDiff(ctx, "base", "added")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Facts.Added) != 1 || diff.Facts.Added[0].Id != f.Id || len(diff.Facts.Modified)+len(diff.Facts.Removed) != 0 {
+		t.Fatalf("added expansion lost or reported modified: %v", diff.Facts)
 	}
 }

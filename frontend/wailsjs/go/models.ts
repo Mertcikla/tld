@@ -1,5 +1,19 @@
 export namespace main {
 	
+	export class DesktopSceneLink {
+	    route: string;
+	    error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new DesktopSceneLink(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.route = source["route"];
+	        this.error = source["error"];
+	    }
+	}
 	export class DesktopUpdateStatus {
 	    checked: boolean;
 	    current: string;

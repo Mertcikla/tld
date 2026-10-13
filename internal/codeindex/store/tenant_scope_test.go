@@ -10,7 +10,8 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/proto"
 )
@@ -155,7 +156,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 			st.EnsureRepositoryIdentity(ctx, "repo", "/"+label, "", "", false),
 			st.Publish(ctx, "/"+label, snap, g),
 			st.SaveMappings(ctx, []ResourceMapping{{LogicalKey: "file:main.go", ResourceID: resourceID, RepositoryID: "repo", SnapshotID: "snap"}}),
-			st.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: "repo", ComparisonKey: "live", ViewId: resourceID}),
+			st.SaveImpact(ctx, &model.Diagram{RepositoryId: "repo", ComparisonKey: "live", Version: label}),
 			st.UpsertWatchState(ctx, WatchState{RepositoryID: "repo", State: label, OwnerID: label}),
 			st.SaveCompletedMap(ctx, "repo", &pb.CompletedMap{Result: &pb.MapResult{RunId: "run", SnapshotId: "snap", ViewId: resourceID}, ConfigHash: label}),
 			st.SaveRepositoryMapOverrides(ctx, "repo", &pb.RepositoryMapConfiguration{MaxLeafFiles: proto.Uint32(uint32(resourceID))}),
@@ -173,7 +174,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 			t.Fatalf("%s mapping = %+v, ok=%v err=%v", label, m, ok, err)
 		}
 		impact, err := st.Impact(ctx, "repo", "live")
-		if err != nil || impact.ViewId != resourceID {
+		if err != nil || impact.Version != label {
 			t.Fatalf("%s impact = %+v err=%v", label, impact, err)
 		}
 		watch, ok, err := st.WatchState(ctx, "repo")

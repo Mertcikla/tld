@@ -1,16 +1,12 @@
 package impact
 
 import (
-	"context"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
-	"github.com/mertcikla/tld/v2/internal/layout"
 )
 
 // viewIndex resolves a repository path to the workspace view that owns it.
@@ -18,121 +14,9 @@ import (
 // cluster view); folders maps a folder path to that folder's map view, which
 // exists even when no file is placed directly in it. Lookups walk up the folder
 // hierarchy so a file with no sibling view lands in the closest ancestor folder.
-// placed records the element ID of every repo-owned file that already has a
-// placement, so overlay nodes can reuse it instead of being placed again.
 type viewIndex struct {
 	dirs    map[string]int64
 	folders map[string]int64
-	placed  map[string]int64
-}
-
-// placeAddedFiles chooses the existing base-snapshot view that best matches the
-// added files and assigns provisional positions for the transient overlay. The
-// chosen view is recorded on the diagram; nothing is written to the workspace.
-// Files that are already mapped keep their placement; genuinely new files reuse
-// the same layout engine as snapshot mapping, so they land in the nearest
-// unoccupied cell next to the elements they depend on. When no added file
-// matches a materialized view the diagram keeps view_id 0 and the frontend falls
-// back to its unmapped overlay.
-func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagram, mappings []cstore.ResourceMapping, data core.ExploreData) error {
-	added := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
-	changed := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
-	for _, node := range diagram.Nodes {
-		if node.GetDistance() > 0 {
-			continue
-		}
-		changed = append(changed, node)
-		if node.Change == pb.ChangeKind_CHANGE_KIND_ADDED {
-			added = append(added, node)
-		}
-	}
-	voters := added
-	if len(voters) == 0 {
-		voters = changed
-	}
-	if len(voters) == 0 {
-		return nil
-	}
-	index := buildViewIndex(data, mappings)
-	votes := map[int64]int{}
-	for _, node := range voters {
-		if view := index.closest(node.Path); view != 0 {
-			votes[view]++
-		}
-	}
-	target, best := int64(0), 0
-	for view, count := range votes {
-		if count > best || (count == best && (target == 0 || view < target)) {
-			target, best = view, count
-		}
-	}
-	if target == 0 {
-		return nil
-	}
-	diagram.ViewId = target
-
-	existing, err := ws.ElementPlacements(ctx, target)
-	if err != nil {
-		return err
-	}
-	placements := make([]layout.Placement, 0, len(existing))
-	positioned := make(map[int64]layout.Placement, len(existing))
-	for _, placement := range existing {
-		item := layout.Placement{ElementID: placement.ElementID, X: placement.PositionX, Y: placement.PositionY}
-		placements = append(placements, item)
-		positioned[placement.ElementID] = item
-	}
-
-	// Resolve node keys to element IDs for the layout connectors. Context
-	// elements use their workspace ID, already-mapped files reuse the ID of
-	// their existing placement, and new files get a deterministic transient
-	// negative ID that never collides with a real workspace element.
-	ids := make(map[string]int64, len(diagram.Nodes))
-	for _, node := range diagram.Nodes {
-		if node.GetDistance() > 0 {
-			ids[node.Key] = node.ElementId
-		}
-	}
-	sorted := append([]*pb.ImpactNode(nil), changed...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
-	targets := make(map[int64]struct{}, len(sorted))
-	nextID := int64(0)
-	for _, node := range sorted {
-		if elementID, ok := index.placed[filepath.ToSlash(node.Path)]; ok {
-			ids[node.Key] = elementID
-			if item, ok := positioned[elementID]; ok {
-				node.X, node.Y = item.X, item.Y
-			}
-			continue
-		}
-		nextID--
-		ids[node.Key] = nextID
-		targets[nextID] = struct{}{}
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-
-	connectors := make([]layout.Connector, 0, len(diagram.Edges))
-	for _, edge := range diagram.Edges {
-		source, sourceOK := ids[edge.FromKey]
-		targetID, targetOK := ids[edge.ToKey]
-		if !sourceOK || !targetOK {
-			continue
-		}
-		connectors = append(connectors, layout.Connector{Source: source, Target: targetID})
-	}
-	next := layout.DeterministicLayoutPlacements(placements, targets, connectors)
-	for _, node := range sorted {
-		elementID, ok := ids[node.Key]
-		if !ok {
-			continue
-		}
-		if item, ok := next[elementID]; ok {
-			node.X, node.Y = item.X, item.Y
-		}
-	}
-	return nil
 }
 
 // folderViewPrefix keys a repository folder's map view. The remaining segment
@@ -140,11 +24,10 @@ func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagr
 const folderViewPrefix = "map|folderview|"
 
 // buildViewIndex tallies the workspace view that owns each directory's
-// materialized files, indexes the map's folder views by path, and records which
-// repo-owned files already have a placement. Only resources mapped to this
-// repository participate, so overlapping paths in other repositories never win.
+// materialized files and indexes map folder views by path. Only resources
+// mapped to this repository participate, so overlapping paths never win.
 func buildViewIndex(data core.ExploreData, mappings []cstore.ResourceMapping) viewIndex {
-	index := viewIndex{dirs: map[string]int64{}, folders: map[string]int64{}, placed: map[string]int64{}}
+	index := viewIndex{dirs: map[string]int64{}, folders: map[string]int64{}}
 	owned := make(map[int64]bool, len(mappings))
 	for _, mapping := range mappings {
 		switch {
@@ -169,9 +52,6 @@ func buildViewIndex(data core.ExploreData, mappings []cstore.ResourceMapping) vi
 				continue
 			}
 			file := filepath.ToSlash(*placement.FilePath)
-			if _, ok := index.placed[file]; !ok {
-				index.placed[file] = placement.ElementID
-			}
 			dir := path.Dir(file)
 			if tallies[dir] == nil {
 				tallies[dir] = map[int64]int{}

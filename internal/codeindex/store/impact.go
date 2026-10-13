@@ -3,45 +3,40 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/encoding/protojson"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func (s *Store) SaveImpact(ctx context.Context, diagram *pb.ImpactDiagram) error {
-	raw, err := protojson.Marshal(diagram)
+func (s *Store) SaveImpact(ctx context.Context, diagram *model.Diagram) error {
+	raw, err := json.Marshal(diagram)
 	if err != nil {
 		return err
 	}
 	_, err = s.bun.NewRaw(`INSERT INTO codeindex_impacts (repository_id, comparison_key, result_json, org_id) VALUES (?, ?, ?, ?)
- ON CONFLICT(org_id, repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, string(raw), scope(ctx).value()).Exec(ctx)
+ ON CONFLICT(org_id, repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, raw, scope(ctx).value()).Exec(ctx)
 	return err
 }
 
-func (s *Store) Impact(ctx context.Context, repositoryID, key string) (*pb.ImpactDiagram, error) {
+func (s *Store) Impact(ctx context.Context, repositoryID, key string) (*model.Diagram, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
-	var raw string
+	var raw []byte
 	if err := s.bun.NewRaw(`SELECT result_json FROM codeindex_impacts WHERE repository_id = ? AND comparison_key = ?`+where, append([]any{repositoryID, key}, scopeArgs...)...).Scan(ctx, &raw); err != nil {
 		return nil, err
 	}
-	diagram := &pb.ImpactDiagram{}
-	if err := protojson.Unmarshal([]byte(raw), diagram); err != nil {
-		return nil, err
-	}
-	// Older saved diagrams predate line counts; derive them from their immutable
-	// captured sources without modifying a potentially newer watcher result.
-	if err := s.sourceLineStats(ctx, diagram.GetDiff().GetSources()); err != nil {
-		return nil, err
+	diagram := &model.Diagram{}
+	if err := json.Unmarshal(raw, diagram); err != nil {
+		return nil, fmt.Errorf("obsolete comparison artifact; run compare again: %w", err)
 	}
 	return diagram, nil
 }
 
-func (s *Store) LiveImpact(ctx context.Context, repositoryID string) (*pb.LiveImpact, error) {
-	result := &pb.LiveImpact{}
+func (s *Store) LiveImpact(ctx context.Context, repositoryID string) (*model.Live, error) {
+	result := &model.Live{}
 	diagram, err := s.Impact(ctx, repositoryID, "live")
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err

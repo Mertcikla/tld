@@ -17,22 +17,23 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
+	ci "github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/gitstate"
+	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/identity"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/ingest"
+	"github.com/mertcikla/codeindex/parity"
+	"github.com/mertcikla/codeindex/remote"
+	"github.com/mertcikla/codeindex/watch"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
-	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
-	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/watch"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -79,8 +80,8 @@ unstaged, and nonignored untracked files are the Head. Git changes trigger
 incremental indexing after a debounce. Each new commit gets an immutable
 snapshot from its committed contents. Watch always saves an affected-file
 change overlay, available in Repositories > Live changes. Compare maps can
-compare commits or saved snapshots. The blast-radius slider adds existing
-unchanged elements by dependency hops.`,
+compare commits or saved snapshots, always showing the full computed
+neighbourhood of unchanged elements by dependency hops.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -120,6 +121,9 @@ type engine struct {
 	// checkout's remote, so the same repository is one repository across
 	// checkouts and machines.
 	repoID string
+	// manifests persists working-tree file hashes across watch scans so repeat
+	// scans only rehash files that moved.
+	manifests gitstate.ManifestCache
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -207,7 +211,7 @@ func run(cmd *cobra.Command, opts options) error {
 		errOut:  cmd.ErrOrStderr(),
 	}
 	_ = eng.store.BackfillRemoteKeys(ctx)
-	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "")
+	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return err
 	}
@@ -216,6 +220,7 @@ func run(cmd *cobra.Command, opts options) error {
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		cmd.SetContext(ctx)
+		eng.manifests = gitstate.ManifestCache{}
 		return eng.watch(ctx, cmd, root)
 	}
 	ctx, release, err := eng.store.AcquireLease(ctx, eng.repoID)
@@ -524,11 +529,15 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		PollInterval: e.opts.pollInterval,
 	})
 	defer func() { _ = detector.Close() }()
+	// captured carries the QuickState of the capture that woke the detector, so
+	// each scan snapshots Git once instead of twice.
+	var captured gitstate.QuickState
 	capture := func(captureCtx context.Context) (string, error) {
 		qs, err := gitstate.CaptureQuick(captureCtx, root)
 		if err != nil {
 			return "", err
 		}
+		captured = qs
 		return qs.Signature(), nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s, poll %s)\n", root, e.opts.debounce, e.opts.pollInterval)
@@ -552,10 +561,14 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			}
 			continue
 		}
-		qs, err := gitstate.CaptureQuick(runCtx, root)
-		if err != nil {
-			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
-			continue
+		qs := captured
+		if qs.Signature() == "" {
+			// A detector transition without a fresh capture should not happen;
+			// capture directly rather than scanning a zero state.
+			if qs, err = gitstate.CaptureQuick(runCtx, root); err != nil {
+				persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
+				continue
+			}
 		}
 		persist(func(s *cstore.WatchState) {
 			s.State = "scanning"
@@ -565,7 +578,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
 		})
 		started := time.Now()
-		snap, report, mapRes, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
+		snap, report, mapRes, live, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
 			mu.Lock()
 			unchanged := status.Stage == stage
 			mu.Unlock()
@@ -577,11 +590,18 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		if err != nil {
 			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
+			// Back off before retrying: the usual cause is sustained edits, and
+			// a hot retry loop would keep failing while the tree is still moving.
+			select {
+			case <-runCtx.Done():
+				return nil
+			case <-time.After(e.opts.pollInterval):
+			}
 			continue
 		}
 		if prev == nil || prev.Id != snap.Id {
-			if prev != nil {
-				e.printDiff(cmd, prev.Id, snap.Id)
+			if prev != nil && live != nil {
+				e.printDiff(cmd, live)
 			}
 			if err = e.print(cmd, snap, report, mapRes); err != nil {
 				return err
@@ -604,7 +624,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *pb.MapResult, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *pb.MapResult, *model.Diagram, error) {
 	reportStage := func(stage string) {
 		for _, report := range onStage {
 			report(stage)
@@ -619,14 +639,14 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		leased, release, err = e.store.AcquireLease(ctx, repoID)
 		if !errors.Is(err, cstore.ErrBusy) {
 			if err != nil {
-				return nil, parity.Report{}, nil, err
+				return nil, parity.Report{}, nil, nil, err
 			}
 			ctx = leased
 			break
 		}
 		select {
 		case <-ctx.Done():
-			return nil, parity.Report{}, nil, ctx.Err()
+			return nil, parity.Report{}, nil, nil, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -638,7 +658,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
 	defer tracker.Finish()
-	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Progress: func(p indexer.Progress) {
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Progress: func(p indexer.Progress) {
 		reportStage(p.Stage)
 		tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail)
 	}}
@@ -649,49 +669,58 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	commits, err := gitstate.Commits(ctx, root, previousRevision, state.Revision)
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	for _, revision := range commits {
 		if _, err = engine.Prepare(ctx, &pb.Revision{GitRevision: revision, GitBranch: state.Branch}); err != nil {
-			return nil, parity.Report{}, nil, err
+			return nil, parity.Report{}, nil, nil, err
 		}
 	}
 	base, err := engine.Prepare(ctx, &pb.Revision{GitRevision: state.Revision, GitBranch: state.Branch})
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
-	snap, err := engine.Prepare(ctx, &pb.Revision{WorkingTree: true})
+	// The working-tree build carries its graph back, so the scan never reloads
+	// the full snapshot (sources, facts, edges, artifacts) just to summarize.
+	snap, graph, reused, err := engine.PrepareWithGraph(ctx, &pb.Revision{WorkingTree: true})
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
-	after, err := gitstate.CaptureQuick(ctx, root)
-	if err != nil {
-		return nil, parity.Report{}, nil, err
-	}
-	if after.Signature() != state.Signature() {
-		return nil, parity.Report{}, nil, fmt.Errorf("git inputs changed during indexing; retrying")
-	}
+	// Edits that land while indexing are normal: the published snapshot is
+	// internally consistent, and the caller's signature tracker still points at
+	// the pre-index state, so the next detector cycle indexes the delta
+	// incrementally instead of restarting this scan.
 	if err = e.store.AdvanceLatest(ctx, repoID, snap.Id); err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
-	g, err := e.store.LoadGraph(ctx, snap.Id)
-	if err != nil {
-		return nil, parity.Report{}, nil, err
+	if graph == nil {
+		if graph, err = e.store.LoadGraph(ctx, snap.Id); err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
 	}
+	report := parity.Summarize(snap, graph)
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
-	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, impact.DefaultContextDepth); err != nil {
-		return nil, parity.Report{}, nil, err
+	service := impact.Service{Workspace: e.ws, Index: e.store}
+	diagram, err := service.CompareSnapshots(ctx, repoID, base.Id, snap.Id, impact.DefaultBlastRadius)
+	if err != nil {
+		return nil, parity.Report{}, nil, nil, err
+	}
+	// Keep the mutable live alias while sharing the immutable comparison cache.
+	live := model.Clone(diagram)
+	live.ComparisonKey = "live"
+	if err = e.store.SaveImpact(ctx, live); err != nil {
+		return nil, parity.Report{}, nil, nil, err
 	}
 	var mapRes *pb.MapResult
-	if e.opts.mapGraph {
+	if e.opts.mapGraph && !reused {
 		if res, mapErr := e.mapGraph(ctx, snap, tracker); mapErr != nil {
 			e.warnf("map failed for %s: %v", root, mapErr)
 		} else {
 			mapRes = res
 		}
 	}
-	return snap, parity.Summarize(snap, g), mapRes, nil
+	return snap, report, mapRes, live, nil
 }
 
 func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mapRes *pb.MapResult) error {
@@ -727,16 +756,15 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 	return nil
 }
 
-func (e *engine) printDiff(cmd *cobra.Command, fromID, toID string) {
-	diff, err := e.store.Diff(cmd.Context(), fromID, toID, false)
-	if err != nil {
-		return
-	}
-	added := len(diff.Facts.Added)
-	removed := len(diff.Facts.Removed)
-	modified := len(diff.Facts.Modified)
+// printDiff summarizes the live comparison the scan already computed, so the
+// watcher never pays for a second full diff just to print counts.
+func (e *engine) printDiff(cmd *cobra.Command, diagram *model.Diagram) {
+	diff := diagram.GetDiff()
+	added := len(diff.GetFacts().GetAdded())
+	removed := len(diff.GetFacts().GetRemoved())
+	modified := len(diff.GetFacts().GetModified())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "changed: %d sources, +%d -%d ~%d facts\n",
-		len(diff.Sources), added, removed, modified)
+		len(diff.GetSources()), added, removed, modified)
 }
 
 func shortHash(s string) string {

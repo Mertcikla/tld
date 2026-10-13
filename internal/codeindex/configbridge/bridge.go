@@ -5,7 +5,7 @@ package configbridge
 import (
 	"strings"
 
-	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
+	ci "github.com/mertcikla/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 

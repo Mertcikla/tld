@@ -203,6 +203,10 @@ type ValidationConfig struct {
 	AllowLowInsight bool     `yaml:"allow_low_insight"`
 	IncludeRules    []string `yaml:"include_rules,omitempty"`
 	ExcludeRules    []string `yaml:"exclude_rules,omitempty"`
+	// LinkCoveragePercent is the fraction of the indexed code directories that
+	// the workspace's source-linked elements must cover for ARC206 to pass.
+	// Zero or unset falls back to DefaultLinkCoveragePercent.
+	LinkCoveragePercent int `yaml:"link_coverage_percent,omitempty"`
 }
 
 // ServeConfig holds serve-specific settings from the global config file.
@@ -225,6 +229,10 @@ type UpdatesConfig struct {
 
 const DefaultValidationLevel = 2
 
+// DefaultLinkCoveragePercent is the linked directory coverage ARC206 requires
+// when the workspace does not configure validation.link_coverage_percent.
+const DefaultLinkCoveragePercent = 75
+
 // DefaultConfig returns a Config struct populated with system defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -236,7 +244,8 @@ func DefaultConfig() *Config {
 			Driver: "sqlite",
 		},
 		Validation: ValidationConfig{
-			Level: DefaultValidationLevel,
+			Level:               DefaultValidationLevel,
+			LinkCoveragePercent: DefaultLinkCoveragePercent,
 		},
 		Serve: ServeConfig{
 			Host: "127.0.0.1",

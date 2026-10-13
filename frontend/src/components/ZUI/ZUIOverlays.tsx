@@ -24,6 +24,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
+import { EDGE_CHANGE_META } from './edgeChange'
 
 const MAX_PROXY_HOVER_VIEW_LINKS = 5
 const BREADCRUMB_MAX_LABEL_WIDTH = 200
@@ -469,6 +470,17 @@ export function ZUIHoverPopover({
                   <Badge colorScheme={hoveredItem.data.isPortalConn ? 'purple' : 'orange'} variant="subtle" fontSize="2xs">
                     {hoveredItem.data.isPortalConn ? 'Portal Connection' : 'Connection'}
                   </Badge>
+                  {hoveredItem.data.change && (
+                    <Badge
+                      data-testid="zui-edge-change"
+                      bg={EDGE_CHANGE_META[hoveredItem.data.change].color}
+                      color="black"
+                      variant="solid"
+                      fontSize="2xs"
+                    >
+                      {EDGE_CHANGE_META[hoveredItem.data.change].label}
+                    </Badge>
+                  )}
                 </VStack>
               </PopoverHeader>
               <PopoverBody px={4} py={3}>

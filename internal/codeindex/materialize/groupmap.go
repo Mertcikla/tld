@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/community"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"

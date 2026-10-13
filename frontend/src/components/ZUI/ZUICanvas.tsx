@@ -8,7 +8,7 @@ import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import { computeLayout } from './layout'
 import { getCameraRebase, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
-import type { DiagramGroupLayout, HoveredItem, ZUITestInteraction, ZUIViewState } from './types'
+import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
 import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
@@ -44,12 +44,14 @@ interface Props {
   changeOverlays?: Record<number, ZUIChangeOverlay>
   data: ExploreData
   onReady?: () => void
+  onSelectObject?: (selection: ZUIObjectSelection | null) => void
   onZoom?: () => void
   onPan?: () => void
   initialCameraFrame?: ZUICameraFrame
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  tagColors?: Record<string, { color?: string } | string>
   groupLayers?: ViewLayer[]
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
@@ -60,12 +62,14 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   changeOverlays,
   data,
   onReady,
+  onSelectObject,
   onZoom,
   onPan,
   initialCameraFrame,
   highlightedTags,
   highlightColor,
   hiddenTags,
+  tagColors,
   groupLayers = [],
   crossBranchSettings,
   hoverLocked = false,
@@ -105,6 +109,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     hiddenTags,
     containerSize.w,
     hoverLocked,
+    onSelectObject,
   )
 
   const viewportBounds = useMemo(() => {
@@ -172,6 +177,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     highlightedTags,
     highlightColor,
     hiddenTags,
+    tagColors,
     groupLayers,
   })
 

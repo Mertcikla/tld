@@ -4,27 +4,22 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
 
-func scopeDiagram() *pb.ImpactDiagram {
-	return &pb.ImpactDiagram{
+func scopeDiagram() *model.Diagram {
+	return &model.Diagram{
 		RepositoryId:  "repo",
 		ComparisonKey: "key",
-		MaxRadius:     3,
-		Nodes: []*pb.ImpactNode{
+		Nodes: []*model.Node{
 			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED},
-			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},
-			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
+			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1},
+			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2},
 		},
-		Edges: []*pb.ImpactEdge{
+		Edges: []*model.Edge{
 			{FromKey: "file|a.go", ToKey: "file|a.go", Weight: 1},
 			{FromKey: "file|a.go", ToKey: "context|1", Weight: 2},
 			{FromKey: "context|1", ToKey: "context|2", Weight: 3},
-		},
-		Groups: []*pb.ImpactGroup{
-			{Key: "view:1", Name: "repo", NodeKeys: []string{"file|a.go"}, Children: []*pb.ImpactGroup{
-				{Key: "view:2", Name: "pkg", NodeKeys: []string{"context|1", "context|2"}},
-			}},
 		},
 	}
 }
@@ -36,24 +31,6 @@ func TestScopeKeepsDirectChangesAndRadiusNeighbours(t *testing.T) {
 	}
 	if len(scoped.GetEdges()) != 2 {
 		t.Fatalf("scoped edges = %+v", scoped.GetEdges())
-	}
-	if len(scoped.GetGroups()) != 1 || len(scoped.GetGroups()[0].GetChildren()) != 1 {
-		t.Fatalf("scoped groups = %+v", scoped.GetGroups())
-	}
-	if keys := scoped.GetGroups()[0].GetChildren()[0].GetNodeKeys(); len(keys) != 1 || keys[0] != "context|1" {
-		t.Fatalf("scoped group keys = %v", keys)
-	}
-}
-
-func TestScopeDropsEmptyGroups(t *testing.T) {
-	scoped := Scope(scopeDiagram(), 0)
-	if len(scoped.GetGroups()) != 1 || len(scoped.GetGroups()[0].GetChildren()) != 0 {
-		t.Fatalf("scoped groups = %+v", scoped.GetGroups())
-	}
-	empty := Scope(scopeDiagram(), 0)
-	empty.Nodes = nil
-	if groups := scopeGroups(empty.GetGroups(), map[string]bool{}); len(groups) != 0 {
-		t.Fatalf("empty groups = %+v", groups)
 	}
 }
 
@@ -70,7 +47,7 @@ func TestFitRadiusNarrowsToBudget(t *testing.T) {
 	}
 }
 
-func nodeKeys(diagram *pb.ImpactDiagram) []string {
+func nodeKeys(diagram *model.Diagram) []string {
 	out := make([]string, 0, len(diagram.GetNodes()))
 	for _, node := range diagram.GetNodes() {
 		out = append(out, node.GetKey())

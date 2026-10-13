@@ -12,9 +12,9 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 )
 

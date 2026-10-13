@@ -45,6 +45,8 @@ tld validate
 
 For root-level elements, omit `--parent`.
 
+Grounding the elements added back to source code is important. Use `--link` while adding elements to point to the source code, folder, or even symbols where possible. Skip `--link` if the element is too abstract or encompasses many files.
+
 If a technology label is uncertain, check it first:
 
 ```bash

@@ -10,12 +10,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
+	"github.com/mertcikla/tld/v2/internal/sceneurl"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type DesktopBridge struct {
-	ctx context.Context
+	ctx        context.Context
+	sceneMu    sync.Mutex
+	sceneLinks []DesktopSceneLink
+}
+
+type DesktopSceneLink struct {
+	Route string `json:"route"`
+	Error string `json:"error,omitempty"`
 }
 
 type DialogFilter struct {
@@ -39,7 +48,47 @@ func NewDesktopBridge() *DesktopBridge {
 }
 
 func (b *DesktopBridge) startup(ctx context.Context) {
+	b.sceneMu.Lock()
+	defer b.sceneMu.Unlock()
 	b.ctx = ctx
+}
+
+// Every link is queued, even before Wails or React is ready. Notifications are
+// only a wakeup: the frontend also drains once immediately after subscribing.
+func (b *DesktopBridge) openSceneURL(value string) {
+	route, err := sceneurl.LocalRoute(value)
+	link := DesktopSceneLink{Route: route}
+	if err != nil {
+		link.Error = err.Error()
+	}
+	b.sceneMu.Lock()
+	b.sceneLinks = append(b.sceneLinks, link)
+	ctx := b.ctx
+	b.sceneMu.Unlock()
+	if ctx != nil {
+		wailsruntime.WindowUnminimise(ctx)
+		wailsruntime.WindowShow(ctx)
+		wailsruntime.EventsEmit(ctx, "tld:scene-links")
+	}
+}
+
+func (b *DesktopBridge) openSceneArgs(args []string) {
+	for _, arg := range args {
+		if strings.HasPrefix(strings.ToLower(arg), "tld:") {
+			b.openSceneURL(arg)
+		}
+	}
+}
+
+func (b *DesktopBridge) DrainSceneLinks() []DesktopSceneLink {
+	b.sceneMu.Lock()
+	defer b.sceneMu.Unlock()
+	links := b.sceneLinks
+	b.sceneLinks = nil
+	if links == nil {
+		return []DesktopSceneLink{}
+	}
+	return links
 }
 
 func (b *DesktopBridge) SaveFile(defaultFilename string, filters []DialogFilter, base64Content string) (SaveFileResult, error) {

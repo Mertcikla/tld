@@ -392,6 +392,11 @@ export const markdownPanelBodySx: SystemStyleObject = {
     background: 'var(--bg-panel)',
   },
   '.tld-mermaid-preview': {
+    // Mermaid previews also appear outside the Markdown editor (Repository Impact).
+    '--baseBorder': 'var(--border-main)',
+    '--baseText': 'var(--chakra-colors-gray-100)',
+    '--baseTextMuted': 'var(--chakra-colors-gray-400)',
+    '--baseTextContrast': 'var(--chakra-colors-whiteAlpha-900)',
     margin: '0.9rem 0 1.15rem',
     border: '1px solid var(--baseBorder)',
     borderRadius: '0.65rem',
@@ -539,6 +544,17 @@ export const markdownPanelBodySx: SystemStyleObject = {
     height: 'auto',
     margin: '0 auto',
   },
+  '.tld-mermaid-preview__body svg .cluster rect': {
+    fill: 'var(--bg-panel) !important',
+    stroke: 'var(--border-main) !important',
+    strokeWidth: '1px',
+    rx: '6px',
+    ry: '6px',
+  },
+  '.tld-mermaid-preview__body svg .note': {
+    fill: 'var(--bg-element) !important',
+    stroke: 'var(--border-main) !important',
+  },
   '.tld-mermaid-preview__body svg .node rect, .tld-mermaid-preview__body svg .node polygon, .tld-mermaid-preview__body svg .node circle, .tld-mermaid-preview__body svg .node ellipse, .tld-mermaid-preview__body svg .node path': {
     fill: 'var(--bg-element) !important',
     stroke: 'var(--accent) !important',
@@ -548,15 +564,16 @@ export const markdownPanelBodySx: SystemStyleObject = {
     color: 'var(--baseTextContrast) !important',
     fill: 'var(--baseTextContrast) !important',
   },
-  '.tld-mermaid-preview__body svg .edgePath path, .tld-mermaid-preview__body svg .flowchart-link, .tld-mermaid-preview__body svg .relationshipLine': {
+  // Keep explicit linkStyle colors and widths, including impact change semantics.
+  '.tld-mermaid-preview__body svg .edgePath path:not([style*="stroke:"]), .tld-mermaid-preview__body svg .flowchart-link:not([style*="stroke:"]), .tld-mermaid-preview__body svg .relationshipLine:not([style*="stroke:"])': {
     stroke: 'var(--accent) !important',
-    strokeWidth: '1.8px !important',
-    opacity: 0.78,
+  },
+  '.tld-mermaid-preview__body svg .edgePath path:not([style*="stroke-width:"]), .tld-mermaid-preview__body svg .flowchart-link:not([style*="stroke-width:"]), .tld-mermaid-preview__body svg .relationshipLine:not([style*="stroke-width:"])': {
+    strokeWidth: '1.8px',
   },
   '.tld-mermaid-preview__body svg marker path, .tld-mermaid-preview__body svg .arrowheadPath': {
     fill: 'var(--accent) !important',
     stroke: 'var(--accent) !important',
-    opacity: 0.78,
   },
   '.tld-mermaid-preview__body svg .edgeLabel, .tld-mermaid-preview__body svg .edgeLabel p, .tld-mermaid-preview__body svg .edgeLabel rect': {
     background: 'transparent !important',

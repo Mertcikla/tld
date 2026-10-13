@@ -181,7 +181,7 @@ describe('Explore group backgrounds', () => {
 })
 
 describe('edgeLayerStyle', () => {
-  const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged') => ({ change, path: `${change}.go`, symbols: [] })
+  const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged') => ({ change, path: `${change}.go`, symbols: [], reason: 'direct' as const })
   const accent = '#63b3ed'
   const borderGrey = 'rgba(160,174,192,0.5)'
 

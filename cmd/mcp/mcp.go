@@ -20,6 +20,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/cmd/view"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	"github.com/mertcikla/tld/v2/internal/codeindex/linkcheck"
 	mappingcheck "github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
@@ -348,6 +349,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		var scoreOpts []archwarnings.Option
 		if classify := mappingcheck.Classifier(ctx, dataDir); classify != nil {
 			scoreOpts = append(scoreOpts, archwarnings.WithCodeindexElementClassifier(classify))
+		}
+		if targets, ok := linkcheck.Index(ctx, dataDir); ok {
+			scoreOpts = append(scoreOpts, archwarnings.WithLinkTargets(targets), archwarnings.WithIgnoreRules(rules))
 		}
 		warnings := archwarnings.Analyze(ws, scoreOpts...)
 		if len(warnings) > 0 {

@@ -88,20 +88,21 @@ tasks:
   dev:
     desc: Run development stack (backend + frontend)
     deps:
-      - be
-      - fe
+      - frontend-deps
+    cmds:
+      - cd frontend && npm run prepare:icons
+      - go run ./scripts/dev/run
 
   dev-stop:
-    desc: Stop development backend
+    desc: Stop registered local processes, including development watchers
     cmds:
-      - cmd: pkill -x tlddebug
-        ignore_error: true
+      - go run ./cmd/tld stop
 
   proto:
     desc: Update go.mod to latest BSR-published proto versions
     cmds:
       - go get buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go@$(buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/protocolbuffers/go)
-      - go get buf.build/gen/go/tldiagramcom/diagram/connectrpc/go@$(buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/connectrpc/go)
+      - go get buf.build/gen/go/tldiagramcom/diagram/connectrpc/go@$(buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/connectrpc/go:v1.21.0)
       - go mod tidy
       - cd frontend && npm install @buf/tldiagramcom_diagram.bufbuild_es@latest && npm install @buf/tldiagramcom_diagram.bufbuild_es@latest --no-workspaces
 

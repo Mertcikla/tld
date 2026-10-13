@@ -8,9 +8,9 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 )
@@ -42,11 +42,15 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if input.RepositoryId == "" || input.Base == nil || input.Head == nil {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository and both comparison targets are required"))
 	}
+	if err := impact.ValidateBlastRadius(input.GetContextDepth()); err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	diagram, err := s.impactService().Compare(ctx, impact.CompareRequest{
 		RepositoryID: input.RepositoryId,
 		Base:         input.Base,
 		Head:         input.Head,
-		ContextDepth: input.ContextDepth,
+		BlastRadius:  input.GetContextDepth(),
+		ViewFilter:   input.GetViewFilter(),
 		Progress: func(p indexer.Progress) {
 			_ = stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Progress{Progress: &pb.Progress{Stage: p.Stage, Current: uint32(p.Current), Total: uint32(p.Total), Detail: p.Detail}}})
 		},
@@ -54,7 +58,8 @@ func (s *codeIndexService) CompareRepository(ctx context.Context, req *connect.R
 	if err != nil {
 		return impactError(err)
 	}
-	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: diagram}})
+	result := impact.PublicScene(diagram.Scene, input.GetDebugProvenance())
+	return stream.Send(&pb.CompareRepositoryEvent{Event: &pb.CompareRepositoryEvent_Result{Result: result}})
 }
 
 func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.LiveImpact], error) {
@@ -65,7 +70,15 @@ func (s *codeIndexService) GetLiveImpact(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(result), nil
+	public := &pb.LiveImpact{Watching: result.Watching, Error: result.Error, GitBranch: result.GitBranch, GitRevision: result.GitRevision}
+	if result.Diagram != nil {
+		if result.Diagram.GetScene().GetSchemaVersion() == impact.PipelineVersion {
+			public.Scene = impact.PublicScene(result.Diagram.Scene, false)
+		} else {
+			public.Error = "Comparison schema is obsolete; run compare again"
+		}
+	}
+	return connect.NewResponse(public), nil
 }
 
 func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect.Request[pb.ExportImpactMermaidRequest]) (*connect.Response[pb.ExportImpactMermaidResponse], error) {
@@ -76,8 +89,17 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	if err != nil {
 		return nil, impactLookupError(err)
 	}
-	scoped := impact.Scope(diagram, req.Msg.GetRadius())
-	code := mermaid.ExportImpactDiagram(scoped, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: req.Msg.GetRadius()})
+	// The change diagram renders the same scene the canvas draws, so the
+	// docked pane and the canvas never disagree. The canonical scene carries
+	// its own fallback chain. The scene is pruned
+	// to the compare blast radius, so unimpacted sections never reach the
+	// payload; node and byte budgets stay CLI-side.
+	scene, err := s.impactService().Scene(ctx, diagram)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
+	code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), mermaid.SceneExportOptions{IncludeMetadata: true})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
 		response.Markdown = mermaid.MermaidBlock(code)
@@ -85,7 +107,7 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	return connect.NewResponse(response), nil
 }
 
-func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Request[pb.GetImpactSceneRequest]) (*connect.Response[pb.GetImpactSceneResponse], error) {
+func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Request[pb.GetImpactSceneRequest]) (*connect.Response[pb.ImpactScene], error) {
 	if req.Msg.GetRepositoryId() == "" || req.Msg.GetComparisonKey() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id and comparison key are required"))
 	}
@@ -97,5 +119,11 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&pb.GetImpactSceneResponse{Scene: scene}), nil
+	// Serve the frozen selection. Standard retains the authored skeleton;
+	// Plain applies the same backend policy used by CLI and Mermaid exports.
+	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
+	if err := impact.ValidateCoverage(scene); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(impact.PublicScene(scene, req.Msg.GetDebugProvenance())), nil
 }

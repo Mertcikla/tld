@@ -1,4 +1,5 @@
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
+import type { ZUIEdgeChange } from './edgeChange'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -25,6 +26,7 @@ type IndexedEdge =
     diagramId: number
     sourceObjId: number
     targetObjId: number
+    change?: ZUIEdgeChange
   }
   | {
     kind: 'portal'
@@ -250,6 +252,7 @@ export function buildEdgeSpatialIndex(groups: DiagramGroupLayout[]): EdgeSpatial
         diagramId: group.diagramId,
         sourceObjId: source.elementId,
         targetObjId: target.elementId,
+        change: edge.change,
       })
     }
 
@@ -336,6 +339,7 @@ export function findHoveredEdge(
       diagramId: bestEdge.diagramId,
       sourceObjId: bestEdge.sourceObjId,
       targetObjId: bestEdge.targetObjId,
+      change: bestEdge.change,
     },
     absX: bestEdge.midX,
     absY: bestEdge.midY,

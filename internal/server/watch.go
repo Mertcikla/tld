@@ -12,9 +12,8 @@ import (
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // watchChild is a CLI watcher process supervised by the server.
@@ -333,20 +332,6 @@ func (s *repositoryService) watchKey(ctx context.Context, repositoryID string) (
 		return repositoryID, nil
 	}
 	return cgraph.RepositoryID(repo.Root), nil
-}
-
-func (s *repositoryService) ListWatches(ctx context.Context, _ *connect.Request[emptypb.Empty]) (*connect.Response[codeindexv1.ListWatchesResponse], error) {
-	s.watches.reap()
-	_ = s.store.ReapStaleWatchStates(ctx)
-	states, err := s.store.ListWatchStates(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	out := &codeindexv1.ListWatchesResponse{}
-	for _, st := range states {
-		out.Watchers = append(out.Watchers, s.statusFor(st, true))
-	}
-	return connect.NewResponse(out), nil
 }
 
 // status reports a watcher's state using the per-checkout key, but labels the

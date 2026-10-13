@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function CheckForUpdate():Promise<main.DesktopUpdateStatus>;
 
+export function DrainSceneLinks():Promise<Array<main.DesktopSceneLink>>;
+
 export function InstallUpdate():Promise<main.DesktopUpdateStatus>;
 
 export function OpenPath(arg1:string):Promise<void>;

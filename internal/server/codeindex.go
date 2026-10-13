@@ -16,17 +16,17 @@ import (
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/gitstate"
+	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/identity"
+	"github.com/mertcikla/codeindex/indexer"
+	"github.com/mertcikla/codeindex/ingest"
+	"github.com/mertcikla/codeindex/remote"
+	"github.com/mertcikla/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
-	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
@@ -100,7 +100,7 @@ func (s *repositoryService) AddRepository(ctx context.Context, req *connect.Requ
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
-	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "")
+	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
@@ -310,7 +310,7 @@ func resolveRepositoryRoot(path string) (string, error) {
 	return resolved, nil
 }
 
-func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[codeindexv1.DeleteRepositoryResponse], error) {
+func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[emptypb.Empty], error) {
 	repositoryID := strings.TrimSpace(req.Msg.GetId())
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id is required"))
@@ -354,7 +354,7 @@ func (s *repositoryService) DeleteRepository(ctx context.Context, req *connect.R
 	if err := s.store.DeleteRepository(ctx, repositoryID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&codeindexv1.DeleteRepositoryResponse{}), nil
+	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 func (s *repositoryService) stopRepositoryWatches(ctx context.Context, repository *codeindexv1.Repository) error {
@@ -375,7 +375,7 @@ func (s *repositoryService) stopRepositoryWatches(ctx context.Context, repositor
 		}
 		// A second checkout may not have published its first snapshot yet.
 		if state.RepoRoot != "" {
-			resolved, err := identity.Resolve(ctx, s.store, state.RepoRoot, "", "")
+			resolved, err := identity.Resolve(ctx, s.store, state.RepoRoot, "", "", app.TenantOrgIDFromCtx(ctx))
 			if err != nil {
 				return err
 			}
@@ -550,7 +550,7 @@ func (s *codeIndexService) DiffSnapshots(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(diff), nil
 }
 
-func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[codeindexv1.DeleteSnapshotResponse], error) {
+func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[emptypb.Empty], error) {
 	snapshotID := strings.TrimSpace(req.Msg.GetId())
 	if snapshotID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("snapshot_id is required"))
@@ -561,7 +561,7 @@ func (s *codeIndexService) DeleteSnapshot(ctx context.Context, req *connect.Requ
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&codeindexv1.DeleteSnapshotResponse{}), nil
+	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 const defaultPageSize = 200

@@ -7,6 +7,8 @@ import {
   EdgeFactSchema,
   FactKind,
   ImpactSceneSchema,
+  ImpactOrigin,
+  ImpactRole,
   SnapshotDiffSchema,
   SnapshotSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
@@ -253,32 +255,51 @@ describe('codeindex snapshot mapping', () => {
 })
 
 describe('impact scene mapping', () => {
+  it('maps file coverage and optional structured audit evidence', () => {
+    const scene = create(ImpactSceneSchema, {
+      comparison: { schemaVersion: '4' },
+      files: [{ path: 'asset.bin', change: ChangeKind.ADDED, representatives: [{ viewId: 1, elementId: -1 }], baseAnalysis: 'absent', headAnalysis: 'manifest_only' }],
+      provenance: { decisions: [{ stage: 'coverage', action: 'suppress', target: 'v1/e-1', reason: 'Missing authored representation' }], witnesses: [{ side: 'head', paths: ['changed.go', 'neighbour.go'] }] },
+    })
+    const mapped = mapImpactScene(scene)
+    expect(mapped.coverage?.[0]).toMatchObject({ path: 'asset.bin', placementKeys: ['placement|1|-1'], factsUnavailable: true })
+    expect(mapped.schemaVersion).toBe('4')
+    expect(mapped.audit?.decisions[0].target).toBe('v1/e-1')
+    expect(mapped.audit?.witnesses[0]).toMatchObject({ side: 'head', paths: ['changed.go', 'neighbour.go'] })
+    expect(mapImpactScene(create(ImpactSceneSchema)).audit).toBeUndefined()
+  })
+
   it('labels symbols from structured changes and keeps scene identity', () => {
     const scene = create(ImpactSceneSchema, {
-      repositoryId: 'repo-1',
-      comparisonKey: 'key-1',
-      version: 'v1',
-      schemaVersion: '1',
-      maxRadius: 2,
-      fromGitRevision: 'aaa',
-      toGitRevision: 'bbb',
+      comparison: { repositoryId: 'repo-1', key: 'key-1', version: 'v1', schemaVersion: '4', base: 'aaa', head: 'bbb' },
+      symbols: {
+        s1: { change: ChangeKind.MODIFIED, name: 'Changed', kind: FactKind.FUNCTION, path: 'a.go', startLine: 3, endLine: 9 },
+        s2: { change: ChangeKind.ADDED, name: 'Fresh', kind: FactKind.METHOD },
+        s3: { change: ChangeKind.REMOVED, name: 'Gone' },
+      },
       tree: [{ id: 1, name: 'Root', children: [] }],
       views: {
         '1': {
           placements: [
             {
+              origin: ImpactOrigin.AUTHORED, role: ImpactRole.DIRECT,
               element: { elementId: 7, viewId: 1, name: 'a.go', filePath: 'a.go', tags: [] },
               overlay: {
                 change: ChangeKind.MODIFIED,
                 path: 'a.go',
                 linesAdded: 12,
                 linesRemoved: 3,
-                distance: 0,
-                symbols: [
-                  { change: ChangeKind.MODIFIED, name: 'Changed', kind: FactKind.FUNCTION, bodyHash: 'ff', anchor: { path: 'a.go', startLine: 3, endLine: 9 } },
-                  { change: ChangeKind.ADDED, name: 'Fresh', kind: FactKind.METHOD },
-                  { change: ChangeKind.REMOVED, name: 'Gone' },
-                ],
+                symbolRefs: ['s1', 's2', 's3'],
+              },
+            },
+            {
+              origin: ImpactOrigin.MAPPED, role: ImpactRole.CONTAINED,
+              element: { elementId: 8, viewId: 1, name: 'svc', filePath: 'svc/', tags: [] },
+              overlay: {
+                change: ChangeKind.MODIFIED,
+                path: 'svc/',
+                contained: true,
+                symbolRefs: [],
               },
             },
           ],
@@ -291,16 +312,17 @@ describe('impact scene mapping', () => {
     expect(mapped.repositoryId).toBe('repo-1')
     expect(mapped.comparisonKey).toBe('key-1')
     expect(mapped.version).toBe('v1')
-    expect(mapped.schemaVersion).toBe('1')
-    expect(mapped.maxRadius).toBe(2)
+    expect(mapped.schemaVersion).toBe('4')
     expect(mapped.fromGitRevision).toBe('aaa')
     expect(mapped.toGitRevision).toBe('bbb')
+    expect(mapped.authoredViewIds).toEqual([1])
     expect(mapped.overlays[7].symbols).toEqual(['~ Changed', '+ Fresh', '− Gone'])
+    expect(mapped.overlays[7].reason).toBe('direct')
+    expect(mapped.overlays[8]).toMatchObject({ change: 'modified', path: 'svc/', reason: 'contained' })
     expect(mapped.overlays[7].symbolDetails[0]).toEqual({
       change: 'modified',
       name: 'Changed',
       kind: FactKind.FUNCTION,
-      bodyHash: 'ff',
       anchor: { path: 'a.go', startLine: 3, endLine: 9 },
     })
     expect(mapped.overlays[7].symbolDetails[2].anchor).toBeUndefined()

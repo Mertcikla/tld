@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/codeindex/community"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/community"
+	cgraph "github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
@@ -148,7 +148,7 @@ func (o Options) Fingerprint() string {
 // change whenever a setting that affects map output changes so cached maps are
 // not reused across configurations.
 func (o Options) ConfigHash() string {
-	return cgraph.ID("group-v9", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
+	return cgraph.ID("group-v10", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
 }
 
 // MaterializeOptions builds the materialization options for these settings.

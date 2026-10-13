@@ -5,8 +5,66 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 )
+
+func TestSnapshotLineCountsBatchMultipleFiles(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	publish := func(id string, files map[string]string) *pb.Snapshot {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "batch"}
+		g := graph.NewGraph(snap.RepositoryId, snap.Id)
+		for path, text := range files {
+			src := &graph.Source{Path: path, Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[src.Path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: src.Path, Hash: src.Hash})
+		}
+		if err := st.Publish(ctx, "/batch", snap, g); err != nil {
+			t.Fatal(err)
+		}
+		return snap
+	}
+	before := publish("batch-base", map[string]string{
+		"a/file one.go":     "one\ntwo\n",
+		"z.go":              "alpha\nbeta\ngamma\n",
+		"replace":           "old\n",
+		"collapse/child.go": "old\nchild\n",
+	})
+	after := publish("batch-head", map[string]string{
+		"a/file one.go":          "one\ntwo\nthree\n",
+		"z.go":                   "alpha\n",
+		"new.txt":                "x\ny\n",
+		"replace/child {one}.go": "new\nchild\n",
+		"collapse":               "new\n",
+	})
+	diff, err := st.Diff(ctx, before.Id, after.Id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]uint32{
+		"a/file one.go":          {1, 0},
+		"new.txt":                {2, 0},
+		"z.go":                   {0, 2},
+		"replace":                {0, 1},
+		"replace/child {one}.go": {2, 0},
+		"collapse/child.go":      {0, 2},
+		"collapse":               {1, 0},
+	}
+	if len(diff.Sources) != len(want) {
+		t.Fatalf("sources = %d, want %d", len(diff.Sources), len(want))
+	}
+	for _, change := range diff.Sources {
+		expected, ok := want[change.Path]
+		if !ok {
+			t.Fatalf("unexpected changed path %q", change.Path)
+		}
+		if change.GetLinesAdded() != expected[0] || change.GetLinesRemoved() != expected[1] {
+			t.Fatalf("%s: +%d -%d, want +%d -%d", change.Path, change.GetLinesAdded(), change.GetLinesRemoved(), expected[0], expected[1])
+		}
+	}
+}
 
 func TestSnapshotLineCounts(t *testing.T) {
 	ctx := context.Background()
@@ -50,17 +108,17 @@ func TestSnapshotLineCounts(t *testing.T) {
 			if len(diff.Sources) != 1 || diff.Sources[0].GetLinesAdded() != test.added || diff.Sources[0].GetLinesRemoved() != test.removed {
 				t.Fatalf("line counts: %+v, want +%d -%d", diff.Sources, test.added, test.removed)
 			}
-			// Persisted diagrams from before the fields existed are hydrated too.
+			// Unknown captured counts remain unknown on immutable cache reads.
 			diff.Sources[0].LinesAdded, diff.Sources[0].LinesRemoved = nil, nil
-			if err := st.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: test.name, ComparisonKey: "live", Diff: diff}); err != nil {
+			if err := st.SaveImpact(ctx, &model.Diagram{RepositoryId: test.name, ComparisonKey: "live", Diff: diff}); err != nil {
 				t.Fatal(err)
 			}
 			saved, err := st.Impact(ctx, test.name, "live")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if saved.Diff.Sources[0].GetLinesAdded() != test.added || saved.Diff.Sources[0].GetLinesRemoved() != test.removed {
-				t.Fatal("legacy impact line counts were not hydrated")
+			if saved.Diff.Sources[0].LinesAdded != nil || saved.Diff.Sources[0].LinesRemoved != nil {
+				t.Fatal("unknown captured impact counts were reconstructed")
 			}
 		})
 	}

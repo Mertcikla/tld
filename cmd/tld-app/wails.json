@@ -12,6 +12,7 @@
     "email": "mertcikla@gmail.com"
   },
   "info": {
+    "protocols": [{ "scheme": "tld", "description": "TLD comparison", "role": "Viewer" }],
     "companyName": "Mert Cikla",
     "productName": "tlDiagram",
     "productVersion": "1.0.0",

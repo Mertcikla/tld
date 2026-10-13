@@ -1,6 +1,9 @@
 import type { ViewLayer } from '../../types'
-import { elementGroupTagForLayer } from '../../utils/elementGroups'
+import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import { CHANGE_RING_COLORS } from './changeOverlay'
+import { EDGE_CHANGE_META } from './edgeChange'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
@@ -39,9 +42,21 @@ const MIN_FONT_HINT = 12
 const MAX_FONT_HINT = 24
 
 const VIEW_EDITOR_NODE_H = 85
+const VIEW_EDITOR_NODE_W = 180
 const NAME_FONT_TO_NODE_H = 20 / VIEW_EDITOR_NODE_H
 const TYPE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
 const RADIUS_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const TAG_DOT_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
+const TAG_DOT_GAP_TO_NODE_H = 4 / VIEW_EDITOR_NODE_H
+const TAG_DOT_INSET_X_TO_NODE_W = 8 / VIEW_EDITOR_NODE_W
+const TAG_DOT_INSET_Y_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const TAG_OVERFLOW_FONT_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const BADGE_H_TO_NODE_H = 16 / VIEW_EDITOR_NODE_H
+const BADGE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
+const BADGE_PAD_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
+const BADGE_GAP_TO_NODE_H = 5 / VIEW_EDITOR_NODE_H
+const BADGE_RADIUS_TO_NODE_H = 5 / VIEW_EDITOR_NODE_H
+const BADGE_MIN_SCREEN_H = 12
 
 export interface ScreenRect {
   left: number
@@ -163,9 +178,37 @@ export function setHighlightedTags(tags: Set<string>): void {
   currentHighlightedTags = tags
 }
 
-let currentHighlightColor = ''
-export function setHighlightColor(color: string): void {
-  currentHighlightColor = color
+export function setHighlightColor(_color: string): void {
+  // Retained for API compatibility; per-tag colors now drive pill chrome.
+}
+
+let currentTagColors: Record<string, string> = {}
+export function setTagColors(colors: Record<string, { color?: string } | string>): void {
+  const next: Record<string, string> = {}
+  for (const [name, entry] of Object.entries(colors ?? {})) {
+    if (typeof entry === 'string') {
+      if (entry) next[name] = entry
+    } else if (entry?.color) {
+      next[name] = entry.color
+    }
+  }
+  currentTagColors = next
+}
+
+function tagColorFor(tag: string, fallback: string): string {
+  return currentTagColors[tag] || fallback
+}
+
+/** Visible workspace tags for node chrome: mirrors ViewEditor's ElementNode filter. */
+function visibleNodeTags(tags: string[]): string[] {
+  return (tags ?? []).filter(
+    (tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag),
+  )
+}
+
+function isTagHighlighted(visibleTags: string[]): boolean {
+  if (currentHighlightedTags.size === 0 || visibleTags.length === 0) return false
+  return visibleTags.some((tag) => currentHighlightedTags.has(tag))
 }
 
 // A node stays fully opaque when it or any descendant carries a change overlay,
@@ -1032,63 +1075,117 @@ function drawSceneNode(
     ctx.restore()
   }
 
-  if (currentHighlightedTags.size > 0 && parentAlpha > 0.05) {
-    const isHighlighted = layout.tags.length > 0 && layout.tags.some((t2) => currentHighlightedTags.has(t2))
-    if (isHighlighted) {
-      const glowColor = currentHighlightColor || accent
-      ctx.save()
-      ctx.globalAlpha = parentAlpha
-      ctx.shadowColor = glowColor
-      ctx.shadowBlur = 8 / drawZoom
-      ctx.strokeStyle = glowColor
-      ctx.lineWidth = 2.5 / drawZoom
-      ctx.setLineDash([])
-      traceShape()
-      ctx.stroke()
-      ctx.shadowBlur = 0
-      ctx.restore()
-    } else if (!subtreeHasChangeOverlay(layout)) {
-      // Nodes inside a change overlay subtree (direct impact or blast-radius
-      // context) stay fully opaque; only unrelated elements fade into the
-      // background.
-      ctx.save()
-      ctx.globalAlpha = parentAlpha * 0.82
-      ctx.fillStyle = canvasBg
-      traceShape()
-      ctx.fill()
-      ctx.restore()
+  // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
+  // idle = tag-colored dots bottom-left; tag-menu hover = vertical stack of
+  // pills (color dot + name) on matching nodes.
+  {
+    const tags = visibleNodeTags(layout.tags)
+    if (tags.length > 0 && parentAlpha > 0.05) {
+      const highlighted = isTagHighlighted(tags)
+      if (highlighted && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
+        const pillH = 18 / drawZoom
+        const pillGap = 4 / drawZoom
+        const pillPadX = 8 / drawZoom
+        const dotR = 3 / drawZoom
+        const fontSize = 10 / drawZoom
+        ctx.save()
+        ctx.font = `700 ${fontSize}px ${ZUI_FONT_FAMILY}`
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        const pillWidths = tags.map((tag) => {
+          const textW = ctx.measureText(tag).width
+          return pillPadX * 2 + dotR * 2 + 4 / drawZoom + textW
+        })
+        let pillBottom = y + h - 6 / drawZoom
+        for (let i = 0; i < tags.length; i += 1) {
+          const tag = tags[i]
+          const pillW = Math.min(pillWidths[i], w - 8 / drawZoom)
+          const pillX = x + 6 / drawZoom
+          const pillY = pillBottom - pillH
+          if (pillY < y + 2 / drawZoom) break
+          ctx.globalAlpha = parentAlpha
+          ctx.beginPath()
+          ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2)
+          ctx.fillStyle = renderCtx.labelBg
+          ctx.fill()
+          ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+          ctx.lineWidth = 1 / drawZoom
+          ctx.stroke()
+          const dotCX = pillX + pillPadX + dotR
+          const dotCY = pillY + pillH / 2
+          ctx.beginPath()
+          ctx.arc(dotCX, dotCY, dotR, 0, Math.PI * 2)
+          ctx.fillStyle = tagColorFor(tag, accent)
+          ctx.fill()
+          ctx.fillStyle = '#fff'
+          const textX = dotCX + dotR + 4 / drawZoom
+          ctx.fillText(tag, textX, dotCY + 0.5 / drawZoom, Math.max(0, pillW - (textX - pillX) - pillPadX))
+          pillBottom = pillY - pillGap
+        }
+        ctx.restore()
+      } else if (drawScreenW > 50) {
+        const dotD = h * TAG_DOT_TO_NODE_H
+        const dotR = dotD / 2
+        const gap = h * TAG_DOT_GAP_TO_NODE_H
+        const insetX = w * TAG_DOT_INSET_X_TO_NODE_W
+        const insetY = h * TAG_DOT_INSET_Y_TO_NODE_H
+        const maxDots = 5
+        const shown = tags.slice(0, maxDots)
+        ctx.save()
+        ctx.globalAlpha = parentAlpha
+        shown.forEach((tag, i) => {
+          const cx = x + insetX + dotR + i * (dotD + gap)
+          const cy = y + h - insetY - dotR
+          ctx.beginPath()
+          ctx.arc(cx, cy, dotR, 0, Math.PI * 2)
+          ctx.fillStyle = tagColorFor(tag, accent)
+          ctx.fill()
+        })
+        if (tags.length > maxDots) {
+          ctx.font = `700 ${h * TAG_OVERFLOW_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
+          ctx.fillStyle = 'rgba(255,255,255,0.6)'
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(
+            `+${tags.length - maxDots}`,
+            x + insetX + dotR + maxDots * (dotD + gap),
+            y + h - insetY - dotR,
+          )
+        }
+        ctx.restore()
+      }
     }
   }
 
-
-  // Blast-radius context keeps its grey marker internally for opacity, but is
-  // not drawn: neighbours should look exactly like the original canvas.
+  // Change state reads as a single solid ring color-coded by line change.
+  // Everything else (provenance, blast-radius context) reads through tags —
+  // except modified, which carries its +added/−removed lines badge instead.
   if (layout.changeOverlay && layout.changeOverlay.change !== 'unchanged' && parentAlpha > 0.05) {
     const change = layout.changeOverlay
-    const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
+    const color = CHANGE_RING_COLORS[change.change]
     ctx.save()
     ctx.globalAlpha = parentAlpha
     ctx.strokeStyle = color
     ctx.lineWidth = 2.5 / drawZoom
-    ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
+    ctx.setLineDash([])
     traceShape()
     ctx.stroke()
-    if (change.change !== 'unchanged' && drawScreenW > 70 && !renderCtx.lowDetail) {
-      const plus = `+${change.linesAdded ?? 0}`
-      const minus = `\u2212${change.linesRemoved ?? 0}`
-      const badgePad = 6 / drawZoom
-      const padX = 6 / drawZoom
-      const gap = 5 / drawZoom
-      const badgeH = 16 / drawZoom
-      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
+    if (change.change === 'modified' && change.linesAdded != null && change.linesRemoved != null && !renderCtx.lowDetail && h * BADGE_H_TO_NODE_H * drawZoom >= BADGE_MIN_SCREEN_H) {
+      const plus = `+${change.linesAdded}`
+      const minus = `\u2212${change.linesRemoved}`
+      const badgePad = h * BADGE_PAD_TO_NODE_H
+      const padX = h * BADGE_PAD_TO_NODE_H
+      const gap = h * BADGE_GAP_TO_NODE_H
+      const badgeH = h * BADGE_H_TO_NODE_H
+      ctx.font = `600 ${h * BADGE_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
       const plusW = ctx.measureText(plus).width
       const minusW = ctx.measureText(minus).width
       const badgeW = Math.min(plusW + gap + minusW + padX * 2, w - badgePad * 2)
-      const badgeX = x
-      const badgeY = y + h + badgePad
+      const badgeX = x + w - badgeW
+      const badgeY = y + h + badgeH - badgePad
       ctx.setLineDash([])
       ctx.beginPath()
-      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, h * BADGE_RADIUS_TO_NODE_H)
       ctx.fillStyle = portalTintColor(color, 0.22)
       ctx.fill()
       ctx.strokeStyle = color
@@ -1320,6 +1417,10 @@ function drawEdges(
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
       ctx.lineWidth = CONNECTOR_LINE_PX / zoom
+
+      if (edge.change === 'removed') {
+        ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))
+      }
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
