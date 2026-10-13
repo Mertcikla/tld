@@ -234,6 +234,39 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
   await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
 })
 
+test('clicking an element jumps into its contents while dragging only pans', async ({ page }, testInfo) => {
+  const { root, parent, childSource } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+  await waitForHoverCamera(page)
+  const geometry = () => zuiScreenGeometry(page, { nodeElementId: parent.id }) as Promise<{
+    node: { x: number; y: number; width: number; height: number }
+  }>
+  const before = await zuiViewState(page)
+  const initial = (await geometry()).node
+  await dispatchZuiMousePan(page,
+    { x: initial.x + initial.width / 2, y: initial.y + initial.height / 2 },
+    { x: initial.x + initial.width / 2 + 30, y: initial.y + initial.height / 2 + 20 },
+  )
+  await waitForHoverCamera(page)
+  expect((await zuiViewState(page)).zoom).toBeCloseTo(before.zoom, 5)
+
+  const node = (await geometry()).node
+  const point = { x: node.x + node.width / 2, y: node.y + node.height / 2 }
+  if (testInfo.project.use.hasTouch) await page.touchscreen.tap(point.x, point.y)
+  else await page.mouse.click(point.x, point.y)
+  const box = await canvasBox(page)
+  const revealThreshold = Math.min(640, Math.max(200, box.width * 0.4))
+  await expect.poll(async () => (await geometry()).node.width).toBeGreaterThan(revealThreshold)
+  await waitForHoverCamera(page)
+  expect((await zuiViewState(page)).zoom).toBeGreaterThan(before.zoom)
+  const { node: child } = await zuiScreenGeometry(page, { nodeElementId: childSource.id }) as {
+    node: { x: number; y: number; width: number; height: number }
+  }
+  await page.mouse.move(child.x + child.width / 2, child.y + child.height / 2)
+  await expect(page.getByTestId('zui-hover-popover')).toContainText(childSource.name)
+})
+
 test('anchors off-view connector popovers at either hovered end of the route', async ({ page }) => {
   const root = await createApiView(page, uniqueName('Proxy Hover Root'))
   const parent = await createPlacedElement(page, root.id, { name: uniqueName('Parent') }, 120, 140)

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIObjectSelection, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
-import { hitTestZUIRenderedNode, warmZUIHitTestIndexes } from './hitTest'
+import { hitTestZUIRenderedNode, warmZUIHitTestIndexes, type ZUIHitTestNodeResult } from './hitTest'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
 import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../utils/wheel'
 import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../utils/safariGesture'
@@ -218,6 +218,7 @@ export function useZUIInteraction(
   canvasWidth: number = 0,
   hoverLocked: boolean = false,
   onSelectObject?: (selection: ZUIObjectSelection | null) => void,
+  onNodeClick?: (hit: ZUIHitTestNodeResult) => void,
 ): ZUIInteraction {
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
@@ -286,7 +287,11 @@ export function useZUIInteraction(
   const onZoomRef = useRef(onZoom)
   const onPanRef = useRef(onPan)
   const onSelectRef = useRef(onSelectObject)
-  useEffect(() => { onSelectRef.current = onSelectObject }, [onSelectObject])
+  const onNodeClickRef = useRef(onNodeClick)
+  useEffect(() => {
+    onSelectRef.current = onSelectObject
+    onNodeClickRef.current = onNodeClick
+  }, [onSelectObject, onNodeClick])
 
   useEffect(() => {
     groupsRef.current = groups
@@ -582,17 +587,21 @@ export function useZUIInteraction(
     }
 
     function selectAt(clientX: number, clientY: number) {
-      if (!onSelectRef.current) return
+      if (!onSelectRef.current && !onNodeClickRef.current) return
       const rect = el!.getBoundingClientRect()
       const view = viewStateRef.current
       const x = screenToWorldX(clientX - rect.left, view)
       const y = screenToWorldY(clientY - rect.top, view)
       const hit = hitTestZUIRenderedNode(x, y, groupsRef.current, view, getExpandThresholds(rect.width), hiddenTagsRef.current)
-      if (hit) { onSelectRef.current({ kind: 'placement', viewId: hit.node.diagramId, resourceId: hit.node.elementId }); return }
+      if (hit) {
+        onSelectRef.current?.({ kind: 'placement', viewId: hit.node.diagramId, resourceId: hit.node.elementId })
+        onNodeClickRef.current?.(hit)
+        return
+      }
       const edge = resolveHoveredProxyItem?.(x, y, view, rect.width) ?? findHoveredEdge(x, y, edgeSpatialIndexRef.current!, view)
-      if (edge?.type === 'edge' && edge.data.id != null) { onSelectRef.current({ kind: 'connector', viewId: edge.data.diagramId, resourceId: edge.data.id }); return }
+      if (edge?.type === 'edge' && edge.data.id != null) { onSelectRef.current?.({ kind: 'connector', viewId: edge.data.diagramId, resourceId: edge.data.id }); return }
       const group = findHoveredGroup(x, y, groupsRef.current, view)
-      onSelectRef.current(group ? { kind: 'view', viewId: group.diagramId, resourceId: group.diagramId } : null)
+      onSelectRef.current?.(group ? { kind: 'view', viewId: group.diagramId, resourceId: group.diagramId } : null)
     }
 
     function onMouseUp(e: MouseEvent) {

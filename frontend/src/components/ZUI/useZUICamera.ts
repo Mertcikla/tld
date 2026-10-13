@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
 import type { ZUICameraFrame } from './ZUICanvas'
 import type { BBox, DiagramGroupLayout, HoveredItem, ZUIViewState } from './types'
-import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
+import type { ZUIHitTestNodeResult } from './hitTest'
+import { focusTargetForNode, viewportForNodeRevealTarget, findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
 import { clamp01, easeOutQuart, findFirstExpandableNode, fitWorldRect, type PathItem } from './camera'
 import { rawCameraView } from './layoutEngine'
 
@@ -13,6 +14,8 @@ export interface ZUICameraController {
   focusElement: (viewId: number, elementId: number) => boolean
   setCameraFrame: (frame: ZUICameraFrame) => boolean
   zoomToPathItem: (item: PathItem) => void
+  revealNode: (hit: ZUIHitTestNodeResult) => boolean
+  cancelTransition: () => void
 }
 
 interface UseZUICameraArgs {
@@ -115,6 +118,21 @@ export function useZUICamera({
     return true
   }, [animateToViewport, containerRef, isMobileLayout, layoutGroups, maxZoom, setHoveredItem])
 
+  const revealNode = useCallback((hit: ZUIHitTestNodeResult) => {
+    const el = containerRef.current
+    if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return false
+    const absX = hit.absX - (hit.node.worldW * hit.cumulativeScale - hit.absW) / 2
+    const absY = hit.absY - (hit.node.worldH * hit.cumulativeScale - hit.absH) / 2
+    const target = focusTargetForNode(hit.node, absX, absY, hit.cumulativeScale)
+    const to = hit.node.children.length > 0
+      ? viewportForNodeRevealTarget(target, el.offsetWidth, el.offsetHeight, maxZoom, isMobileLayout)
+      : viewportForElementFocusTarget(target, el.offsetWidth, el.offsetHeight, maxZoom, isMobileLayout)
+    if (!to || (hit.node.children.length === 0 && to.zoom <= viewStateRef.current.zoom)) return false
+    setHoveredItem(null, true)
+    animateToViewport(to)
+    return true
+  }, [animateToViewport, containerRef, isMobileLayout, maxZoom, setHoveredItem, viewStateRef])
+
   const setCameraFrame = useCallback((frame: ZUICameraFrame) => {
     if (frame.profile !== 'detail-to-overview') return false
 
@@ -209,5 +227,7 @@ export function useZUICamera({
     focusElement,
     setCameraFrame,
     zoomToPathItem,
+    revealNode,
+    cancelTransition,
   }
 }

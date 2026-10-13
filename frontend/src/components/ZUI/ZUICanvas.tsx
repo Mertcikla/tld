@@ -10,6 +10,7 @@ import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
+import type { ZUIHitTestNodeResult } from './hitTest'
 import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
@@ -98,19 +99,33 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return proxyResolverRef.current?.(worldX, worldY, view, canvasW) ?? null
   }, [])
 
+  const cameraActionsRef = useRef<ReturnType<typeof useZUICamera> | null>(null)
+  const handleNodeClick = useCallback((hit: ZUIHitTestNodeResult) => {
+    cameraActionsRef.current?.revealNode(hit)
+  }, [])
+  const handleZoom = useCallback(() => {
+    cameraActionsRef.current?.cancelTransition()
+    onZoom?.()
+  }, [onZoom])
+  const handlePan = useCallback(() => {
+    cameraActionsRef.current?.cancelTransition()
+    onPan?.()
+  }, [onPan])
+
   const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
     canvasRef,
     undefined,
     layout.groups,
     layout.bbox,
-    onZoom,
-    onPan,
+    handleZoom,
+    handlePan,
     suppressWheelPan,
     resolveHoveredProxyItem,
     hiddenTags,
     containerSize.w,
     hoverLocked,
     onSelectObject,
+    handleNodeClick,
   )
 
   const viewportBounds = useMemo(() => {
@@ -153,6 +168,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     viewStateRef,
     setHoveredItem,
   })
+  cameraActionsRef.current = camera
   const {
     fitInitialView,
     fitCurrentView,
