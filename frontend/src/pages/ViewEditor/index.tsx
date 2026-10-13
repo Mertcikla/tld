@@ -2992,8 +2992,15 @@ function ViewEditorInner({
           allElements,
           existingElementIds,
           allowCreate: true,
-          getSecondaryLabel: pending.mode === 'connect'
+          connectionMode: pending.sourceElementIds.length > 0 ? pending.mode : undefined,
+          onConnectionModeChange: canvas.setPendingElementMode,
+          getSecondaryLabel: pending.sourceElementIds.length > 0
             ? (obj: WorkspaceElement) => placementSummaryByElementId[obj.id] ?? obj.technology ?? null
+            : undefined,
+          getDisabledReason: pending.mode === 'connect'
+            ? (obj: WorkspaceElement) => existingElementIds.has(obj.id) || effectiveWorkspaceSnapshot?.placementsByElementId[obj.id]?.length
+              ? null
+              : effectiveWorkspaceSnapshot ? 'Not placed in any view. Use Add & connect.' : 'Loading view locations…'
             : undefined,
           onConfirmNew: canvas.handleConfirmNewElement,
           onConfirmExisting: canvas.handleConfirmExistingElement,
@@ -3007,6 +3014,8 @@ function ViewEditorInner({
     canvas.handleConfirmExistingElement,
     canvas.handleConfirmNewElement,
     canvas.pendingElement,
+    canvas.setPendingElementMode,
+    effectiveWorkspaceSnapshot,
     existingElementIds,
     placementSummaryByElementId,
     viewId,
