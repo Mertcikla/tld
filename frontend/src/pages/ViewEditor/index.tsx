@@ -4587,6 +4587,7 @@ function ViewEditorInner({
               name={viewName ?? undefined}
               isOpen={viewDetails.isOpen}
               onToggle={viewDetails.onToggle}
+              onOpenExplorer={viewId != null ? () => navigate(`/views?view=explore&focus=${viewId}`) : undefined}
               supportsZoomOut={supportsZoomOut}
               supportsZoomIn={supportsZoomIn}
             />
