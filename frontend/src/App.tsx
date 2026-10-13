@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, Outlet, useSearchParams } from 'react-router-dom'
 import { Box, HStack, Spinner, Center } from '@chakra-ui/react'
-import { api } from './api/client'
 import ViewEditor from './pages/ViewEditor'
 import ViewsPage from './pages/Views'
 import Inventory from './pages/Inventory'
@@ -87,8 +86,7 @@ function WorkspaceApp() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    api.system.ready()
-      .then(() => platform.initPlatform())
+    platform.initPlatform()
       .finally(() => setReady(true))
   }, [])
 
