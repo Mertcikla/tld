@@ -6,6 +6,7 @@ import { api } from '../api/client'
 const ACCENT_KEY = 'diag:accent-color'
 const BG_KEY = 'diag:background-color'
 const ELEMENT_COLOR_KEY = 'diag:element-color'
+const FLAT_PANELS_KEY = 'diag:flat-panels'
 
 /** Convert hex to "r,g,b" triplet for use in rgba(var(--rgb), alpha). */
 function toRgbTriplet(hex: string): string {
@@ -57,6 +58,16 @@ interface ElementColorContextValue {
   elementColor: string
   setElementColor: (value: string) => void
 }
+
+interface PanelStyleContextValue {
+  flatPanels: boolean
+  setFlatPanels: (value: boolean) => void
+}
+
+const PanelStyleContext = createContext<PanelStyleContextValue>({
+  flatPanels: false,
+  setFlatPanels: () => { },
+})
 
 const AccentColorContext = createContext<AccentColorContextValue>({
   accent: ACCENT_DEFAULT,
@@ -115,6 +126,12 @@ export function ThemeProvider({
   const [elementColor, setElementColorState] = useState<string>(
     () => localStorage.getItem(elementKey) ?? defaultElementColor ?? ELEMENT_DEFAULT,
   )
+  const flatPanelsKey = storagePrefix ? `${storagePrefix}:flat-panels` : FLAT_PANELS_KEY
+  const [flatPanels, setFlatPanelsState] = useState(() => localStorage.getItem(flatPanelsKey) === 'true')
+  const setFlatPanels = useCallback((value: boolean) => {
+    localStorage.setItem(flatPanelsKey, String(value))
+    setFlatPanelsState(value)
+  }, [flatPanelsKey])
 
   // Apply CSS vars whenever accent or background changes
   useEffect(() => {
@@ -175,16 +192,23 @@ export function ThemeProvider({
   const accentValue = useMemo(() => ({ accent, setAccent }), [accent, setAccent])
   const backgroundValue = useMemo(() => ({ background, setBackground }), [background, setBackground])
   const elementColorValue = useMemo(() => ({ elementColor, setElementColor }), [elementColor, setElementColor])
+  const panelStyleValue = useMemo(() => ({ flatPanels, setFlatPanels }), [flatPanels, setFlatPanels])
 
   return (
     <AccentColorContext.Provider value={accentValue}>
       <BackgroundColorContext.Provider value={backgroundValue}>
         <ElementColorContext.Provider value={elementColorValue}>
-          {children}
+          <PanelStyleContext.Provider value={panelStyleValue}>
+            {children}
+          </PanelStyleContext.Provider>
         </ElementColorContext.Provider>
       </BackgroundColorContext.Provider>
     </AccentColorContext.Provider>
   )
+}
+
+export function usePanelStyle() {
+  return useContext(PanelStyleContext)
 }
 
 export function useTheme() {
