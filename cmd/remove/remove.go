@@ -110,7 +110,7 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			if sess.HasWorkspace() {
 				if err := workspace.RemoveElement(*wdir, ref); err != nil {
-					err = cmdutil.CacheError(err)
+					err = sess.CacheError(err)
 					if cmdutil.WantsJSON(*format) {
 						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
 					}
@@ -228,11 +228,11 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 							delete(ws.Meta.Connectors, key)
 						}
 						if err := workspace.DeleteCurrentConnectorMetadataEntries(*wdir, key); err != nil {
-							return cmdutil.CacheError(err)
+							return sess.CacheError(err)
 						}
 					}
 					if err := exec.SaveCache(sess.Wdir, ws); err != nil {
-						return cmdutil.CacheError(err)
+						return sess.CacheError(err)
 					}
 				}
 			}

@@ -829,11 +829,29 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			if !ok {
 				return nil, fmt.Errorf("unknown placement parent ref %q", parentRef)
 			}
-			item, err := a.AddPlacement(ctx, viewID, elementID, placement.GetPositionX(), placement.GetPositionY())
+			x, y := placement.GetPositionX(), placement.GetPositionY()
+			existingPlacement := false
+			placements, err := a.Store.Placements(ctx, int64(viewID))
 			if err != nil {
 				return nil, err
 			}
-			if placement.PositionX == nil && placement.PositionY == nil {
+			for _, current := range placements {
+				if current.ElementID == int64(elementID) {
+					existingPlacement = true
+					if placement.PositionX == nil {
+						x = current.PositionX
+					}
+					if placement.PositionY == nil {
+						y = current.PositionY
+					}
+					break
+				}
+			}
+			item, err := a.AddPlacement(ctx, viewID, elementID, x, y)
+			if err != nil {
+				return nil, err
+			}
+			if !existingPlacement && placement.PositionX == nil && placement.PositionY == nil {
 				if autoLayoutTargets[int64(viewID)] == nil {
 					autoLayoutTargets[int64(viewID)] = map[int64]struct{}{}
 				}
@@ -888,6 +906,18 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 
 		var connector *diagv1.Connector
 		if planned.GetId() != 0 {
+			current, readErr := a.GetConnector(ctx, planned.GetId(), uuid.Nil)
+			if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+				return nil, readErr
+			}
+			if current != nil {
+				if planned.Direction == nil {
+					input.Direction = current.GetDirection()
+				}
+				if planned.Style == nil {
+					input.Style = current.GetStyle()
+				}
+			}
 			connector, err = a.UpdateConnector(ctx, planned.GetId(), uuid.Nil, input)
 			if errors.Is(err, sql.ErrNoRows) {
 				connector, err = a.createConnectorWithID(ctx, planned.GetId(), input)

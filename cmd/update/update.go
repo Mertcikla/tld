@@ -243,6 +243,9 @@ and refresh the YAML cache when present.`,
 				value = resolveTagValue(connector.Tags, value, mode)
 			}
 			if err := workspace.ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
+				if !slices.Contains(completion.ConnectorFields(), field) {
+					return fail(cmdutil.UnknownField("connector", field, completion.ConnectorFields()))
+				}
 				return fail(fmt.Errorf("update connector: %w", err))
 			}
 			if dryRun {
@@ -274,16 +277,16 @@ and refresh the YAML cache when present.`,
 			}
 			if sess.HasWorkspace() {
 				if err := workspace.UpdateConnectorField(*wdir, ref, field, value); err != nil {
-					return fail(cmdutil.CacheError(err))
+					return fail(sess.CacheError(err))
 				}
 				if updated != nil {
 					if err := exec.RecordConnectorMeta(sess.Context(cmd.Context()), *wdir, newKey, updated); err != nil {
-						return fail(cmdutil.CacheError(err))
+						return fail(sess.CacheError(err))
 					}
 					// Advance the local current watermark so pull can detect a
 					// concurrent server edit instead of silently overwriting it.
 					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
-						return fail(cmdutil.CacheError(err))
+						return fail(sess.CacheError(err))
 					}
 				}
 			}
@@ -347,7 +350,7 @@ func unsupportedElementFieldError(field string) error {
 	case "owner", "symbol", "has_view", "density_level":
 		return fmt.Errorf("field %q is not supported by 'update element'; edit the workspace YAML directly", field)
 	default:
-		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(completion.ElementFields(), ", "))
+		return cmdutil.UnknownField("element", field, completion.ElementFields())
 	}
 }
 
@@ -360,18 +363,18 @@ func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *work
 		return nil
 	}
 	if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
-		return cmdutil.CacheError(err)
+		return sess.CacheError(err)
 	}
 	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
-		return cmdutil.CacheError(err)
+		return sess.CacheError(err)
 	}
 
 	if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-		return cmdutil.CacheError(err)
+		return sess.CacheError(err)
 	}
 	if viewID != 0 {
 		if err := workspace.TouchCurrentViewMetadata(sess.Wdir, ref); err != nil {
-			return cmdutil.CacheError(err)
+			return sess.CacheError(err)
 		}
 	}
 	return nil

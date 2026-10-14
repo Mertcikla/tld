@@ -91,6 +91,7 @@ for a structured response containing the rendered content.`,
 	c.Flags().StringVar(&format, "to", "mermaid", "diagram format: mermaid")
 	c.Flags().StringVarP(&output, "output", "o", "", "write render output to file")
 	c.Flags().StringVar(&view, "view", "", "root, owner ref/name, or view ID (alternative to the argument)")
+	cmdutil.AddReadSourceFlag(c)
 	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return completion.ViewRefs(wdir)
 	})

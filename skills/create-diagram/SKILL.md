@@ -16,18 +16,28 @@ Build a navigable map that answers the user's architectural questions. Preserve 
 - **Connectors** belong to one view. Use `--view` explicitly when authoring or updating multiple views. The same endpoints can have different labeled relationships.
 - **Kind** is optional role metadata. Technology is metadata too; use `tld tech suggest` when a catalog name is uncertain.
 
-Use `tld <command> --help` for accepted fields and examples, and `tld --help-all` for advanced commands. Prefer `--format json` for inspection and mutation results. Successful mutations return selectors for subsequent commands; connector keys change when their view, endpoints, or label change, so retain the returned key or ID.
+Use `tld <command> --help` for accepted fields and examples, `tld import --schema` for the exact batch schema offline, and `tld --help-all` for advanced commands. Prefer `--format json` for inspection and mutation results. Preview results have `dry_run: true`; batch and individual authoring results include selectors for subsequent commands. Connector keys change when their view, endpoints, or label change, so retain the returned key or ID.
 
 ## Establish scope and inspect
 
-1. Reuse the current workspace, or select one with `--workspace <dir>`. For a new diagram, run `tld init` in the project root. Check the configured target with `tld config get apply.target`; `auto` selects cloud when credentials and an organization are configured, otherwise local. Use `--target local` on mutations when the requested destination is local.
-2. For existing diagrams, inspect `tld list views --tree`, relevant elements/connectors, and `tld inspect <ref> --type element --format json` before editing. Use `tld pull` when the task requires refreshing from the target; resolve reported conflicts before proceeding.
+1. Reuse the current workspace, or select one with `--workspace <dir>`. For a new diagram, run `tld init` in the project root. Check `tld context --format json` for the effective workspace, target, destination, and read source; `auto` selects cloud when credentials and an organization are configured, otherwise local. Pin the same `--target` and, when supplied, `--data-dir` on previews, writes, and verification reads. Use `--target local` for a local destination.
+2. For existing diagrams, inspect `tld list views --tree`, relevant elements/connectors, and `tld inspect <ref> --type element --format json` before editing. Reads use workspace YAML by default; `--source live` reads current target state, and an explicit `--target` or `--data-dir` selects live reads automatically. Use `tld pull` when refreshing the cache is needed; review reported conflicts or local edits before proceeding.
 3. Use the user's requested scope. Ask about detail or destination only when it is missing and materially affects the result. An overview should explain major runtime boundaries and dependencies; drill down where the requested questions require it. View counts and hierarchy depth are not completion targets.
 4. Read the relevant source and write a compact inventory of responsibilities, callers, dependencies, and evidence. For updates, identify the affected views and relationships before making changes.
 
 ## Create or update in batches
 
-For substantial creation or related edits, prefer `tld import`: it validates and applies a batch atomically on the target. Reapplying the same refs and connector keys updates existing resources. It does not delete omitted resources; perform intended deletions explicitly.
+Choose the operation according to the change:
+
+| Change | Command |
+| --- | --- |
+| Create many resources or patch nonempty metadata without changing identity | `import` |
+| Clear a field, set tags, or rename an element | `update element` / `update connector` |
+| Change a connector label, view, or endpoints | `update connector` using its existing key or ID |
+| Reuse, move, or unplace an element | `view place` / `view unplace` |
+| Delete a resource or rename an owned canvas | `remove` / `view rename` |
+
+`import` validates and applies its batch atomically. Reapplying the same refs and connector keys updates existing resources. Omitted resources, fields, placements, and existing coordinates are preserved; empty strings do not clear fields. Changing a connector label, view, or endpoints in an import creates another connector and keeps the old one. Moves and deletions require explicit commands and are separate operations. Connector tags cannot be applied by the batch API; use `update connector`. Consult `import --schema` for supported fields rather than copying cache-only fields into a batch.
 
 An import document is a ref-keyed `elements` map and a `connectors` list. For example, after verifying the actual relationship:
 
@@ -51,11 +61,12 @@ connectors:
 ```
 
 ```bash
-tld import diagram.yaml --dry-run --format json
-tld import diagram.yaml --format json
+tld import diagram.yaml --target local --dry-run --format json
+tld import diagram.yaml --target local --format json
+tld list connectors --target local --format json
 ```
 
-Use actual source links in `file_path` when available (`path`, `path#symbol`, or `folder/`), or `--link` with `tld add`. Use `tld link` for advanced anchors and external resources. See `tld import --help` for schema references.
+Use actual source links in `file_path` when available (`path`, `path#symbol`, or `folder/`), or `--link` with `tld add`. Use `tld link` for advanced anchors and external resources. Rename an owned canvas with `view rename`; `view_name` and separate `symbol` fields are not supported in imports.
 
 For small edits, use the existing commands:
 
@@ -74,7 +85,7 @@ These are individual recipes, not a sequence to run blindly. Parents/endpoints m
 
 `add` preserves omitted fields and unions tags; supplied nonempty fields update metadata. Use `update element` to clear a field, change its kind, or rename its display name. Use its `ref` field only to deliberately rename a workspace alias. For placement-only changes, prefer `view place` so metadata need not be repeated.
 
-Mutations apply immediately and refresh workspace YAML. Prefer CLI mutations to editing cache files; deliberate YAML edits require `tld sync`. Read error hints before retrying. If an error says the target changed but the cache failed, refresh with `tld pull` before continuing. Stop repeated retries when the same issue persists and report the unresolved cause.
+Mutations apply immediately and refresh workspace YAML. Prefer CLI mutations to editing cache files; deliberate YAML edits require `tld sync`, which refuses fields the batch API cannot apply. Read error hints before retrying. If an error says the target changed but the cache failed (`error.applied: true`), refresh with `tld pull` against the same target before continuing. JSON pulls do not prompt over local edits: review `pull --dry-run`, apply edits with `sync`, or deliberately discard them with `pull --force`. Stop repeated retries when the same issue persists and report the unresolved cause.
 
 ## Evidence and readable views
 
@@ -88,6 +99,6 @@ Keep views focused, usually around 8–12 elements. Split by responsibility when
 
 Run `tld validate --format json` and address structural/source-link failures. Review architectural warnings with `tld validate --verbose` or a specific rule code. Use `--strict` when warnings should fail the check; explain intentional exceptions rather than inventing relationships or suppressing warnings to obtain a pass.
 
-Inspect the changed resources and render each affected view with `tld render <view>`. If browser or visual inspection is available, inspect layout and labels in the UI too. Validation and resource counts do not prove completeness: compare the result against the requested questions and evidenced execution/data paths.
+Inspect the changed resources with `--source live` against the selected target and render each affected view with `tld render <view> --source live`. If browser or visual inspection is available, inspect layout and labels in the UI too. Validation and resource counts do not prove completeness: compare the result against the requested questions and evidenced execution/data paths.
 
 For a local diagram, use `tld serve --open` to open the UI. For an existing remote diagram, hand off its known destination. Summarize what changed, what was verified, and any evidence or coverage gaps. Do not claim visual verification if only CLI checks were possible.

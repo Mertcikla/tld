@@ -296,16 +296,16 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 	// Refresh YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := workspace.UpsertElement(sess.Wdir, ref, spec); err != nil {
-			return fail(cmdutil.CacheError(err))
+			return fail(sess.CacheError(err))
 		}
 		// Keep explicit source-link updates aligned with the target.
 		if linkFilePath != "" {
 			if err := workspace.UpdateElementField(sess.Wdir, ref, "file_path", linkFilePath); err != nil {
-				return fail(cmdutil.CacheError(err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
-			return fail(cmdutil.CacheError(err))
+			return fail(sess.CacheError(err))
 		}
 	}
 

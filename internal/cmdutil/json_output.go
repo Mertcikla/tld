@@ -3,6 +3,7 @@ package cmdutil
 type JSONOutput struct {
 	Command  string         `json:"command"`
 	Status   string         `json:"status"`
+	DryRun   bool           `json:"dry_run"`
 	Summary  map[string]int `json:"summary,omitempty"`
 	Items    []JSONItem     `json:"items,omitempty"`
 	Errors   []string       `json:"errors,omitempty"`

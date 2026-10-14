@@ -117,7 +117,7 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 					// Reload metadata for any view promoted while placing the element.
 					ws, err = sess.Reload()
 					if err != nil {
-						return cmdutil.CacheError(err)
+						return sess.CacheError(err)
 					}
 					el := ws.Elements[ref]
 					kept := make([]workspace.ViewPlacement, 0, len(el.Placements)+1)
@@ -131,7 +131,7 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 						el.Placements = append(el.Placements, workspace.ViewPlacement{ParentRef: viewRef, PositionX: x, PositionY: y, PositionXSet: true, PositionYSet: true})
 					}
 					if err := exec.SaveCache(sess.Wdir, ws); err != nil {
-						return cmdutil.CacheError(err)
+						return sess.CacheError(err)
 					}
 				}
 			}

@@ -122,7 +122,7 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 					}
 				}
 				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "dry-run", fmt.Sprintf("%s:%s", from, to))
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "dry-run", workspace.ConnectorKey(spec))
 				}
 				term.Successf(cmd.OutOrStdout(), "dry-run: connect: %s -> %s", from, to)
 				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
@@ -237,15 +237,15 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	}
 	if sess.HasWorkspace() {
 		if err := workspace.AppendConnector(sess.Wdir, spec); err != nil {
-			return fail(cmdutil.CacheError(err))
+			return fail(sess.CacheError(err))
 		}
 		if moved {
 			if err := workspace.SetPlacementPosition(sess.Wdir, to, view, movedX, movedY); err != nil {
-				return fail(cmdutil.CacheError(err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if err := exec.RecordConnectorMeta(ctx, sess.Wdir, workspace.ConnectorKey(spec), created); err != nil {
-			return fail(cmdutil.CacheError(err))
+			return fail(sess.CacheError(err))
 		}
 	}
 	if cmdutil.WantsJSON(format) {

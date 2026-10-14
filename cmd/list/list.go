@@ -115,7 +115,7 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "element", Action: "present", Name: row.Name})
+					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "element", Action: "present", Name: row.Name, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list elements",
@@ -140,6 +140,7 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, kind, technology, owner, and tags")
 	c.Flags().StringVar(&kind, "kind", "", "only show elements of this kind")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -181,7 +182,7 @@ endpoint, or view, list connectors again to discover the new key.`,
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Key, ResourceType: "connector", Action: "present", Name: row.Label})
+					items = append(items, cmdutil.JSONItem{Ref: row.Key, ResourceType: "connector", Action: "present", Name: row.Label, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list connectors",
@@ -205,6 +206,7 @@ endpoint, or view, list connectors again to discover the new key.`,
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across view, source, target, label, and relationship")
 	c.Flags().StringVar(&view, "view", "", "only show connectors bound to this view ref")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -246,7 +248,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "view", Action: "present", Name: row.Name})
+					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "view", Action: "present", Name: row.Name, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list views",
@@ -276,6 +278,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, label, and parent")
 	c.Flags().StringVar(&parent, "parent", "", "only show views placed under this parent ref")
 	c.Flags().BoolVar(&tree, "tree", false, "render the derived view hierarchy as a tree")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 

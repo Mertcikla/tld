@@ -3,8 +3,11 @@ package cmdutil
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +23,10 @@ type CommandError struct {
 
 func (e *CommandError) Error() string { return fmt.Sprintf("%v\n  Hint: %s", e.Cause, e.Hint) }
 func (e *CommandError) Unwrap() error { return e.Cause }
+
+func WithCode(err error, code, hint string) error {
+	return &CommandError{Cause: err, Code: code, Hint: hint}
+}
 
 type reportedError struct{ error }
 
@@ -44,7 +51,47 @@ func recoveryError(command string, err error) *CommandError {
 		return &copy
 	}
 	message := err.Error()
+	var recovery interface {
+		RecoveryCode() string
+		RecoveryHint() string
+	}
+	if errors.As(err, &recovery) {
+		return &CommandError{Cause: err, Code: recovery.RecoveryCode(), Message: message, Hint: recovery.RecoveryHint()}
+	}
 	code, hint := "command_failed", "Run '"+command+" --help' for usage and examples."
+	var pathErr *os.PathError
+	var rpcErr *connect.Error
+	if errors.As(err, &pathErr) {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			code, hint = "path_not_found", "Supply an existing input path."
+			if pathErr.Op == "open" && strings.Contains(message, "write output") {
+				hint = "Create the output directory or choose a path in an existing directory."
+			}
+		case errors.Is(err, fs.ErrPermission):
+			code, hint = "permission_denied", "Use a path you can access or fix its file permissions."
+		default:
+			code, hint = "filesystem_error", "Check the path and available disk space, then retry."
+		}
+		return &CommandError{Cause: err, Code: code, Message: message, Hint: hint}
+	}
+	if errors.As(err, &rpcErr) {
+		switch rpcErr.Code() {
+		case connect.CodeUnauthenticated:
+			code, hint = "unauthenticated", "Run 'tld login' to refresh your credentials."
+		case connect.CodePermissionDenied:
+			code, hint = "permission_denied", "Select a workspace you can edit or request write access."
+		case connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			code, hint = "target_unavailable", "Check the server URL and connection, then retry."
+		case connect.CodeInvalidArgument:
+			code, hint = "invalid_value", "Correct the field reported by the target, then retry."
+		case connect.CodeFailedPrecondition:
+			code, hint = "failed_precondition", "Refresh target state with 'tld pull', then retry the corrected operation."
+		case connect.CodeUnimplemented:
+			code, hint = "unsupported_operation", "Update the target server to a version supporting this operation."
+		}
+		return &CommandError{Cause: err, Code: code, Message: message, Hint: hint}
+	}
 	switch {
 	case strings.Contains(message, "not found") && strings.Contains(message, "connector"):
 		code, hint = "not_found", "Run 'tld list connectors' and use a listed key or ID."
@@ -56,8 +103,43 @@ func recoveryError(command string, err error) *CommandError {
 		code = "invalid_arguments"
 	case strings.Contains(message, "ambiguous"):
 		code, hint = "ambiguous_selector", "Use an exact ref or numeric ID from 'tld list'."
+	case strings.Contains(message, "invalid direction"):
+		code, hint = "invalid_value", "Use forward, backward, both, or none for direction."
+	case strings.Contains(message, "invalid style"):
+		code, hint = "invalid_value", "Use bezier, straight, step, or smoothstep for style."
 	}
 	return &CommandError{Cause: err, Code: code, Message: message, Hint: hint}
+}
+
+// UnknownField supplies a nearby valid field when a spelling mistake is likely.
+func UnknownField(resource, field string, fields []string) error {
+	hint := "Run 'tld update " + resource + " --help' for accepted fields."
+	best, distance := "", 3
+	for _, candidate := range fields {
+		row := make([]int, len(candidate)+1)
+		for j := range row {
+			row[j] = j
+		}
+		for i := range field {
+			previous := row[0]
+			row[0] = i + 1
+			for j := range candidate {
+				old, cost := row[j+1], 1
+				if field[i] == candidate[j] {
+					cost = 0
+				}
+				row[j+1] = min(row[j]+1, row[j+1]+1, previous+cost)
+				previous = old
+			}
+		}
+		if d := row[len(candidate)]; d < distance {
+			best, distance = candidate, d
+		}
+	}
+	if best != "" {
+		hint = fmt.Sprintf("Use the %s field instead of %s.", best, field)
+	}
+	return WithCode(fmt.Errorf("unknown %s field %q; known fields: %s", resource, field, strings.Join(fields, ", ")), "unknown_field", hint)
 }
 
 // Execute handles errors at the command boundary, including Cobra parsing

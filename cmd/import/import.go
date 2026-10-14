@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
+	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -34,6 +36,7 @@ func NewImportCmd(wdir, format *string, compact *bool) *cobra.Command {
 		target  string
 		dataDir string
 		dryRun  bool
+		schema  bool
 	)
 
 	c := &cobra.Command{
@@ -62,11 +65,29 @@ Existing elements/views/connectors are matched and updated, so re-running the
 same file is safe. The whole batch is applied in a single transaction: if any
 part fails, nothing is committed. Use "-" to read from stdin.
 
-Schemas:
+Use --schema to print the exact accepted import schema without network access.
+Omitted metadata and coordinates are preserved. Changing a connector's label,
+view, or endpoints creates another connector; use 'update connector' to edit it.
+Connector tags require 'update connector'; the batch API cannot apply them.
+
+Workspace schemas:
   elements:   %s
   connectors: %s`, workspace.ElementsSchemaURL, workspace.ConnectorsSchemaURL),
-		Args: cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if schema {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if schema {
+				data, err := assets.FS.ReadFile("schemas/import.schema.json")
+				if err != nil {
+					return err
+				}
+				_, err = cmd.OutOrStdout().Write(data)
+				return err
+			}
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
 			if err != nil {
 				return err
@@ -77,6 +98,7 @@ Schemas:
 	}
 
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "validate and report changes without applying them")
+	c.Flags().BoolVar(&schema, "schema", false, "print the accepted JSON schema (no file or target needed)")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	return c
@@ -121,12 +143,16 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 	}
 
 	if sess.HasWorkspace() {
-		if err := persistImportCache(sess.Wdir, ws, plan, resp); err != nil {
-			return fail(cmdutil.CacheError(err))
+		actual, err := runner.ExportWorkspace(ctx)
+		if err != nil {
+			return fail(sess.CacheError(err))
+		}
+		if err := persistImportCache(sess.Wdir, ws, plan, resp, actual); err != nil {
+			return fail(sess.CacheError(err))
 		}
 	}
 
-	return reportImport(cmd, format, compact, "import", "ok", plan)
+	return reportImport(cmd, format, compact, "import", "ok", plan, resp)
 }
 
 func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
@@ -145,30 +171,123 @@ func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
 		return nil, fmt.Errorf("read import file %s: %w", label, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return nil, fmt.Errorf("import file %s is empty", label)
+		return nil, cmdutil.WithCode(fmt.Errorf("import file %s is empty", label), "invalid_document", "Add an elements map or connectors list; run 'tld import --schema' for accepted fields.")
 	}
 
 	var doc importDocument
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&doc); err != nil {
-		return nil, cmdutil.WithHint(fmt.Errorf("parse import file %s: %w", label, err), strings.TrimSpace(schemaHint()))
+		return nil, cmdutil.WithCode(fmt.Errorf("parse import file %s: %w", label, err), "invalid_document", strings.TrimSpace(schemaHint()))
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, fmt.Errorf("import file %s must contain one document; combine elements and connectors in one mapping", label)
+		return nil, cmdutil.WithCode(fmt.Errorf("import file %s must contain one document", label), "invalid_document", "Combine elements and connectors in one mapping.")
 	}
 	if len(doc.Elements) == 0 && len(doc.Connectors) == 0 {
-		return nil, fmt.Errorf("import file %s defines no elements or connectors; expected top-level `elements` and/or `connectors`%s", label, schemaHint())
+		return nil, cmdutil.WithCode(fmt.Errorf("import file %s defines no elements or connectors", label), "invalid_document", "Add top-level elements and/or connectors; run 'tld import --schema' for their shape.")
+	}
+	// Workspace YAML carries cache-only fields that the batch API cannot apply.
+	// Refuse them instead of reporting success and writing misleading cache data.
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, err
+	}
+	if len(node.Content) > 0 {
+		sections := importMappingEntries(node.Content[0])
+		for _, section := range []string{"elements", "connectors"} {
+			entries := sections[section]
+			if entries == nil {
+				continue
+			}
+			for entries.Kind == yaml.AliasNode {
+				entries = entries.Alias
+			}
+			if section == "elements" {
+				for ref, spec := range importMappingEntries(entries) {
+					for _, field := range importMappingFields(spec) {
+						if field == "density_level" {
+							doc.Elements[ref].DensityLevelSet = true
+						}
+						if field == "owner" || field == "symbol" || field == "view_name" {
+							hint := "Use file_path with a path#symbol anchor for source links."
+							if field == "view_name" {
+								hint = fmt.Sprintf("Use 'tld view rename %s <name>' after creating the view.", ref)
+							}
+							if field == "owner" {
+								hint = "Keep repository ownership in workspace YAML; use repo or repository_id for target metadata."
+							}
+							return nil, cmdutil.WithCode(fmt.Errorf("element %q: import does not support %s", ref, field), "unsupported_field", hint)
+						}
+					}
+				}
+			}
+			if section == "connectors" {
+				for index, spec := range entries.Content {
+					for _, field := range importMappingFields(spec) {
+						if field == "visibility_delta" {
+							doc.Connectors[index].VisibilityDeltaSet = true
+						}
+						if field == "tags" || field == "id" || field == "updated_at" {
+							hint := "Omit cache IDs and timestamps; import resolves existing resources automatically."
+							if field == "tags" {
+								hint = "Omit connector tags from the import; set them with 'tld update connector <key-or-id> tags <comma-separated-tags>'."
+							}
+							return nil, cmdutil.WithCode(fmt.Errorf("connector import does not support %s", field), "unsupported_field", hint)
+						}
+					}
+				}
+			}
+		}
 	}
 	return &doc, nil
 }
 
-// schemaHint points at the published schemas so editors can validate and
-// autocomplete the import file. Appended to parse/shape errors.
+// Resolve YAML aliases and merge keys before checking accepted fields.
+func importMappingEntries(node *yaml.Node) map[string]*yaml.Node {
+	if node.Kind == yaml.AliasNode {
+		return importMappingEntries(node.Alias)
+	}
+	entries := map[string]*yaml.Node{}
+	if node.Kind == yaml.SequenceNode {
+		for _, child := range node.Content {
+			for key, value := range importMappingEntries(child) {
+				if entries[key] == nil {
+					entries[key] = value
+				}
+			}
+		}
+		return entries
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "<<" {
+			for key, value := range importMappingEntries(node.Content[i+1]) {
+				if entries[key] == nil {
+					entries[key] = value
+				}
+			}
+		}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "<<" {
+			entries[node.Content[i].Value] = node.Content[i+1]
+		}
+	}
+	return entries
+}
+
+func importMappingFields(node *yaml.Node) []string {
+	var fields []string
+	for key := range importMappingEntries(node) {
+		fields = append(fields, key)
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+// schemaHint directs agents to the bundled import schema.
 func schemaHint() string {
-	return fmt.Sprintf("\nValidate the file against the schemas:\n  elements:   %s\n  connectors: %s",
-		workspace.ElementsSchemaURL, workspace.ConnectorsSchemaURL)
+	return "\nRun 'tld import --schema' for the accepted fields and document shape."
 }
 
 // explainApplyError turns a failed apply into an actionable reason. The apply is
@@ -193,7 +312,7 @@ func explainApplyError(err error) error {
 // mirroring the write-through behavior of `add`/`connect`. The target is always
 // the source of truth: if this fails, the caller reports that a `tld pull` is
 // needed rather than treating the import as failed.
-func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportPlan, resp *diagv1.ApplyPlanResponse) error {
+func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportPlan, resp *diagv1.ApplyPlanResponse, exported *diagv1.ExportOrganizationResponse) error {
 	if ws.Elements == nil {
 		ws.Elements = map[string]*workspace.Element{}
 	}
@@ -227,6 +346,41 @@ func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportP
 		}
 		for ref, meta := range resp.GetConnectorMetadata() {
 			ws.Meta.Connectors[ref] = protoMetadata(meta)
+		}
+		// Cache applied resource values, including fields omitted in a patch and
+		// coordinates selected by the target's layout engine.
+		actual := cmdutil.ConvertExportResponse(ws, exported)
+		for ref, el := range actual.Elements {
+			if plan.ElementSpecs[ref] == nil {
+				continue
+			}
+			if cached := ws.Elements[ref]; cached != nil {
+				el.Owner, el.Symbol, el.DensityLevel, el.BypassNoiseGate = cached.Owner, cached.Symbol, cached.DensityLevel, cached.BypassNoiseGate
+				for i := range el.Placements {
+					for _, placement := range cached.Placements {
+						if placement.ParentRef == el.Placements[i].ParentRef {
+							el.Placements[i].VisibilityDelta = placement.VisibilityDelta
+						}
+					}
+				}
+			}
+			ws.Elements[ref] = el
+		}
+		for ref, connector := range actual.Connectors {
+			imported := false
+			for _, spec := range plan.Connectors {
+				if workspace.ConnectorKey(spec) == ref {
+					imported = true
+					break
+				}
+			}
+			if !imported {
+				continue
+			}
+			if cached := ws.Connectors[ref]; cached != nil {
+				connector.VisibilityDelta = cached.VisibilityDelta
+			}
+			ws.Connectors[ref] = connector
 		}
 	}
 
@@ -323,8 +477,9 @@ func mergeImportElement(existing, incoming *workspace.Element) *workspace.Elemen
 	if incoming.ViewLabel != "" {
 		merged.ViewLabel = incoming.ViewLabel
 	}
-	if incoming.DensityLevel != 0 {
+	if incoming.DensityLevelSet || incoming.DensityLevel != 0 {
 		merged.DensityLevel = incoming.DensityLevel
+		merged.DensityLevelSet = incoming.DensityLevelSet
 	}
 	if incoming.BypassNoiseGate != nil {
 		merged.BypassNoiseGate = incoming.BypassNoiseGate
@@ -353,6 +508,15 @@ func mergeImportPlacements(existing, incoming []workspace.ViewPlacement) []works
 				current = workspace.RootRef
 			}
 			if current == parent {
+				if !placement.VisibilityDeltaSet && placement.VisibilityDelta == 0 {
+					placement.VisibilityDelta = out[i].VisibilityDelta
+				}
+				if !placement.PositionXSet && placement.PositionX == 0 {
+					placement.PositionX, placement.PositionXSet = out[i].PositionX, out[i].PositionXSet
+				}
+				if !placement.PositionYSet && placement.PositionY == 0 {
+					placement.PositionY, placement.PositionYSet = out[i].PositionY, out[i].PositionYSet
+				}
 				out[i] = placement
 				replaced = true
 				break
@@ -377,14 +541,56 @@ func protoMetadata(meta *diagv1.ResourceMetadata) *workspace.ResourceMetadata {
 	return &workspace.ResourceMetadata{ID: workspace.ResourceID(id), UpdatedAt: updatedAt}
 }
 
-func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan) error {
+func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan, responses ...*diagv1.ApplyPlanResponse) error {
 	elements := plan.ElementsCreated + plan.ElementsUpdated
 	connectors := plan.ConnectorsCreated + plan.ConnectorsUpdated
 
 	if cmdutil.WantsJSON(format) {
+		var response *diagv1.ApplyPlanResponse
+		if len(responses) > 0 {
+			response = responses[0]
+		}
+		items := make([]cmdutil.JSONItem, 0, elements+connectors)
+		for _, el := range plan.Request.GetElements() {
+			id, action := el.GetId(), "add"
+			if id != 0 {
+				action = "update"
+			}
+			if response != nil {
+				id = response.GetElementMetadata()[el.GetRef()].GetId()
+			}
+			items = append(items, cmdutil.JSONItem{Ref: el.GetRef(), ID: id, ResourceType: "element", Action: action, Name: el.GetName()})
+			if el.GetHasView() {
+				viewID, viewAction := el.GetViewId(), "add"
+				if viewID != 0 {
+					viewAction = "update"
+				}
+				if response != nil {
+					viewID = response.GetViewMetadata()[el.GetRef()].GetId()
+				}
+				items = append(items, cmdutil.JSONItem{Ref: el.GetRef(), ID: viewID, ResourceType: "view", Action: viewAction})
+			}
+		}
+		for _, connector := range plan.Request.GetConnectors() {
+			id, action := connector.GetId(), "add"
+			if id != 0 {
+				action = "update"
+			}
+			if response != nil {
+				id = response.GetConnectorMetadata()[connector.GetRef()].GetId()
+			}
+			items = append(items, cmdutil.JSONItem{Ref: connector.GetRef(), ID: id, ResourceType: "connector", Action: action})
+		}
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].ResourceType != items[j].ResourceType {
+				return items[i].ResourceType < items[j].ResourceType
+			}
+			return items[i].Ref < items[j].Ref
+		})
 		return cmdutil.WriteJSON(cmd.OutOrStdout(), compact, cmdutil.JSONOutput{
 			Command: command,
 			Status:  status,
+			Items:   items,
 			Summary: map[string]int{
 				"elements_created":   plan.ElementsCreated,
 				"elements_updated":   plan.ElementsUpdated,

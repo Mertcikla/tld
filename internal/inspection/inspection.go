@@ -48,6 +48,7 @@ type Options struct {
 type Report struct {
 	Command   string           `json:"command"`
 	Status    string           `json:"status"`
+	DryRun    bool             `json:"dry_run"`
 	Ref       string           `json:"ref"`
 	Type      string           `json:"type"`
 	Matches   []string         `json:"matches,omitempty"`

@@ -120,7 +120,7 @@ func TestInspectLocalDBUsesDataDir(t *testing.T) {
 	t.Setenv("TLD_DATA_DIR", dataDir)
 	setupInspectWorkspace(t, dir)
 
-	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "api", "--data-dir", dataDir)
+	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "api", "--source", "cache", "--data-dir", dataDir)
 	if err != nil {
 		t.Fatalf("inspect local db: %v", err)
 	}

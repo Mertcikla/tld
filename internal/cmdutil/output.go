@@ -34,6 +34,14 @@ func CompactFromCmd(cmd *cobra.Command) bool {
 }
 
 func WriteJSON(w io.Writer, compact bool, payload JSONOutput) error {
+	if payload.Status == "dry-run" {
+		payload.Status, payload.DryRun = "ok", true
+	}
+	for _, item := range payload.Items {
+		if item.Action == "dry-run" {
+			payload.DryRun = true
+		}
+	}
 	enc := json.NewEncoder(w)
 	if !compact {
 		enc.SetIndent("", "  ")

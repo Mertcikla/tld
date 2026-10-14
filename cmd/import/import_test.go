@@ -339,8 +339,8 @@ func TestImportCmd_MalformedYamlShowsSchemaHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "elements.schema.json") || !strings.Contains(err.Error(), "connectors.schema.json") {
-		t.Fatalf("error should link the schemas, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "tld import --schema") {
+		t.Fatalf("error should show how to discover the accepted schema, got: %s", err.Error())
 	}
 }
 

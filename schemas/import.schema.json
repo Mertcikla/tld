@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tld bulk import",
+  "description": "Atomic upsert. Omitted resources are kept. Connector identity is view/source/target/label; changing it creates another connector. Connector tags are not supported by the batch API; use tld update connector.",
+  "type": "object",
+  "properties": {
+    "elements": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/elementRef"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/element"
+      }
+    },
+    "connectors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/connector"
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "elements"
+      ],
+      "properties": {
+        "elements": {
+          "minProperties": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "connectors"
+      ],
+      "properties": {
+        "connectors": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "elementRef": {
+      "description": "Element reference matching a key in elements.yaml. Must start with a lowercase letter or digit and may contain lowercase letters, digits, dots, underscores, and hyphens. `root` is reserved and cannot be used here.",
+      "type": "string",
+      "pattern": "^(?!(?:root)$)[a-z0-9][a-z0-9._-]*$",
+      "examples": [
+        "api-service",
+        "postgres"
+      ]
+    },
+    "parentRef": {
+      "description": "Parent/view reference. Same character rules as an element ref, plus the reserved value `root` for the synthetic workspace root.",
+      "type": "string",
+      "pattern": "^(?:root|[a-z0-9][a-z0-9._-]*)$",
+      "examples": [
+        "root",
+        "platform",
+        "api-service"
+      ]
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "examples": [
+        "runtime",
+        "data-flow"
+      ]
+    },
+    "viewPlacement": {
+      "type": "object",
+      "description": "Places the containing element inside another element's internal view (or the root view when parent is `root`).",
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/parentRef"
+        },
+        "position_x": {
+          "type": "number",
+          "description": "Omitted on an existing placement: preserve its current X coordinate. New placements are laid out automatically."
+        },
+        "position_y": {
+          "type": "number",
+          "description": "Omitted on an existing placement: preserve its current Y coordinate. New placements are laid out automatically."
+        },
+        "visibility_delta": {
+          "type": "integer",
+          "description": "Density/noise-gate adjustment applied to this placement relative to the parent view."
+        }
+      },
+      "required": [
+        "parent"
+      ],
+      "additionalProperties": false
+    },
+    "element": {
+      "type": "object",
+      "description": "An element patch. Name is required. Omitted and empty string fields preserve existing metadata; use tld update element to clear fields. Omitted placements preserve other placements.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable element name shown on the diagram.",
+          "examples": [
+            "API Service",
+            "Postgres"
+          ],
+          "pattern": "\\S"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Element kind/category. Free-form lowercase token used for icon and default styling (e.g. service, database, queue, cache). Defaults to `service` when created through the CLI.",
+          "examples": [
+            "service",
+            "database",
+            "queue",
+            "cache",
+            "client",
+            "external"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Long-form description of the element's responsibility."
+        },
+        "technology": {
+          "type": "string",
+          "description": "Primary technology label (e.g. Go, React, Postgres).",
+          "examples": [
+            "Go",
+            "React",
+            "Postgres"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "External link to documentation, repo, or runbook."
+        },
+        "logo_url": {
+          "type": "string",
+          "description": "Override logo/icon URL or catalog slug. May be a relative path or a technology slug.",
+          "examples": [
+            "/icons/go.svg",
+            "go"
+          ]
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repository identifier this element lives in (e.g. an owner/name slug)."
+        },
+        "repository_id": {
+          "type": "string",
+          "description": "Identifier of the indexed codeindex repository this element is linked to. When set, `repo`/`file_path` are resolved against that repository's local checkout."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Repository branch associated with this element."
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path within the repo for code-linked elements. When combined with `symbol`, the CLI verifies the symbol exists."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Free-form labels used for filtering and visual grouping.",
+          "items": {
+            "$ref": "#/$defs/tag"
+          },
+          "uniqueItems": true
+        },
+        "has_view": {
+          "type": "boolean",
+          "description": "Whether this element owns an internal (child) view/diagram. Defaults to false.",
+          "default": false
+        },
+        "view_label": {
+          "type": "string",
+          "description": "Label shown for a drill-down into this element's child view (e.g. Container, Component)."
+        },
+        "density_level": {
+          "type": "integer",
+          "description": "Noise-gate density level for this element's internal view. Higher values reveal more detail."
+        },
+        "bypass_noise_gate": {
+          "type": "boolean",
+          "description": "When true, this element is always shown regardless of the view's density level."
+        },
+        "placements": {
+          "type": "array",
+          "description": "Where this element appears across views. A source element placed in multiple parent views has one entry per parent.",
+          "items": {
+            "$ref": "#/$defs/viewPlacement"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "name": "API Service",
+          "kind": "service",
+          "description": "Handles checkout requests",
+          "technology": "Go",
+          "tags": [
+            "backend"
+          ],
+          "has_view": true,
+          "view_label": "Component",
+          "placements": [
+            {
+              "parent": "root",
+              "position_x": 100,
+              "position_y": 200
+            }
+          ]
+        }
+      ]
+    },
+    "viewRef": {
+      "description": "View reference: either `root` for the top-level workspace view or the ref of an element that owns a child view (has_view: true).",
+      "type": "string",
+      "pattern": "^(?:root|[a-z0-9][a-z0-9._-]*)$",
+      "examples": [
+        "root",
+        "platform",
+        "api-service"
+      ]
+    },
+    "connector": {
+      "type": "object",
+      "description": "A directed edge between two elements within a view.",
+      "properties": {
+        "view": {
+          "$ref": "#/$defs/viewRef",
+          "default": "root"
+        },
+        "source": {
+          "$ref": "#/$defs/elementRef",
+          "description": "Source element ref (tail of the edge)."
+        },
+        "target": {
+          "$ref": "#/$defs/elementRef",
+          "description": "Target element ref (head of the edge)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Short text shown on the edge (e.g. action or payload name).",
+          "examples": [
+            "reads",
+            "HTTP",
+            "Publishes event"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Longer explanation of what flows across the connector."
+        },
+        "relationship": {
+          "type": "string",
+          "description": "Relationship/protocol category (e.g. SQL, HTTP, gRPC, pub/sub). Free-form; used for grouping and styling.",
+          "examples": [
+            "SQL",
+            "HTTP",
+            "gRPC",
+            "pub/sub"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "description": "Edge direction. Defaults to `forward` when omitted. `none` renders an undirected line. On an existing connector, omission preserves its current value.",
+          "enum": [
+            "forward",
+            "backward",
+            "both",
+            "none"
+          ],
+          "default": "forward"
+        },
+        "style": {
+          "type": "string",
+          "description": "Edge routing style. Defaults to `bezier` when omitted. On an existing connector, omission preserves its current value.",
+          "enum": [
+            "bezier",
+            "straight",
+            "step",
+            "smoothstep"
+          ],
+          "default": "bezier"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "External link for the connector (e.g. a runbook or API docs)."
+        },
+        "source_handle": {
+          "type": "string",
+          "description": "Anchor on the source node the edge attaches to.",
+          "enum": [
+            "top",
+            "right",
+            "bottom",
+            "left"
+          ],
+          "examples": [
+            "right",
+            "bottom"
+          ]
+        },
+        "target_handle": {
+          "type": "string",
+          "description": "Anchor on the target node the edge attaches to.",
+          "enum": [
+            "top",
+            "right",
+            "bottom",
+            "left"
+          ],
+          "examples": [
+            "left",
+            "top"
+          ]
+        },
+        "visibility_delta": {
+          "type": "integer",
+          "description": "Density/noise-gate adjustment applied to this connector relative to its view."
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "view": "root",
+          "source": "api-service",
+          "target": "postgres",
+          "label": "reads",
+          "relationship": "SQL",
+          "direction": "forward",
+          "style": "smoothstep",
+          "source_handle": "right",
+          "target_handle": "left"
+        }
+      ]
+    }
+  }
+}

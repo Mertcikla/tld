@@ -81,7 +81,8 @@ This command reads state without changing the diagram.`,
 			if err != nil {
 				return err
 			}
-			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
+			_, effectiveDir := cmdutil.TargetOverrides(cmd, "", dataDirFlag)
+			dataDir, err := workspace.ResolveDataDir(cfg, effectiveDir)
 			if err != nil {
 				return err
 			}
@@ -94,11 +95,11 @@ This command reads state without changing the diagram.`,
 				IncludeLocal: true,
 				IncludeCloud: includeCloud || includeAll,
 			}
-			if !sess.HasWorkspace() {
-				ws, err := sess.LoadWorkspace()
-				if err != nil {
-					return err
-				}
+			readSource, err := cmdutil.ReadSource(cmd, sess.HasWorkspace())
+			if err != nil {
+				return err
+			}
+			if readSource == "live" {
 				opts.Workspace = ws
 				opts.TargetOnly = true
 				opts.IncludeLocal = false
@@ -122,6 +123,7 @@ This command reads state without changing the diagram.`,
 	c.Flags().BoolVar(&includeCloud, "cloud", false, "include cloud state")
 	c.Flags().BoolVar(&includeAll, "all", false, "include all state sources")
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "data directory for local DB state")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 

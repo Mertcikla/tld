@@ -399,12 +399,12 @@ func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *st
 	}
 	if name != "" {
 		if err := workspace.UpdateElementField(wdir, ref, "view_name", name); err != nil {
-			return cmdutil.CacheError(err)
+			return sess.CacheError(err)
 		}
 	}
 	if newLabel != nil {
 		if err := workspace.UpdateElementField(wdir, ref, "view_label", *newLabel); err != nil {
-			return cmdutil.CacheError(err)
+			return sess.CacheError(err)
 		}
 	}
 	return nil
@@ -426,17 +426,17 @@ func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	}
 	if sess.HasWorkspace() {
 		if err := workspace.UpdateElementField(wdir, ref, "has_view", "false"); err != nil {
-			return fail(cmdutil.CacheError(err))
+			return fail(sess.CacheError(err))
 		}
 		el := ws.Elements[ref]
 		if el != nil && el.ViewName != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_name", ""); err != nil {
-				return fail(cmdutil.CacheError(err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if el != nil && el.ViewLabel != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_label", ""); err != nil {
-				return fail(cmdutil.CacheError(err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {
