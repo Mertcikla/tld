@@ -22,7 +22,7 @@ func rootPlacement(t *testing.T, ws *workspace.Workspace, ref string) workspace.
 	return workspace.ViewPlacement{}
 }
 
-func TestConnectCmd_RelocatesFreshTarget(t *testing.T) {
+func TestConnectCmd_PreservesExistingTargetPosition(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
@@ -35,8 +35,8 @@ func TestConnectCmd_RelocatesFreshTarget(t *testing.T) {
 		t.Fatalf("load workspace: %v", err)
 	}
 	database := rootPlacement(t, ws, "db")
-	if database.PositionX == 2000 && database.PositionY == 2000 {
-		t.Fatalf("fresh target was not relocated: (%v, %v)", database.PositionX, database.PositionY)
+	if database.PositionX != 2000 || database.PositionY != 2000 {
+		t.Fatalf("existing target was relocated: (%v, %v)", database.PositionX, database.PositionY)
 	}
 }
 

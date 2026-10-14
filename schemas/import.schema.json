@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "tld bulk import",
-  "description": "Atomic upsert. Omitted resources are kept. Connector identity is view/source/target/label; changing it creates another connector. Connector tags are not supported by the batch API; use tld update connector.",
+  "description": "Atomic upsert. Connector endpoints are placed automatically in their selected view. Omitted resources and placements are kept. Shared placements may copy existing relationships into the destination view. Connector identity is view/source/target/label; changing it creates another connector. Connector tags require tld update connector.",
   "type": "object",
   "properties": {
     "elements": {

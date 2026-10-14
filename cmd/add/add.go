@@ -125,6 +125,9 @@ Next, connect elements with 'tld connect' or inspect them with 'tld list element
 				}
 				placementParent = resolvedParent
 			}
+			if placementParent == r {
+				return cmdutil.WithHint(fmt.Errorf("an element cannot be placed inside its own canvas"), "Choose another --parent, or add a child component to this canvas.")
+			}
 			// Place the element automatically unless the caller pinned it. An
 			// element that already has a placement keeps its position (re-add
 			// must not reset the canvas), otherwise the layout engine drops the

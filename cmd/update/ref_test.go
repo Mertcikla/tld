@@ -15,8 +15,8 @@ func TestUpdateElementRefCascadesReferencesAndPreservesMetadata(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	cmd.SeedElementWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "connect", "--from", "platform", "--to", "api", "--view", "platform", "--label", "contains")
-	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "platform", "--view", "platform", "--label", "reports")
+	cmd.MustRunCmd(t, dir, "connect", "--from", "platform", "--to", "api", "--view", "root", "--label", "contains")
+	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "platform", "--view", "root", "--label", "reports")
 	before, err := workspace.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -43,8 +43,17 @@ func TestUpdateElementRefCascadesReferencesAndPreservesMetadata(t *testing.T) {
 		t.Fatalf("ref rename lost the element or changed its name: %+v", after.Elements)
 	}
 	for _, ref := range []string{"api", "db"} {
-		if after.Elements[ref].Placements[0].ParentRef != "system" {
-			t.Fatalf("placement for %s still uses the old parent", ref)
+		found := false
+		for _, placement := range after.Elements[ref].Placements {
+			if placement.ParentRef == "platform" {
+				t.Fatalf("placement for %s still uses the old parent", ref)
+			}
+			if placement.ParentRef == "system" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("placement for %s lost the owned canvas", ref)
 		}
 	}
 	if after.Meta.Elements["platform"] != nil || after.Meta.Views["platform"] != nil || after.Meta.Elements["system"] == nil || after.Meta.Views["system"] == nil {
@@ -55,7 +64,9 @@ func TestUpdateElementRefCascadesReferencesAndPreservesMetadata(t *testing.T) {
 	}
 	for oldKey, connector := range before.Connectors {
 		want := *connector
-		want.View = "system"
+		if want.View == "platform" {
+			want.View = "system"
+		}
 		if want.Source == "platform" {
 			want.Source = "system"
 		}

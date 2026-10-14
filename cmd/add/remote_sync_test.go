@@ -32,7 +32,7 @@ func TestSyncCommands_RemoteRoundTrip(t *testing.T) {
 	if !strings.Contains(stdout, "add: api (id=") {
 		t.Fatalf("expected immediate server feedback with id, got:\n%s", stdout)
 	}
-	if _, _, err := cmd.RunCmd(t, dir, "connect", "--from", "api", "--to", "platform", "--label", "runs-on"); err != nil {
+	if _, _, err := cmd.RunCmd(t, dir, "connect", "--from", "api", "--to", "platform", "--view", "root", "--label", "runs-on"); err != nil {
 		t.Fatalf("remote connect: %v", err)
 	}
 	if _, _, err := cmd.RunCmd(t, dir, "update", "element", "api", "description", "Handles traffic"); err != nil {
@@ -53,7 +53,7 @@ func TestSyncCommands_RemoteRoundTrip(t *testing.T) {
 		t.Fatalf("connectors = %d, want 1", len(ws.Connectors))
 	}
 
-	if _, _, err := cmd.RunCmd(t, dir, "remove", "connector", "--view", "platform", "--from", "api", "--to", "platform"); err != nil {
+	if _, _, err := cmd.RunCmd(t, dir, "remove", "connector", "--view", "root", "--from", "api", "--to", "platform"); err != nil {
 		t.Fatalf("remote remove connector: %v", err)
 	}
 	if _, _, err := cmd.RunCmd(t, dir, "remove", "element", "api"); err != nil {
@@ -278,7 +278,8 @@ func TestSyncCommands_ConnectPromotesViewInYaml(t *testing.T) {
 
 	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
-	cmd.MustRunCmd(t, dir, "connect", "--view", "platform", "--from", "api", "--to", "platform")
+	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db")
+	cmd.MustRunCmd(t, dir, "connect", "--view", "platform", "--from", "api", "--to", "db")
 
 	ws, err := workspace.Load(dir)
 	if err != nil {

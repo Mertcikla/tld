@@ -1,6 +1,9 @@
 package workspace
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // ViewDiagnostics describes which stored relationships an export can display.
 type ViewDiagnostics struct {
@@ -89,4 +92,16 @@ func (ws *Workspace) ViewDiagnostics() []ViewDiagnostics {
 		out = append(out, ws.DiagnoseView(ref))
 	}
 	return out
+}
+
+// CheckConnectorOwner rejects the canvas owner as a child endpoint. The user
+// can connect the owner in its containing view or connect actual children here.
+func CheckConnectorOwner(view, source, target string) error {
+	if view == "" || view == RootRef {
+		return nil
+	}
+	if source == view || target == view {
+		return fmt.Errorf("view owner %q cannot be an endpoint inside its own canvas; connect its child components in --view %s, or connect %s in its containing view", view, view, view)
+	}
+	return nil
 }
