@@ -20,7 +20,7 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	}
 	g := graph.NewGraph(snap.RepositoryId, snap.Id)
 	sourceWhere, sourceScopeArgs := scope(ctx).clause("s.org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT s.path, s.hash, b.content, s.language, s.input_blob, s.dirty, COALESCE(b.syntax_cache, ''), COALESCE(b.file_cache, '')
+	rows, err := s.bun.QueryContext(ctx, `SELECT s.path, s.hash, b.content, s.language, s.input_blob, s.dirty, b.syntax_cache, b.file_cache, COALESCE(b.compression, 0)
 		FROM codeindex_sources s
 		LEFT JOIN codeindex_blobs b ON b.org_id = s.org_id AND b.hash = s.hash AND b.language = s.language
 		WHERE s.snapshot_id = ?`+sourceWhere, append([]any{snap.Id}, sourceScopeArgs...)...)
@@ -29,10 +29,21 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	}
 	for rows.Next() {
 		src := &graph.Source{}
-		if err := rows.Scan(&src.Path, &src.Hash, &src.Text, &src.Language, &src.InputBlob, &src.Dirty, &src.SyntaxCache, &src.FileCache); err != nil {
+		var syntaxCache, fileCache []byte
+		var compression int
+		if err := rows.Scan(&src.Path, &src.Hash, &src.Text, &src.Language, &src.InputBlob, &src.Dirty, &syntaxCache, &fileCache, &compression); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
+		for i, field := range []*[]byte{&src.Text, &syntaxCache, &fileCache} {
+			decoded, err := decompressBlob(*field, compression, 1<<i)
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("source %s: %w", src.Path, err)
+			}
+			*field = decoded
+		}
+		src.SyntaxCache, src.FileCache = string(syntaxCache), string(fileCache)
 		src.SyntaxCache = sourceCache(src.SyntaxCache, snap.RepositoryId, src.Path)
 		src.FileCache = sourceCache(src.FileCache, snap.RepositoryId, src.Path)
 		g.Sources[src.Path] = src

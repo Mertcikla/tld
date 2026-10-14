@@ -251,10 +251,26 @@ func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Gra
 	missing := make([][]any, 0, len(blobRows))
 	for i, row := range blobRows {
 		if !existing[keys[i]] {
+			var compression int
+			for j, flag := range []int{blobContentGzip, blobSyntaxGzip, blobFileGzip} {
+				var raw []byte
+				if j == 0 {
+					raw = row[3].([]byte)
+				} else {
+					raw = []byte(row[3+j].(string))
+				}
+				encoded, bit, err := compressBlob(raw, flag)
+				if err != nil {
+					return fmt.Errorf("compress blob %s: %w", keys[i][0], err)
+				}
+				row[3+j] = encoded
+				compression |= bit
+			}
+			row = append(row, compression)
 			missing = append(missing, row)
 		}
 	}
-	if err := insertRows(ctx, tx, `INSERT INTO codeindex_blobs (org_id, hash, language, content, syntax_cache, file_cache) VALUES `, ` ON CONFLICT(org_id, hash, language) DO NOTHING`, 6, missing); err != nil {
+	if err := insertRows(ctx, tx, `INSERT INTO codeindex_blobs (org_id, hash, language, content, syntax_cache, file_cache, compression) VALUES `, ` ON CONFLICT(org_id, hash, language) DO NOTHING`, 7, missing); err != nil {
 		return err
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_sources (snapshot_id, path, hash, size, language, input_blob, dirty, org_id) VALUES `, ``, 8, sourceRows); err != nil {
@@ -624,9 +640,14 @@ func (s *Store) Repository(ctx context.Context, id string) (*pb.Repository, erro
 func (s *Store) Source(ctx context.Context, hash string) ([]byte, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var content []byte
-	err := s.bun.NewRaw(`SELECT content FROM codeindex_blobs WHERE hash = ?`+where+` LIMIT 1`, append([]any{hash}, scopeArgs...)...).Scan(ctx, &content)
+	var compression int
+	err := s.bun.NewRaw(`SELECT content, compression FROM codeindex_blobs WHERE hash = ?`+where+` LIMIT 1`, append([]any{hash}, scopeArgs...)...).Scan(ctx, &content, &compression)
 	if err != nil {
 		return nil, err
+	}
+	content, err = decompressBlob(content, compression, blobContentGzip)
+	if err != nil {
+		return nil, fmt.Errorf("source %s: %w", hash, err)
 	}
 	return content, nil
 }
