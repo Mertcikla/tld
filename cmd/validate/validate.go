@@ -85,10 +85,10 @@ func NewValidateCmd(wdir *string) *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "validate [rule-code]",
-		Short: "Validate the workspace and check diagram freshness",
-		Long: `Validate the workspace YAML files for structural errors, verify that
-referenced symbols still exist in source files, and flag diagrams whose
-metadata is older than the file's last git commit.
+		Short: "Validate workspace structure, source links, and architectural warnings",
+		Long: `Validate workspace structure and source symbols, and report architectural warnings.
+Use --strict to fail on architectural warnings as well as structural errors.
+Validation checks model consistency; it does not prove architectural completeness.
 
 When called without arguments, validates the entire workspace and shows a summary
 of architectural warnings grouped by rule code.
@@ -98,6 +98,9 @@ in full detail with individual element and connector information. The requested
 rule runs regardless of the configured strictness level or exclude list.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("strictness") && (strictness < 1 || strictness > 3) {
+				return fmt.Errorf("--strictness must be 1, 2, or 3")
+			}
 			if !cmdutil.WorkspaceConfigured(cmd, *wdir) {
 				return cmdutil.WithHint(
 					errors.New("validate requires a workspace"),
@@ -146,6 +149,13 @@ rule runs regardless of the configured strictness level or exclude list.`,
 
 			errs := ws.Validate()
 			if len(errs) > 0 {
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					messages := make([]string, len(errs))
+					for i, e := range errs {
+						messages[i] = e.Error()
+					}
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "validate", cmdutil.WithHint(errors.New(strings.Join(messages, "; ")), "Fix the listed fields, then run 'tld validate' again."))
+				}
 				term.Fail(cmd.ErrOrStderr(), "Validation errors:")
 				for _, e := range errs {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "    - %s\n", e)
@@ -155,6 +165,9 @@ rule runs regardless of the configured strictness level or exclude list.`,
 
 			broken := cmdutil.CheckSymbols(cmd.Context(), ws, repoCtx, rules)
 			if len(broken) > 0 {
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "validate", cmdutil.WithHint(errors.New(strings.Join(broken, "; ")), "Update the source links with 'tld link', then run 'tld validate' again."))
+				}
 				term.Fail(cmd.ErrOrStderr(), "Symbol verification errors:")
 				for _, msg := range broken {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "    - %s\n", msg)
@@ -163,16 +176,51 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			}
 
 			warnings := archwarnings.Analyze(ws, scoreOpts...)
+			if len(args) == 1 {
+				filtered := warnings[:0]
+				for _, warning := range warnings {
+					if warning.RuleCode == normalizeRuleCode(args[0]) {
+						filtered = append(filtered, warning)
+					}
+				}
+				warnings = filtered
+			}
+			var strictErr error
+			if strict && len(warnings) > 0 {
+				strictErr = cmdutil.WithHint(fmt.Errorf("%d architectural warning group(s)", len(warnings)), "Run 'tld validate --verbose' and address the listed warnings; keep intentional exceptions explicit in workspace validation settings.")
+			}
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				groups := make([]map[string]any, 0, len(warnings))
+				for _, w := range warnings {
+					groups = append(groups, map[string]any{"code": w.RuleCode, "name": w.RuleName, "violations": w.Violations, "hint": w.Mediation, "score": w.Score})
+				}
+				extra := map[string]any{"rules": groups}
+				if len(args) == 1 && normalizeRuleCode(args[0]) == "ARC205" {
+					extra["grounding"] = archwarnings.Grounding(ws, scoreOpts...)
+				}
+				if len(args) == 1 && normalizeRuleCode(args[0]) == "ARC206" {
+					extra["coverage"] = archwarnings.LinkCoverage(ws, scoreOpts...)
+				}
+				return cmdutil.WriteResult(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "validate", Status: "ok", Summary: map[string]int{"elements": len(ws.Elements), "views": cmdutil.CountViews(ws), "connectors": len(ws.Connectors), "warning_groups": len(warnings)}, Extra: extra}, strictErr)
+			}
 
 			if len(args) == 1 {
 				code := normalizeRuleCode(args[0])
 				switch code {
 				case "ARC205":
-					return printGrounding(cmd, ws, scoreOpts...)
+					if err := printGrounding(cmd, ws, scoreOpts...); err != nil {
+						return err
+					}
 				case "ARC206":
-					return printLinkCoverage(cmd, ws, scoreOpts...)
+					if err := printLinkCoverage(cmd, ws, scoreOpts...); err != nil {
+						return err
+					}
+				default:
+					if err := printRuleViolations(cmd, args[0], warnings); err != nil {
+						return err
+					}
 				}
-				return printRuleViolations(cmd, args[0], warnings)
+				return strictErr
 			}
 
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
@@ -187,13 +235,13 @@ rule runs regardless of the configured strictness level or exclude list.`,
 				printWarningSummary(cmd, ws, warnings, verbose)
 			}
 
-			return nil
+			return strictErr
 		},
 	}
 
 	c.Flags().IntVar(&strictness, "strictness", 0, "override validation strictness level [1-3]")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
-	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero when outdated diagrams are detected")
+	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero on architectural warnings")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for the local database used to identify codeindex elements")
 	c.AddCommand(newRulesCmd())
 	return c
@@ -211,6 +259,9 @@ Rules are enabled based on validation.level in .tld.yaml (1 = Minimal,
 violations in the current workspace.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "validate rules", Status: "ok", Extra: map[string]any{"rules": archwarnings.Rules()}})
+			}
 			printRules(cmd)
 			return nil
 		},

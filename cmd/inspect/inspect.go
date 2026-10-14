@@ -24,10 +24,10 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "inspect <ref>",
 		Short: "Inspect a resource across YAML, local DB, and optional cloud state",
-		Long: `Inspect an element, owned view, or connector using its ref.
+		Long: `Inspect an element, owned view, or connector using its ref or ID.
 
 Find element/view refs and canonical connector keys with 'tld list'. For a
-connector, pass its full view/source~target[/label] key. Use --type to distinguish
+connector, pass its full view/source~target[/label] key or numeric ID. Use --type to distinguish
 an element from its owned view when they share a ref.
 
 In a YAML workspace, reports YAML and local database state; --cloud also checks
@@ -39,11 +39,43 @@ This command reads state without changing the diagram.`,
   tld inspect api --type element --cloud --format json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			resourceType = strings.ToLower(strings.TrimSpace(resourceType))
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", dataDirFlag)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return err
+			}
+			ref := args[0]
+			switch resourceType {
+			case "connector":
+				ref, err = cmdutil.ResolveConnectorArg(ws, ref)
+			case "element":
+				ref, err = cmdutil.ResolveElementArg(ws, ref)
+			case "view":
+				ref, err = cmdutil.ResolveViewArg(ws, ref)
+			default:
+				// Preserve element/owned-view ambiguity; only resolve aliases when
+				// the supplied value is not already a canonical workspace key.
+				if ws.Elements[ref] == nil && ws.Connectors[ref] == nil && ref != workspace.RootRef {
+					element, elementErr := cmdutil.ResolveElementArg(ws, ref)
+					connector, connectorErr := cmdutil.ResolveConnectorArg(ws, ref)
+					if elementErr == nil && connectorErr == nil {
+						return fmt.Errorf("selector %q is ambiguous; specify --type element or --type connector", ref)
+					}
+					if elementErr == nil {
+						ref = element
+					} else if connectorErr == nil {
+						ref = connector
+					}
+				}
+			}
+			if err != nil {
+				return err
+			}
 
 			cfg, err := workspace.LoadGlobalConfig()
 			if err != nil {
@@ -55,7 +87,7 @@ This command reads state without changing the diagram.`,
 			}
 			opts := inspection.Options{
 				WorkspaceDir: *wdir,
-				Ref:          args[0],
+				Ref:          ref,
 				Type:         strings.ToLower(strings.TrimSpace(resourceType)),
 				DataDir:      dataDir,
 				Database:     cfg.Database,

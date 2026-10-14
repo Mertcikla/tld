@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/git"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -289,11 +290,17 @@ the top-level view with 'tld render root'.`,
 			}
 
 			if existing, ok := workspace.ExistingGlobalConfigPath(); ok {
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "init", Status: "ok", Extra: map[string]any{"workspace": dir, "config": existing}})
+				}
 				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
 				term.Infof(cmd.OutOrStdout(), "Global config already exists at %s", term.Path(cmd.OutOrStdout(), existing))
 			} else {
 				if err := workspace.EnsureGlobalConfig(); err != nil {
 					return fmt.Errorf("ensure global config: %w", err)
+				}
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "init", Status: "ok", Extra: map[string]any{"workspace": dir, "config": cfgPath}})
 				}
 				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
 				term.Infof(cmd.OutOrStdout(), "Global config created at %s", term.Path(cmd.OutOrStdout(), cfgPath))

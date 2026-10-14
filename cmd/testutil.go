@@ -20,6 +20,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localapi "github.com/mertcikla/tld/v2/internal/server"
 	"github.com/mertcikla/tld/v2/internal/store"
@@ -59,8 +60,7 @@ func RunCmdWithStdin(t *testing.T, dir string, stdin io.Reader, args ...string) 
 	root.SetOut(outBuf)
 	root.SetErr(errBuf)
 	root.SetIn(stdin)
-	root.SetArgs(append([]string{"--workspace", dir}, args...))
-	err = root.Execute()
+	err = cmdutil.Execute(root, append([]string{"--workspace", dir}, args...))
 	return outBuf.String(), errBuf.String(), err
 }
 

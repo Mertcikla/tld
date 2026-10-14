@@ -26,6 +26,9 @@ An element is a reusable node; its owned view is a canvas for its children.
 'tld add --parent <element-ref>' creates the parent's view automatically.
 'tld view create <element-ref>' ensures it exists even before children are added.
 The synthetic root view holds top-level placements.
+Use 'view place <view> <element>' to reuse an element without repeating its name
+or metadata. Add --from <old-view> to move it; 'view unplace <view> <element>'
+removes just that placement. Remove connectors in the old view first.
 
 View names and level labels are separate from element names and refs. Use
 'view rename' for the canvas name and 'view set-level' for a label such as
@@ -49,6 +52,8 @@ with 'tld render <owner-ref>'.`,
 		newRenameCmd(wdir, format, compact),
 		newSetLevelCmd(wdir, format, compact),
 		newDeleteCmd(wdir, format, compact),
+		newPlacementCmd(wdir, format, compact, false),
+		newPlacementCmd(wdir, format, compact, true),
 	)
 	return c
 }
@@ -394,12 +399,12 @@ func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *st
 	}
 	if name != "" {
 		if err := workspace.UpdateElementField(wdir, ref, "view_name", name); err != nil {
-			return fmt.Errorf("update YAML cache: %w", err)
+			return cmdutil.CacheError(err)
 		}
 	}
 	if newLabel != nil {
 		if err := workspace.UpdateElementField(wdir, ref, "view_label", *newLabel); err != nil {
-			return fmt.Errorf("update YAML cache: %w", err)
+			return cmdutil.CacheError(err)
 		}
 	}
 	return nil
@@ -421,17 +426,17 @@ func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	}
 	if sess.HasWorkspace() {
 		if err := workspace.UpdateElementField(wdir, ref, "has_view", "false"); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+			return fail(cmdutil.CacheError(err))
 		}
 		el := ws.Elements[ref]
 		if el != nil && el.ViewName != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_name", ""); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(cmdutil.CacheError(err))
 			}
 		}
 		if el != nil && el.ViewLabel != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_label", ""); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(cmdutil.CacheError(err))
 			}
 		}
 		if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {

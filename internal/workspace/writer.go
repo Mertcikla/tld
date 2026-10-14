@@ -79,6 +79,9 @@ func validateConnectorSpecRefs(spec *Connector) error {
 	if spec == nil {
 		return fmt.Errorf("connector is required")
 	}
+	if err := ValidateConnectorValues(spec); err != nil {
+		return err
+	}
 	if err := ValidateParentRef(spec.View); err != nil {
 		return fmt.Errorf("invalid connector view: %w", err)
 	}
@@ -481,7 +484,7 @@ func mergeExistingSpec(ref string, existingNode *yaml.Node, spec any) (any, erro
 		if err := existingNode.Decode(&existing); err != nil {
 			return nil, fmt.Errorf("decode existing element %q: %w", ref, err)
 		}
-		return mergeElementFields(ref, &existing, incoming)
+		return MergeElementFields(ref, &existing, incoming)
 	default:
 		return spec, nil
 	}
@@ -502,25 +505,35 @@ func markPlacementParentsWithViews(mapping *yaml.Node, spec any) {
 	}
 }
 
-func mergeElementFields(ref string, existing, incoming *Element) (*Element, error) {
-	if existing.Kind != incoming.Kind {
+// MergeElementFields previews an additive upsert without mutating either input.
+// Supplied nonempty fields replace existing values; omitted fields are preserved.
+// Use UpdateElementField to clear a field or intentionally change an existing kind.
+func MergeElementFields(ref string, existing, incoming *Element) (*Element, error) {
+	if existing == nil {
+		return incoming, nil
+	}
+	if existing.Kind != "" && incoming.Kind != "" && existing.Kind != incoming.Kind {
 		return nil, fmt.Errorf("element %q already exists with kind %q (tried to reuse as %q)", ref, existing.Kind, incoming.Kind)
 	}
 
 	merged := *existing
-	if merged.Name == "" {
+	merged.Placements = append([]ViewPlacement(nil), existing.Placements...)
+	if incoming.Kind != "" {
+		merged.Kind = incoming.Kind
+	}
+	if incoming.Name != "" {
 		merged.Name = incoming.Name
 	}
-	if merged.Description == "" {
+	if incoming.Description != "" {
 		merged.Description = incoming.Description
 	}
-	if merged.Technology == "" {
+	if incoming.Technology != "" {
 		merged.Technology = incoming.Technology
 	}
-	if merged.URL == "" {
+	if incoming.URL != "" {
 		merged.URL = incoming.URL
 	}
-	if merged.LogoURL == "" {
+	if incoming.LogoURL != "" {
 		merged.LogoURL = incoming.LogoURL
 	}
 	if merged.Owner == "" {
@@ -532,7 +545,7 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	if merged.Branch == "" {
 		merged.Branch = incoming.Branch
 	}
-	if merged.FilePath == "" {
+	if incoming.FilePath != "" {
 		merged.FilePath = incoming.FilePath
 	}
 	if merged.Symbol == "" {
@@ -1238,6 +1251,9 @@ func ValidateConnectorFieldChange(ws *Workspace, ref, field, value string) error
 	// entry; refuse a collision before either side is mutated.
 	renamed := *ws.Connectors[ref]
 	ApplyConnectorField(&renamed, field, value)
+	if err := ValidateConnectorValues(&renamed); err != nil {
+		return err
+	}
 	if newKey := ConnectorKey(&renamed); newKey != ref {
 		if _, exists := ws.Connectors[newKey]; exists {
 			return fmt.Errorf("connector %q already exists", newKey)

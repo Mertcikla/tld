@@ -27,8 +27,8 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 A view is required: pass it as an argument or with --view. Use root for the
 top-level diagram, an owning element ref or name, or a numeric view ID.
 Find available views with 'tld list views --tree'. Output goes to stdout unless
---output is supplied. This command's --format selects the diagram format;
-mermaid is the supported value.`,
+--output is supplied. Use --to mermaid for the diagram format and --format json
+for a structured response containing the rendered content.`,
 		Example: `  tld render root
   tld render platform -o diagram.mmd
   tld render --view root --output diagram.mmd`,
@@ -43,7 +43,7 @@ mermaid is the supported value.`,
 			}
 			viewRef := normalizeViewRef(target)
 			if !strings.EqualFold(format, "mermaid") {
-				return fmt.Errorf("unsupported --format %q (supported: mermaid)", format)
+				return fmt.Errorf("unsupported --to %q (supported: mermaid)", format)
 			}
 			ws, err := loadWorkspace(cmd, *wdir)
 			if err != nil {
@@ -67,9 +67,7 @@ mermaid is the supported value.`,
 					return fmt.Errorf("write output: %w", err)
 				}
 			}
-			// The local --format flag shadows the global one, so honor a global
-			// JSON request only when the local flag was not set explicitly.
-			if cmdutil.WantsJSONFromCmd(cmd) && !cmd.Flags().Changed("format") {
+			if cmdutil.WantsJSONFromCmd(cmd) {
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
 					Command: "render",
 					Status:  "ok",
@@ -90,7 +88,7 @@ mermaid is the supported value.`,
 		},
 	}
 
-	c.Flags().StringVar(&format, "format", "mermaid", "render output format: mermaid")
+	c.Flags().StringVar(&format, "to", "mermaid", "diagram format: mermaid")
 	c.Flags().StringVarP(&output, "output", "o", "", "write render output to file")
 	c.Flags().StringVar(&view, "view", "", "root, owner ref/name, or view ID (alternative to the argument)")
 	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {

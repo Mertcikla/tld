@@ -1,9 +1,11 @@
 package connect
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
@@ -33,7 +35,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "connect",
-		Short: "Add a connector between two elements",
+		Short: "Add or update a labeled relationship between two elements",
 		Long: `Add a connector between two existing elements.
 
 --from and --to accept element refs, display names, or numeric element IDs from
@@ -43,6 +45,7 @@ placements; root selects the top-level diagram.
 
 Use --label for the visible interaction and --relationship for semantic metadata
 such as calls or queries. Direction is forward, backward, both, or none.
+Repeating the same view, endpoints, and label updates the existing connector.
 Changes apply to the target immediately and refresh the YAML cache when present.
 Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 		Example: `  tld connect --from api --to db --label reads
@@ -55,11 +58,6 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 				return err
 			}
 			defer func() { _ = sess.Close() }()
-			if sess.HasWorkspace() {
-				if err := validateConnectorRefs(from, to, legacyView); err != nil {
-					return err
-				}
-			}
 			ws, err := sess.LoadWorkspace()
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
@@ -108,6 +106,9 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 				Style:        style,
 				URL:          url,
 				Tags:         workspace.ParseTagList(tags),
+			}
+			if err := workspace.ValidateConnectorValues(spec); err != nil {
+				return err
 			}
 			if dryRun {
 				if sess.HasWorkspace() {
@@ -198,7 +199,7 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	if style == "" {
 		style = "bezier"
 	}
-	created, err := runner.CreateConnector(ctx, api.ConnectorInput{
+	created, err := ensureConnector(ctx, cmd, runner, api.ConnectorInput{
 		ViewID:       viewID,
 		SourceID:     sourceID,
 		TargetID:     targetID,
@@ -213,6 +214,11 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	if err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server create connector failed", err))
 	}
+	// Optional fields omitted on a retry are preserved by the target. Cache the
+	// returned values so the YAML cannot silently clear those fields.
+	spec.Description, spec.Relationship, spec.URL = created.GetDescription(), created.GetRelationship(), created.GetUrl()
+	spec.Direction, spec.Style, spec.Tags = created.GetDirection(), created.GetStyle(), created.GetTags()
+	spec.SourceHandle, spec.TargetHandle = created.GetSourceHandle(), created.GetTargetHandle()
 	// Auto-place a freshly-connected target so the new edge reads cleanly. Only
 	// targets that already live in this view and have no other connectors here
 	// (i.e. just added) are moved, so deliberately wired-up elements are never
@@ -223,7 +229,7 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	if !noReposition && cmdutil.FindPlacement(ws, to, view) != nil && targetIsFresh(ws, view, to) {
 		if x, y, ok := cmdutil.AutoPlace(ws, view, to, []workspace.Connector{*spec}); ok {
 			if err := runner.UpdatePlacement(ctx, viewID, targetID, x, y); err != nil {
-				term.Warnf(cmd.OutOrStdout(), "connected but could not reposition %q: %v", to, err)
+				term.Warnf(cmd.ErrOrStderr(), "connected but could not reposition %q: %v", to, err)
 			} else {
 				moved, movedX, movedY = true, x, y
 			}
@@ -231,23 +237,59 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	}
 	if sess.HasWorkspace() {
 		if err := workspace.AppendConnector(sess.Wdir, spec); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+			return fail(cmdutil.CacheError(err))
 		}
 		if moved {
 			if err := workspace.SetPlacementPosition(sess.Wdir, to, view, movedX, movedY); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(cmdutil.CacheError(err))
 			}
 		}
 		if err := exec.RecordConnectorMeta(ctx, sess.Wdir, workspace.ConnectorKey(spec), created); err != nil {
-			return fail(fmt.Errorf("update cache metadata: %w", err))
+			return fail(cmdutil.CacheError(err))
 		}
 	}
 	if cmdutil.WantsJSON(format) {
-		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
+		return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), compact, "connect", "connect", workspace.ConnectorKey(spec), "connector", created.GetId())
 	}
 	term.Successf(cmd.OutOrStdout(), "connect: %s -> %s (id=%d)", from, to, created.GetId())
 	term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
 	return nil
+}
+
+// Match against the target, not just cached metadata: a retry after a failed
+// cache write must not create another copy of the same relationship.
+func ensureConnector(ctx context.Context, cmd *cobra.Command, runner exec.Runner, input api.ConnectorInput) (*diagv1.Connector, error) {
+	connectors, err := runner.ListConnectors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var match *diagv1.Connector
+	label := ""
+	if input.Label != nil {
+		label = *input.Label
+	}
+	for _, c := range connectors {
+		if c.GetViewId() != input.ViewID || c.GetSourceElementId() != input.SourceID || c.GetTargetElementId() != input.TargetID || c.GetLabel() != label {
+			continue
+		}
+		if match != nil {
+			return nil, cmdutil.WithHint(fmt.Errorf("multiple connectors match this relationship"), "Run 'tld list connectors' and remove duplicate connector IDs before retrying.")
+		}
+		match = c
+	}
+	if match != nil {
+		if !cmd.Flags().Changed("direction") {
+			input.Direction = match.GetDirection()
+		}
+		if !cmd.Flags().Changed("style") {
+			input.Style = match.GetStyle()
+		}
+		if !cmd.Flags().Changed("tags") {
+			input.Tags = match.GetTags()
+		}
+		return runner.UpdateConnector(ctx, match.GetId(), input)
+	}
+	return runner.CreateConnector(ctx, input)
 }
 
 func optStr(s string) *string {

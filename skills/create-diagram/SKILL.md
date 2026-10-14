@@ -1,117 +1,93 @@
 ---
 name: create-diagram
-description: Create architecture diagrams from a local codebase or system description. Use when the user asks to diagram a repo, map system architecture, show component relationships, create drill-down views, or explain a system visually with tld.
+description: Create, update, or maintain tld architecture diagrams from a local codebase or system description. Use for architecture maps, component relationships, drill-down views, and requests to revise an existing tld diagram. Do not use for prose-only explanations or unrelated application changes.
 allowed-tools: Read, Glob, Grep, Write, Bash(tld *)
 ---
 
-# Create Diagram
+# Create and Maintain Diagrams
 
-Build a tld workspace that helps someone understand a system by moving from broad architecture to useful detail.
+Build a navigable map that answers the user's architectural questions. Preserve existing refs, useful layout, and unrelated diagram content when making updates.
 
-## When to Use
+## Model and command discovery
 
-- The user asks for a diagram, architecture map, component map, dependency map, or data-flow view.
-- The target is a local codebase, service, package, multi-service app, or described system.
-- The useful output is a navigable tld model rather than prose alone.
+- **Elements** are reusable entities. Their workspace refs remain stable when their display names change. Custom refs require `tld init`; database-only refs are derived from names. Numeric IDs identify persisted resources.
+- **Views** are canvases owned by elements. `root` is the top-level view. Adding a child with `--parent` or using `tld view place` creates the owner's view automatically.
+- **Placements** put an element in a view. An element can appear in several views without being duplicated. Unplacing it preserves the element and its other placements.
+- **Connectors** belong to one view. Use `--view` explicitly when authoring or updating multiple views. The same endpoints can have different labeled relationships.
+- **Kind** is optional role metadata. Technology is metadata too; use `tld tech suggest` when a catalog name is uncertain.
 
-## When NOT to Use
+Use `tld <command> --help` for accepted fields and examples, and `tld --help-all` for advanced commands. Prefer `--format json` for inspection and mutation results. Successful mutations return selectors for subsequent commands; connector keys change when their view, endpoints, or label change, so retain the returned key or ID.
 
-- The user only wants code explanation and did not ask for a visual model.
-- The task is to change application behavior.
-- The diagram is unrelated to software/system structure and does not benefit from tld's hierarchy.
+## Establish scope and inspect
 
+1. Reuse the current workspace, or select one with `--workspace <dir>`. For a new diagram, run `tld init` in the project root. Check the configured target with `tld config get apply.target`; `auto` selects cloud when credentials and an organization are configured, otherwise local. Use `--target local` on mutations when the requested destination is local.
+2. For existing diagrams, inspect `tld list views --tree`, relevant elements/connectors, and `tld inspect <ref> --type element --format json` before editing. Use `tld pull` when the task requires refreshing from the target; resolve reported conflicts before proceeding.
+3. Use the user's requested scope. Ask about detail or destination only when it is missing and materially affects the result. An overview should explain major runtime boundaries and dependencies; drill down where the requested questions require it. View counts and hierarchy depth are not completion targets.
+4. Read the relevant source and write a compact inventory of responsibilities, callers, dependencies, and evidence. For updates, identify the affected views and relationships before making changes.
 
-## tld Mental Model
+## Create or update in batches
 
-tld models architecture as a hierarchy of **elements** and **connectors**.
+For substantial creation or related edits, prefer `tld import`: it validates and applies a batch atomically on the target. Reapplying the same refs and connector keys updates existing resources. It does not delete omitted resources; perform intended deletions explicitly.
 
-- An **element** is the node in the knowledge graph. It can represent a system, subsystem, service, module, class, database, external system, user, or any other entity relevant to the architecture.
-- A **view** is the canvas owned by an element. Add children with `--parent <ref>` to create a drill-down view automatically, or use `tld view create <element-ref>` to ensure the view exists before adding children. Use `tld list views --tree` to discover the hierarchy and `tld render <owner-ref>` to export a view.
-- A **connector** describes a relationship between elements and belongs to a view. Its view defaults to the source element's parent view; use `--view <view-ref>` to choose another view when elements have multiple placements.
-- A **kind** is a broad role such as `system`, `container`, `component`, `database`, `person`, or `external`; omit it if it doesn't fit any clear category. `--kind` takes a single shell token, so quote multi-word kinds (e.g. `--kind "external system"`).
-- A **technology** is metadata. Prefer catalog names suggested by `tld tech suggest`.
+An import document is a ref-keyed `elements` map and a `connectors` list. For example, after verifying the actual relationship:
 
-The goal is not to mirror folders. Build a navigable map of how control, data, ownership, and dependencies move through the system.
-
-## CLI Basics
-
-Use the flat CLI shape:
+```yaml
+elements:
+  api:
+    name: API
+    kind: service
+    placements:
+      - parent: root
+  db:
+    name: Database
+    kind: database
+    placements:
+      - parent: root
+connectors:
+  - view: root
+    source: api
+    target: db
+    label: reads
+```
 
 ```bash
-tld add "<name>" --ref <ref> --kind <kind> --parent <parent-ref>
-tld connect --from <source-ref> --to <target-ref> --label "<specific interaction>"
-tld validate
+tld import diagram.yaml --dry-run --format json
+tld import diagram.yaml --format json
 ```
 
-For root-level elements, omit `--parent`.
+Use actual source links in `file_path` when available (`path`, `path#symbol`, or `folder/`), or `--link` with `tld add`. Use `tld link` for advanced anchors and external resources. See `tld import --help` for schema references.
 
-Custom `--ref` values require a YAML workspace: run `tld init` first. Use `tld update element <ref> ref <new-ref>` to rename a workspace-local ref and cascade its references; use the `name` field to change the display name. Discover editable fields with `tld update element --help` and `tld update connector --help`. Connector keys come from `tld list connectors` and have the form `view/source~target[/label]`.
-
-Grounding the elements added back to source code is important. Use `--link` while adding elements to point to the source code, folder, or even symbols where possible. Skip `--link` if the element is too abstract or encompasses many files.
-
-If a technology label is uncertain, check it first:
+For small edits, use the existing commands:
 
 ```bash
-tld tech suggest "<technology name>"
+tld add "API" --ref api --kind service --parent platform
+tld connect --from api --to db --view platform --label "reads and writes"
+tld update element api description "Handles public requests"
+tld update connector 'platform/api~db/reads' label "reads and writes"
+tld view place root api
+tld view place platform api --from root
+tld remove connector 'platform/api~db/reads and writes'
+tld view unplace platform api
 ```
 
-If the same real element appears in another view, reuse the same `--ref` with a different `--parent`. This creates another placement, not a duplicate element, and highly desired to truly show interaction. Add connectors with different labels in each view to show different relationships using `--view <optional-view-ref>`.
+These are individual recipes, not a sequence to run blindly. Parents/endpoints must exist. Remove or update connectors in a view before unplacing or moving their endpoints. `remove element` deletes the reusable resource, so use `view unplace` when only one view should change.
 
-## Workflow
+`add` preserves omitted fields and unions tags; supplied nonempty fields update metadata. Use `update element` to clear a field, change its kind, or rename its display name. Use its `ref` field only to deliberately rename a workspace alias. For placement-only changes, prefer `view place` so metadata need not be repeated.
 
-Before exploring, check for `.tld` folder. If it exists we are working in an active workspace and should inspect the existing model and ask the user how they want to update it. If not, run `tld init` in the codebase root then ask the user the following to set expectations and guide the level of detail:
+Mutations apply immediately and refresh workspace YAML. Prefer CLI mutations to editing cache files; deliberate YAML edits require `tld sync`. Read error hints before retrying. If an error says the target changed but the cache failed, refresh with `tld pull` before continuing. Stop repeated retries when the same issue persists and report the unresolved cause.
 
-> 1. **How detailed should the diagram be?** (overview, medium, detailed)
-Use their answers to calibrate the rest of the work. If they don't know, suggest options based on the codebase size once you've done a quick directory scan.
+## Evidence and readable views
 
-**Overview** ~5–10 views, 1–2 levels deep Services and their direct dependencies. Entry points, major layers, external systems. Nothing low level.
+Connectors must represent relationships supported by source or by the user's system description. Record useful source evidence in element links and connector descriptions. Distinguish inferred or proposed relationships from confirmed behavior; do not add edges merely to eliminate isolation warnings.
 
-**Medium** ~10–30 views, 2–3 levels deep Modules and packages decomposed. Key classes identified and placed. Major data and logic flows wired. Inheritance shown where architecturally significant.
+Reuse existing elements across views. Add children and their labeled relationships together. When summarizing internal interactions at a higher level, connect the actual containing elements and describe the aggregate interaction; do not substitute parent refs for distinct children within a detailed view.
 
-**Detailed** ~50–200+ views, 4–6 levels deep. Every significant class and function has its own linked view. A reader should be able to navigate from the root view down to understanding a specific method's behavior without opening a file. Connected end-to-end from producers to consumers. 
+Keep views focused, usually around 8–12 elements. Split by responsibility when that improves understanding. An intentional isolated element can remain if its role is explained. Avoid mirroring directories or expanding every class/function unless the user's questions require that detail.
 
-1. Inspect the codebase enough to identify entry points, major subsystems, storage, external systems, and runtime boundaries.
-2. Write a compact inventory before adding elements:
+## Verify and hand off
 
-```text
-Subsystem inventory:
-- API: handles HTTP requests | calls: services, auth, database | called by: frontend
-- Worker: processes queued jobs | calls: redis, external API | called by: queue
-```
+Run `tld validate --format json` and address structural/source-link failures. Review architectural warnings with `tld validate --verbose` or a specific rule code. Use `--strict` when warnings should fail the check; explain intentional exceptions rather than inventing relationships or suppressing warnings to obtain a pass.
 
-3. Create a root view with a few high-level elements that match the system, not a fixed template.
-4. For each view, add children first, then immediately add labeled connectors for that same view.
-5. Drill down on sub-systems if asked for: service internals, module responsibilities, key classes, important data paths, or complex methods. Children **reuses the parent element ref when connecting, unless children exists as indiviual elements**
+Inspect the changed resources and render each affected view with `tld render <view>`. If browser or visual inspection is available, inspect layout and labels in the UI too. Validation and resource counts do not prove completeness: compare the result against the requested questions and evidenced execution/data paths.
 
-
-```text
-API
-Subsystem inventory:
--  Parent Element: Users 
-    - endpoints: GET /users, POST /users
-    - services: UserService
-    - handlers: UserHandler
-    - calls: UserService, GetUserData
-```
-
-6. Reuse shared elements in every relevant view and reconnect them, optionally with labels specific to that context.
-7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain. Ordinary `tld add` / `tld connect` / `tld update` operations apply immediately to the configured target and refresh the workspace YAML cache. Ref updates only change the YAML aliases and references. If the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
-
-
-## Modeling Guidance
-
-Keep each view readable. Aim for about 8-12 elements; split or cluster before a view becomes crowded. If a parent would contain many items, introduce a new element with a role-based name such as "Data Layer", "Event Pipeline", or "Authentication".
-
-An isolated element is usually a modeling bug. Either connect it, move it to a better view, or remove it.
-
-Depth should match the user's goal, before handoff, validate that the diagram meets their needs. If they want an overview, don't add too much detail. If they want a detailed map, make sure to drill down enough.
-
-## Handoff
-
-To view the diagram:
-
-```bash
-tld serve --open
-```
-
-Ask for feedback and add/remove some detail on sub-systems.
+For a local diagram, use `tld serve --open` to open the UI. For an existing remote diagram, hand off its known destination. Summarize what changed, what was verified, and any evidence or coverage gaps. Do not claim visual verification if only CLI checks were possible.

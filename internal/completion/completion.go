@@ -224,5 +224,5 @@ func ConnectorFields() []string {
 
 // ConnectorDirections are the valid values for --direction.
 func ConnectorDirections() []string {
-	return []string{"forward", "backward", "both", "none"}
+	return workspace.ConnectorDirections()
 }

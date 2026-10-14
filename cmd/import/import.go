@@ -1,6 +1,7 @@
 package importcmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -121,10 +122,7 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 
 	if sess.HasWorkspace() {
 		if err := persistImportCache(sess.Wdir, ws, plan, resp); err != nil {
-			return fail(fmt.Errorf(
-				"the import was applied to the target, but updating the local cache failed: %w\n"+
-					"The target state is correct; run `tld pull` to refresh the local files",
-				err))
+			return fail(cmdutil.CacheError(err))
 		}
 	}
 
@@ -151,8 +149,14 @@ func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
 	}
 
 	var doc importDocument
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse import file %s: %w%s", label, err, schemaHint())
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&doc); err != nil {
+		return nil, cmdutil.WithHint(fmt.Errorf("parse import file %s: %w", label, err), strings.TrimSpace(schemaHint()))
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("import file %s must contain one document; combine elements and connectors in one mapping", label)
 	}
 	if len(doc.Elements) == 0 && len(doc.Connectors) == 0 {
 		return nil, fmt.Errorf("import file %s defines no elements or connectors; expected top-level `elements` and/or `connectors`%s", label, schemaHint())

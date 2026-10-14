@@ -10,7 +10,7 @@ import (
 )
 
 func WithHint(err error, hint string) error {
-	return fmt.Errorf("%w\n  Hint: %s", err, hint)
+	return &CommandError{Cause: err, Code: "command_failed", Hint: hint}
 }
 
 func LoadWorkspace(dir string) (*workspace.Workspace, error) {

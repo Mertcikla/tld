@@ -298,6 +298,9 @@ func DropConnectorMeta(ctx context.Context, wdir string, keys ...string) error {
 	return persistCache(wdir, ws)
 }
 
+// SaveCache persists a successful target mutation and advances the cache hash.
+func SaveCache(wdir string, ws *workspace.Workspace) error { return persistCache(wdir, ws) }
+
 func persistCache(wdir string, ws *workspace.Workspace) error {
 	if err := workspace.Save(ws); err != nil {
 		return err

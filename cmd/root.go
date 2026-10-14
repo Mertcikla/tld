@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mertcikla/tld/v2/cmd/add"
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
@@ -29,6 +30,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/validate"
 	"github.com/mertcikla/tld/v2/cmd/version"
 	viewcmd "github.com/mertcikla/tld/v2/cmd/view"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -54,8 +56,10 @@ func WithServeCommand(runE func(*cobra.Command, []string) error) RootOption {
 
 // Execute runs the root command and exits on error.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
+	if err := cmdutil.Execute(rootCmd, os.Args[1:]); err != nil {
+		if !cmdutil.ErrorReported(err) {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
@@ -119,7 +123,10 @@ workspace. To change a display name in either mode, use
 	// Accept either a content root or a workspace directory for --workspace by
 	// resolving to the nested ".tld" directory when the root itself does not
 	// hold workspace files.
-	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	root.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
+		if outputFormat != "text" && outputFormat != "json" && (c.Name() != "render" || outputFormat != "mermaid") {
+			return fmt.Errorf("unsupported --format %q; use text or json", outputFormat)
+		}
 		wdir = workspace.ResolveDir(wdir)
 		return nil
 	}
@@ -286,6 +293,44 @@ workspace. To change a display name in either mode, use
 	for _, option := range options {
 		option(root)
 	}
+
+	// Keep the ordinary authoring help short without removing advanced commands.
+	var helpAll bool
+	root.Flags().BoolVar(&helpAll, "help-all", false, "show all commands, flags, and examples")
+	root.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	root.Args = cobra.NoArgs
+	fullHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if c != root || helpAll {
+			fullHelp(c, args)
+			return
+		}
+		out := c.OutOrStdout()
+		_, _ = fmt.Fprintln(out, "tld - create and update architecture diagrams\n\nUsage: tld <command> [flags]\n\nAuthoring:")
+		primary := map[string]bool{}
+		for _, name := range []string{"init", "list", "inspect", "add", "connect", "update", "remove", "view", "import", "link", "validate", "render"} {
+			command, _, _ := root.Find([]string{name})
+			primary[name] = true
+			_, _ = fmt.Fprintf(out, "  %-10s %s\n", name, command.Short)
+		}
+		var other []string
+		for _, command := range root.Commands() {
+			if !primary[command.Name()] && !command.Hidden {
+				other = append(other, command.Name())
+			}
+		}
+		_, _ = fmt.Fprintf(out, "\nAlso: %s\n", strings.Join(other, ", "))
+		_, _ = fmt.Fprintln(out, `
+Start: tld init; tld add "API" --ref api; tld render root
+Bulk:  tld import diagram.yaml --dry-run; tld import diagram.yaml
+
+Mutations apply immediately to the configured target (local by default).
+Use --target local to pin writes, --dry-run to preview, and --format json
+for machine-readable results. YAML workspaces preserve custom refs.
+Use --workspace <dir> to select a workspace and --compact for compact JSON.
+
+Use 'tld <command> --help' for fields and examples; 'tld --help-all' for all options.`)
+	})
 
 	return root
 }

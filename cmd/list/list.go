@@ -24,7 +24,7 @@ func NewListCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Long: `Find the identifiers used by other commands.
 
 'list elements' shows element refs, names, and database IDs. 'list connectors'
-shows canonical keys for 'inspect' and 'update connector'. 'list views --tree'
+shows keys and IDs for 'inspect', 'update connector', and 'remove connector'. 'list views --tree'
 shows view owner refs and the hierarchy used by 'render' and 'view' commands.
 Use --format json for structured rows and --search to filter a resource list.`,
 		Example: `  tld list elements --search api

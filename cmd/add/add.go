@@ -50,6 +50,9 @@ Reusing a workspace ref updates the existing element. Use the same ref with a
 different --parent to place it in another view. The parent must already exist;
 placing a child under it automatically creates its owned view. Omit --parent
 for root. Use 'tld view create' to create an owned view before adding children.
+Supplied nonempty fields replace existing values; omitted fields are preserved.
+Use 'update element' to clear a field or change an existing kind.
+Use 'view place <view> <element>' to add a placement without changing metadata.
 
 Changes apply to the target immediately and refresh the YAML cache when present.
 Next, connect elements with 'tld connect' or inspect them with 'tld list elements'.`,
@@ -165,6 +168,9 @@ Next, connect elements with 'tld connect' or inspect them with 'tld list element
 				Tags:        parsedTags,
 				ViewLabel:   viewLabel,
 				Placements:  []workspace.ViewPlacement{placement},
+			}
+			if _, err := workspace.MergeElementFields(r, ws.Elements[r], spec); err != nil {
+				return cmdutil.WithHint(err, fmt.Sprintf("Use 'tld update element %s kind %s' to change its kind.", r, kind))
 			}
 			validateAndWarnTechnology(cmd, technology)
 			if dryRun {
@@ -290,18 +296,16 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 	// Refresh YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := workspace.UpsertElement(sess.Wdir, ref, spec); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+			return fail(cmdutil.CacheError(err))
 		}
-		// UpsertElement merges fill-empty-only, but an explicit --link flag
-		// must overwrite (matching `tld link`) so the cache does not diverge
-		// from the server when relinking an existing element.
+		// Keep explicit source-link updates aligned with the target.
 		if linkFilePath != "" {
 			if err := workspace.UpdateElementField(sess.Wdir, ref, "file_path", linkFilePath); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(cmdutil.CacheError(err))
 			}
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
-			return fail(fmt.Errorf("update cache metadata: %w", err))
+			return fail(cmdutil.CacheError(err))
 		}
 	}
 
@@ -310,7 +314,7 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 		if updated {
 			action = "update"
 		}
-		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "add", action, ref)
+		return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), compact, "add", action, ref, "element", elementID)
 	}
 	if updated {
 		term.Successf(cmd.OutOrStdout(), "updated: %s (id=%d)", ref, elementID)
@@ -488,10 +492,10 @@ func validateAndWarnTechnology(cmd *cobra.Command, technology string) {
 	for _, m := range missing {
 		suggestions := tech.SuggestSimilar(m, 5)
 		if len(suggestions) == 0 {
-			term.Warnf(cmd.OutOrStdout(), "Unknown technology %q", m)
+			term.Warnf(cmd.ErrOrStderr(), "Unknown technology %q", m)
 			continue
 		}
-		term.Warnf(cmd.OutOrStdout(), "Unknown technology %q. similar: %s?", m, joinQuoted(suggestions))
+		term.Warnf(cmd.ErrOrStderr(), "Unknown technology %q. similar: %s?", m, joinQuoted(suggestions))
 	}
 }
 

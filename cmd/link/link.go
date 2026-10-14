@@ -646,11 +646,11 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 			return err
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, updated, 0, nil); err != nil {
-			return fmt.Errorf("update cache metadata: %w", err)
+			return cmdutil.CacheError(err)
 		}
 
 		if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-			return fmt.Errorf("refresh cache metadata: %w", err)
+			return cmdutil.CacheError(err)
 		}
 	}
 	return nil

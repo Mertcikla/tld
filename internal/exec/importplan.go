@@ -288,6 +288,9 @@ func collectImportElements(
 		if c == nil {
 			return nil, errors.New("connectors: entry is empty")
 		}
+		if err := workspace.ValidateConnectorValues(c); err != nil {
+			return nil, err
+		}
 		if err := workspace.ValidateElementRef(c.Source); err != nil {
 			return nil, fmt.Errorf("connector %s -> %s: invalid source element ref: %w", c.Source, c.Target, err)
 		}

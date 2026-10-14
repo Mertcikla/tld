@@ -60,7 +60,7 @@ func TestUpdateConnectorCmdRenamesKeyOnSourceChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update connector source: %v\nstdout:%s\nstderr:%s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "updated \"platform/api~db/reads\": source=\"cache\"") {
+	if !strings.Contains(stdout, "updated \"platform/cache~db/reads\": source=\"cache\"") {
 		t.Fatalf("stdout = %q, want update confirmation", stdout)
 	}
 	ws, err := workspace.Load(dir)

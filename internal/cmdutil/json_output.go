@@ -6,6 +6,7 @@ type JSONOutput struct {
 	Summary  map[string]int `json:"summary,omitempty"`
 	Items    []JSONItem     `json:"items,omitempty"`
 	Errors   []string       `json:"errors,omitempty"`
+	Error    *CommandError  `json:"error,omitempty"`
 	Warnings []string       `json:"warnings,omitempty"`
 	Extra    map[string]any `json:"extra,omitempty"`
 }
@@ -16,4 +17,5 @@ type JSONItem struct {
 	Action       string `json:"action"`
 	Name         string `json:"name,omitempty"`
 	Reason       string `json:"reason,omitempty"`
+	ID           int32  `json:"id,omitempty"`
 }

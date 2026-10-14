@@ -146,7 +146,11 @@ and refresh the YAML cache when present.`, strings.Join(completion.ElementFields
 				return fail(err)
 			}
 			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref)
+				var id int32
+				if ws.Meta != nil && ws.Meta.Elements[ref] != nil {
+					id = int32(ws.Meta.Elements[ref].ID)
+				}
+				return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref, "element", id)
 			}
 			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", ref, field, value)
 			return nil
@@ -229,6 +233,18 @@ and refresh the YAML cache when present.`,
 			if err != nil {
 				return fail(err)
 			}
+			// Validate before touching server state; the desired spec is
+			// derived from the pre-update state so the key change is known.
+			if mode != "" {
+				connector := ws.Connectors[ref]
+				if connector == nil {
+					return fail(fmt.Errorf("connector %q not found", ref))
+				}
+				value = resolveTagValue(connector.Tags, value, mode)
+			}
+			if err := workspace.ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
+				return fail(fmt.Errorf("update connector: %w", err))
+			}
 			if dryRun {
 				if sess.HasWorkspace() {
 					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
@@ -242,18 +258,6 @@ and refresh the YAML cache when present.`,
 				}
 				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
 				return nil
-			}
-			// Validate before touching server state; the desired spec is
-			// derived from the pre-update state so the key change is known.
-			if mode != "" {
-				connector := ws.Connectors[ref]
-				if connector == nil {
-					return fail(fmt.Errorf("connector %q not found", ref))
-				}
-				value = resolveTagValue(connector.Tags, value, mode)
-			}
-			if err := workspace.ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
-				return fail(fmt.Errorf("update connector: %w", err))
 			}
 			preSpec := ws.Connectors[ref]
 			var preID int32
@@ -270,23 +274,23 @@ and refresh the YAML cache when present.`,
 			}
 			if sess.HasWorkspace() {
 				if err := workspace.UpdateConnectorField(*wdir, ref, field, value); err != nil {
-					return fail(fmt.Errorf("update YAML cache: %w", err))
+					return fail(cmdutil.CacheError(err))
 				}
 				if updated != nil {
 					if err := exec.RecordConnectorMeta(sess.Context(cmd.Context()), *wdir, newKey, updated); err != nil {
-						return fail(fmt.Errorf("update cache metadata: %w", err))
+						return fail(cmdutil.CacheError(err))
 					}
 					// Advance the local current watermark so pull can detect a
 					// concurrent server edit instead of silently overwriting it.
 					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
-						return fail(fmt.Errorf("refresh cache metadata: %w", err))
+						return fail(cmdutil.CacheError(err))
 					}
 				}
 			}
 			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update connector", "update", ref)
+				return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), *compact, "update connector", "update", newKey, "connector", updated.GetId())
 			}
-			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", ref, field, value)
+			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", newKey, field, value)
 			return nil
 		},
 	}
@@ -356,18 +360,18 @@ func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *work
 		return nil
 	}
 	if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
-		return fmt.Errorf("update YAML cache: %w", err)
+		return cmdutil.CacheError(err)
 	}
 	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
-		return fmt.Errorf("update cache metadata: %w", err)
+		return cmdutil.CacheError(err)
 	}
 
 	if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-		return fmt.Errorf("refresh cache metadata: %w", err)
+		return cmdutil.CacheError(err)
 	}
 	if viewID != 0 {
 		if err := workspace.TouchCurrentViewMetadata(sess.Wdir, ref); err != nil {
-			return fmt.Errorf("refresh view metadata: %w", err)
+			return cmdutil.CacheError(err)
 		}
 	}
 	return nil

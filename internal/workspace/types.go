@@ -59,6 +59,13 @@ type ViewPlacement struct {
 }
 
 func (p *ViewPlacement) UnmarshalYAML(node *yaml.Node) error {
+	for i := 0; node.Kind == yaml.MappingNode && i+1 < len(node.Content); i += 2 {
+		switch key := node.Content[i].Value; key {
+		case "parent", "position_x", "position_y", "visibility_delta":
+		default:
+			return fmt.Errorf("unknown placement field %q; use parent, position_x, position_y, or visibility_delta", key)
+		}
+	}
 	var raw struct {
 		ParentRef       string   `yaml:"parent"`
 		PositionX       *float64 `yaml:"position_x"`
