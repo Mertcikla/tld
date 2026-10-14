@@ -23,26 +23,28 @@ func TestPostgresIntegerIDUpgradePreservesSettingsAndDiagramOwnership(t *testing
 	}
 	admin := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	t.Cleanup(func() { _ = admin.Close() })
-	for _, org := range []uuid.UUID{uuid.Nil, uuid.New()} {
-		t.Run(org.String(), func(t *testing.T) {
-			ctx := context.Background()
-			schema := "integer_ids_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-			if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if _, err := admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
-					t.Error(err)
+	for _, cutoff := range []string{"20261014000100", "20261014000200"} {
+		for _, org := range []uuid.UUID{uuid.Nil, uuid.New()} {
+			t.Run(cutoff+"/"+org.String(), func(t *testing.T) {
+				ctx := context.Background()
+				schema := "integer_ids_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+				if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+					t.Fatal(err)
 				}
+				t.Cleanup(func() {
+					if _, err := admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
+						t.Error(err)
+					}
+				})
+				db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+				db.SetMaxOpenConns(1)
+				b := bun.NewDB(db, pgdialect.New())
+				t.Cleanup(func() { _ = b.Close() })
+				if _, err := db.ExecContext(ctx, `SET search_path TO "`+schema+`", public`); err != nil {
+					t.Fatal(err)
+				}
+				testIndexFormatUpgrade(t, db, b, dbrepo.DialectPostgres, "migrations/postgres", org, cutoff)
 			})
-			db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-			db.SetMaxOpenConns(1)
-			b := bun.NewDB(db, pgdialect.New())
-			t.Cleanup(func() { _ = b.Close() })
-			if _, err := db.ExecContext(ctx, `SET search_path TO "`+schema+`", public`); err != nil {
-				t.Fatal(err)
-			}
-			testIntegerIDUpgrade(t, db, b, dbrepo.DialectPostgres, "migrations/postgres", org)
-		})
+		}
 	}
 }

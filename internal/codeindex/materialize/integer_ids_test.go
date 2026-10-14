@@ -28,21 +28,23 @@ import (
 )
 
 func TestIntegerIDUpgradePreservesSettingsAndDiagramOwnership(t *testing.T) {
-	for _, org := range []uuid.UUID{uuid.Nil, uuid.New()} {
-		t.Run(org.String(), func(t *testing.T) {
-			db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "upgrade.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			db.SetMaxOpenConns(1)
-			b := bun.NewDB(db, sqlitedialect.New())
-			t.Cleanup(func() { _ = b.Close() })
-			testIntegerIDUpgrade(t, db, b, dbrepo.DialectSQLite, "migrations", org)
-		})
+	for _, cutoff := range []string{"20261014000100", "20261014000200"} {
+		for _, org := range []uuid.UUID{uuid.Nil, uuid.New()} {
+			t.Run(cutoff+"/"+org.String(), func(t *testing.T) {
+				db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "upgrade.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				db.SetMaxOpenConns(1)
+				b := bun.NewDB(db, sqlitedialect.New())
+				t.Cleanup(func() { _ = b.Close() })
+				testIndexFormatUpgrade(t, db, b, dbrepo.DialectSQLite, "migrations", org, cutoff)
+			})
+		}
 	}
 }
 
-func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Dialect, migrationsDir string, org uuid.UUID) {
+func testIndexFormatUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Dialect, migrationsDir string, org uuid.UUID, cutoff string) {
 	t.Helper()
 	ctx := app.WithTenantOrgID(context.Background(), org)
 	history := migrate.NewMigrator(b, migrate.NewMigrations(), migrate.WithUpsert(true))
@@ -54,7 +56,7 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") || entry.Name() >= "20261014000100" {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") || entry.Name() >= cutoff {
 			continue
 		}
 		raw, err := assets.FS.ReadFile(migrationsDir + "/" + entry.Name())
@@ -73,6 +75,10 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 	idx := cstore.NewStore(db, b, dialect)
 	root := t.TempDir()
 	oldID := graph.RepositoryID(root)
+	oldSnapshot := "old-snapshot"
+	if cutoff == "20261014000200" {
+		oldID, oldSnapshot = "1", "2"
+	}
 	if err := idx.EnsureRepositoryIdentity(ctx, oldID, root, "https://github.com/owner/repo", "github.com/owner/repo", true); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +97,7 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 			t.Fatal(err)
 		}
 	}
-	input := GroupMapInput{RepositoryID: oldID, RepositoryName: "saved-repository", RepositoryRoot: root, SnapshotID: "old-snapshot", Files: files,
+	input := GroupMapInput{RepositoryID: oldID, RepositoryName: "saved-repository", RepositoryRoot: root, SnapshotID: oldSnapshot, Files: files,
 		Groups: []*community.Group{{Key: "alpha", Name: "alpha", Files: 2, Members: []int{0, 1}}, {Key: "beta", Name: "beta", Files: 2, Members: []int{2, 3}}},
 		Edges:  []MapEdge{{FromFactID: files[0].ID, ToFactID: files[2].ID, Weight: 1, Kind: "calls"}}}
 	opts := MapOptions{GroupLayers: true, AnnotateTags: true}
@@ -119,14 +125,21 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 	if _, err := ws.UpdateView(ctx, groupView, &editedView, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.NewRaw(`INSERT INTO codeindex_snapshots(id,repository_id,org_id) VALUES (?,?,?)`, "old-snapshot", oldID, org.String()).Exec(ctx); err != nil {
+	if _, err := b.NewRaw(`INSERT INTO codeindex_snapshots(id,repository_id,org_id) VALUES (?,?,?)`, oldSnapshot, oldID, org.String()).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := b.NewRaw(`INSERT INTO codeindex_blobs(hash,language,syntax_cache,org_id) VALUES ('old-cache','go','obsolete IDs',?)`, org.String()).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := b.NewRaw(`INSERT INTO codeindex_edges(id,repository_id,snapshot_id,logical_key,anchor_json,evidence_json,org_id)
+		VALUES (?,?,?,?,?,?,?)`, "3", oldID, oldSnapshot, "edge|legacy", `{"path":"a.go"}`, `[{"producer":"scip"}]`, org.String()).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.NewRaw(`INSERT INTO codeindex_snapshot_edges(snapshot_id,edge_id,org_id) VALUES (?,?,?)`, oldSnapshot, "3", org.String()).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if dialect == dbrepo.DialectSQLite {
-		if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_integer_ids BEFORE INSERT ON bun_migrations WHEN NEW.name='20261014000100' BEGIN SELECT RAISE(ABORT,'injected history failure'); END`); err != nil {
+		if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_integer_ids BEFORE INSERT ON bun_migrations WHEN NEW.name='`+cutoff+`' BEGIN SELECT RAISE(ABORT,'injected history failure'); END`); err != nil {
 			t.Fatal(err)
 		}
 		if err := dbrepo.ApplyEmbeddedMigrations(ctx, b, assets.FS, migrationsDir); err == nil {
@@ -150,6 +163,14 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
 		t.Fatal(err)
 	}
+	if cutoff == "20261014000200" && id != oldID {
+		t.Fatalf("edge format migration changed repository ID: %s -> %s", oldID, id)
+	}
+	var remoteURL string
+	var managed bool
+	if err := b.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id=? AND org_id=?`, id, org.String()).Scan(ctx, &remoteURL, &managed); err != nil || remoteURL != "https://github.com/owner/repo" || !managed {
+		t.Fatalf("repository configuration lost: %s %v %v", remoteURL, managed, err)
+	}
 	namespace, err := idx.MappingNamespace(ctx, id)
 	if err != nil || namespace != oldID {
 		t.Fatalf("namespace=%q err=%v", namespace, err)
@@ -166,6 +187,12 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 	}
 	if latest, err := idx.Latest(ctx, id); err != nil || latest != "" {
 		t.Fatalf("latest=%q err=%v", latest, err)
+	}
+	for _, mapping := range ownership {
+		saved, found, err := idx.MappingByLogicalKey(ctx, mapping.LogicalKey)
+		if err != nil || !found || saved.SnapshotID != "" || saved.ResourceID != mapping.ResourceID {
+			t.Fatalf("ownership or stale snapshot reference after migration: %v %v", saved, err)
+		}
 	}
 	linked, err := ws.ElementByID(ctx, fileID)
 	if err != nil || linked.RepositoryID == nil || *linked.RepositoryID != id {
@@ -209,7 +236,7 @@ func testIntegerIDUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.Di
 		t.Fatalf("user view lost: %v %v", view, err)
 	}
 	if dialect == dbrepo.DialectPostgres {
-		if _, err := db.ExecContext(ctx, `DELETE FROM bun_migrations WHERE name='20261014000100'`); err != nil {
+		if _, err := b.NewRaw(`DELETE FROM bun_migrations WHERE name=?`, cutoff).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

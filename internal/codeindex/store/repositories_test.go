@@ -44,7 +44,7 @@ func TestDeleteRepositoryAfterDeletingOriginSnapshot(t *testing.T) {
 	defer func() { _ = handle.Close() }()
 	g := graph.NewGraph("repo", "s1")
 	g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "s1", BodyHash: "retained-body-hash"}
-	g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "s1", FromFactId: "fact"}
+	g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "s1", FromFactId: "fact", LogicalKey: graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "fact", "target")}
 	for _, snap := range []*pb.Snapshot{{Id: "s1", RepositoryId: "repo", CreatedUnix: 1}, {Id: "s2", RepositoryId: "repo", CreatedUnix: 2}} {
 		if err := st.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)

@@ -375,16 +375,22 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		if g.Reused[e.Id] {
 			continue
 		}
-		anchor, _ := marshalJSON(e.Anchor)
-		evidence, _ := marshalJSON(e.Evidence)
+		key, err := graph.DecodeEdgeLogicalKey(e.LogicalKey)
+		if err != nil {
+			return fmt.Errorf("edge %s: %w", e.Id, err)
+		}
+		details, err := marshalEdgeDetails(e.Anchor, e.Evidence)
+		if err != nil {
+			return fmt.Errorf("encode edge %s: %w", e.Id, err)
+		}
 		rows = append(rows, []any{
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), storedID(e.FromFactId), storedID(e.ToFactId), e.TargetSymbolKey,
-			e.LogicalKey, e.Weight, anchor, evidence, org,
+			key, e.Weight, details, org,
 		})
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_edges
-		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json, org_id) VALUES `,
-		` ON CONFLICT(org_id, id) DO NOTHING`, 12, rows); err != nil {
+		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, details, org_id) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 11, rows); err != nil {
 		return fmt.Errorf("insert edges: %w", err)
 	}
 	return nil
@@ -721,8 +727,12 @@ func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKi
 		args = append(args, int(kind))
 	}
 	if logicalKey != "" {
+		key, err := graph.DecodeEdgeLogicalKey(logicalKey)
+		if err != nil {
+			return nil, err
+		}
 		query += ` AND e.logical_key = ?`
-		args = append(args, logicalKey)
+		args = append(args, key)
 	}
 	if after != "" {
 		query += ` AND e.id > ?`
@@ -742,8 +752,12 @@ func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKi
 
 // EdgeVersions returns every snapshot's observation of a logical edge.
 func (s *Store) EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.EdgeFact, error) {
+	key, err := graph.DecodeEdgeLogicalKey(logicalKey)
+	if err != nil {
+		return nil, err
+	}
 	where, scopeArgs := scope(ctx).clause("org_id")
-	return s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE logical_key = ?`+where+` ORDER BY snapshot_id DESC`, append([]any{logicalKey}, scopeArgs...)...)
+	return s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE logical_key = ?`+where+` ORDER BY snapshot_id DESC`, append([]any{key}, scopeArgs...)...)
 }
 
 func escapeLike(s string) string {

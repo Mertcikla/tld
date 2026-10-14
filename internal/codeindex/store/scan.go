@@ -2,16 +2,18 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 )
 
 const (
 	factColumns = `id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json`
-	edgeColumns = `id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json`
+	edgeColumns = `id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, details`
 
 	factColumnsQualified = `f.id, f.repository_id, f.snapshot_id, f.language, f.kind, f.name, f.qualified_name, f.symbol_key, f.signature, f.documentation, f.body_hash, f.parent_fact_id, f.logical_key, f.path, f.anchor_json, f.evidence_json, f.imports_json`
-	edgeColumnsQualified = `e.id, e.repository_id, e.snapshot_id, e.kind, e.from_fact_id, e.to_fact_id, e.target_symbol_key, e.logical_key, e.weight, e.anchor_json, e.evidence_json`
+	edgeColumnsQualified = `e.id, e.repository_id, e.snapshot_id, e.kind, e.from_fact_id, e.to_fact_id, e.target_symbol_key, e.logical_key, e.weight, e.details`
 )
 
 func (s *Store) scanFacts(ctx context.Context, query string, args ...any) ([]*pb.CodeFact, error) {
@@ -55,12 +57,12 @@ func (s *Store) scanEdges(ctx context.Context, query string, args ...any) ([]*pb
 	out := []*pb.EdgeFact{}
 	for rows.Next() {
 		var (
-			e                pb.EdgeFact
-			kind             int
-			anchor, evidence string
+			e            pb.EdgeFact
+			kind         int
+			key, details []byte
 		)
 		if err := rows.Scan(&e.Id, &e.RepositoryId, &e.SnapshotId, &kind, &e.FromFactId, &e.ToFactId,
-			&e.TargetSymbolKey, &e.LogicalKey, &e.Weight, &anchor, &evidence); err != nil {
+			&e.TargetSymbolKey, &key, &e.Weight, &details); err != nil {
 			return nil, err
 		}
 		e.Kind = pb.EdgeKind(kind)
@@ -70,8 +72,15 @@ func (s *Store) scanEdges(ctx context.Context, query string, args ...any) ([]*pb
 		if e.ToFactId == "0" {
 			e.ToFactId = ""
 		}
-		e.Anchor = unmarshalAnchor(anchor)
-		e.Evidence = unmarshalEvidence(evidence)
+		if len(key) != 32 {
+			return nil, fmt.Errorf("edge %s: invalid stored logical key length", e.Id)
+		}
+		e.LogicalKey = hex.EncodeToString(key)
+		var err error
+		e.Anchor, e.Evidence, err = unmarshalEdgeDetails(details)
+		if err != nil {
+			return nil, fmt.Errorf("decode edge %s: %w", e.Id, err)
+		}
 		out = append(out, &e)
 	}
 	return out, rows.Err()
