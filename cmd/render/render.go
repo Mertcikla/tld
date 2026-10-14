@@ -143,11 +143,24 @@ func renderMermaid(ws *workspace.Workspace, view string) (string, error) {
 		if !elementSet[c.Source] || !elementSet[c.Target] {
 			continue
 		}
+		from, to := mermaidID(c.Source), mermaidID(c.Target)
+		arrow := "-->"
+		switch strings.ToLower(strings.TrimSpace(c.Direction)) {
+		case "", "forward":
+		case "backward":
+			from, to = to, from
+		case "both", "bidirectional":
+			arrow = "<-->"
+		case "none":
+			arrow = "---"
+		default:
+			return "", fmt.Errorf("connector %q has unsupported direction %q", key, c.Direction)
+		}
 		label := ""
 		if strings.TrimSpace(c.Label) != "" {
 			label = fmt.Sprintf("|%s|", escapeMermaid(c.Label))
 		}
-		_, _ = fmt.Fprintf(&b, "  %s -->%s %s\n", mermaidID(c.Source), label, mermaidID(c.Target))
+		_, _ = fmt.Fprintf(&b, "  %s %s%s %s\n", from, arrow, label, to)
 	}
 
 	return b.String(), nil
