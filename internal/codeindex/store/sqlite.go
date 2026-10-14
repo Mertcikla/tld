@@ -12,6 +12,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/symbols"
 	"github.com/uptrace/bun"
 )
 
@@ -93,6 +94,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		}
 		assignGraphIDs(snap, g, first)
 	}
+	versions := symbols.Versions(g)
 	now := time.Now().UTC().Format(time.RFC3339)
 	repoID := snap.RepositoryId
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -110,7 +112,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		}
 		// The repository upsert serializes publications of this repository before
 		// selecting existing rows, including concurrent PostgreSQL publishers.
-		factHashes, err := deduplicateFacts(ctx, tx, g)
+		factHashes, err := deduplicateFacts(ctx, tx, g, versions)
 		if err != nil {
 			return err
 		}
@@ -124,7 +126,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
 		}
-		if err := saveSnapshotRow(ctx, tx, snap); err != nil {
+		if err := saveSnapshotRow(ctx, tx, snap, versions); err != nil {
 			return err
 		}
 		if err := saveSources(ctx, tx, snap, g); err != nil {
@@ -164,7 +166,8 @@ func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.
 	return nil
 }
 
-func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
+func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, versions map[string]string) error {
+	symbolVersions, _ := marshalJSON(versions)
 	projects, _ := marshalJSON(snap.Projects)
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
@@ -173,8 +176,8 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 		return err
 	}
 	res, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id, manifest_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id, manifest_json, symbol_versions_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
@@ -185,9 +188,9 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 			warnings_json = excluded.warnings_json,
 			tool_versions_json = excluded.tool_versions_json,
         provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
-        commit_message = excluded.commit_message, manifest_json = excluded.manifest_json`,
+        commit_message = excluded.commit_message, manifest_json = excluded.manifest_json, symbol_versions_json = excluded.symbol_versions_json`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value(), manifest).Exec(ctx)
+		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value(), manifest, symbolVersions).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -365,7 +368,7 @@ func existingArtifactKeys(ctx context.Context, tx bun.Tx, org any, keys [][2]str
 }
 
 // factValues is shared by persistence and fingerprinting so reuse compares
-// precisely the fields a reader receives, rather than extraction-only metadata.
+// precisely the payload fields; fact fingerprints normalize SCIP versions first.
 func factValues(f *pb.CodeFact) []any {
 	anchor, _ := marshalJSON(f.Anchor)
 	evidence, _ := marshalJSON(f.Evidence)

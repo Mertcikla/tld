@@ -12,9 +12,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// Fingerprints cover exactly the persisted payload, including source positions,
-// evidence and physical parent IDs. Only repository/snapshot/entity IDs are
-// excluded. A match therefore requires no transformation when reading a fact.
+// Fingerprints cover persisted payload fields, including source positions,
+// evidence and physical parent IDs. Facts additionally normalize package versions
+// belonging to this snapshot; raw symbol strings are restored on snapshot reads.
 func rowFingerprint(values []any) (string, error) {
 	raw, err := json.Marshal(values)
 	if err != nil {
@@ -102,7 +102,7 @@ func remapEntities(g *graph.Graph, remap map[string]string) {
 	rewriteGraphCaches(g, remap)
 }
 
-func deduplicateFacts(ctx context.Context, tx bun.Tx, g *graph.Graph) (map[string]string, error) {
+func deduplicateFacts(ctx context.Context, tx bun.Tx, g *graph.Graph, versions map[string]string) (map[string]string, error) {
 	pending := make(map[string]*pb.CodeFact, len(g.Facts))
 	for id, f := range g.Facts {
 		pending[id] = f
@@ -119,7 +119,7 @@ func deduplicateFacts(ctx context.Context, tx bun.Tx, g *graph.Graph) (map[strin
 			if parent, ok := remap[f.ParentFactId]; ok {
 				f.ParentFactId = parent
 			}
-			hash, err := rowFingerprint(factValues(f))
+			hash, err := factFingerprint(f, versions)
 			if err != nil {
 				return nil, err
 			}

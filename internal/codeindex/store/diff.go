@@ -9,6 +9,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
+	"google.golang.org/protobuf/proto"
 )
 
 // LoadGraph reconstructs a published snapshot's code graph so an incremental
@@ -300,11 +301,21 @@ func (s *Store) diffFactsByMembership(ctx context.Context, fromID, toID string) 
 	var fromFacts, toFacts []*pb.CodeFact
 	for id, fact := range facts {
 		if _, ok := fromKey[id]; ok {
-			fromFacts = append(fromFacts, fact)
+			copy := proto.Clone(fact).(*pb.CodeFact)
+			copy.SnapshotId = fromID
+			fromFacts = append(fromFacts, copy)
 		}
 		if _, ok := toKey[id]; ok {
-			toFacts = append(toFacts, fact)
+			copy := proto.Clone(fact).(*pb.CodeFact)
+			copy.SnapshotId = toID
+			toFacts = append(toFacts, copy)
 		}
+	}
+	if err := s.hydrateFactSymbolVersions(ctx, fromFacts); err != nil {
+		return nil, nil, err
+	}
+	if err := s.hydrateFactSymbolVersions(ctx, toFacts); err != nil {
+		return nil, nil, err
 	}
 	return fromFacts, toFacts, nil
 }

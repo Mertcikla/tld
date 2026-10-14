@@ -15,3 +15,7 @@ func TestPostgresExactEdgeReusePreservesRepeatedObservations(t *testing.T) {
 func TestPostgresRowReuseUpgradePreservesSnapshots(t *testing.T) {
 	testRowReuseUpgradePreservesSnapshots(t, openPostgresTestStore(t), "migrations/postgres")
 }
+
+func TestPostgresPackageVersionReuse(t *testing.T) {
+	testPackageVersionReuse(t, openPostgresTestStore(t))
+}

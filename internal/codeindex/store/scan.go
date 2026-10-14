@@ -45,7 +45,16 @@ func (s *Store) scanFacts(ctx context.Context, query string, args ...any) ([]*pb
 		f.Imports = unmarshalStrings(imports)
 		out = append(out, &f)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.hydrateFactSymbolVersions(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) scanEdges(ctx context.Context, query string, args ...any) ([]*pb.EdgeFact, error) {

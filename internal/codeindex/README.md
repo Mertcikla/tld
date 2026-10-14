@@ -1,7 +1,7 @@
 
 | Package |  What it is | codeindex module dep |
 | --- |  --- | --- |
-| `store` |  **The DB implementation** — bun/SQLite/Postgres persistence for snapshots, facts, edges, mappings, impacts, maps, watch leases | `graph` (assert vs `codeindex/store`) |
+| `store` |  **The DB implementation** — bun/SQLite/Postgres persistence for snapshots, facts, edges, mappings, impacts, maps, watch leases | `graph`, `symbols` (assert vs `codeindex/store`) |
 | `materialize` |  Projects the fact graph into workspace views/elements/connectors | `graph`, `community` |
 | `impact` |  Change-impact diagrams (fact-delta scenes, placement, hierarchy) | `graph`, `community`, `config`, `indexer`, `ingest` |
 | `mapconfig` | Map grouping options + per-repository overrides | `graph`, `community`, `materialize` |
@@ -42,15 +42,23 @@ SQLite reuses freed pages but does not automatically shrink its database file.
 After rebuilding, stop database users and run a separate maintenance `VACUUM`
 to reclaim disk space. Startup migrations never run `VACUUM`.
 
-Publication shares exact fact and edge rows within a repository. A SHA-256
-fingerprint covers every stored payload field, including fact locations,
-evidence, symbol versions and parent IDs. An equal row is reused through the
+Publication shares fact and edge rows within a repository. A SHA-256
+fingerprint covers stored payload fields, including fact locations,
+evidence and parent IDs. For facts, the defining package's SCIP version is
+excluded from symbol metadata before hashing; each snapshot keeps its package
+versions in `symbol_versions_json` and restores them on reads. Dependency and
+ambiguous package versions remain identifying. An equal row is reused through the
 existing `codeindex_snapshot_facts` or `codeindex_snapshot_edges` membership
 table. Repeated equal observations remain separate rows to preserve counts.
-The migration adds fingerprint columns and indexes; it preserves existing rows,
-which remain readable and acquire no fingerprints retroactively.
+The additive migrations preserve existing rows and add fingerprint columns,
+indexes and the snapshot version map. Old rows remain readable and acquire no
+fingerprints retroactively.
+
+SCIP parsing, normalization and formatting live in `codeindex/symbols`. The
+database store persists the opaque version map and calls the module's fact
+helpers; it does not import the SCIP library directly.
 
 Sources and extraction artifacts keep their existing whole-payload sharing.
 Memberships and inventories are still stored per snapshot, and changes to
-positions or versioned symbols require new fact rows. Storage growth therefore
+positions require new fact rows. Storage growth therefore
 includes these costs rather than being strictly proportional to edited bytes.

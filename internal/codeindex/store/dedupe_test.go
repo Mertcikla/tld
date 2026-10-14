@@ -189,7 +189,10 @@ func testRowReuseUpgradePreservesSnapshots(t *testing.T, st *Store, migrations s
 			}
 		}
 	}
-	if _, err := st.bun.ExecContext(ctx, `DELETE FROM bun_migrations WHERE name='20261014000500'`); err != nil {
+	if _, err := st.bun.ExecContext(ctx, `ALTER TABLE codeindex_snapshots DROP COLUMN symbol_versions_json`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.bun.ExecContext(ctx, `DELETE FROM bun_migrations WHERE name IN ('20261014000500','20261015000100')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := dbrepo.ApplyEmbeddedMigrations(ctx, st.bun, assets.FS, migrations); err != nil {
