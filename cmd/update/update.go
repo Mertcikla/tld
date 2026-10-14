@@ -41,7 +41,14 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "element <ref> <field> <value>",
 		Short: "Update an element field",
-		Args:  cobra.ExactArgs(3),
+		Long: `Update an element field.
+
+Use the name field to change a display name in either mode. The ref field changes
+a workspace-local alias and requires a YAML workspace (run 'tld init' first, or
+pass --yaml). Ref changes update placements, connectors, and workspace metadata;
+the database element ID and display name stay the same.`,
+		Example: "  tld update element api name \"Public API\"\n  tld update element api ref service-api",
+		Args:    cobra.ExactArgs(3),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
@@ -67,8 +74,26 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
+			if field == "ref" {
+				if err := cmdutil.RenameWorkspaceElement(cmd, *wdir, ref, value, dryRun); err != nil {
+					return fail(err)
+				}
+				if cmdutil.WantsJSON(*format) {
+					action := "update"
+					if dryRun {
+						action = "dry-run"
+					}
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", action, value)
+				}
+				if dryRun {
+					term.Successf(cmd.OutOrStdout(), "dry-run: update %q: ref=%q", ref, value)
+				} else {
+					term.Successf(cmd.OutOrStdout(), "updated %q: ref=%q", ref, value)
+				}
+				return nil
+			}
 			if !serverSyncedElementFields(field) {
-				return fail(unsupportedElementFieldError(ref, field))
+				return fail(unsupportedElementFieldError(field))
 			}
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
 			if err != nil {
@@ -274,19 +299,16 @@ func resolveTagValue(current []string, value, mode string) string {
 	}
 }
 
-// serverSyncedElementFields reports whether `update element` accepts the field.
-// Every accepted field mirrors to the target store.
+// serverSyncedElementFields excludes ref, which is handled as a YAML-only alias.
 func serverSyncedElementFields(field string) bool {
-	return slices.Contains(completion.ElementFields(), field)
+	return field != "ref" && slices.Contains(completion.ElementFields(), field)
 }
 
 // unsupportedElementFieldError explains why a field is not accepted. Fields
 // without a database column (owner, symbol, has_view, density_level) are only
-// editable directly in workspace YAML, and ref renames go through `tld rename`.
-func unsupportedElementFieldError(ref, field string) error {
+// editable directly in workspace YAML.
+func unsupportedElementFieldError(field string) error {
 	switch field {
-	case "ref":
-		return fmt.Errorf(`"ref" cannot be updated in place; use 'tld rename --from %s --to <new-ref>'`, ref)
 	case "owner", "symbol", "has_view", "density_level":
 		return fmt.Errorf("field %q is not supported by 'update element'; edit the workspace YAML directly", field)
 	default:

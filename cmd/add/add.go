@@ -40,7 +40,12 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add or update an element",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add or update an element.
+
+Custom --ref values are workspace-local aliases and require a YAML workspace
+(run 'tld init' first, or pass --yaml). Database mode derives convenience refs
+from element names; those refs can change when the names change.`,
+		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
@@ -48,6 +53,13 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 			return completion.ElementRefsWithNames(wdir)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("ref") && !cmdutil.WorkspaceConfigured(cmd, *wdir) {
+				err := cmdutil.WithHint(fmt.Errorf("--ref requires a YAML workspace"), "Run 'tld init' first or pass --yaml to use a workspace-local ref; omit --ref to work directly on the database.")
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "add", err)
+				}
+				return err
+			}
 			name := args[0]
 			if strings.TrimSpace(kind) == "" {
 				kind = ""
@@ -175,7 +187,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
 	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal canvas position")
 	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
-	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
+	c.Flags().StringVar(&ref, "ref", "", "workspace-local ref (YAML mode only; default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&viewLabel, "view-label", "", "label for the diagram created when this element becomes a parent")

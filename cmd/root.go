@@ -71,7 +71,13 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 Commands work on the database directly: the local database by default, or the
 configured cloud workspace when credentials are present. Pass --yaml (or run in
 a directory that holds workspace YAML files) to read and write
-elements.yaml/connectors.yaml instead.`,
+elements.yaml/connectors.yaml instead.
+
+Database IDs identify persisted elements. YAML refs are workspace-local aliases;
+database-mode refs are derived from names and can change when names change.
+Custom 'add --ref' values and 'update element <ref> ref <new-ref>' require a YAML
+workspace. To change a display name in either mode, use
+'tld update element <ref-or-id> name <new-name>'.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
