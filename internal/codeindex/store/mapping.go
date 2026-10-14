@@ -46,7 +46,7 @@ func (s *Store) SaveMappings(ctx context.Context, mappings []ResourceMapping) er
 		if kind == "" {
 			kind = MappingElement
 		}
-		rows = append(rows, []any{m.LogicalKey, string(kind), m.ResourceID, m.RepositoryID, m.SnapshotID, now, org})
+		rows = append(rows, []any{m.LogicalKey, string(kind), m.ResourceID, storedID(m.RepositoryID), storedID(m.SnapshotID), now, org})
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return insertRows(ctx, tx, `INSERT INTO codeindex_elements (logical_key, resource_type, resource_id, repository_id, snapshot_id, updated_at, org_id) VALUES `,
@@ -63,7 +63,7 @@ func (s *Store) SaveMappings(ctx context.Context, mappings []ResourceMapping) er
 func (s *Store) MappingByLogicalKey(ctx context.Context, logicalKey string) (ResourceMapping, bool, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var m ResourceMapping
-	err := s.bun.NewRaw(`SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id
+	err := s.bun.NewRaw(`SELECT logical_key, resource_type, resource_id, CASE WHEN CAST(repository_id AS TEXT)='0' THEN '' ELSE CAST(repository_id AS TEXT) END, CASE WHEN CAST(snapshot_id AS TEXT)='0' THEN '' ELSE CAST(snapshot_id AS TEXT) END
 		FROM codeindex_elements WHERE logical_key = ?`+where, append([]any{logicalKey}, scopeArgs...)...).Scan(ctx, &m.LogicalKey, &m.Kind, &m.ResourceID, &m.RepositoryID, &m.SnapshotID)
 	if err == sql.ErrNoRows {
 		return ResourceMapping{}, false, nil
@@ -79,7 +79,7 @@ func (s *Store) MappingByLogicalKey(ctx context.Context, logicalKey string) (Res
 func (s *Store) MappingByResource(ctx context.Context, kind MappingKind, resourceID int64) (ResourceMapping, bool, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var m ResourceMapping
-	err := s.bun.NewRaw(`SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id
+	err := s.bun.NewRaw(`SELECT logical_key, resource_type, resource_id, CASE WHEN CAST(repository_id AS TEXT)='0' THEN '' ELSE CAST(repository_id AS TEXT) END, CASE WHEN CAST(snapshot_id AS TEXT)='0' THEN '' ELSE CAST(snapshot_id AS TEXT) END
 		FROM codeindex_elements WHERE resource_type = ? AND resource_id = ?`+where, append([]any{string(kind), resourceID}, scopeArgs...)...).
 		Scan(ctx, &m.LogicalKey, &m.Kind, &m.ResourceID, &m.RepositoryID, &m.SnapshotID)
 	if err == sql.ErrNoRows {
@@ -94,7 +94,7 @@ func (s *Store) MappingByResource(ctx context.Context, kind MappingKind, resourc
 // MappingsBySnapshot lists mappings recorded for a snapshot.
 func (s *Store) MappingsBySnapshot(ctx context.Context, snapshotID string) ([]ResourceMapping, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id
+	rows, err := s.bun.QueryContext(ctx, `SELECT logical_key, resource_type, resource_id, CASE WHEN CAST(repository_id AS TEXT)='0' THEN '' ELSE CAST(repository_id AS TEXT) END, CASE WHEN CAST(snapshot_id AS TEXT)='0' THEN '' ELSE CAST(snapshot_id AS TEXT) END
 		FROM codeindex_elements WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (s *Store) MappingsBySnapshot(ctx context.Context, snapshotID string) ([]Re
 // MappingsByRepository lists mappings recorded for a repository.
 func (s *Store) MappingsByRepository(ctx context.Context, repositoryID string) ([]ResourceMapping, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id
+	rows, err := s.bun.QueryContext(ctx, `SELECT logical_key, resource_type, resource_id, CASE WHEN CAST(repository_id AS TEXT)='0' THEN '' ELSE CAST(repository_id AS TEXT) END, CASE WHEN CAST(snapshot_id AS TEXT)='0' THEN '' ELSE CAST(snapshot_id AS TEXT) END
 		FROM codeindex_elements WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err

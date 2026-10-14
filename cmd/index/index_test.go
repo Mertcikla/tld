@@ -110,7 +110,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if len(stages) < 3 || stages[0] != "waiting-indexer" || stages[len(stages)-1] != "live-map" {
 		t.Fatalf("watch stages: %v", stages)
 	}
-	_, release, err := idx.AcquireLease(ctx, graph.RepositoryID(dir))
+	_, release, err := idx.AcquireLease(ctx, eng.repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if _, _, _, _, err = eng.scanWatched(ctx, dir, state, initial); err != nil {
 		t.Fatal(err)
 	}
-	live, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")
+	live, err := idx.Impact(ctx, eng.repoID, "live")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 		t.Fatalf("impact: %+v", live)
 	}
 	comparison, err := (impact.Service{Workspace: sq, Index: idx}).Compare(ctx, impact.CompareRequest{
-		RepositoryID: graph.RepositoryID(dir),
+		RepositoryID: eng.repoID,
 		Base:         &pb.Revision{SnapshotId: live.Diff.FromSnapshotId},
 		Head:         &pb.Revision{SnapshotId: live.Diff.ToSnapshotId},
 	})
@@ -176,7 +176,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if _, _, _, _, err = eng.scanWatched(ctx, dir, clean, state.Revision); err != nil {
 		t.Fatal(err)
 	}
-	empty, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")
+	empty, err := idx.Impact(ctx, eng.repoID, "live")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,8 @@ func TestWatchConvergesUnderContinuousEdits(t *testing.T) {
 	deadline := time.Now().Add(60 * time.Second)
 	converged := false
 	for time.Now().Before(deadline) {
-		latest, latestErr := idx.Latest(context.Background(), repoID)
+		repositoryID, _, _ := idx.RepositoryByRoot(context.Background(), dir)
+		latest, latestErr := idx.Latest(context.Background(), repositoryID)
 		if latestErr == nil && latest != "" {
 			if snap, snapErr := idx.Snapshot(context.Background(), latest); snapErr == nil {
 				for _, src := range snap.Sources {

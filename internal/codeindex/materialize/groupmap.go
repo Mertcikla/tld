@@ -17,9 +17,11 @@ import (
 
 // GroupMapInput is a dependency-graph grouping to materialize into a workspace.
 type GroupMapInput struct {
-	RepositoryID   string
-	RepositoryName string
-	RepositoryRoot string
+	RepositoryID string
+	// MappingNamespace preserves ownership keys and tags across ID-format upgrades.
+	MappingNamespace string
+	RepositoryName   string
+	RepositoryRoot   string
 	// RepositoryRemoteURL is the canonical remote of the repository, when known.
 	RepositoryRemoteURL string
 	SnapshotID          string
@@ -51,6 +53,7 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	}
 	base := MapInput{
 		RepositoryID:        input.RepositoryID,
+		MappingNamespace:    input.MappingNamespace,
 		RepositoryName:      input.RepositoryName,
 		RepositoryRoot:      input.RepositoryRoot,
 		RepositoryRemoteURL: input.RepositoryRemoteURL,
@@ -91,8 +94,8 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 			retErr = errors.Join(retErr, fmt.Errorf("save map resource mappings: %w", err))
 		}
 	}()
-	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
-	topKey := mapKeyPrefix + "top|" + input.RepositoryID
+	rootKey := mapKeyPrefix + "view|" + m.repositoryKey()
+	topKey := mapKeyPrefix + "top|" + m.repositoryKey()
 	legacyMapViewID := int64(0)
 	if mapping, ok := byKey[rootKey]; ok && mapping.Kind == cstore.MappingView {
 		legacyMapViewID = mapping.ResourceID
@@ -157,11 +160,11 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 // at least one nested subgroup. The tag is applied to those loose files only,
 // leaving the subgroup nodes outside the background.
 func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64, chain, elementPath []int64) error {
-	elementID, err := m.upsertElement(groupElementKey(m.input.RepositoryID, group.Key), m.groupElement(group))
+	elementID, err := m.upsertElement(groupElementKey(m.repositoryKey(), group.Key), m.groupElement(group))
 	if err != nil {
 		return err
 	}
-	groupViewID, err := m.upsertView(groupViewKey(m.input.RepositoryID, group.Key), group.Name, "Map", &elementID)
+	groupViewID, err := m.upsertView(groupViewKey(m.repositoryKey(), group.Key), group.Name, "Map", &elementID)
 	if err != nil {
 		return err
 	}
@@ -171,10 +174,10 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 	}
 	// Tag loose files only when nested subgroups share the view, so the group
 	// background encloses a proper subset of the view instead of everything.
-	groupTagValue := groupTag(m.input.RepositoryID, group.Key)
+	groupTagValue := groupTag(m.repositoryKey(), group.Key)
 	hasLayer := m.opts.GroupLayers && len(group.Members) >= 2 && len(group.Children) >= 1
 	if hasLayer {
-		if err := m.upsertLayer(groupLayerKey(m.input.RepositoryID, group.Key), groupViewID, group.Name, []string{groupTagValue}); err != nil {
+		if err := m.upsertLayer(groupLayerKey(m.repositoryKey(), group.Key), groupViewID, group.Name, []string{groupTagValue}); err != nil {
 			return err
 		}
 	}
@@ -203,7 +206,7 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 			if hasLayer {
 				input.Tags = unionTags(input.Tags, []string{groupTagValue})
 			}
-			key := fileKey(m.input.RepositoryID, fact.ID)
+			key := fileKey(m.repositoryKey(), fact.ID)
 			_, exists := m.byKey[key]
 			if canBatch && !exists {
 				inputs = append(inputs, input)

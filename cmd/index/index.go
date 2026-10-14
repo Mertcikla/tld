@@ -20,7 +20,6 @@ import (
 	ci "github.com/mertcikla/codeindex/config"
 	"github.com/mertcikla/codeindex/gitstate"
 	cgraph "github.com/mertcikla/codeindex/graph"
-	"github.com/mertcikla/codeindex/identity"
 	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/ingest"
 	"github.com/mertcikla/codeindex/parity"
@@ -211,7 +210,7 @@ func run(cmd *cobra.Command, opts options) error {
 		errOut:  cmd.ErrOrStderr(),
 	}
 	_ = eng.store.BackfillRemoteKeys(ctx)
-	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
+	resolved, err := eng.store.ResolveRepository(ctx, root, remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return err
 	}
@@ -629,6 +628,13 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		for _, report := range onStage {
 			report(stage)
 		}
+	}
+	if e.repoID == "" {
+		resolved, err := e.store.ResolveRepository(ctx, root, "", false, app.TenantOrgIDFromCtx(ctx))
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
+		e.repoID = resolved.ID
 	}
 	repoID := e.resolveRepoID(root)
 	reportStage("waiting-indexer")

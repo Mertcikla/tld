@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"sort"
 	"strings"
 	"time"
@@ -74,12 +75,27 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
 	}
+	if g != nil && temporaryID(snap.Id) {
+		if !numericID(snap.RepositoryId) {
+			resolved, err := s.ResolveRepository(ctx, root, "", false, uuid.Nil)
+			if err != nil {
+				return err
+			}
+			snap.RepositoryId = resolved.ID
+		}
+		normalizeReuse(g, snap.RepositoryId)
+		first, err := s.AllocateIDs(ctx, graphIDCount(g))
+		if err != nil {
+			return err
+		}
+		assignGraphIDs(snap, g, first)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	repoID := snap.RepositoryId
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		res, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at, org_id)
 			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(org_id, id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = '' THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at`,
+			ON CONFLICT(org_id, id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = 0 THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at`,
 			repoID, root, snap.Id, now, now, scope(ctx).value(), advanceLatest).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
@@ -338,7 +354,7 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		}
 		rows = append(rows, []any{
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
-			f.Signature, f.Documentation, f.BodyHash, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org,
+			f.Signature, f.Documentation, f.BodyHash, storedID(f.ParentFactId), f.LogicalKey, path, anchor, evidence, imports, org,
 		})
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_facts
@@ -362,7 +378,7 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		anchor, _ := marshalJSON(e.Anchor)
 		evidence, _ := marshalJSON(e.Evidence)
 		rows = append(rows, []any{
-			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), e.FromFactId, e.ToFactId, e.TargetSymbolKey,
+			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), storedID(e.FromFactId), storedID(e.ToFactId), e.TargetSymbolKey,
 			e.LogicalKey, e.Weight, anchor, evidence, org,
 		})
 	}
@@ -394,6 +410,9 @@ func sortedEdges(g *graph.Graph) []*pb.EdgeFact {
 
 // Snapshot loads a published snapshot and its source manifest.
 func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
+	if temporaryID(id) {
+		return nil, sql.ErrNoRows
+	}
 	var (
 		snap                                pb.Snapshot
 		projects, warnings, tools, manifest string
@@ -561,7 +580,7 @@ func (s *Store) SnapshotRefs(ctx context.Context, repositoryID string) ([]*pb.Sn
 func (s *Store) Latest(ctx context.Context, repositoryID string) (string, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var latest string
-	err := s.bun.NewRaw(`SELECT latest_snapshot_id FROM codeindex_repositories WHERE id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, &latest)
+	err := s.bun.NewRaw(`SELECT CASE WHEN CAST(latest_snapshot_id AS TEXT)='0' THEN '' ELSE CAST(latest_snapshot_id AS TEXT) END FROM codeindex_repositories WHERE id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, &latest)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -592,7 +611,7 @@ func (s *Store) SetSnapshotProvenance(ctx context.Context, id, provenance string
 func (s *Store) Repository(ctx context.Context, id string) (*pb.Repository, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var root, latest string
-	if err := s.bun.NewRaw(`SELECT root, latest_snapshot_id FROM codeindex_repositories WHERE id = ?`+where, append([]any{id}, scopeArgs...)...).Scan(ctx, &root, &latest); err != nil {
+	if err := s.bun.NewRaw(`SELECT root, CASE WHEN CAST(latest_snapshot_id AS TEXT)='0' THEN '' ELSE CAST(latest_snapshot_id AS TEXT) END FROM codeindex_repositories WHERE id = ?`+where, append([]any{id}, scopeArgs...)...).Scan(ctx, &root, &latest); err != nil {
 		return nil, err
 	}
 	return &pb.Repository{Id: id, Root: root, LatestSnapshotId: latest}, nil
@@ -612,6 +631,9 @@ func (s *Store) Source(ctx context.Context, hash string) ([]byte, error) {
 
 // Fact loads a single fact.
 func (s *Store) Fact(ctx context.Context, id string) (*pb.CodeFact, error) {
+	if temporaryID(id) {
+		return nil, sql.ErrNoRows
+	}
 	where, scopeArgs := scope(ctx).clause("org_id")
 	facts, err := s.scanFacts(ctx, `SELECT `+factColumns+` FROM codeindex_facts WHERE id = ?`+where, append([]any{id}, scopeArgs...)...)
 	if err != nil {
@@ -626,6 +648,9 @@ func (s *Store) Fact(ctx context.Context, id string) (*pb.CodeFact, error) {
 // Facts lists facts for a snapshot via membership, optionally filtered by kind
 // and path prefix.
 func (s *Store) Facts(ctx context.Context, snapshotID string, kind pb.FactKind, pathPrefix, after string, limit int) ([]*pb.CodeFact, error) {
+	if temporaryID(snapshotID) {
+		return []*pb.CodeFact{}, nil
+	}
 	query := `SELECT ` + factColumnsQualified + ` FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id AND m.org_id = f.org_id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if where, scopeArgs := scope(ctx).clause("f.org_id"); where != "" {
@@ -665,6 +690,9 @@ func (s *Store) FactVersions(ctx context.Context, logicalKey string) ([]*pb.Code
 
 // EdgeFact loads a single edge.
 func (s *Store) EdgeFact(ctx context.Context, id string) (*pb.EdgeFact, error) {
+	if temporaryID(id) {
+		return nil, sql.ErrNoRows
+	}
 	where, scopeArgs := scope(ctx).clause("org_id")
 	edges, err := s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE id = ?`+where, append([]any{id}, scopeArgs...)...)
 	if err != nil {
@@ -679,6 +707,9 @@ func (s *Store) EdgeFact(ctx context.Context, id string) (*pb.EdgeFact, error) {
 // EdgeFacts lists edges for a snapshot via membership, optionally filtered by
 // kind and logical key.
 func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKind, logicalKey, after string, limit int) ([]*pb.EdgeFact, error) {
+	if temporaryID(snapshotID) {
+		return []*pb.EdgeFact{}, nil
+	}
 	query := `SELECT ` + edgeColumnsQualified + ` FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if where, scopeArgs := scope(ctx).clause("e.org_id"); where != "" {

@@ -10,6 +10,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 	"github.com/uptrace/bun"
 )
 
@@ -139,7 +140,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 				return err
 			}
 		}
-		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = 0 WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if err := collectOrphanContent(ctx, tx); err != nil {
@@ -163,7 +164,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 		}
 		_, err := tx.NewRaw(`UPDATE codeindex_repositories SET latest_snapshot_id = COALESCE(
 			(SELECT id FROM codeindex_snapshots WHERE codeindex_snapshots.org_id = codeindex_repositories.org_id AND repository_id = ?
-				ORDER BY created_unix DESC, capture_order DESC, id DESC LIMIT 1), '')
+				ORDER BY created_unix DESC, capture_order DESC, id DESC LIMIT 1), 0)
 			WHERE id = ? AND latest_snapshot_id = ?`+where, append([]any{repositoryID, repositoryID, snapshotID}, scopeArgs...)...).Exec(ctx)
 		return err
 	})
@@ -175,7 +176,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 // counts reported by Snapshot.
 func (s *Store) ListRepositories(ctx context.Context) ([]*pb.Repository, error) {
 	query := `SELECT
-		r.id, r.root, r.latest_snapshot_id, r.remote_url, r.managed,
+		r.id, r.root, CASE WHEN CAST(r.latest_snapshot_id AS TEXT)='0' THEN '' ELSE CAST(r.latest_snapshot_id AS TEXT) END, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
@@ -283,7 +284,7 @@ func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (st
 // RepositoryExists reports whether a repository id is already registered.
 func (s *Store) RepositoryExists(ctx context.Context, id string) (bool, error) {
 	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || (s.Dialect() == dbrepo.DialectPostgres && !numericID(id)) {
 		return false, nil
 	}
 	where, scopeArgs := scope(ctx).clause("org_id")
@@ -304,7 +305,7 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
-		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
 			remote_url = CASE WHEN excluded.remote_url <> '' THEN excluded.remote_url ELSE codeindex_repositories.remote_url END,

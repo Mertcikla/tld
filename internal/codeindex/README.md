@@ -10,3 +10,15 @@
 | `symbolcheck` |  Answers "does this file declare symbol X" (server/validator) | none (direct gotreesitter) |
 | `mappingcheck` | DB-backed "is this logical key mapped" check | none |
 | `linkcheck` |  Reads the codeindex file inventory from the local DB | `graph` |
+
+Index format 2 allocates global 64-bit integer IDs at publication; protobuf
+references remain decimal strings. Extraction hashes, logical keys, payloads,
+and checkout watcher keys retain their existing format.
+
+The integer-ID migration silently discards old snapshots, analysis results,
+and index caches. Reindex normally to repopulate them. Repository identities
+are translated through a small temporary lookup, preserving their remotes,
+settings, workspace links, and diagram ownership. `mapping_namespace` retains
+existing mapping keys and group tags so remapping updates the same resources.
+There are no archived graph tables and no changes to anchor/evidence encoding
+or edge storage. Workspace repository references retain their string API.

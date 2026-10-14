@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -227,7 +228,10 @@ func TestRepositoryServiceAddRepository(t *testing.T) {
 	if repository == nil {
 		t.Fatal("stream ended without a repository")
 	}
-	repoID := cgraph.ID("organisation", workspaceID.String(), cgraph.RepositoryID(resolved))
+	repoID := repository.GetId()
+	if _, err := strconv.ParseInt(repoID, 10, 64); err != nil {
+		t.Fatalf("repository ID is not numeric: %q", repoID)
+	}
 	if repository.GetId() != repoID || repository.GetRoot() != resolved {
 		t.Fatalf("repository = %+v, want id %s root %s", repository, repoID, resolved)
 	}
@@ -369,7 +373,10 @@ func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 	if !stages["materializing"] {
 		t.Fatalf("stages = %+v, want a graph-map materializing stage", stages)
 	}
-	mappings, err := idx.MappingsByRepository(ctx, cgraph.ID("organisation", workspaceID.String(), cgraph.RepositoryID(resolved)))
+	if repository.GetRoot() != resolved {
+		t.Fatalf("repository root = %q, want %q", repository.GetRoot(), resolved)
+	}
+	mappings, err := idx.MappingsByRepository(ctx, repository.GetId())
 	if err != nil {
 		t.Fatalf("mappings: %v", err)
 	}

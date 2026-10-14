@@ -16,9 +16,11 @@ import (
 // MapInput is the shared state the map materializer works against. Files are
 // the repository's file facts; Edges and Imports are resolved dependencies.
 type MapInput struct {
-	RepositoryID   string
-	RepositoryName string
-	RepositoryRoot string
+	RepositoryID string
+	// MappingNamespace preserves ownership keys and tags across ID-format upgrades.
+	MappingNamespace string
+	RepositoryName   string
+	RepositoryRoot   string
 	// RepositoryRemoteURL is the canonical remote of the repository when it has
 	// one. Materialized elements carry it so source links survive across
 	// checkouts and machines; the local root is only a fallback.
@@ -459,7 +461,7 @@ func (m *mapMaterializer) materializeConnectors() error {
 				input.Relationship = optionalStr(relationship)
 				input.Tags = []string{"dependency"}
 			}
-			if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), input); err != nil {
+			if err := m.upsertConnector(elementConnectorKey(m.repositoryKey(), entry.viewID, entry.a, entry.b), input); err != nil {
 				return err
 			}
 			m.layoutEdges[entry.viewID] = append(m.layoutEdges[entry.viewID], layout.Connector{Source: entry.a, Target: entry.b})
@@ -652,7 +654,7 @@ func (m *mapMaterializer) materializeCrossViewConnectors() error {
 			input.Description = optionalStr(description)
 			input.Tags = []string{"dependency", "cross-view"}
 		}
-		if err := m.upsertConnector(elementCrossViewConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), input); err != nil {
+		if err := m.upsertConnector(elementCrossViewConnectorKey(m.repositoryKey(), entry.viewID, entry.a, entry.b), input); err != nil {
 			return err
 		}
 	}
@@ -698,11 +700,11 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	if m.opts.AnnotateTags {
 		container.Tags = []string{"external"}
 	}
-	containerID, err := m.upsertElement(externalKey(m.input.RepositoryID), container)
+	containerID, err := m.upsertElement(externalKey(m.repositoryKey()), container)
 	if err != nil {
 		return err
 	}
-	externalViewID, err := m.upsertView(externalViewKey(m.input.RepositoryID), "External", "Map", &containerID)
+	externalViewID, err := m.upsertView(externalViewKey(m.repositoryKey()), "External", "Map", &containerID)
 	if err != nil {
 		return err
 	}
@@ -730,7 +732,7 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 				importElement.TechnologyConnectors = links
 			}
 		}
-		elementID, err := m.upsertElement(importKey(m.input.RepositoryID, name), importElement)
+		elementID, err := m.upsertElement(importKey(m.repositoryKey(), name), importElement)
 		if err != nil {
 			return err
 		}
@@ -793,7 +795,7 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 			input.Relationship = optionalStr("imports")
 			input.Tags = []string{"external"}
 		}
-		if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, rootViewID, entry.from, containerID), input); err != nil {
+		if err := m.upsertConnector(elementConnectorKey(m.repositoryKey(), rootViewID, entry.from, containerID), input); err != nil {
 			return err
 		}
 		m.layoutEdges[rootViewID] = append(m.layoutEdges[rootViewID], layout.Connector{Source: entry.from, Target: containerID})
@@ -1269,4 +1271,11 @@ func (m *mapMaterializer) recordMapping(key string, kind cstore.MappingKind, id 
 	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
 		LogicalKey: key, Kind: kind, ResourceID: id, RepositoryID: m.input.RepositoryID, SnapshotID: m.input.SnapshotID,
 	})
+}
+
+func (m *mapMaterializer) repositoryKey() string {
+	if m.input.MappingNamespace != "" {
+		return m.input.MappingNamespace
+	}
+	return m.input.RepositoryID
 }

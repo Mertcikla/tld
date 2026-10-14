@@ -35,6 +35,9 @@ func (s *Store) scanFacts(ctx context.Context, query string, args ...any) ([]*pb
 			return nil, err
 		}
 		f.Kind = pb.FactKind(kind)
+		if f.ParentFactId == "0" {
+			f.ParentFactId = ""
+		}
 		f.Anchor = unmarshalAnchor(anchor)
 		f.Evidence = unmarshalEvidence(evidence)
 		f.Imports = unmarshalStrings(imports)
@@ -61,6 +64,12 @@ func (s *Store) scanEdges(ctx context.Context, query string, args ...any) ([]*pb
 			return nil, err
 		}
 		e.Kind = pb.EdgeKind(kind)
+		if e.FromFactId == "0" {
+			e.FromFactId = ""
+		}
+		if e.ToFactId == "0" {
+			e.ToFactId = ""
+		}
 		e.Anchor = unmarshalAnchor(anchor)
 		e.Evidence = unmarshalEvidence(evidence)
 		out = append(out, &e)

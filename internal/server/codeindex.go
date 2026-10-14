@@ -100,7 +100,7 @@ func (s *repositoryService) AddRepository(ctx context.Context, req *connect.Requ
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
-	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
+	resolved, err := s.store.ResolveRepository(ctx, root, spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
