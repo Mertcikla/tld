@@ -28,6 +28,7 @@ import { AddIcon, CloseIcon, SearchIcon } from '@chakra-ui/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
+import { useExploreData } from './explore/useExploreData'
 import { ZoomInIcon } from '../components/Icons'
 import { ShortcutHint } from '../components/PanelUI'
 import { api } from '../api/client'
@@ -406,25 +407,34 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   const [newName, setNewName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const exploreRef = useRef<InfiniteZoomHandle>(null)
-  const exploreSearchLoadRef = useRef<Promise<ExploreData | null> | null>(null)
+  const initialTreeLoadRef = useRef<Promise<ViewTreeNode[] | null> | null>(null)
+  const previousViewRef = useRef(view)
+  // The page, jump search, and canvas share this workspace response.
+  const exploreDataState = useExploreData(undefined, false)
+  const { data: exploreData, reload: reloadExploreData } = exploreDataState
 
   const flatTree = useMemo(() => flattenTree(treeData), [treeData])
 
+  useEffect(() => {
+    if (!exploreData) return
+    setExploreSearchData(exploreData)
+  }, [exploreData])
+
+  const loadExploreData = useCallback(() => reloadExploreData().then((data) => {
+    if (data) setTreeData(data.tree)
+    return data
+  }), [reloadExploreData])
+
+  useEffect(() => {
+    const previousView = previousViewRef.current
+    previousViewRef.current = view
+    // Pick up edits made in hierarchy mode when the canvas mounts again.
+    if (view === 'explore' && previousView !== 'explore') void loadExploreData()
+  }, [loadExploreData, view])
+
   const ensureExploreSearchData = useCallback(() => {
-    if (exploreSearchData || exploreSearchLoadRef.current) return
-    exploreSearchLoadRef.current = api.explore.load()
-      .then((data) => {
-        if (!data.password_required) {
-          setExploreSearchData(data)
-          return data
-        }
-        return null
-      })
-      .catch(() => null)
-      .finally(() => {
-        exploreSearchLoadRef.current = null
-      })
-  }, [exploreSearchData])
+    if (!exploreSearchData) void reloadExploreData()
+  }, [exploreSearchData, reloadExploreData])
 
   const handleViewChange = useCallback((newView: ViewType) => {
     setView(newView)
@@ -495,11 +505,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   useEffect(() => {
     let mounted = true
     setTreeLoading(true)
-    api.workspace.views.tree()
+    // Reuse the initial request during StrictMode's effect replay.
+    if (!initialTreeLoadRef.current) {
+      initialTreeLoadRef.current = view === 'explore'
+        ? loadExploreData().then((data) => data?.tree ?? null)
+        : api.workspace.views.tree()
+    }
+    initialTreeLoadRef.current
       .then((tree) => {
         if (!mounted) return
         if (tree) setTreeData(tree)
-        if (!tree || tree.length === 0) {
+        if (tree && tree.length === 0) {
           // Only auto-switch to edit if no view is explicitly set in URL
           if (!searchParams.get('view')) {
             handleViewChange('hierarchy')
@@ -643,7 +659,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
           h="full"
         >
           {view === 'explore' ? (
-            <InfiniteZoom ref={exploreRef} shareSlot={shareSlot} />
+            <InfiniteZoom ref={exploreRef} shareSlot={shareSlot} dataState={{ ...exploreDataState, reload: loadExploreData }} />
           ) : (
             <ViewsGrid
               onShare={onShareView}

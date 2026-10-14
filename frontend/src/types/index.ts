@@ -287,6 +287,7 @@ export interface ExploreData {
   tree: ViewTreeNode[]
   views: Record<string, ExploreViewData>
   navigations: ViewConnector[]
+  elements?: LibraryElement[]
   password_required?: boolean
 }
 

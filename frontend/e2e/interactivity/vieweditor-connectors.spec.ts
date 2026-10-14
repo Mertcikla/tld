@@ -3,11 +3,16 @@ import {
   closeViewEditorPanels,
   confirmInlineNewElement,
   createAndLoadDiagramWithNodes,
+  createApiView,
   createConnector,
+  createElement,
+  createPlacedElement,
   expectConnector,
+  expectPlacement,
   handleLocator,
   isMobileLayout,
   listConnectors,
+  listPlacements,
   locatorCenter,
   longPressLocator,
   nodeByName,
@@ -17,24 +22,20 @@ import {
 } from '../helpers/vieweditor'
 
 async function waitForStableLocator(
-  page: Parameters<typeof handleLocator>[0],
   locator: ReturnType<typeof handleLocator>,
 ) {
   let previous = await locator.boundingBox()
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await page.evaluate(() => new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-    }))
+  let stableSamples = 0
+  await expect.poll(async () => {
     const next = await locator.boundingBox()
-    if (
+    const stable =
       previous && next &&
       previous.x === next.x && previous.y === next.y &&
       previous.width === next.width && previous.height === next.height
-    ) {
-      return
-    }
+    stableSamples = stable ? stableSamples + 1 : 0
     previous = next
-  }
+    return stableSamples
+  }, { intervals: [100] }).toBeGreaterThanOrEqual(3)
 }
 
 async function dragLocatorToPoint(
@@ -43,7 +44,7 @@ async function dragLocatorToPoint(
   point: { x: number; y: number },
   useTouchOnMobile = false,
 ) {
-  await waitForStableLocator(page, locator)
+  await waitForStableLocator(locator)
   const start = await locatorCenter(locator)
   const isWebKit = await page.evaluate(() => (
     navigator.userAgent.includes('AppleWebKit') &&
@@ -97,7 +98,7 @@ async function dragLocatorToPointWithMidDragCheck(
   point: { x: number; y: number },
   check: () => Promise<void>,
 ) {
-  await waitForStableLocator(page, locator)
+  await waitForStableLocator(locator)
   const start = await locatorCenter(locator)
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
@@ -144,7 +145,7 @@ test('starts, cancels, and creates click-connect flows from handles', async ({ p
   }, true, diagram.id)
 })
 
-test('drags handles to target handles, node bodies, empty pending elements, and Shift-forced connect mode', async ({ page }) => {
+test('drags handles to target handles, node bodies, and the inline connection picker', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 4, 'Connector Drag Matrix')
   await closeViewEditorPanels(page)
 
@@ -168,6 +169,8 @@ test('drags handles to target handles, node bodies, empty pending elements, and 
     await expect(page.getByTestId('click-connect-connector')).toHaveCount(0)
   })
   await expect(page.getByTestId('pending-element-label-input')).toBeVisible()
+  await expect(page.getByTestId('pending-element-mode-connect')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByTestId('pending-element-mode-add').click()
   const pendingName = uniqueName('Connector Pending Target')
   await confirmInlineNewElement(page, pendingName)
   await expect(nodeByName(page, pendingName)).toBeVisible()
@@ -184,6 +187,75 @@ test('drags handles to target handles, node bodies, empty pending elements, and 
   await page.keyboard.up('Shift')
   await expect(page.getByTestId('pending-element-label-input')).toBeVisible()
   await page.keyboard.press('Escape')
+})
+
+test('connects to an off-view element by default and can switch to add and connect', async ({ page }) => {
+  const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 1, 'Off-view Picker')
+  const externalView = await createApiView(page, uniqueName('External View'))
+  const external = await createPlacedElement(page, externalView.id, { name: uniqueName('External Target') })
+  const unplaced = await createElement(page, { name: uniqueName('Unplaced Target') })
+  await reloadView(page)
+  await closeViewEditorPanels(page)
+
+  const openPicker = async () => {
+    await clickRevealedHandle(nodeByName(page, elements[0].name), handleLocator(page, elements[0].id, 'right-2'))
+    const paneBox = await reactFlowPaneBox(page)
+    await page.mouse.click(paneBox.x + paneBox.width * 0.35, paneBox.y + paneBox.height * 0.72)
+    await expect(page.getByTestId('pending-element-mode-connect')).toHaveAttribute('aria-pressed', 'true')
+  }
+
+  await openPicker()
+  const input = page.getByTestId('pending-element-label-input')
+  await input.fill(unplaced.name)
+  const unplacedOption = page.getByTestId('pending-element-existing-option').filter({ hasText: unplaced.name })
+  await expect(unplacedOption).toHaveAttribute('aria-disabled', 'false')
+  await expect(page.getByTestId('pending-element-create-option')).toHaveCount(0)
+  await input.press('Enter')
+  await expectConnector(page, {
+    sourceElementId: elements[0].id,
+    targetElementId: unplaced.id,
+  }, true, 0)
+  expect((await listPlacements(page, diagram.id)).map((placement) => placement.elementId)).toEqual([elements[0].id])
+  await expect(page.locator('button[aria-label="Expand Unplaced elements"]')).toBeVisible()
+  await reloadView(page)
+  await closeViewEditorPanels(page)
+  const expandUnplaced = page.locator('button[aria-label="Expand Unplaced elements"]')
+  await expect(expandUnplaced).toBeVisible()
+  await waitForStableLocator(expandUnplaced)
+  await expandUnplaced.click()
+  await expect(page.locator('button[aria-label="Collapse Unplaced elements"]')).toBeVisible()
+  await page.keyboard.press('f')
+  await expect(page.locator('.react-flow__node-contextNeighborNode').filter({ hasText: unplaced.name })).toBeVisible()
+
+  await openPicker()
+
+  await input.fill(external.name)
+  const externalOption = page.getByTestId('pending-element-existing-option').filter({ hasText: external.name })
+  await expect(externalOption).toHaveAttribute('aria-disabled', 'false')
+  await input.press('Enter')
+  await expectConnector(page, {
+    sourceElementId: elements[0].id,
+    targetElementId: external.id,
+  }, true, 0)
+  expect((await listPlacements(page, diagram.id)).map((placement) => placement.elementId)).toEqual([elements[0].id])
+  await expect(page.locator('.react-flow__edge-proxyConnectorEdge').first()).toBeAttached()
+
+  await openPicker()
+  await input.fill(external.name)
+  await page.getByTestId('pending-element-mode-add').click()
+  await expect(input).toHaveValue(external.name)
+  await expect(page.getByTestId('pending-element-mode-add')).toHaveAttribute('aria-pressed', 'true')
+  await externalOption.click()
+  await expectPlacement(page, external.name, true, diagram.id)
+  await expect(nodeByName(page, external.name)).toBeVisible()
+  await expect.poll(async () => (await listConnectors(page, diagram.id)).length).toBe(2)
+
+  await page.keyboard.press('c')
+  await expect(input).toBeVisible()
+  await expect(page.getByTestId('pending-element-mode-connect')).toHaveCount(0)
+  const newName = uniqueName('Standalone Element')
+  await confirmInlineNewElement(page, newName)
+  await expectPlacement(page, newName, true, diagram.id)
 })
 
 test('moves connector source and target through the connector context menu', async ({ page }) => {

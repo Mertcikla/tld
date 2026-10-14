@@ -76,6 +76,8 @@ test('global search matches element metadata and connector context', async ({ pa
   await page.goto('/inventory')
   await page.getByTestId('inventory-search').fill(data.api.name)
   await expect(rowByKey(page, `element:${data.api.id}`)).toBeVisible()
+  // The matching row is also visible before search finishes rendering.
+  await expect(rowByKey(page, `element:${data.worker.id}`)).toHaveCount(0)
 
   await page.getByTestId('inventory-search').fill(' invoice jobs ')
   await expect(rowByKey(page, `element:${data.worker.id}`)).toBeVisible()
@@ -100,6 +102,7 @@ test('type tag kind and quality filters compose and reset URL state', async ({ p
   const data = await seedInventory(page)
 
   await page.goto(`/inventory?page=2&object=element:${data.api.id}`)
+  await expect(rowByKey(page, `element:${data.api.id}`)).toBeVisible()
   await expandFilterSection(page, 'Tags')
   await page.getByTestId(`inventory-tag-filter-${data.tag}`).click()
 
@@ -136,10 +139,12 @@ test('object type tab keeps search scoped and records type in the URL', async ({
 
   await page.goto('/inventory')
   await page.getByTestId('inventory-search').fill(data.prefix)
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe(data.prefix)
+  await expect(page.getByRole('button', { name: 'Clear search', exact: true })).toBeVisible()
   await page.getByTestId('inventory-tab-connectors').click()
 
   await expect.poll(() => new URL(page.url()).searchParams.get('type')).toBe('connectors')
-  await expect(new URL(page.url()).searchParams.get('q')).toBe(data.prefix)
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe(data.prefix)
   await expect(rowByKey(page, `connector:${data.sqlConnector.id}`)).toBeVisible()
   await expect(rowByKey(page, `element:${data.api.id}`)).toHaveCount(0)
 
@@ -153,6 +158,8 @@ test('no-result search can be cleared and stale selected object params are remov
   const data = await seedInventory(page)
 
   await page.goto(`/inventory?page=2&object=element:${data.api.id}`)
+  // Let the deep link reveal its row before a search replaces its page/object params.
+  await expect(rowByKey(page, `element:${data.api.id}`)).toBeVisible()
   await page.getByTestId('inventory-search').fill(uniqueName('no-match'))
   await expect(page.getByText('No matching objects')).toBeVisible()
   await expect(page.getByTestId('inventory-pagination-summary')).toHaveText('0–0 of 0')
@@ -178,12 +185,17 @@ test('column filters keep sorting independent and remain accessible with hidden 
   await expect(headers.getByTestId('inventory-filter-section-tags')).toBeVisible()
   await expect(headers.getByTestId('inventory-filter-section-kind')).toBeVisible()
   await headers.getByRole('button', { name: 'Kind', exact: true }).click()
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).toBe('type')
+  const kindHeader = headers.getByRole('columnheader').filter({
+    has: page.getByRole('button', { name: 'Kind', exact: true }),
+  })
+  await expect(kindHeader).toHaveAttribute('aria-sort', /^(ascending|descending)$/)
   const sortParams = new URL(page.url()).searchParams
   expect(sortParams.get('sort')).toBe('type')
   await headers.getByTestId('inventory-filter-section-kind').click()
   await page.getByTestId('inventory-kind-filter-service').click()
-  expect(new URL(page.url()).searchParams.get('sort')).toBe('type')
-  expect(new URL(page.url()).searchParams.get('dir')).toBe(sortParams.get('dir'))
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).toBe('type')
+  await expect.poll(() => new URL(page.url()).searchParams.get('dir')).toBe(sortParams.get('dir'))
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   await page.getByRole('button', { name: 'Columns', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Kind', exact: true }).click()
