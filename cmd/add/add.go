@@ -44,7 +44,23 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 Custom --ref values are workspace-local aliases and require a YAML workspace
 (run 'tld init' first, or pass --yaml). Database mode derives convenience refs
-from element names; those refs can change when the names change.`,
+from element names; those refs can change when the names change.
+
+Reusing a workspace ref updates the existing element. Use the same ref with a
+different --parent to place it in another view. The parent must already exist;
+placing a child under it automatically creates its owned view. Omit --parent
+for root. Use 'tld view create' to create an owned view before adding children.
+
+Changes apply to the target immediately and refresh the YAML cache when present.
+Next, connect elements with 'tld connect' or inspect them with 'tld list elements'.`,
+		Example: `  tld add "API" --kind service --technology Go
+
+  # Custom refs and drill-down views in a YAML workspace
+  tld init
+  tld add "Platform" --ref platform
+  tld add "API" --ref api --parent platform --kind service
+  tld add "API" --ref api --parent root
+  tld list views --tree`,
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {

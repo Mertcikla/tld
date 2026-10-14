@@ -21,6 +21,15 @@ func NewListCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List resources",
+		Long: `Find the identifiers used by other commands.
+
+'list elements' shows element refs, names, and database IDs. 'list connectors'
+shows canonical keys for 'inspect' and 'update connector'. 'list views --tree'
+shows view owner refs and the hierarchy used by 'render' and 'view' commands.
+Use --format json for structured rows and --search to filter a resource list.`,
+		Example: `  tld list elements --search api
+  tld list connectors --view root --format json
+  tld list views --tree`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -78,7 +87,10 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "elements",
 		Short: "List elements",
-		Args:  cobra.NoArgs,
+		Long:  "List element refs, display names, kinds, and database IDs. Use refs, names, or IDs with connect and ordinary element updates; inspect uses the ref.",
+		Example: `  tld list elements --search api
+  tld list elements --kind service --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {
@@ -137,7 +149,14 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "connectors",
 		Short: "List connectors",
-		Args:  cobra.NoArgs,
+		Long: `List connector keys, endpoints, labels, and database IDs.
+
+Keys have the form view/source~target[/label]. Copy the full key into 'inspect'
+or 'update connector'; quote it when it contains spaces. After changing a label,
+endpoint, or view, list connectors again to discover the new key.`,
+		Example: `  tld list connectors --view root
+  tld list connectors --search reads --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {
@@ -196,7 +215,10 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "views",
 		Short: "List views (diagrams)",
-		Args:  cobra.NoArgs,
+		Long:  "List views with owner refs, display names, level labels, and database IDs. Use --tree to see the hierarchy; pass an owner ref or root to 'tld render'.",
+		Example: `  tld list views --tree
+  tld list views --parent platform --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {

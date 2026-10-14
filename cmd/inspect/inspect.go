@@ -24,7 +24,20 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "inspect <ref>",
 		Short: "Inspect a resource across YAML, local DB, and optional cloud state",
-		Args:  cobra.ExactArgs(1),
+		Long: `Inspect an element, owned view, or connector using its ref.
+
+Find element/view refs and canonical connector keys with 'tld list'. For a
+connector, pass its full view/source~target[/label] key. Use --type to distinguish
+an element from its owned view when they share a ref.
+
+In a YAML workspace, reports YAML and local database state; --cloud also checks
+the configured remote workspace. In database mode, reports the selected target.
+This command reads state without changing the diagram.`,
+		Example: `  tld inspect api --type element
+  tld inspect platform --type view
+  tld inspect 'root/api~db/reads' --type connector
+  tld inspect api --type element --cloud --format json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", dataDirFlag)
 			if err != nil {

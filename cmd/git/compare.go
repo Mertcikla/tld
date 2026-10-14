@@ -62,6 +62,9 @@ func newCompareCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "compare [repository] <base> <head>",
 		Short: "Compare two revisions of a repository",
+		Example: `  tld git compare HEAD~1 HEAD --mermaid
+  tld git compare main feature --markdown
+  tld git compare HEAD~1 HEAD --url`,
 		Long: `Compare two Git revisions and emit the canonical impact scene.
 
 The repository may be omitted to use the current checkout, or given as a

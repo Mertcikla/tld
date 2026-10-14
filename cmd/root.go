@@ -68,16 +68,37 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		Short: "tld -- tlDiagram CLI",
 		Long: `tld CLI for managing and visualizing system architecture diagrams.
 
-Commands work on the database directly: the local database by default, or the
-configured cloud workspace when credentials are present. Pass --yaml (or run in
-a directory that holds workspace YAML files) to read and write
-elements.yaml/connectors.yaml instead.
+Commands use the local database by default, or the configured cloud workspace
+when an API key and workspace ID select the remote target. In a YAML workspace
+(created with 'tld init', detected automatically, or selected with --yaml),
+commands read workspace refs and refresh elements.yaml/connectors.yaml after
+target writes. Ordinary add, connect, update, and remove operations apply to
+their target immediately; use --dry-run to preview a supported operation.
+
+Elements are reusable nodes. Each element can own a view (diagram); placing a
+child with 'add --parent <ref>' creates that view automatically. Use 'view create'
+to create it explicitly. 'root' is the top-level view. Find refs and connector
+keys with 'list', inspect details with 'inspect', and export Mermaid with 'render'.
 
 Database IDs identify persisted elements. YAML refs are workspace-local aliases;
 database-mode refs are derived from names and can change when names change.
 Custom 'add --ref' values and 'update element <ref> ref <new-ref>' require a YAML
 workspace. To change a display name in either mode, use
-'tld update element <ref-or-id> name <new-name>'.`,
+'tld update element <ref-or-id> name <new-name>'. Ref changes only affect YAML.`,
+		Example: `  # Build and export a local diagram with workspace refs
+  tld init
+  tld add "API" --ref api --kind service --target local
+  tld add "Database" --ref db --kind database --target local
+  tld connect --from api --to db --label reads --target local
+  tld list connectors
+  tld render root -o diagram.mmd
+
+  # Generate a map from the current repository
+  tld doctor
+  tld index . --map
+
+  # Visualize the last commit
+  tld git compare HEAD~1 HEAD --mermaid`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -91,7 +112,7 @@ workspace. To change a display name in either mode, use
 		defaultWdir = "tld"
 	}
 	root.PersistentFlags().StringVarP(&wdir, "workspace", "w", defaultWdir, "workspace directory")
-	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "read and write workspace YAML files instead of working on the database directly")
+	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "use workspace YAML refs and cache alongside the configured target")
 	root.PersistentFlags().StringVar(&outputFormat, "format", "text", "output format: text or json")
 	root.PersistentFlags().BoolVar(&compactJSON, "compact", false, "compact JSON output (no whitespace)")
 

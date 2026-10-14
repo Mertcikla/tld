@@ -100,9 +100,22 @@ docker compose -f docker-compose.postgres.yml up
 
 There are Mobile apps available in both [App Store](https://apps.apple.com/us/app/tldiagram/id6760236883) and [Play Store](https://play.google.com/store/apps/details?id=com.mertcikla.tldiagram) they are mostly cloud-oriented and free but require [tldiagram.com](https://tldiagram.com) account. They are good for quickly checking stuff on-the-go, small screens are hard for full featured diagram authoring but they still received some development effort and attention to make authoring possible on mobile. 
 
-## Commands Reference 
-`tld --help`
+## Commands Reference
 
-or 
+Run `tld --help` for a local diagram walkthrough and repository-analysis examples.
+Use `tld <command> --help` for details, including these discovery commands:
 
-Use `tld [command] --help` for more information about a command
+```bash
+tld list elements                 # Element refs, names, and database IDs
+tld list connectors               # Keys for inspecting and updating connectors
+tld list views --tree             # View owners and drill-down hierarchy
+tld update element --help         # Editable fields, name changes, and YAML ref changes
+tld update connector --help       # Editable fields, connector keys, and direction values
+tld view --help                   # Create and manage an element's owned view
+tld render --help                 # Export a required view as Mermaid
+```
+
+An element can appear in multiple views. Adding a child with `--parent <ref>`
+creates the parent's view automatically; `tld view create <ref>` creates it
+explicitly. Ordinary mutations apply to their configured target immediately and
+refresh workspace YAML when present. Workspace ref changes only affect YAML.

@@ -20,6 +20,22 @@ func NewViewCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "view",
 		Short: "Manage diagrams (views) owned by elements",
+		Long: `Manage the diagram owned by an element.
+
+An element is a reusable node; its owned view is a canvas for its children.
+'tld add --parent <element-ref>' creates the parent's view automatically.
+'tld view create <element-ref>' ensures it exists even before children are added.
+The synthetic root view holds top-level placements.
+
+View names and level labels are separate from element names and refs. Use
+'view rename' for the canvas name and 'view set-level' for a label such as
+Container. Discover owner refs with 'tld list views --tree', then render a view
+with 'tld render <owner-ref>'.`,
+		Example: `  tld add "Platform"
+  tld view create platform --name "Platform details" --label Container
+  tld add "API" --parent platform
+  tld list views --tree
+  tld render platform`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -51,7 +67,11 @@ func newCreateCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Long: `Create the diagram owned by an element and set has_view on it.
 
 The element must already exist (ref, name, or database ID); create it first with
-'tld add'. Use --name and --label to set the view display name and level label.`,
+'tld add'. Use --name and --label to set the view display name and level label.
+Adding a child with 'tld add --parent <element-ref>' also creates this view
+automatically. Use 'tld list views --tree' to inspect the resulting hierarchy.`,
+		Example: `  tld view create platform --name "Platform details" --label Container
+  tld view create api --dry-run`,
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {

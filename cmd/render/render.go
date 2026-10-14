@@ -20,9 +20,19 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 	)
 
 	c := &cobra.Command{
-		Use:   "render [view]",
-		Short: "Render a view (diagram) to text output formats",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "render <view>",
+		Short: "Export a view (diagram) as Mermaid",
+		Long: `Export a view as Mermaid, preserving connector labels and directions.
+
+A view is required: pass it as an argument or with --view. Use root for the
+top-level diagram, an owning element ref or name, or a numeric view ID.
+Find available views with 'tld list views --tree'. Output goes to stdout unless
+--output is supplied. This command's --format selects the diagram format;
+mermaid is the supported value.`,
+		Example: `  tld render root
+  tld render platform -o diagram.mmd
+  tld render --view root --output diagram.mmd`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := strings.TrimSpace(view)
 			if len(args) == 1 {
@@ -80,9 +90,9 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 		},
 	}
 
-	c.Flags().StringVar(&format, "format", "mermaid", "render output format")
+	c.Flags().StringVar(&format, "format", "mermaid", "render output format: mermaid")
 	c.Flags().StringVarP(&output, "output", "o", "", "write render output to file")
-	c.Flags().StringVar(&view, "view", "", "view ref to render (alternative to the positional argument)")
+	c.Flags().StringVar(&view, "view", "", "root, owner ref/name, or view ID (alternative to the argument)")
 	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return completion.ViewRefs(wdir)
 	})

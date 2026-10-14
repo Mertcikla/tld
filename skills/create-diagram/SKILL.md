@@ -26,8 +26,8 @@ Build a tld workspace that helps someone understand a system by moving from broa
 tld models architecture as a hierarchy of **elements** and **connectors**.
 
 - An **element** is the node in the knowledge graph. It can represent a system, subsystem, service, module, class, database, external system, user, or any other entity relevant to the architecture.
-- A **view** is the canvas inside an element. Add children with `--parent <ref>` to create drill-downs. There is no separate "create view" command. View is used to group related elements, or to explain a subsystem in more detail.
-- A **connector** is the edges of the graph, describes a relationship between elements. The view is inferred from the elements' shared parent.
+- A **view** is the canvas owned by an element. Add children with `--parent <ref>` to create a drill-down view automatically, or use `tld view create <element-ref>` to ensure the view exists before adding children. Use `tld list views --tree` to discover the hierarchy and `tld render <owner-ref>` to export a view.
+- A **connector** describes a relationship between elements and belongs to a view. Its view defaults to the source element's parent view; use `--view <view-ref>` to choose another view when elements have multiple placements.
 - A **kind** is a broad role such as `system`, `container`, `component`, `database`, `person`, or `external`; omit it if it doesn't fit any clear category. `--kind` takes a single shell token, so quote multi-word kinds (e.g. `--kind "external system"`).
 - A **technology** is metadata. Prefer catalog names suggested by `tld tech suggest`.
 
@@ -44,6 +44,8 @@ tld validate
 ```
 
 For root-level elements, omit `--parent`.
+
+Custom `--ref` values require a YAML workspace: run `tld init` first. Use `tld update element <ref> ref <new-ref>` to rename a workspace-local ref and cascade its references; use the `name` field to change the display name. Discover editable fields with `tld update element --help` and `tld update connector --help`. Connector keys come from `tld list connectors` and have the form `view/source~target[/label]`.
 
 Grounding the elements added back to source code is important. Use `--link` while adding elements to point to the source code, folder, or even symbols where possible. Skip `--link` if the element is too abstract or encompasses many files.
 
@@ -93,7 +95,7 @@ Subsystem inventory:
 ```
 
 6. Reuse shared elements in every relevant view and reconnect them, optionally with labels specific to that context.
-7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain. Every `tld add` / `tld connect` / `tld update` applies immediately to the server. If the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
+7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain. Ordinary `tld add` / `tld connect` / `tld update` operations apply immediately to the configured target and refresh the workspace YAML cache. Ref updates only change the YAML aliases and references. If the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
 
 
 ## Modeling Guidance

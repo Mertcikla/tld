@@ -222,7 +222,20 @@ func NewInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
 		Short: "Initialize a new tld workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Create a YAML workspace in .tld under the current directory or supplied
+project directory. An existing workspace directory is used directly.
+
+Creates elements.yaml, connectors.yaml, and .tld.yaml. Existing element and
+connector files are preserved. Use --wizard for interactive configuration.
+Initialization is optional for direct database use, and enables workspace-local
+refs and YAML-backed authoring.
+
+Next, add elements with 'tld add', connect them with 'tld connect', and export
+the top-level view with 'tld render root'.`,
+		Example: `  tld init
+  tld init ./my-project --wizard
+  tld add "API" --ref api --kind service`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := resolveInitDir(args)
 

@@ -41,14 +41,26 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "element <ref> <field> <value>",
 		Short: "Update an element field",
-		Long: `Update an element field.
+		Long: fmt.Sprintf(`Update an element field.
+
+Fields:
+  %s
+
+For ordinary fields, the element selector accepts a ref, display name, or numeric
+element ID. Find these with 'tld list elements'. Tags are comma-separated;
+--append and --remove modify the existing tags instead of replacing them.
 
 Use the name field to change a display name in either mode. The ref field changes
 a workspace-local alias and requires a YAML workspace (run 'tld init' first, or
 pass --yaml). Ref changes update placements, connectors, and workspace metadata;
-the database element ID and display name stay the same.`,
-		Example: "  tld update element api name \"Public API\"\n  tld update element api ref service-api",
-		Args:    cobra.ExactArgs(3),
+the database element ID and display name stay the same. For a ref change, use
+the current YAML ref as the selector. Other fields apply to the target immediately
+and refresh the YAML cache when present.`, strings.Join(completion.ElementFields(), ", ")),
+		Example: `  tld update element api name "Public API"
+  tld update element api tags "backend,critical" --append
+  tld update element api technology Go --dry-run
+  tld update element api ref service-api`,
+		Args: cobra.ExactArgs(3),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
@@ -154,7 +166,26 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "connector <ref> <field> <value>",
 		Short: "Update a connector field",
-		Args:  cobra.ExactArgs(3),
+		Long: fmt.Sprintf(`Update a connector field.
+
+Fields:
+  %s
+
+Use the connector key or numeric connector ID from 'tld list connectors'. Keys
+have the form view/source~target[/label], for example root/api~db/reads. Quote
+keys containing spaces. Changing view, source, target, or label changes the key;
+list connectors again to find its new key.
+
+Direction values: %s.
+Style values: bezier, straight, step, smoothstep.
+Tags are comma-separated; --append and --remove edit the existing tags.
+visibility_delta is workspace YAML metadata. Other changes apply to the target
+and refresh the YAML cache when present.`,
+			strings.Join(completion.ConnectorFields(), ", "), strings.Join(completion.ConnectorDirections(), ", ")),
+		Example: `  tld list connectors --view root
+  tld update connector 'root/api~db/reads' direction both
+  tld update connector 'root/api~db/reads' label "reads and writes"`,
+		Args: cobra.ExactArgs(3),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:

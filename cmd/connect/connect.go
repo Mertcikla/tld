@@ -34,7 +34,21 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "connect",
 		Short: "Add a connector between two elements",
-		Args:  cobra.NoArgs,
+		Long: `Add a connector between two existing elements.
+
+--from and --to accept element refs, display names, or numeric element IDs from
+'tld list elements'. The connector belongs to the source element's parent view
+by default. Use --view to choose a particular view when elements have multiple
+placements; root selects the top-level diagram.
+
+Use --label for the visible interaction and --relationship for semantic metadata
+such as calls or queries. Direction is forward, backward, both, or none.
+Changes apply to the target immediately and refresh the YAML cache when present.
+Use 'tld list connectors' to find the resulting key for inspection or updates.`,
+		Example: `  tld connect --from api --to db --label reads
+  tld connect --from api --to db --view platform --label "reads and writes" --direction both
+  tld list connectors --view platform`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
 			if err != nil {
