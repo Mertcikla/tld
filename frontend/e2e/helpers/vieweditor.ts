@@ -461,7 +461,7 @@ export async function dispatchTouchEventOnLocator(
         screenY: point.clientY,
         pageX: point.clientX,
         pageY: point.clientY,
-      } as Touch
+      } as unknown as Touch
     }
     const active = payload.touches.map(makeTouch)
     const changed = payload.changedTouches.map(makeTouch)

@@ -35,6 +35,7 @@ async function waitForStableLocator(
     }
     previous = next
   }
+  throw new Error('Connector drag target did not settle before the drag')
 }
 
 async function dragLocatorToPoint(
@@ -108,11 +109,37 @@ async function dragLocatorToPointWithMidDragCheck(
 
 async function openEdgeContextMenu(page: Parameters<typeof handleLocator>[0]) {
   const edge = page.locator('.react-flow__edge').first()
-  await edge.click({ button: 'right', force: true })
-  if (await page.getByTestId('connector-context-move-target').isVisible({ timeout: 800 }).catch(() => false)) {
-    return
+  const path = edge.locator('.react-flow__edge-interaction').first()
+  const moveTarget = page.getByTestId('connector-context-move-target')
+  // Horizontal SVG paths have a zero-height bounding box even when their stroke is visible.
+  await expect(path).toBeAttached()
+  await waitForStableLocator(page, path)
+  // The SVG bounding-box center can miss a curved edge and right-click the canvas.
+  const findPoint = () => path.evaluate((element) => {
+    const curve = element as SVGPathElement
+    const transform = curve.getScreenCTM()
+    if (!transform) return null
+    const edge = curve.closest('.react-flow__edge')
+    for (const fraction of [0.35, 0.65, 0.5, 0.2, 0.8]) {
+      const point = curve.getPointAtLength(curve.getTotalLength() * fraction).matrixTransform(transform)
+      if (document.elementFromPoint(point.x, point.y)?.closest('.react-flow__edge') === edge) {
+        return { x: point.x, y: point.y }
+      }
+    }
+    return null
+  })
+  await expect.poll(findPoint, {
+    message: 'Connector interaction path must be reachable before opening its menu',
+  }).not.toBeNull()
+  const point = await findPoint()
+  if (!point) throw new Error('Connector interaction path is not reachable')
+  await page.mouse.click(point.x, point.y, { button: 'right' })
+  try {
+    await expect(moveTarget).toBeVisible({ timeout: 1000 })
+  } catch {
+    await longPressLocator(path, { clientX: point.x, clientY: point.y, durationMs: 650 })
+    await expect(moveTarget).toBeVisible()
   }
-  await longPressLocator(edge, { durationMs: 650 })
 }
 
 async function clickRevealedHandle(
@@ -206,9 +233,7 @@ test('moves connector source and target through the connector context menu', asy
   await closeViewEditorPanels(page)
   await openEdgeContextMenu(page)
   const moveSource = page.getByTestId('connector-context-move-source')
-  if (!await moveSource.isVisible({ timeout: 1500 }).catch(() => false)) {
-    return
-  }
+  await expect(moveSource).toBeVisible()
   await moveSource.click()
   await expect(page.getByText(/Tap a node to set as new source/)).toBeVisible()
   await nodeByName(page, elements[1].name).click()

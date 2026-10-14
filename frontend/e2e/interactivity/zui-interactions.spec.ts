@@ -103,7 +103,7 @@ test('pans with left and middle mouse drags, ignores right drag, and zooms with 
       const interaction = await zuiLastInteraction(page)
       return Math.abs(interaction?.deltaX ?? 0) + Math.abs(interaction?.deltaY ?? 0)
     }).toBeGreaterThan(150)
-    expect(stateDelta(await zuiViewState(page), beforeMiddlePan)).toBeGreaterThan(0)
+    await expect.poll(async () => stateDelta(await zuiViewState(page), beforeMiddlePan)).toBeGreaterThan(0)
 
     const beforeRightDrag = await waitForStableZuiCamera(page)
     const beforeRightInteraction = await zuiLastInteraction(page)
