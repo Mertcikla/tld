@@ -381,11 +381,22 @@ test('shows connected unplaced elements inside a synthetic Explore boundary', as
   await waitForZuiReady(page)
   await page.getByRole('button', { name: 'Fit View', exact: true }).click()
   await waitForStableZuiCamera(page)
-  const geometry = await zuiScreenGeometry(page, { nodeElementId: target.id }) as {
+  const geometry = () => zuiScreenGeometry(page, { nodeElementId: target.id }) as Promise<{
     node: { x: number; y: number; width: number; height: number; diagramId: number }
-  }
-  expect(geometry.node.diagramId).toBeLessThan(0)
-  await page.mouse.move(geometry.node.x + geometry.node.width / 2, geometry.node.y + geometry.node.height / 2)
+  }>
+  const initial = (await geometry()).node
+  expect(initial.diagramId).toBeLessThan(0)
+  // Other tests add roots to this workspace; Fit View can reach its minimum zoom
+  // before the synthetic boundary fits on screen. Pan to the actual hover target.
+  const box = await canvasBox(page)
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await dispatchZuiMousePan(page, center, {
+    x: center.x * 2 - (initial.x + initial.width / 2),
+    y: center.y * 2 - (initial.y + initial.height / 2),
+  }, { button: 'middle' })
+  await waitForStableZuiCamera(page)
+  const node = (await geometry()).node
+  await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2)
   await expect(page.getByTestId('zui-hover-popover')).toContainText(target.name)
   await expect(page.getByTestId('zui-hover-popover').getByRole('button', { name: 'Open in Editor', exact: true })).toBeDisabled()
 })
