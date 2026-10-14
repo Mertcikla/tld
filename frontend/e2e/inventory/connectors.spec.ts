@@ -1,5 +1,6 @@
 import { expect, test } from '../fixtures'
 import type { Page } from '@playwright/test'
+import { openInventory, searchInventory } from '../helpers/inventory'
 import {
   createConnectorGraph,
   uniqueName,
@@ -34,13 +35,14 @@ function selectedCard(page: Page) {
 }
 
 test('search empty state can be cleared in inventory', async ({ page }) => {
-  await page.goto('/inventory')
-  await page.getByTestId('inventory-search').fill(uniqueName('no-match'))
+  await openInventory(page)
+  await searchInventory(page, uniqueName('no-match'))
 
   await expect(page.getByText('No matching objects')).toBeVisible()
   await expect(page.getByTestId('inventory-pagination-summary')).toHaveText('0–0 of 0')
-  await page.getByTestId('inventory-search').fill('')
+  await searchInventory(page, '')
   await expect(page.getByTestId('inventory-search')).toHaveValue('')
+  await expect(page.getByText('No matching objects')).toHaveCount(0)
 })
 
 test('lists elements, totals, and connector counts from the workspace', async ({ page }) => {
