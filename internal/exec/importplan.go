@@ -22,7 +22,6 @@ import (
 type ImportPlan struct {
 	Views               []workspace.ViewDiagnostics
 	PreservedPlacements map[string][]string
-	AutoPlacements      map[string][]string
 
 	Request *diagv1.ApplyPlanRequest
 
@@ -59,13 +58,6 @@ func BuildImportPlan(
 ) (*ImportPlan, error) {
 	if ws == nil {
 		return nil, errors.New("workspace is required")
-	}
-	for _, c := range connectors {
-		if c != nil {
-			if err := workspace.CheckConnectorOwner(c.View, c.Source, c.Target); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	planElements, err := collectImportElements(ws, elements, connectors)
@@ -141,36 +133,6 @@ func BuildImportPlan(
 		return nil, fmt.Errorf("read target placements: %w", err)
 	}
 
-	autoPlacements := map[string][]string{}
-	for _, c := range connectors {
-		view := c.View
-		if view == "" {
-			view = workspace.RootRef
-		}
-		for _, ref := range []string{c.Source, c.Target} {
-			el := planElements[ref]
-			found := false
-			for _, p := range el.Placements {
-				if p.ParentRef == view || p.ParentRef == "" && view == workspace.RootRef {
-					found = true
-				}
-			}
-			for _, p := range exported.Placements {
-				if p.ElementId == elementIDs[ref] {
-					for _, v := range serverViews {
-						if v.Id == p.ViewId && (view == workspace.RootRef && v.OwnerElementId == nil || v.OwnerElementId != nil && *v.OwnerElementId == elementIDs[view]) {
-							found = true
-						}
-					}
-				}
-			}
-			if !found {
-				el.Placements = append(append([]workspace.ViewPlacement(nil), el.Placements...), workspace.ViewPlacement{ParentRef: view})
-				autoPlacements[ref] = append(autoPlacements[ref], view)
-			}
-		}
-	}
-
 	// Recompute which refs need an owned view: every placement parent and every
 	// connector view, plus elements that explicitly request a view.
 	requiredViews := map[string]bool{}
@@ -206,10 +168,9 @@ func BuildImportPlan(
 	}
 
 	plan := &ImportPlan{
-		AutoPlacements: autoPlacements,
-		Request:        &diagv1.ApplyPlanRequest{},
-		ElementSpecs:   planElements,
-		Connectors:     append([]*workspace.Connector(nil), connectors...),
+		Request:      &diagv1.ApplyPlanRequest{},
+		ElementSpecs: planElements,
+		Connectors:   append([]*workspace.Connector(nil), connectors...),
 	}
 
 	refs := make([]string, 0, len(planElements))
@@ -280,7 +241,7 @@ func BuildImportPlan(
 			}
 		}
 		for _, placement := range el.Placements {
-			if !declared && id != 0 && !slices.Contains(autoPlacements[ref], placement.ParentRef) {
+			if !declared && id != 0 {
 				continue
 			}
 			parent := placement.ParentRef

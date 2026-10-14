@@ -3,7 +3,6 @@ package connect
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -41,9 +40,11 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 --from and --to accept element refs, display names, or numeric element IDs from
 'tld list elements'. The connector belongs to the source element's parent view
-by default. Both endpoints are made visible there automatically, retaining their
-other placements and existing coordinates. Use --view when multiple canvases are
-possible; root selects the top-level diagram.
+by default. Use --view to choose a particular view when elements have multiple
+placements; root selects the top-level diagram.
+Endpoints need not be placed in that view: off-view relationships can appear
+through UI context nodes, ancestor proxies, or badges. Connecting never places
+an endpoint; use 'view place' only when it belongs directly in this view.
 
 Use --label for the visible interaction and --relationship for semantic metadata
 such as calls or queries. Direction is forward, backward, both, or none.
@@ -97,9 +98,6 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 					return err
 				}
 			}
-			if err := workspace.CheckConnectorOwner(view, from, to); err != nil {
-				return err
-			}
 			spec := &workspace.Connector{
 				View:         view,
 				Source:       from,
@@ -116,12 +114,6 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 				return err
 			}
 			if dryRun {
-				placementsAdded := []string{}
-				for _, ref := range []string{from, to} {
-					if !ws.ElementPlacedInView(ref, view) && !slices.Contains(placementsAdded, ref) {
-						placementsAdded = append(placementsAdded, ref)
-					}
-				}
 				if sess.HasWorkspace() {
 					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
 						return workspace.AppendConnector(cloneDir, spec)
@@ -133,13 +125,11 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 					}
 				}
 				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{Command: "connect", Status: "dry-run", DryRun: true, Items: []cmdutil.JSONItem{{Ref: workspace.ConnectorKey(spec), ResourceType: "connector", Action: "connect"}}, Extra: map[string]any{"view": view, "placements_added": placementsAdded}})
+					return writeConnectJSON(cmd, ws, spec, *compact, "dry-run", 0)
 				}
 				term.Successf(cmd.OutOrStdout(), "dry-run: connect: %s -> %s", from, to)
 				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
-				if len(placementsAdded) > 0 {
-					term.Infof(cmd.OutOrStdout(), "make visible: %s", strings.Join(placementsAdded, ", "))
-				}
+				printVisibility(cmd, ws, spec)
 				return nil
 			}
 			return runConnect(cmd, sess, ws, *format, *compact, spec, from, to, view, noReposition)
@@ -156,7 +146,7 @@ Use 'tld list connectors' to find the resulting key for inspection or updates.`,
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
 	c.Flags().StringVar(&legacyView, "view", "", "explicit connector view ref (default: source element's view)")
-	c.Flags().BoolVar(&noReposition, "no-reposition", false, "do not adjust the position of a newly visible target element")
+	c.Flags().BoolVar(&noReposition, "no-reposition", false, "do not auto-place a freshly connected target element")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
@@ -188,9 +178,6 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		}
 		return err
 	}
-	if err := sess.RequireAppliedCache(); err != nil {
-		return fail(err)
-	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
@@ -207,10 +194,6 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, sess.Wdir, view)
 	if err != nil {
 		return fail(fmt.Errorf("resolve connector view: %w", err))
-	}
-	placementsAdded, err := cmdutil.EnsureConnectorPlacements(cmd, sess, ws, view, viewID, []string{from, to}, []int32{sourceID, targetID})
-	if err != nil {
-		return fail(err)
 	}
 	direction := spec.Direction
 	if direction == "" {
@@ -233,9 +216,6 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		Tags:         spec.Tags,
 	})
 	if err != nil {
-		if len(placementsAdded) > 0 {
-			return fail(&cmdutil.CommandError{Cause: err, Code: "partial_mutation", Applied: true, Hint: "The endpoints are now visible in the selected view. Retry this command to save their connector."})
-		}
 		return fail(cmdutil.WithUnauthorizedHint("server create connector failed", err))
 	}
 	// Optional fields omitted on a retry are preserved by the target. Cache the
@@ -243,11 +223,14 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	spec.Description, spec.Relationship, spec.URL = created.GetDescription(), created.GetRelationship(), created.GetUrl()
 	spec.Direction, spec.Style, spec.Tags = created.GetDirection(), created.GetStyle(), created.GetTags()
 	spec.SourceHandle, spec.TargetHandle = created.GetSourceHandle(), created.GetTargetHandle()
-	// Adjust only a placement created by this command. Existing coordinates
-	// belong to the user. Failures are non-fatal after creating the connector.
+	// Auto-place a freshly-connected target so the new edge reads cleanly. Only
+	// targets that already live in this view and have no other connectors here
+	// (i.e. just added) are moved, so deliberately wired-up elements are never
+	// disturbed and cross-view targets are left alone. Failures here are
+	// non-fatal: the connector itself was already created.
 	moved := false
 	var movedX, movedY float64
-	if !noReposition && slices.Contains(placementsAdded, to) && targetIsFresh(ws, view, to) {
+	if !noReposition && cmdutil.FindPlacement(ws, to, view) != nil && targetIsFresh(ws, view, to) {
 		if x, y, ok := cmdutil.AutoPlace(ws, view, to, []workspace.Connector{*spec}); ok {
 			if err := runner.UpdatePlacement(ctx, viewID, targetID, x, y); err != nil {
 				term.Warnf(cmd.ErrOrStderr(), "connected but could not reposition %q: %v", to, err)
@@ -268,20 +251,26 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		if err := exec.RecordConnectorMeta(ctx, sess.Wdir, workspace.ConnectorKey(spec), created); err != nil {
 			return fail(sess.CacheError(err))
 		}
-		cached, err := workspace.Load(sess.Wdir)
-		if err != nil {
-			return fail(sess.CacheError(err))
-		}
-		if err := sess.RefreshCache(cached); err != nil {
-			return fail(sess.CacheError(err))
-		}
 	}
 	if cmdutil.WantsJSON(format) {
-		return cmdutil.WriteJSON(cmd.OutOrStdout(), compact, cmdutil.JSONOutput{Command: "connect", Status: "ok", Items: []cmdutil.JSONItem{{Ref: workspace.ConnectorKey(spec), ResourceType: "connector", Action: "connect", ID: created.GetId()}}, Extra: map[string]any{"view": view, "placements_added": placementsAdded}})
+		return writeConnectJSON(cmd, ws, spec, compact, "ok", created.GetId())
 	}
 	term.Successf(cmd.OutOrStdout(), "connect: %s -> %s (id=%d)", from, to, created.GetId())
 	term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
+	printVisibility(cmd, ws, spec)
 	return nil
+}
+
+func writeConnectJSON(cmd *cobra.Command, ws *workspace.Workspace, spec *workspace.Connector, compact bool, status string, id int32) error {
+	return cmdutil.WriteJSON(cmd.OutOrStdout(), compact, cmdutil.JSONOutput{Command: "connect", Status: status, DryRun: status == "dry-run", Items: []cmdutil.JSONItem{{Ref: workspace.ConnectorKey(spec), ResourceType: "connector", Action: "connect", ID: id}}, Extra: map[string]any{"visibility": ws.DiagnoseConnector(spec)}})
+}
+
+func printVisibility(cmd *cobra.Command, ws *workspace.Workspace, spec *workspace.Connector) {
+	d := ws.DiagnoseConnector(spec)
+	term.Infof(cmd.OutOrStdout(), "visibility: %s", d.Description())
+	if d.Mode == "off-view" {
+		term.Info(cmd.OutOrStdout(), workspace.OffViewHint)
+	}
 }
 
 // Match against the target, not just cached metadata: a retry after a failed
@@ -376,31 +365,11 @@ func inferConnectorView(ws *workspace.Workspace, from, to string) (string, error
 	if !ok {
 		return "", fmt.Errorf("source element %q not found", from)
 	}
-	views := map[string]bool{}
-	if len(fromElement.Placements) == 0 {
-		views[workspace.RootRef] = true
-	}
-	for _, p := range fromElement.Placements {
-		views[normalizeParentRef(p.ParentRef)] = true
-	}
-	common := []string{}
-	for view := range views {
-		if ws.ElementPlacedInView(to, view) {
-			common = append(common, view)
-		}
-	}
-	if len(common) == 1 {
-		return common[0], nil
-	}
-	if len(views) == 1 {
-		for view := range views {
-			return view, nil
-		}
-	}
-	return "", cmdutil.WithHint(fmt.Errorf("elements have multiple possible views"), "Choose the canvas with --view <view>; use 'tld list views' to find it.")
+	return parentOfElement(fromElement), nil
 }
 
-// targetIsFresh reports whether ref has no connectors in view yet.
+// targetIsFresh reports whether ref has no connectors in view yet. A fresh
+// target was almost certainly just added and is safe to auto-place.
 func targetIsFresh(ws *workspace.Workspace, view, ref string) bool {
 	if ws == nil || ref == "" {
 		return false
@@ -418,6 +387,21 @@ func targetIsFresh(ws *workspace.Workspace, view, ref string) bool {
 		}
 	}
 	return true
+}
+
+func parentOfElement(element *workspace.Element) string {
+	if element == nil || len(element.Placements) == 0 {
+		return workspace.RootRef
+	}
+	best := workspace.RootRef
+	for _, placement := range element.Placements {
+		candidate := normalizeParentRef(placement.ParentRef)
+		if candidate != workspace.RootRef {
+			best = candidate
+			break
+		}
+	}
+	return best
 }
 
 func normalizeParentRef(ref string) string {

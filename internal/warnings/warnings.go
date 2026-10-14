@@ -110,20 +110,15 @@ type warningRule struct {
 var warningRules = []warningRule{
 	{
 		Code:        "ARC008",
-		Name:        "Hidden Connector",
-		Description: "Connector endpoints are not placed in its view, so exports omit it",
-		Mediation:   "Place missing endpoints with 'tld view place <view> <element>', or connect child elements within the owned view. An owner cannot be placed in its own view.",
+		Name:        "Unresolved Connector",
+		Description: "Connector references a missing endpoint definition",
+		Mediation:   "Define the missing element or correct the endpoint ref. Existing endpoints in other views are valid off-view relationships.",
 		Level:       1,
 		Check: func(ctx *warningContext, rule warningRule) {
 			for _, view := range ctx.ws.ViewDiagnostics() {
-				for _, key := range view.OmittedConnectors {
-					c := ctx.ws.Connectors[key]
-					for _, ref := range []string{c.Source, c.Target} {
-						if ref == view.View {
-							ctx.addWarning(rule.Code, fmt.Sprintf("Connector %q: view owner %q cannot be its own child endpoint; connect child elements for internal interactions", key, ref))
-						} else if !ctx.ws.ElementPlacedInView(ref, view.View) {
-							ctx.addWarning(rule.Code, fmt.Sprintf("Connector %q: endpoint %q is not placed in view %q", key, ref, view.View))
-						}
+				for _, key := range view.UnresolvedConnectors {
+					for _, ref := range view.ConnectorVisibility[key].MissingEndpoints {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Connector %q: endpoint %q has no element definition", key, ref))
 					}
 				}
 			}

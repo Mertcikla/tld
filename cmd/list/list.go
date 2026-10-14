@@ -57,14 +57,15 @@ type elementRow struct {
 }
 
 type connectorRow struct {
-	Key          string `json:"key"`
-	View         string `json:"view"`
-	Source       string `json:"source"`
-	Target       string `json:"target"`
-	Label        string `json:"label,omitempty"`
-	Relationship string `json:"relationship,omitempty"`
-	Direction    string `json:"direction,omitempty"`
-	ID           int32  `json:"id,omitempty"`
+	Visibility   workspace.ConnectorVisibility `json:"visibility"`
+	Key          string                        `json:"key"`
+	View         string                        `json:"view"`
+	Source       string                        `json:"source"`
+	Target       string                        `json:"target"`
+	Label        string                        `json:"label,omitempty"`
+	Relationship string                        `json:"relationship,omitempty"`
+	Direction    string                        `json:"direction,omitempty"`
+	ID           int32                         `json:"id,omitempty"`
 }
 
 type viewRow struct {
@@ -154,7 +155,9 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 Keys have the form view/source~target[/label]. Copy the full key into 'inspect'
 or 'update connector'; quote it when it contains spaces. After changing a label,
-endpoint, or view, list connectors again to discover the new key.`,
+endpoint, or view, list connectors again to discover the new key.
+Visibility reports direct or off-view endpoints relative to each connector's
+owning view. Off-view relationships are retained for UI context/proxy rendering.`,
 		Example: `  tld list connectors --view root
   tld list connectors --search reads --format json`,
 		Args: cobra.NoArgs,
@@ -194,12 +197,17 @@ endpoint, or view, list connectors again to discover the new key.`,
 			}
 			out := cmd.OutOrStdout()
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "VIEW\tSOURCE\tTARGET\tLABEL\tRELATIONSHIP\tDIRECTION\tID")
+			_, _ = fmt.Fprintln(w, "VIEW\tSOURCE\tTARGET\tLABEL\tRELATIONSHIP\tDIRECTION\tID\tVISIBILITY")
+			hasOffView := false
 			for _, row := range filtered {
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					row.View, row.Source, row.Target, row.Label, row.Relationship, row.Direction, idString(row.ID))
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					row.View, row.Source, row.Target, row.Label, row.Relationship, row.Direction, idString(row.ID), row.Visibility.Description())
+				hasOffView = hasOffView || row.Visibility.Mode == "off-view"
 			}
 			_ = w.Flush()
+			if hasOffView {
+				term.Info(out, workspace.OffViewHint)
+			}
 			term.Infof(out, "%d of %d connector(s)", len(filtered), len(rows))
 			return nil
 		},
@@ -310,6 +318,7 @@ func buildConnectorRows(ws *workspace.Workspace) []connectorRow {
 			continue
 		}
 		rows = append(rows, connectorRow{
+			Visibility:   ws.DiagnoseConnector(connector),
 			Key:          key,
 			View:         connector.View,
 			Source:       connector.Source,

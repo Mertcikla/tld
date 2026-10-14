@@ -75,7 +75,7 @@ The default output is the canonical impact scene: the user-authored diagram stay
 canonical, each linked element is verified against the pinned snapshots, and
 the generated map contributes collapsed context only. The payload is
 self-contained, so it renders offline without the repository, its index, or
-its snapshots. Pass --mermaid to emit the same change scene the canvas
+its snapshots. Pass --mermaid to emit the same change scene the view
 draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
 and added/removed/modified arrows on connectors.
 
@@ -270,7 +270,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		return err
 	}
 	if opts.debugProvenance && opts.maxBytes > 0 && len(result.text) > opts.maxBytes && result.size <= opts.maxBytes {
-		notice("notice: debug provenance exceeds the normal byte budget; canvas selection is unchanged")
+		notice("notice: debug provenance exceeds the normal byte budget; view selection is unchanged")
 	}
 	report = comparisonReport(result.diagram, opts)
 	return writeCompareOutput(cmd, opts, result, report)

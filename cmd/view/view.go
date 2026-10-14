@@ -22,7 +22,7 @@ func NewViewCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Manage diagrams (views) owned by elements",
 		Long: `Manage the diagram owned by an element.
 
-An element is a reusable node; its owned view is a canvas for its children.
+An element is a reusable node; its owned view displays its children.
 'tld add --parent <element-ref>' creates the parent's view automatically.
 'tld view create <element-ref>' ensures it exists even before children are added.
 The synthetic root view holds top-level placements.
@@ -31,7 +31,7 @@ or metadata. Add --from <old-view> to move it; 'view unplace <view> <element>'
 removes just that placement. Remove connectors in the old view first.
 
 View names and level labels are separate from element names and refs. Use
-'view rename' for the canvas name and 'view set-level' for a label such as
+'view rename' for the view name and 'view set-level' for a label such as
 Container. Discover owner refs with 'tld list views --tree', then render a view
 with 'tld render <owner-ref>'.`,
 		Example: `  tld add "Platform"

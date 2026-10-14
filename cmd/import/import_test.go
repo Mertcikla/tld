@@ -54,8 +54,7 @@ func TestImportCmd_ConnectorOnlyPreservesViewName(t *testing.T) {
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
 	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db")
 	cmd.MustRunCmd(t, dir, "view", "create", "api", "--name", "Custom diagram")
-	cmd.MustRunCmd(t, dir, "add", "Handler", "--ref", "handler")
-	file := writeImportFile(t, "connectors:\n  - view: api\n    source: handler\n    target: db\n")
+	file := writeImportFile(t, "connectors:\n  - view: api\n    source: api\n    target: db\n")
 	cmd.MustRunCmd(t, dir, "import", file)
 	ws, err := workspace.Load(dir)
 	if err != nil {

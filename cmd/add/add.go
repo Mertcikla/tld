@@ -126,11 +126,11 @@ Next, connect elements with 'tld connect' or inspect them with 'tld list element
 				placementParent = resolvedParent
 			}
 			if placementParent == r {
-				return cmdutil.WithHint(fmt.Errorf("an element cannot be placed inside its own canvas"), "Choose another --parent, or add a child component to this canvas.")
+				return cmdutil.WithHint(fmt.Errorf("an element cannot be placed inside its own view"), "Choose another --parent, or add a child component to this view.")
 			}
 			// Place the element automatically unless the caller pinned it. An
 			// element that already has a placement keeps its position (re-add
-			// must not reset the canvas), otherwise the layout engine drops the
+			// must not reset the view), otherwise the layout engine drops the
 			// new node into the nearest free slot, anchored to any existing
 			// connectors.
 			positionSet := cmd.Flags().Changed("position-x") || cmd.Flags().Changed("position-y")
@@ -210,8 +210,8 @@ Next, connect elements with 'tld connect' or inspect them with 'tld list element
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&logoURL, "logo-url", "", "logo image URL")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
-	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal canvas position")
-	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
+	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal position in the view")
+	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical position in the view")
 	c.Flags().StringVar(&ref, "ref", "", "workspace-local ref (YAML mode only; default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")

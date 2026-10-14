@@ -248,11 +248,6 @@ and refresh the YAML cache when present.`,
 				}
 				return fail(fmt.Errorf("update connector: %w", err))
 			}
-			desired := *ws.Connectors[ref]
-			workspace.ApplyConnectorField(&desired, field, value)
-			if err := workspace.CheckConnectorOwner(desired.View, desired.Source, desired.Target); err != nil {
-				return fail(err)
-			}
 			if dryRun {
 				if sess.HasWorkspace() {
 					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
@@ -266,9 +261,6 @@ and refresh the YAML cache when present.`,
 				}
 				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
 				return nil
-			}
-			if err := sess.RequireAppliedCache(); err != nil {
-				return fail(err)
 			}
 			preSpec := ws.Connectors[ref]
 			var preID int32
@@ -296,15 +288,6 @@ and refresh the YAML cache when present.`,
 					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
 						return fail(sess.CacheError(err))
 					}
-				}
-			}
-			if sess.HasWorkspace() {
-				cached, err := workspace.Load(sess.Wdir)
-				if err != nil {
-					return fail(sess.CacheError(err))
-				}
-				if err := sess.RefreshCache(cached); err != nil {
-					return fail(sess.CacheError(err))
 				}
 			}
 			if cmdutil.WantsJSON(*format) {
@@ -590,6 +573,11 @@ func runUpdateConnectorServer(cmd *cobra.Command, sess *cmdutil.Session, ws *wor
 			connectorID = int32(m.ID)
 		}
 	}
+	if connectorID == 0 {
+		// No cached ID (hand-written YAML): fall back to create.
+		created, err := runCreateConnectorFromSpec(ctx, ws, runner, sess.Wdir, &spec)
+		return created, currentKey, err
+	}
 	sourceID, err := exec.EnsureElementID(ctx, runner, ws, sess.Wdir, spec.Source)
 	if err != nil {
 		return nil, currentKey, err
@@ -601,20 +589,6 @@ func runUpdateConnectorServer(cmd *cobra.Command, sess *cmdutil.Session, ws *wor
 	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, sess.Wdir, spec.View)
 	if err != nil {
 		return nil, currentKey, fmt.Errorf("resolve connector view: %w", err)
-	}
-	placementsAdded, err := cmdutil.EnsureConnectorPlacements(cmd, sess, ws, spec.View, viewID, []string{spec.Source, spec.Target}, []int32{sourceID, targetID})
-	if err != nil {
-		return nil, currentKey, err
-	}
-	mutationError := func(err error) error {
-		if err != nil && len(placementsAdded) > 0 {
-			return &cmdutil.CommandError{Cause: err, Code: "partial_mutation", Applied: true, Hint: "The endpoints are now visible in the selected view. Retry this command to finish updating their connector."}
-		}
-		return err
-	}
-	if connectorID == 0 {
-		created, err := runCreateConnectorFromSpec(ctx, ws, runner, sess.Wdir, &spec)
-		return created, currentKey, mutationError(err)
 	}
 	direction := spec.Direction
 	if direction == "" {
@@ -629,7 +603,7 @@ func runUpdateConnectorServer(cmd *cobra.Command, sess *cmdutil.Session, ws *wor
 	// existing tags through to avoid clearing them on unrelated updates.
 	existing, err := runner.GetConnector(ctx, connectorID)
 	if err != nil {
-		return nil, currentKey, mutationError(cmdutil.WithUnauthorizedHint("server get connector failed", err))
+		return nil, currentKey, cmdutil.WithUnauthorizedHint("server get connector failed", err)
 	}
 	tags := existing.GetTags()
 	if spec.Tags != nil {
@@ -650,7 +624,7 @@ func runUpdateConnectorServer(cmd *cobra.Command, sess *cmdutil.Session, ws *wor
 		Tags:         tags,
 	})
 	if err != nil {
-		return nil, currentKey, mutationError(cmdutil.WithUnauthorizedHint("server update connector failed", err))
+		return nil, currentKey, cmdutil.WithUnauthorizedHint("server update connector failed", err)
 	}
 	return updated, currentKey, nil
 }

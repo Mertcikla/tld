@@ -71,8 +71,7 @@ An import adds placements; it does not move elements or remove old placements.
 Use 'tld view unplace <view> <element>' to remove a placement, or 'tld view place
 <destination> <element> --from <old-view>' to move one. Shared placements can copy
 existing relationships into the destination view; these appear in the refreshed
-cache and live listings. Connector endpoints are placed in their selected view
-automatically. Changing a connector's label,
+cache and live listings. Changing a connector's label,
 view, or endpoints creates another connector; use 'update connector' to edit it.
 Unapplied YAML edits must be synced before a write refreshes the cache; use
 'import --dry-run' to preview without discarding them.
@@ -582,7 +581,7 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			Command: command,
 			Status:  status,
 			Items:   items,
-			Extra:   map[string]any{"views": plan.Views, "preserved_placements": plan.PreservedPlacements, "placements_added": plan.AutoPlacements},
+			Extra:   map[string]any{"views": plan.Views, "preserved_placements": plan.PreservedPlacements},
 			Summary: map[string]int{
 				"omitted_connectors": omitted,
 				"elements_created":   plan.ElementsCreated,
@@ -595,7 +594,10 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 	}
 
 	for _, view := range plan.Views {
-		term.Infof(cmd.OutOrStdout(), "view %s: %d elements, %d connectors (%d visible, %d omitted)", view.View, view.Elements, view.Connectors, view.RenderedConnectors, len(view.OmittedConnectors))
+		term.Infof(cmd.OutOrStdout(), "view %s: %d elements, %d connectors (%d direct, %d off-view, %d unresolved)", view.View, view.Elements, view.Connectors, view.RenderedConnectors, len(view.OffViewConnectors), len(view.UnresolvedConnectors))
+		if len(view.OffViewConnectors) > 0 {
+			term.Info(cmd.OutOrStdout(), workspace.OffViewHint)
+		}
 	}
 	if len(plan.PreservedPlacements) > 0 {
 		refs := make([]string, 0, len(plan.PreservedPlacements))
@@ -607,9 +609,6 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			term.Infof(cmd.OutOrStdout(), "kept existing placements for %s: %s", ref, strings.Join(plan.PreservedPlacements[ref], ", "))
 		}
 		term.Infof(cmd.OutOrStdout(), "Use 'tld view unplace <view> <element>' to remove a placement.")
-	}
-	for ref, views := range plan.AutoPlacements {
-		term.Infof(cmd.OutOrStdout(), "connector endpoints: make %s visible in %s", ref, strings.Join(views, ", "))
 	}
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
@@ -672,7 +671,7 @@ func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declar
 	}
 	// A newly shared endpoint causes the target to copy existing relationships
 	// whose opposite endpoint is already placed in the destination view.
-	for ref, spec := range plan.ElementSpecs {
+	for ref, spec := range declared {
 		for _, p := range spec.Placements {
 			view := cmdutil.NormalizeParentRef(p.ParentRef)
 			if ws.ElementPlacedInView(ref, view) {

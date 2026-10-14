@@ -29,7 +29,9 @@ top-level diagram, an owning element ref or name, or a numeric view ID.
 Find available views with 'tld list views --tree'. Output goes to stdout unless
 --output is supplied. Use --to mermaid for the diagram format and --format json
 for a structured response containing the rendered content and emitted/omitted
-connector counts. Missing endpoint placements are reported on stderr in text mode.`,
+connector counts. Off-view relationships remain stored and can appear in the UI
+as context/proxy connectors or badges; this Mermaid export draws only directly
+placed endpoints. Off-view details are reported on stderr in text mode.`,
 		Example: `  tld render root
   tld render platform -o diagram.mmd
   tld render --view root --output diagram.mmd`,
@@ -73,22 +75,32 @@ connector counts. Missing endpoint placements are reported on stderr in text mod
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
 					Command: "render",
 					Status:  "ok",
-					Summary: map[string]int{"elements": diagnostics.Elements, "connectors": diagnostics.Connectors, "rendered_connectors": diagnostics.RenderedConnectors, "omitted_connectors": len(diagnostics.OmittedConnectors)},
+					Summary: map[string]int{"elements": diagnostics.Elements, "connectors": diagnostics.Connectors, "rendered_connectors": diagnostics.RenderedConnectors, "omitted_connectors": len(diagnostics.OmittedConnectors), "off_view_connectors": len(diagnostics.OffViewConnectors), "unresolved_connectors": len(diagnostics.UnresolvedConnectors)},
 					Extra: map[string]any{
-						"view":               viewRef,
-						"omitted_connectors": diagnostics.OmittedConnectors,
-						"format":             "mermaid",
-						"content":            content,
-						"output":             output,
+						"view":                  viewRef,
+						"omitted_connectors":    diagnostics.OmittedConnectors,
+						"off_view_connectors":   diagnostics.OffViewConnectors,
+						"unresolved_connectors": diagnostics.UnresolvedConnectors,
+						"connector_visibility":  diagnostics.ConnectorVisibility,
+						"off_view_hint":         workspace.OffViewHint,
+						"format":                "mermaid",
+						"content":               content,
+						"output":                output,
 					},
 				})
 			}
-			if len(diagnostics.OmittedConnectors) > 0 {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: omitted %d of %d connector(s) in view %q because an endpoint is not placed there:\n", len(diagnostics.OmittedConnectors), diagnostics.Connectors, viewRef)
-				for _, key := range diagnostics.OmittedConnectors {
-					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key)
+			if len(diagnostics.OffViewConnectors) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%d off-view connector(s) in %q are omitted from Mermaid only:\n", len(diagnostics.OffViewConnectors), viewRef)
+				for _, key := range diagnostics.OffViewConnectors {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key+": "+diagnostics.ConnectorVisibility[key].Description())
 				}
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Place missing endpoints with 'tld view place <view> <element>'. An owner cannot be placed in its own view; use child elements for internal interactions. Run 'tld validate ARC008' for details.")
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), workspace.OffViewHint)
+			}
+			if len(diagnostics.UnresolvedConnectors) > 0 {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: unresolved connectors have missing endpoint definitions; run 'tld validate' for details.")
+				for _, key := range diagnostics.UnresolvedConnectors {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key+": "+diagnostics.ConnectorVisibility[key].Description())
+				}
 			}
 			if output == "" {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), content)
