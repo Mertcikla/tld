@@ -46,7 +46,7 @@ func publishPipeline(t *testing.T, ctx context.Context, idx *cstore.Store, id st
 		facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "First", "go", source.Anchor(0, len(text)), text, "", nil)
 	}
 	for _, edge := range edges {
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 	}
 	if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 		t.Fatal(err)

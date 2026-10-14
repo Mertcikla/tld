@@ -37,7 +37,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 	graph.Facts["sym-a"] = &codeindexv1.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["sym-c"] = &codeindexv1.CodeFact{Id: "sym-c", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/deep/c.go"}}
-	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-c", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-c", "", &codeindexv1.SourceAnchor{Path: "src/a.go"})
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 	graph.Facts["f2"] = &codeindexv1.CodeFact{Id: "f2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
 	graph.Facts["s1"] = &codeindexv1.CodeFact{Id: "s1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["s2"] = &codeindexv1.CodeFact{Id: "s2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
-	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "s1", "s2", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "s1", "s2", "", &codeindexv1.SourceAnchor{Path: "src/a.go"})
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}

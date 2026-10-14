@@ -3,7 +3,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(20261014000200);
   -- Make retry safe if migration-history recording failed after committing DDL.
   IF EXISTS (SELECT 1 FROM information_schema.columns
-    WHERE table_schema=current_schema() AND table_name='codeindex_edges' AND column_name='details') THEN
+    WHERE table_schema=current_schema() AND table_name='codeindex_edges' AND column_name='logical_key' AND data_type='bytea') THEN
     RETURN;
   END IF;
 
@@ -22,7 +22,6 @@ BEGIN
     ALTER COLUMN logical_key TYPE BYTEA USING decode(logical_key, 'hex'),
     DROP COLUMN anchor_json,
     DROP COLUMN evidence_json,
-    ADD COLUMN details BYTEA NOT NULL,
     ADD CONSTRAINT codeindex_edges_logical_key_length CHECK (octet_length(logical_key) = 32);
   CREATE INDEX idx_codeindex_edges_logical ON codeindex_edges(org_id, logical_key, snapshot_id);
 END $$;

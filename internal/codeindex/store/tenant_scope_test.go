@@ -149,7 +149,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 		t.Helper()
 		g := graph.NewGraph("1", "2")
 		g.Facts["3"] = &pb.CodeFact{Id: "3", RepositoryId: "1", SnapshotId: "2", Name: label, LogicalKey: "file:main.go"}
-		g.EdgeFacts["4"] = &pb.EdgeFact{Id: "4", RepositoryId: "1", SnapshotId: "2", LogicalKey: graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target"), Anchor: &pb.SourceAnchor{Path: label}}
+		g.EdgeFacts["4"] = &pb.EdgeFact{Id: "4", RepositoryId: "1", SnapshotId: "2", LogicalKey: graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target"), TargetSymbolKey: label}
 		snap := &pb.Snapshot{Id: "2", RepositoryId: "1", GitBranch: label, Sources: []*pb.SourceFile{{Path: "main.go", Hash: label}}}
 		g.Sources["main.go"] = &graph.Source{Text: []byte(label)}
 		for _, err := range []error{
@@ -202,7 +202,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 			t.Fatalf("%s facts = %+v err=%v", label, facts, err)
 		}
 		edges, err := st.EdgeFacts(ctx, "2", pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 10)
-		if err != nil || len(edges) != 1 || edges[0].LogicalKey != graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target") || edges[0].GetAnchor().GetPath() != label {
+		if err != nil || len(edges) != 1 || edges[0].LogicalKey != graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target") || edges[0].TargetSymbolKey != label {
 			t.Fatalf("%s edges = %+v err=%v", label, edges, err)
 		}
 		for _, read := range []func() ([]*pb.EdgeFact, error){
@@ -210,7 +210,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 			func() ([]*pb.EdgeFact, error) { return st.EdgeFacts(ctx, "2", 0, edges[0].LogicalKey, "", 10) },
 		} {
 			filtered, err := read()
-			if err != nil || len(filtered) != 1 || filtered[0].GetAnchor().GetPath() != label {
+			if err != nil || len(filtered) != 1 || filtered[0].TargetSymbolKey != label {
 				t.Fatalf("%s edge key lookup escaped tenant: %v %v", label, filtered, err)
 			}
 		}

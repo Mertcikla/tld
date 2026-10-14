@@ -77,7 +77,7 @@ func TestIntegerIDPublicationRemapsReferencesAndPreservesPayloads(t *testing.T) 
 	parent := g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, 10), "A", "", nil)
 	child := g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "B", "go", src.Anchor(11, 21), "B", "", nil)
 	child.ParentFactId = parent.Id
-	edge := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, child.Id, parent.Id, "symbol/A", src.Anchor(12, 13), &pb.Evidence{Producer: "scip", OriginalId: "original symbol", OriginalRange: "12:13", Anchor: src.Anchor(12, 13)})
+	edge := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, child.Id, parent.Id, "symbol/A", src.Anchor(12, 13))
 	if err := st.Publish(ctx, root, snap, g); err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +94,8 @@ func TestIntegerIDPublicationRemapsReferencesAndPreservesPayloads(t *testing.T) 
 		t.Fatal("references were not remapped")
 	}
 	got := loaded.EdgeFacts[edge.Id]
-	if got.Anchor.SourceHash != src.Hash || got.Evidence[0].OriginalId != "original symbol" || got.Evidence[0].OriginalRange != "12:13" {
-		t.Fatalf("payload changed: %v", got)
+	if got.Anchor != nil || len(got.Evidence) != 0 {
+		t.Fatalf("edge retained provenance: %v", got)
 	}
 	first := snap.Id
 	if err := st.Publish(ctx, root, snap, g); err != nil || snap.Id != first {

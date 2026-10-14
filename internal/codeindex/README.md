@@ -31,29 +31,13 @@ codeindex and update the pinned `github.com/mertcikla/codeindex` dependency;
 the previous v0.0.2 module does not expose the new key decoder. No local-path
 replacement is added to the portable core module.
 
-Edge anchors and evidence now share one versioned binary `details` payload,
-using the existing protobuf messages. Evidence anchors equal to the edge anchor
-are stored as references and reconstructed on reads. Distinct/absent anchors,
-nil entries, empty lists, order, and unknown protobuf fields are preserved.
-Corrupt or unsupported payloads fail reads instead of silently losing provenance.
-Facts still use their existing JSON encoding. RPC message shapes are unchanged.
+Edges store only relationship identity, endpoints, unresolved target symbols,
+and weights. Extractors use observation sites internally for ownership and
+deduplication, but emit no edge anchors or evidence. Source locations and
+provenance remain on facts; source blobs, SCIP import caches and syntax caches
+retain the data used for extraction. RPC message shapes are unchanged, with
+edge anchor and evidence fields unset. Fresh databases have no `details` column.
 
 SQLite reuses freed pages but does not automatically shrink its database file.
 After rebuilding, stop database users and run a separate maintenance `VACUUM`
 to reclaim disk space. Startup migrations never run `VACUUM`.
-
-To repeat the space measurement, create an isolated backup of a format-2
-database and run:
-
-```sh
-TLD_EDGE_STORAGE_BENCHMARK_DB=/tmp/backup.db go test ./internal/codeindex/store -run TestEdgeStorageSize -v
-go test ./internal/codeindex/store -run '^$' -bench BenchmarkEdgeDetails -benchmem
-```
-
-The measurement checks every edge for lossless round trips and reports payload,
-table, and index sizes. The supplied database's 41,011 edges reduced raw payload
-from 36,922,718 to 12,246,879 bytes (66.8%). Edge table plus indexes reduced from
-64,290,816 to 25,587,712 bytes (60.2%); unrelated database tables are excluded.
-Keeping all unrelated data and vacuuming both whole-database copies reduced the
-database from 137,809,920 to 101,490,688 bytes (26.4%). This isolates edge-format
-savings from reclaimed freelist space and from discarded derived snapshots.

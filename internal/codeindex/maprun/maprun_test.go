@@ -225,7 +225,7 @@ func TestColdSnapshotsKeepCommunityResources(t *testing.T) {
 		for i := range 40 {
 			for j := i + 1; j < 40; j++ {
 				if i/10 == j/10 || j == i+1 {
-					g.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, ids[i], ids[j], "", &codeindexv1.SourceAnchor{Path: fmt.Sprint(i), StartByte: uint32(j)}, nil)
+					g.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, ids[i], ids[j], "", &codeindexv1.SourceAnchor{Path: fmt.Sprint(i), StartByte: uint32(j)})
 				}
 			}
 		}

@@ -1,4 +1,4 @@
--- Index format 3: compact edge identities and lossless binary provenance.
+-- Index format 3: compact edge identities and relationship-only rows.
 -- Derived indexes are rebuilt; repository configuration and diagram ownership
 -- keep their existing IDs and namespaces.
 DELETE FROM codeindex_active_maps;
@@ -31,7 +31,6 @@ CREATE TABLE codeindex_edges (
   target_symbol_key TEXT NOT NULL DEFAULT '',
   logical_key BLOB NOT NULL CHECK (typeof(logical_key) = 'blob' AND length(logical_key) = 32),
   weight REAL NOT NULL DEFAULT 0,
-  details BLOB NOT NULL,
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
   PRIMARY KEY (org_id, id)
 );

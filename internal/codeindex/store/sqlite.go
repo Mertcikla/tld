@@ -379,18 +379,14 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Id, err)
 		}
-		details, err := marshalEdgeDetails(e.Anchor, e.Evidence)
-		if err != nil {
-			return fmt.Errorf("encode edge %s: %w", e.Id, err)
-		}
 		rows = append(rows, []any{
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), storedID(e.FromFactId), storedID(e.ToFactId), e.TargetSymbolKey,
-			key, e.Weight, details, org,
+			key, e.Weight, org,
 		})
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_edges
-		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, details, org_id) VALUES `,
-		` ON CONFLICT(org_id, id) DO NOTHING`, 11, rows); err != nil {
+		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, org_id) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 10, rows); err != nil {
 		return fmt.Errorf("insert edges: %w", err)
 	}
 	return nil
