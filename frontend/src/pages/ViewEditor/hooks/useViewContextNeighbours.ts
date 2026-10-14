@@ -9,6 +9,7 @@ import type {
   WorkspaceGraphSnapshot,
 } from '../../../crossBranch/types'
 import { resolveViewProxyGraph } from '../../../crossBranch/resolve'
+import { UNPLACED_ELEMENTS_BOUNDARY_ID, UNPLACED_ELEMENTS_NAME, UNPLACED_ELEMENTS_VIEW_ID } from '../../../crossBranch/unplacedElements'
 import { placedElementToLibraryElement } from '../../../store/useStore'
 import { canonicalNodePairKey } from '../pairKey'
 import { Z_CONTEXT_BOUNDARY, Z_CONTEXT_GROUP_ANCHOR, Z_CONTEXT_NODE } from '../../../utils/zOrder'
@@ -795,14 +796,15 @@ export function useViewContextNeighbours({
           boundaryBounds,
         )
         const placements = snapshot.placementsByElementId[summaryNode.elementId] ?? []
+        const isSyntheticBoundary = summaryNode.elementId === UNPLACED_ELEMENTS_BOUNDARY_ID
         const placementViews = new Map<number, string>()
         placements.forEach((placement) => {
-          placementViews.set(placement.viewId, placement.viewName)
+          if (placement.viewId !== UNPLACED_ELEMENTS_VIEW_ID) placementViews.set(placement.viewId, placement.viewName)
         })
         const primaryPlacement = placements[0]?.element
         const representativeLeaf = summaryForest.leavesById[summaryNode.directLeafIds[0] ?? summaryNode.descendantLeafIds[0] ?? '']
         const representativeElement = primaryPlacement ?? currentElementsById.get(summaryNode.elementId) ?? null
-        const name = representativeElement?.name
+        const name = isSyntheticBoundary ? UNPLACED_ELEMENTS_NAME : representativeElement?.name
           ?? representativeLeaf?.endpoint.anchorElementName
           ?? representativeLeaf?.endpoint.actualElementName
           ?? `Element ${summaryNode.elementId}`
@@ -837,6 +839,7 @@ export function useViewContextNeighbours({
           zIndex: isGroupAnchor && summaryNode.visibleChildIds.length > 0 ? Z_CONTEXT_GROUP_ANCHOR : Z_CONTEXT_NODE,
           data: {
             element_id: summaryNode.elementId,
+            isSyntheticBoundary,
             name,
             kind: displayElement?.kind ?? null,
             description: displayElement?.description ?? null,

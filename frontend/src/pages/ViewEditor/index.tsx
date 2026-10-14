@@ -2034,8 +2034,8 @@ function ViewEditorInner({
 
   const effectiveWorkspaceSnapshot = useMemo(() => {
     if (viewId == null) return workspaceGraphSnapshot
-    return overrideViewContentInSnapshot(workspaceGraphSnapshot, viewId, viewElements, connectors)
-  }, [workspaceGraphSnapshot, viewId, viewElements, connectors])
+    return overrideViewContentInSnapshot(workspaceGraphSnapshot, viewId, viewElements, connectors, allElements)
+  }, [workspaceGraphSnapshot, viewId, viewElements, connectors, allElements])
 
   const placementSummaryByElementId = useMemo(() => {
     const summary: Record<number, string> = {}
@@ -2992,7 +2992,9 @@ function ViewEditorInner({
           allElements,
           existingElementIds,
           allowCreate: true,
-          getSecondaryLabel: pending.mode === 'connect'
+          connectionMode: pending.sourceElementIds.length > 0 ? pending.mode : undefined,
+          onConnectionModeChange: canvas.setPendingElementMode,
+          getSecondaryLabel: pending.sourceElementIds.length > 0
             ? (obj: WorkspaceElement) => placementSummaryByElementId[obj.id] ?? obj.technology ?? null
             : undefined,
           onConfirmNew: canvas.handleConfirmNewElement,
@@ -3007,6 +3009,7 @@ function ViewEditorInner({
     canvas.handleConfirmExistingElement,
     canvas.handleConfirmNewElement,
     canvas.pendingElement,
+    canvas.setPendingElementMode,
     existingElementIds,
     placementSummaryByElementId,
     viewId,

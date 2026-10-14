@@ -89,6 +89,7 @@ export type ConnectorDragTarget = {
 
 function resolveElementIdFromNode(node: RFNode | null | undefined) {
   if (!node) return null
+  if ((node.data as { isSyntheticBoundary?: boolean } | undefined)?.isSyntheticBoundary) return null
   const numericId = parseNumericId(node.id)
   if (numericId !== null) return numericId
 
@@ -969,9 +970,9 @@ export function useCanvasInteractions({
     } catch { /* intentionally empty */ }
   }, [autoLayoutEnabled, canEdit, getInteractionNodes, onPlacementMoved, setRfNodes, updateElementPosition, viewElementsRef, viewId])
 
-  const finalizeConnectorCreate = useCallback(async (connector: Connector) => {
+  const finalizeConnectorCreate = useCallback(async (connector: Connector, elements?: LibraryElement[]) => {
     await relocateConnectedTarget(connector)
-    upsertConnectorGraphSnapshot(connector)
+    upsertConnectorGraphSnapshot(connector, elements)
     upsertConnector(connector)
     onConnectorSaved?.(connector)
     await refreshElements()
@@ -983,29 +984,8 @@ export function useCanvasInteractions({
   const openConnectorPanelRef = useRef(openConnectorPanel)
   openConnectorPanelRef.current = openConnectorPanel
 
-  const resolvePickerMode = useCallback((flowX: number, flowY: number, preferredMode: 'add' | 'connect', forceConnect = false) => {
-    if (preferredMode !== 'connect') return preferredMode
-    if (forceConnect) return 'connect'
-
-    const boundaryNode = getInteractionNodes().find((node) => node.type === 'ContextBoundaryElement')
-    if (!boundaryNode) return 'add'
-
-    const boundaryData = boundaryNode.data as { width?: number; height?: number } | undefined
-    const width = boundaryData?.width ?? boundaryNode.width
-    const height = boundaryData?.height ?? boundaryNode.height
-    if (width == null || height == null) return 'add'
-
-    const withinBoundary =
-      flowX >= boundaryNode.position.x &&
-      flowX <= boundaryNode.position.x + width &&
-      flowY >= boundaryNode.position.y &&
-      flowY <= boundaryNode.position.y + height
-
-    return withinBoundary ? 'add' : 'connect'
-  }, [getInteractionNodes])
-
   // ── Pending element node ───────────────────────────────────────────────────
-  const showAddingElementAt = useCallback((clientX: number, clientY: number, _expandResults = false, mode: 'add' | 'connect' = 'add', forceConnect = false) => {
+  const showAddingElementAt = useCallback((clientX: number, clientY: number, _expandResults = false, _mode: 'add' | 'connect' = 'add', _forceConnect = false) => {
     const flowPos = screenToFlowPositionRef.current({ x: clientX, y: clientY })
     let { x: flowX, y: flowY } = flowPos
     if (snapToGrid) {
@@ -1023,15 +1003,15 @@ export function useCanvasInteractions({
     setPendingElement({
       id: PENDING_ELEMENT_NODE_ID,
       position: resolveAutoPlacementPosition(flowX, flowY, sourceIds, sourceHandle),
-      mode: resolvePickerMode(flowX, flowY, mode, forceConnect),
+      mode: sourceIds.length > 0 ? 'connect' : 'add',
       sourceElementIds: sourceIds,
       sourceHandle,
     })
     pendingConnectionSourceRef.current = null
     multiConnectionSourceIdsRef.current = null
-  }, [multiConnectionSourceIdsRef, snapToGrid, resolvePickerMode, resolveAutoPlacementPosition])
+  }, [multiConnectionSourceIdsRef, snapToGrid, resolveAutoPlacementPosition])
 
-  const updateConnectorDragPreview = useCallback((clientX: number, clientY: number, sourceNodeId: string, forceConnect = false) => {
+  const updateConnectorDragPreview = useCallback((clientX: number, clientY: number, sourceNodeId: string) => {
     if (!shouldDisplayConnectorDragPlaceholder(getConnectorDragTargetAtPoint(clientX, clientY))) {
       setPendingElement((current) => current?.preview ? null : current)
       return
@@ -1052,7 +1032,7 @@ export function useCanvasInteractions({
     }
     const sourceHandle = pendingConnectionSourceHandleRef.current
     const position = resolveAutoPlacementPosition(flowX, flowY, [sourceElementId], sourceHandle)
-    const mode = resolvePickerMode(flowX, flowY, 'connect', forceConnect)
+    const mode = 'connect'
 
     setPendingElement((current) => {
       if (
@@ -1075,11 +1055,17 @@ export function useCanvasInteractions({
         sourceHandle,
       }
     })
-  }, [getInteractionNodes, resolveAutoPlacementPosition, resolvePickerMode, snapToGrid])
+  }, [getInteractionNodes, resolveAutoPlacementPosition, snapToGrid])
+
+  const setPendingElementMode = useCallback((mode: PendingElementState['mode']) => {
+    setPendingElement((current) => current && current.sourceElementIds.length > 0
+      ? { ...current, mode }
+      : current)
+  }, [])
 
   // ── Pending element confirmation handlers ──────────────────────────────────
   const handleConfirmNewElement = useCallback(async (name: string) => {
-    if (!canEdit || viewId === null || !pendingElement) return
+    if (!canEdit || viewId === null || !pendingElement || pendingElement.mode === 'connect') return
     const activePendingElement = pendingElement
     const targetPoint = {
       x: activePendingElement.position.x + PENDING_ELEMENT_OFFSET_X,
@@ -1111,7 +1097,7 @@ export function useCanvasInteractions({
           style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
-        await finalizeConnectorCreate(connector)
+        await finalizeConnectorCreate(connector, [obj])
       }
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
@@ -1125,10 +1111,11 @@ export function useCanvasInteractions({
       y: activePendingElement.position.y + PENDING_ELEMENT_OFFSET_Y,
     }
     const sourceIds = activePendingElement.sourceElementIds.filter((sourceId) => sourceId !== obj.id)
+    const addPlacement = activePendingElement.mode === 'add' && !existingElementIds.has(obj.id)
     setPendingElement(null)
     clearPendingConnectionRefs()
     try {
-      if (!existingElementIds.has(obj.id)) {
+      if (addPlacement) {
         await api.workspace.views.placements.add(viewId, obj.id, activePendingElement.position.x, activePendingElement.position.y)
         await refreshElements()
         const placed = viewElementsRef.current.find((element) => element.element_id === obj.id)
@@ -1153,9 +1140,9 @@ export function useCanvasInteractions({
           style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
-        await finalizeConnectorCreate(connector)
+        await finalizeConnectorCreate(connector, [obj])
       }
-      if (!existingElementIds.has(obj.id) || sourceIds.length > 0) onUnsupportedMutation?.()
+      if (addPlacement || sourceIds.length > 0) onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
   }, [canEdit, clearPendingConnectionRefs, createConnectorStyle, existingElementIds, finalizeConnectorCreate, onUnsupportedMutation, pendingElement, refreshElements, rfNodesRef, viewId, viewElementsRef])
 
@@ -1691,7 +1678,7 @@ export function useCanvasInteractions({
       : event.touches[0]
         ? { clientX: event.touches[0].clientX, clientY: event.touches[0].clientY }
         : null
-    const updateFromPoint = (clientX: number, clientY: number, forceConnect = false) => {
+    const updateFromPoint = (clientX: number, clientY: number) => {
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
@@ -1704,18 +1691,18 @@ export function useCanvasInteractions({
         setSyncedClickConnectMode(null)
         setClickConnectCursorPos(null)
       }
-      updateConnectorDragPreview(clientX, clientY, nodeId, forceConnect)
+      updateConnectorDragPreview(clientX, clientY, nodeId)
     }
 
     if ('clientX' in event) {
-      updateConnectorDragPreview(event.clientX, event.clientY, nodeId, event.shiftKey)
+      updateConnectorDragPreview(event.clientX, event.clientY, nodeId)
     } else {
       const touch = event.touches[0]
       if (touch) updateConnectorDragPreview(touch.clientX, touch.clientY, nodeId)
     }
 
     const move = (moveEvent: PointerEvent) => {
-      updateFromPoint(moveEvent.clientX, moveEvent.clientY, moveEvent.shiftKey)
+      updateFromPoint(moveEvent.clientX, moveEvent.clientY)
     }
     const touchMove = (moveEvent: TouchEvent) => {
       const touch = moveEvent.touches[0]
@@ -1801,7 +1788,7 @@ export function useCanvasInteractions({
       setClickConnectCursorPos(null)
       pendingConnectionSourceRef.current = sourceElementId
       suppressImmediatePaneClick()
-      showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
+      showAddingElementAt(clientX, clientY, true)
     }
   }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onConnectorCreatePreviewActiveChange, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, showAddingElementAt, suppressImmediatePaneClick, viewIdRef])
 
@@ -2259,7 +2246,7 @@ export function useCanvasInteractions({
           : pendingConnectionSourceHandleRef.current
         setSyncedClickConnectMode(null)
         setClickConnectCursorPos(null)
-        showAddingElementAt(e.clientX, e.clientY, true, 'connect', e.shiftKey)
+        showAddingElementAt(e.clientX, e.clientY, true)
       }
       return
     }
@@ -2889,5 +2876,6 @@ export function useCanvasInteractions({
     // Library / adder callbacks
     handleConfirmNewElement,
     handleConfirmExistingElement,
+    setPendingElementMode,
   }
 }

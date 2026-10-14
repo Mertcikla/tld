@@ -7,12 +7,13 @@ import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { ExploreEmptyState, ExploreToolbar } from './explore/ExploreComponents'
-import { useExploreData } from './explore/useExploreData'
+import { useExploreData, type ExploreDataState } from './explore/useExploreData'
 import { useExploreTags } from './explore/useExploreTags'
 
 interface Props {
   sharedToken?: string
   shareSlot?: ReactNode
+  dataState?: ExploreDataState
 }
 
 export interface InfiniteZoomHandle {
@@ -23,7 +24,7 @@ export interface InfiniteZoomHandle {
 
 const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 
-function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHandle>) {
+function ExplorePage({ sharedToken, shareSlot, dataState }: Props, ref?: Ref<InfiniteZoomHandle>) {
   const navigate = useNavigate()
   const location = useLocation()
   const zuiRef = useRef<ZUICanvasHandle>(null)
@@ -32,8 +33,8 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
   const [miniOnboardingInteractionSeen, setMiniOnboardingInteractionSeen] = useState(false)
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const [isCrossBranchControlsOpen, setIsCrossBranchControlsOpen] = useState(false)
-  const dataState = useExploreData(sharedToken)
-  const { data, loading, error, hasPlacements, reload } = dataState
+  const localDataState = useExploreData(sharedToken, !dataState)
+  const { data, loading, error, hasPlacements, reload } = dataState ?? localDataState
   const tags = useExploreTags(data, sharedToken)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const {

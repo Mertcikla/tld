@@ -2,6 +2,7 @@ import { expect, test } from '../fixtures'
 import {
   createApiView,
   createConnector,
+  createElement,
   createPlacedElement,
   uniqueName,
   dispatchTouchEventOnLocator,
@@ -369,6 +370,35 @@ test('anchors off-view connector popovers at either hovered end of the route', a
       return Math.abs(popup.x - expectedLeft)
     }, { x: anchor!.x, width: anchor!.width })).toBeLessThan(2)
   }
+})
+
+test('shows connected unplaced elements inside a synthetic Explore boundary', async ({ page }) => {
+  const root = await createApiView(page, uniqueName('Unplaced Explore'))
+  const source = await createPlacedElement(page, root.id, { name: uniqueName('Placed Source') })
+  const target = await createElement(page, { name: uniqueName('Unplaced Target'), technology: 'Go' })
+  await createConnector(page, root.id, source.id, target.id, { label: 'Calls unplaced service' })
+  await page.goto('/views?view=explore&debugZuiTest=1')
+  await waitForZuiReady(page)
+  await page.getByRole('button', { name: 'Fit View', exact: true }).click()
+  await waitForStableZuiCamera(page)
+  const geometry = () => zuiScreenGeometry(page, { nodeElementId: target.id }) as Promise<{
+    node: { x: number; y: number; width: number; height: number; diagramId: number }
+  }>
+  const initial = (await geometry()).node
+  expect(initial.diagramId).toBeLessThan(0)
+  // Other tests add roots to this workspace; Fit View can reach its minimum zoom
+  // before the synthetic boundary fits on screen. Pan to the actual hover target.
+  const box = await canvasBox(page)
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await dispatchZuiMousePan(page, center, {
+    x: center.x * 2 - (initial.x + initial.width / 2),
+    y: center.y * 2 - (initial.y + initial.height / 2),
+  }, { button: 'middle' })
+  await waitForStableZuiCamera(page)
+  const node = (await geometry()).node
+  await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2)
+  await expect(page.getByTestId('zui-hover-popover')).toContainText(target.name)
+  await expect(page.getByTestId('zui-hover-popover').getByRole('button', { name: 'Open in Editor', exact: true })).toBeDisabled()
 })
 
 test('handles one-finger touch pan, two-finger pinch, and transition back to touch pan', async ({ page }, testInfo) => {

@@ -343,6 +343,7 @@ function ContextNeighborNode({ data }: Props) {
           zIndex={10}
         >
           <Button
+            aria-label={`${isGroupExpanded ? 'Collapse' : 'Expand'} ${data.name}`}
             variant="unstyled"
             display="inline-flex"
             alignItems="center"

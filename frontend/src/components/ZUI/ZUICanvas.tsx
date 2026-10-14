@@ -5,6 +5,7 @@ import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import type { ExploreData, ViewLayer } from '../../types'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
+import { withUnplacedElements } from '../../crossBranch/unplacedElements'
 import { computeLayout } from './layout'
 import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
@@ -91,7 +92,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
   const layout = useMemo(() => {
-    const base = computeLayout(data)
+    const base = computeLayout(withUnplacedElements(data))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   }, [data, changeOverlays])
   const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags), [layout, selectedTags, hiddenTags])

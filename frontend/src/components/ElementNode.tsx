@@ -219,7 +219,10 @@ export interface PendingElementCreateData {
   allElements: LibraryElement[]
   existingElementIds: Set<number>
   allowCreate?: boolean
+  connectionMode?: 'add' | 'connect'
+  onConnectionModeChange?: (mode: 'add' | 'connect') => void
   getSecondaryLabel?: (obj: LibraryElement) => string | null
+  getDisabledReason?: (obj: LibraryElement) => string | null
   onConfirmNew: (name: string) => Promise<void>
   onConfirmExisting: (obj: LibraryElement) => Promise<void>
   onCancel: () => void
@@ -341,6 +344,8 @@ type PendingInputRect = {
   top: number
   width: number
   height: number
+  viewportWidth: number
+  viewportHeight: number
 }
 
 function pendingInputRectsEqual(a: PendingInputRect | null, b: PendingInputRect) {
@@ -348,7 +353,9 @@ function pendingInputRectsEqual(a: PendingInputRect | null, b: PendingInputRect)
     a.left === b.left &&
     a.top === b.top &&
     a.width === b.width &&
-    a.height === b.height
+    a.height === b.height &&
+    a.viewportWidth === b.viewportWidth &&
+    a.viewportHeight === b.viewportHeight
 }
 
 function getReconnectZoneStyle(position: Position, slot: number): React.CSSProperties {
@@ -371,7 +378,7 @@ function PendingElementLabelEditor({
 }: {
   config: PendingElementCreateData
 }) {
-  const { query, setQuery, remoteElements } = useElementSearch()
+  const { query, setQuery, remoteElements, fetching } = useElementSearch()
   const [activeIndex, setActiveIndex] = useState(0)
   const [busy, setBusy] = useState(false)
   const [inputRect, setInputRect] = useState<PendingInputRect | null>(null)
@@ -381,7 +388,7 @@ function PendingElementLabelEditor({
     query,
     allElements: config.allElements,
     remoteElements,
-    allowCreate: config.allowCreate ?? true,
+    allowCreate: config.connectionMode !== 'connect' && (config.allowCreate ?? true),
   })
   const inputWidth = `clamp(156px, ${Math.max(query.length + 1, 2)}ch, 206px)`
 
@@ -396,6 +403,8 @@ function PendingElementLabelEditor({
       top: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
     }
     setInputRect((current) => pendingInputRectsEqual(current, next) ? current : next)
   }, [])
@@ -428,11 +437,12 @@ function PendingElementLabelEditor({
     }
   }, [focusInput, inputRect])
 
-  useEffect(() => { setActiveIndex(0) }, [query])
+  useEffect(() => { setActiveIndex(0) }, [query, config.connectionMode])
 
   const confirm = useCallback(async (idx: number) => {
     const item = results[idx]
     if (!item || busy) return
+    if (item.kind === 'existing' && config.getDisabledReason?.(item.obj)) return
     setBusy(true)
     try {
       if (item.kind === 'new') {
@@ -470,6 +480,13 @@ function PendingElementLabelEditor({
       setActiveIndex((i) => Math.max(i - 1, 0))
     }
   }, [activeIndex, config, confirm, results.length])
+
+  const resultsWidth = inputRect ? Math.min(340, inputRect.viewportWidth - 16) : undefined
+  const resultsOnRight = !inputRect || !resultsWidth || inputRect.left + inputRect.width + 14 + resultsWidth <= inputRect.viewportWidth - 8
+  const resultsAbove = inputRect && !resultsOnRight && inputRect.top > inputRect.viewportHeight / 2
+  const resultsMaxHeight = inputRect && !resultsOnRight
+    ? Math.min(300, resultsAbove ? inputRect.top - 16 : inputRect.viewportHeight - inputRect.top - inputRect.height - 16)
+    : 300
 
   return (
     <Box
@@ -553,14 +570,14 @@ function PendingElementLabelEditor({
           />
         </Portal>
       )}
-      {inputRect && results.length > 0 && (
+      {inputRect && (results.length > 0 || config.connectionMode) && (
         <Portal>
           <Box
             data-testid="pending-element-results"
             position="fixed"
-            left={`${inputRect.left + inputRect.width + 14}px`}
-            top={`${inputRect.top + inputRect.height / 2}px`}
-            transform="translateY(-50%)"
+            left={`${resultsOnRight ? inputRect.left + inputRect.width + 14 : Math.max(8, Math.min(inputRect.left, inputRect.viewportWidth - (resultsWidth ?? 340) - 8))}px`}
+            top={`${resultsOnRight ? inputRect.top + inputRect.height / 2 : resultsAbove ? inputRect.top - 8 : inputRect.top + inputRect.height + 8}px`}
+            transform={resultsOnRight ? 'translateY(-50%)' : resultsAbove ? 'translateY(-100%)' : undefined}
             zIndex={2401}
             bg="var(--bg-panel)"
             border="1px solid"
@@ -568,14 +585,45 @@ function PendingElementLabelEditor({
             rounded="xl"
             shadow="0 8px 32px rgba(0,0,0,0.5)"
             minW="220px"
-            maxW="340px"
+            maxW={resultsWidth ? `${resultsWidth}px` : '340px'}
             w="max-content"
-            maxH="300px"
+            maxH={`${Math.max(80, resultsMaxHeight)}px`}
             overflowY="auto"
             pointerEvents="auto"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
+            {config.connectionMode && (
+              <HStack px={1.5} py={1.5} spacing={1} borderBottom="1px solid" borderColor="whiteAlpha.100" role="group" aria-label="Target placement">
+                {(['connect', 'add'] as const).map((mode) => (
+                  <Tooltip
+                    key={mode}
+                    label={mode === 'connect' ? 'Connect without adding the target to this view.' : 'Add the target to this view and connect it.'}
+                    placement="top"
+                    openDelay={300}
+                  >
+                    <Button
+                      data-testid={`pending-element-mode-${mode}`}
+                      size="xs"
+                      h="24px"
+                      flex={1}
+                      variant="ghost"
+                      aria-pressed={config.connectionMode === mode}
+                      isDisabled={busy}
+                      bg={config.connectionMode === mode ? 'rgba(var(--accent-rgb), 0.16)' : 'transparent'}
+                      color={config.connectionMode === mode ? 'var(--accent)' : 'gray.300'}
+                      _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)' }}
+                      onClick={() => {
+                        config.onConnectionModeChange?.(mode)
+                        focusInput()
+                      }}
+                    >
+                      {mode === 'connect' ? 'Connect only' : 'Add & connect'}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </HStack>
+            )}
             <ElementCreateSearchResults
               results={results}
               activeIndex={activeIndex}
@@ -584,9 +632,15 @@ function PendingElementLabelEditor({
               existingElementIds={config.existingElementIds}
               testIdPrefix="pending-element"
               getSecondaryLabel={config.getSecondaryLabel}
+              getDisabledReason={config.getDisabledReason}
               onActiveIndexChange={setActiveIndex}
               onConfirm={(idx) => { void confirm(idx) }}
             />
+            {results.length === 0 && config.connectionMode === 'connect' && (
+              <Text px={3} py={2} fontSize="xs" color="gray.400">
+                {fetching ? 'Searching…' : query.trim() ? 'No matching elements.' : 'Search for an existing element.'}
+              </Text>
+            )}
           </Box>
         </Portal>
       )}

@@ -1940,7 +1940,7 @@ export const api = {
           content: Record<string, { placements: Record<string, unknown>[]; connectors: Record<string, unknown>[] }>
           navigations: Record<string, unknown>[]
         }>(GetWorkspaceResponseSchema, res)
-        return {
+        const data: ExploreData = {
           tree: (json.views ?? []).map(mapDiagram),
           views: Object.fromEntries(
             Object.entries(json.content ?? {}).map(([key, value]) => [
@@ -1954,6 +1954,12 @@ export const api = {
           navigations: (json.navigations ?? []).map(protoNavigation),
           password_required: false,
         }
+        const placedIds = new Set(Object.values(data.views).flatMap((view) => view.placements.map((placement) => placement.element_id)))
+        const unplacedIds = new Set(Object.values(data.views).flatMap((view) => view.connectors.flatMap((connector) => [connector.source_element_id, connector.target_element_id])).filter((id) => !placedIds.has(id)))
+        if (unplacedIds.size > 0) {
+          data.elements = (await api.elements.list({ limit: 0 })).filter((element) => unplacedIds.has(element.id))
+        }
+        return data
       }),
 
     loadShared: async (token: string, password?: string): Promise<ExploreData & { password_required?: boolean }> => {

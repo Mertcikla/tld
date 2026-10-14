@@ -21,9 +21,18 @@ function waitForUpdateView(page: Page) {
 }
 
 async function openNodeMenu(page: Page, view: ApiView) {
+  // Let the initial fit finish before search pans to a card outside the viewport.
+  const viewport = page.locator('.react-flow__viewport')
+  await expect(viewport).toBeVisible()
+  await expect(viewport).not.toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
   const search = page.getByTestId('views-search-input')
   await search.fill(view.name)
   await expect(search).toHaveValue(view.name)
+  await expect(page.getByTestId('views-search-result').filter({ hasText: view.name })).toBeVisible()
+
+  // Keep the focused card, but dismiss results that can cover its action menu.
+  await page.getByLabel('Clear search', { exact: true }).click()
+  await expect(page.getByTestId('views-search-results')).toHaveCount(0)
 
   const node = viewGridNode(page, view.id)
   await expect(node).toBeVisible()

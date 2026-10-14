@@ -449,8 +449,8 @@ export function ZUIHoverPopover({
                   <Divider borderColor="whiteAlpha.200" />
                   <HStack width="full" spacing={2}>
                     <Button
-                      as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
+                      as={(hoveredItem.data.details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId) > 0 ? RouterLink : undefined}
+                      isDisabled={(hoveredItem.data.details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId) < 0}
                       to={`/views/${hoveredItem.data.details!.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`}
                       size="xs"
                       colorScheme="gray"
@@ -462,8 +462,8 @@ export function ZUIHoverPopover({
                       Open Source
                     </Button>
                     <Button
-                      as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
+                      as={(hoveredItem.data.details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId) > 0 ? RouterLink : undefined}
+                      isDisabled={(hoveredItem.data.details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId) < 0}
                       to={`/views/${hoveredItem.data.details!.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`}
                       size="xs"
                       colorScheme="teal"
