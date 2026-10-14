@@ -420,3 +420,54 @@ func refForMetadataID(metadata map[string]*workspace.ResourceMetadata, id int) s
 	}
 	return ""
 }
+
+// RefreshCache includes server-created relationships (for example those copied
+// when a shared element is placed) so listed selectors work on the next write.
+func (s *Session) RefreshCache(base *workspace.Workspace) error {
+	if !s.HasWorkspace() {
+		return nil
+	}
+	runner, err := s.Runner()
+	if err != nil {
+		return err
+	}
+	exported, err := runner.ExportWorkspace(s.ctx)
+	if err != nil {
+		return err
+	}
+	actual := ConvertExportResponse(base, exported)
+	PreservePendingResources(base, actual)
+	if err := exec.SaveCache(s.Wdir, actual); err != nil {
+		return err
+	}
+	s.ws = actual
+	return nil
+}
+
+// RequireAppliedCache protects unapplied YAML edits before a mutation replaces
+// the persisted cache with a fresh target snapshot. Sync intentionally bypasses
+// this check because it is the operation that applies those edits.
+func (s *Session) RequireAppliedCache() error {
+	if !s.HasWorkspace() {
+		return nil
+	}
+	return EnsureCacheInSync(s.Wdir)
+}
+
+func EnsureCacheInSync(dir string) error {
+	lock, err := workspace.LoadLockFile(dir)
+	if err != nil {
+		return fmt.Errorf("load lock file: %w", err)
+	}
+	if lock == nil || strings.TrimSpace(lock.WorkspaceHash) == "" {
+		return nil
+	}
+	hash, err := workspace.CalculateWorkspaceHash(dir)
+	if err != nil {
+		return fmt.Errorf("calculate workspace hash: %w", err)
+	}
+	if hash != lock.WorkspaceHash {
+		return WithCode(errors.New("workspace YAML is out of sync with the last applied state"), "cache_out_of_sync", "Run 'tld sync' to apply local YAML edits, or review 'tld pull --dry-run' before refreshing from the target. Use the same workspace, target, and data directory.")
+	}
+	return nil
+}

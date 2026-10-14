@@ -116,6 +116,13 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 					}
 					return err
 				}
+				cached, err := workspace.Load(*wdir)
+				if err != nil {
+					return sess.CacheError(err)
+				}
+				if err := exec.SaveCache(*wdir, cached); err != nil {
+					return sess.CacheError(err)
+				}
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), *compact, "remove element", "remove", ref, "element", elementID)

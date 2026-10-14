@@ -235,6 +235,9 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 		}
 		return err
 	}
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
@@ -305,6 +308,13 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 			}
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
+			return fail(sess.CacheError(err))
+		}
+		cached, err := workspace.Load(sess.Wdir)
+		if err != nil {
+			return fail(sess.CacheError(err))
+		}
+		if err := sess.RefreshCache(cached); err != nil {
 			return fail(sess.CacheError(err))
 		}
 	}

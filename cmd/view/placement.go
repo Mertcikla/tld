@@ -9,7 +9,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/term"
-	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +21,7 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 	var dryRun bool
 	c := &cobra.Command{
 		Use: name + " <view> <element>", Short: summary,
-		Long: summary + ". Select views and elements by ref, name, or ID.\nExisting placements retain their coordinates. Remove or update connectors in\nthe old view before unplacing or moving their endpoints. Operations are repeatable.",
+		Long: summary + ". Select views and elements by ref, name, or ID.\nExisting placements retain their coordinates. Remove or update connectors in\nthe old view before unplacing or moving their endpoints. Placing shared endpoints can copy their existing relationships into this view;\nthese copies are persisted connectors and appear in list output. Operations are repeatable.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
@@ -77,6 +76,9 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 			if dryRun {
 				action = "dry-run"
 			} else {
+				if err := sess.RequireAppliedCache(); err != nil {
+					return err
+				}
 				runner, err := sess.Runner()
 				if err != nil {
 					return err
@@ -114,23 +116,7 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 					}
 				}
 				if sess.HasWorkspace() {
-					// Reload metadata for any view promoted while placing the element.
-					ws, err = sess.Reload()
-					if err != nil {
-						return sess.CacheError(err)
-					}
-					el := ws.Elements[ref]
-					kept := make([]workspace.ViewPlacement, 0, len(el.Placements)+1)
-					for _, p := range el.Placements {
-						if cmdutil.NormalizeParentRef(p.ParentRef) != oldView {
-							kept = append(kept, p)
-						}
-					}
-					el.Placements = kept
-					if !remove && cmdutil.FindPlacement(ws, ref, viewRef) == nil {
-						el.Placements = append(el.Placements, workspace.ViewPlacement{ParentRef: viewRef, PositionX: x, PositionY: y, PositionXSet: true, PositionYSet: true})
-					}
-					if err := exec.SaveCache(sess.Wdir, ws); err != nil {
+					if err := sess.RefreshCache(ws); err != nil {
 						return sess.CacheError(err)
 					}
 				}

@@ -28,7 +28,8 @@ A view is required: pass it as an argument or with --view. Use root for the
 top-level diagram, an owning element ref or name, or a numeric view ID.
 Find available views with 'tld list views --tree'. Output goes to stdout unless
 --output is supplied. Use --to mermaid for the diagram format and --format json
-for a structured response containing the rendered content.`,
+for a structured response containing the rendered content and emitted/omitted
+connector counts. Missing endpoint placements are reported on stderr in text mode.`,
 		Example: `  tld render root
   tld render platform -o diagram.mmd
   tld render --view root --output diagram.mmd`,
@@ -57,6 +58,7 @@ for a structured response containing the rendered content.`,
 				viewRef = resolved
 			}
 
+			diagnostics := ws.DiagnoseView(viewRef)
 			content, err := renderMermaid(ws, viewRef)
 			if err != nil {
 				return err
@@ -71,13 +73,22 @@ for a structured response containing the rendered content.`,
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
 					Command: "render",
 					Status:  "ok",
+					Summary: map[string]int{"elements": diagnostics.Elements, "connectors": diagnostics.Connectors, "rendered_connectors": diagnostics.RenderedConnectors, "omitted_connectors": len(diagnostics.OmittedConnectors)},
 					Extra: map[string]any{
-						"view":    viewRef,
-						"format":  "mermaid",
-						"content": content,
-						"output":  output,
+						"view":               viewRef,
+						"omitted_connectors": diagnostics.OmittedConnectors,
+						"format":             "mermaid",
+						"content":            content,
+						"output":             output,
 					},
 				})
+			}
+			if len(diagnostics.OmittedConnectors) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: omitted %d of %d connector(s) in view %q because an endpoint is not placed there:\n", len(diagnostics.OmittedConnectors), diagnostics.Connectors, viewRef)
+				for _, key := range diagnostics.OmittedConnectors {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key)
+				}
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Place missing endpoints with 'tld view place <view> <element>'. An owner cannot be placed in its own view; use child elements for internal interactions. Run 'tld validate ARC008' for details.")
 			}
 			if output == "" {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), content)

@@ -224,12 +224,21 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init [dir]",
 		Short: "Initialize a new tld workspace",
 		Long: `Create a YAML workspace in .tld under the current directory or supplied
-project directory. An existing workspace directory is used directly.
+project directory. The positional directory selects where files are created;
+it is not a repository selector or a database destination. For example,
+'init ./repo' writes ./repo/.tld; 'init ./study' writes ./study/.tld.
+An existing workspace directory is used directly. Use --workspace <project-dir>
+on later commands when running outside that project. --data-dir selects the local
+database for later writes; init creates YAML/configuration files only.
 
 Creates elements.yaml, connectors.yaml, and .tld.yaml. Existing element and
 connector files are preserved. Use --wizard for interactive configuration.
 Initialization is optional for direct database use, and enables workspace-local
 refs and YAML-backed authoring.
+
+For batch authoring: init, import diagram.yaml --dry-run, import diagram.yaml,
+validate --source live, list views --tree, and render root --source live.
+Pin the same --workspace, --target and --data-dir on these commands.
 
 Next, add elements with 'tld add', connect them with 'tld connect', and export
 the top-level view with 'tld render root'.`,

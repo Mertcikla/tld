@@ -53,6 +53,9 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 				errs = append(errs, ValidationError{ploc, "parent is required"})
 				continue
 			}
+			if placement.ParentRef == ref {
+				errs = append(errs, ValidationError{ploc, "an element cannot be placed in its own view"})
+			}
 			if placement.ParentRef != "root" {
 				if _, ok := ws.Elements[placement.ParentRef]; !ok {
 					errs = append(errs, ValidationError{ploc, fmt.Sprintf("parent ref %q not found", placement.ParentRef)})

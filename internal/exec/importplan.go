@@ -20,6 +20,9 @@ import (
 // are matched to their server IDs (from the lockfile cache first, then by
 // name/endpoints) and updated instead of duplicated.
 type ImportPlan struct {
+	Views               []workspace.ViewDiagnostics
+	PreservedPlacements map[string][]string
+
 	Request *diagv1.ApplyPlanRequest
 
 	// ElementSpecs are the specs to persist to the local YAML cache, keyed by
@@ -91,6 +94,37 @@ func BuildImportPlan(
 			return nil, err
 		}
 		elementIDs[ref] = id
+	}
+	// Different YAML refs must never silently alias one persisted element.
+	// Otherwise a later remove of an apparently redundant ref deletes both.
+	idsToRef := map[int32]string{}
+	if ws.Meta != nil && workspace.IsWorkspaceDir(ws.Dir) {
+		for ref, meta := range ws.Meta.Elements {
+			if meta != nil && meta.ID != 0 && ws.Elements[ref] != nil {
+				if old := idsToRef[int32(meta.ID)]; old == "" || ref < old {
+					idsToRef[int32(meta.ID)] = ref
+				}
+			}
+		}
+	}
+	refsByID := map[int32]string{}
+	aliasRefs := make([]string, 0, len(elementIDs))
+	for ref := range elementIDs {
+		aliasRefs = append(aliasRefs, ref)
+	}
+	sort.Strings(aliasRefs)
+	for _, ref := range aliasRefs {
+		id := elementIDs[ref]
+		if id == 0 {
+			continue
+		}
+		if previous, ok := idsToRef[id]; ok && previous != ref {
+			return nil, fmt.Errorf("element ref %q resolves to the same target ID %d as workspace ref %q; reuse the existing ref or rename it with 'tld update element %s ref %s'", ref, id, previous, previous, ref)
+		}
+		if previous, ok := refsByID[id]; ok && previous != ref {
+			return nil, fmt.Errorf("element refs %q and %q resolve to the same target ID %d; use one ref for this element across all views", previous, ref, id)
+		}
+		refsByID[id] = ref
 	}
 	// Read current coordinates from the target, rather than replaying a stale
 	// cache or treating an omitted coordinate as zero.
@@ -355,6 +389,9 @@ func collectImportElements(
 			parent := placement.ParentRef
 			if parent == "" {
 				parent = workspace.RootRef
+			}
+			if parent == ref {
+				return nil, fmt.Errorf("element %q cannot be placed in its own view; choose another placement parent", ref)
 			}
 			if err := workspace.ValidateParentRef(parent); err != nil {
 				return nil, fmt.Errorf("element %q: invalid placement parent %q: %w", ref, parent, err)

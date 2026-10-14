@@ -83,6 +83,7 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return fail(fmt.Errorf("sync aborted before any changes were made: %w", err))
 	}
 
+	setImportDiagnostics(plan, ws, ws.Elements)
 	if dryRun {
 		return reportImport(cmd, format, compact, "sync", "dry-run", plan)
 	}
@@ -100,6 +101,7 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return fail(sess.CacheError(err))
 	}
 
+	plan.Views = ws.ViewDiagnostics()
 	return reportImport(cmd, format, compact, "sync", "ok", plan, resp)
 }
 

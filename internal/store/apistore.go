@@ -904,9 +904,30 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			TargetHandle: planned.TargetHandle,
 		}
 
+		// Placement insertion may have copied this exact relationship since the
+		// read-only import preview. Reuse that copy instead of inserting a duplicate.
+		connectorID := planned.GetId()
+		if connectorID == 0 {
+			existing, listErr := a.Store.Connectors(ctx, int64(viewID))
+			if listErr != nil {
+				return nil, listErr
+			}
+			for _, c := range existing {
+				label := ""
+				if c.Label != nil {
+					label = *c.Label
+				}
+				if c.SourceElementID == int64(sourceID) && c.TargetElementID == int64(targetID) && label == planned.GetLabel() {
+					if connectorID != 0 {
+						return nil, fmt.Errorf("multiple connectors match %q; resolve duplicate relationships before importing", planned.GetRef())
+					}
+					connectorID = int32(c.ID)
+				}
+			}
+		}
 		var connector *diagv1.Connector
-		if planned.GetId() != 0 {
-			current, readErr := a.GetConnector(ctx, planned.GetId(), uuid.Nil)
+		if connectorID != 0 {
+			current, readErr := a.GetConnector(ctx, connectorID, uuid.Nil)
 			if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
 				return nil, readErr
 			}
@@ -918,7 +939,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 					input.Style = current.GetStyle()
 				}
 			}
-			connector, err = a.UpdateConnector(ctx, planned.GetId(), uuid.Nil, input)
+			connector, err = a.UpdateConnector(ctx, connectorID, uuid.Nil, input)
 			if errors.Is(err, sql.ErrNoRows) {
 				connector, err = a.createConnectorWithID(ctx, planned.GetId(), input)
 			}

@@ -407,6 +407,13 @@ func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *st
 			return sess.CacheError(err)
 		}
 	}
+	ws, err := workspace.Load(wdir)
+	if err != nil {
+		return sess.CacheError(err)
+	}
+	if err := exec.SaveCache(wdir, ws); err != nil {
+		return sess.CacheError(err)
+	}
 	return nil
 }
 
@@ -441,6 +448,13 @@ func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		}
 		if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {
 			return fail(fmt.Errorf("drop view metadata: %w", err))
+		}
+		cached, err := workspace.Load(wdir)
+		if err != nil {
+			return fail(sess.CacheError(err))
+		}
+		if err := exec.SaveCache(wdir, cached); err != nil {
+			return fail(sess.CacheError(err))
 		}
 	}
 	if cmdutil.WantsJSON(format) {

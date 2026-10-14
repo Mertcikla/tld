@@ -34,26 +34,7 @@ func normalizeRuleCode(code string) string {
 // the state last written to the target, so symbol and freshness checks never run
 // against a stale cache. A missing lock file or an unrecorded hash is treated as
 // unverifiable, keeping hand-authored workspaces usable.
-func ensureCacheInSync(dir string) error {
-	lockFile, err := workspace.LoadLockFile(dir)
-	if err != nil {
-		return fmt.Errorf("load lock file: %w", err)
-	}
-	if lockFile == nil || strings.TrimSpace(lockFile.WorkspaceHash) == "" {
-		return nil
-	}
-	currentHash, err := workspace.CalculateWorkspaceHash(dir)
-	if err != nil {
-		return fmt.Errorf("calculate workspace hash: %w", err)
-	}
-	if currentHash != lockFile.WorkspaceHash {
-		return cmdutil.WithHint(
-			errors.New("workspace YAML is out of sync with the last applied state"),
-			"Run 'tld pull' to refresh local YAML from the target, or 'tld sync' to push local changes, then re-run 'tld validate'.",
-		)
-	}
-	return nil
-}
+func ensureCacheInSync(dir string) error { return cmdutil.EnsureCacheInSync(dir) }
 
 func knownRuleCodes() []string {
 	codes := make([]string, 0, len(allWarningCodes))
@@ -87,6 +68,11 @@ func NewValidateCmd(wdir *string) *cobra.Command {
 		Use:   "validate [rule-code]",
 		Short: "Validate workspace structure, source links, and architectural warnings",
 		Long: `Validate workspace structure and source symbols, and report architectural warnings.
+Reads workspace YAML by default. Use --source live to validate the target, or
+--source cache to check YAML explicitly. An explicit --target or --data-dir selects
+live reads automatically, just like list and render. Without a workspace, checks
+the database; workspace-local repository configuration is used when available.
+Counts include the root view; owned_views excludes it. Empty checks are reported.
 Use --strict to fail on architectural warnings as well as structural errors.
 Validation checks model consistency; it does not prove architectural completeness.
 
@@ -101,18 +87,27 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			if cmd.Flags().Changed("strictness") && (strictness < 1 || strictness > 3) {
 				return fmt.Errorf("--strictness must be 1, 2, or 3")
 			}
-			if !cmdutil.WorkspaceConfigured(cmd, *wdir) {
-				return cmdutil.WithHint(
-					errors.New("validate requires a workspace"),
-					"Run inside a workspace directory, pass --workspace, or use --yaml. Symbol and freshness checks need .tld.yaml repository configuration.",
-				)
+			// --yaml must not turn a missing workspace into a successful empty check.
+			if yamlFlag := cmd.Flags().Lookup("yaml"); yamlFlag != nil && yamlFlag.Value.String() == "true" && !workspace.IsWorkspaceDir(workspace.ResolveDir(*wdir)) {
+				return cmdutil.WithCode(errors.New("no initialized workspace to validate"), "workspace_required", "Run 'tld init <project-dir>' to create <project-dir>/.tld, or omit --yaml to validate the target database.")
 			}
-			ws, err := workspace.Load(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, "", dataDir)
 			if err != nil {
-				return fmt.Errorf("load workspace: %w", err)
-			}
-			if err := ensureCacheInSync(ws.Dir); err != nil {
 				return err
+			}
+			defer func() { _ = sess.Close() }()
+			source, err := cmdutil.ReadSource(cmd, sess.HasWorkspace())
+			if err != nil {
+				return err
+			}
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return err
+			}
+			if source == "cache" {
+				if err := ensureCacheInSync(ws.Dir); err != nil {
+					return err
+				}
 			}
 			repoCtx := cmdutil.DetectRepoScope(cmdutil.GetWorkingDir(), *wdir)
 			rules := ws.IgnoreRulesForRepository(repoCtx.Name)
@@ -194,14 +189,17 @@ rule runs regardless of the configured strictness level or exclude list.`,
 				for _, w := range warnings {
 					groups = append(groups, map[string]any{"code": w.RuleCode, "name": w.RuleName, "violations": w.Violations, "hint": w.Mediation, "score": w.Score})
 				}
-				extra := map[string]any{"rules": groups}
+				extra := map[string]any{"rules": groups, "source": source, "workspace": ws.Dir, "empty": len(ws.Elements) == 0 && len(ws.Connectors) == 0}
+				if len(ws.Elements) == 0 && len(ws.Connectors) == 0 {
+					extra["message"] = "No elements or connectors were checked. Confirm the workspace and target with 'tld context'."
+				}
 				if len(args) == 1 && normalizeRuleCode(args[0]) == "ARC205" {
 					extra["grounding"] = archwarnings.Grounding(ws, scoreOpts...)
 				}
 				if len(args) == 1 && normalizeRuleCode(args[0]) == "ARC206" {
 					extra["coverage"] = archwarnings.LinkCoverage(ws, scoreOpts...)
 				}
-				return cmdutil.WriteResult(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "validate", Status: "ok", Summary: map[string]int{"elements": len(ws.Elements), "views": cmdutil.CountViews(ws), "connectors": len(ws.Connectors), "warning_groups": len(warnings)}, Extra: extra}, strictErr)
+				return cmdutil.WriteResult(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "validate", Status: "ok", Summary: map[string]int{"elements": len(ws.Elements), "views": cmdutil.CountViews(ws) + 1, "owned_views": cmdutil.CountViews(ws), "connectors": len(ws.Connectors), "warning_groups": len(warnings)}, Extra: extra}, strictErr)
 			}
 
 			if len(args) == 1 {
@@ -224,11 +222,11 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			}
 
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
-				viewCount := cmdutil.CountViews(ws)
+				viewCount := cmdutil.CountViews(ws) + 1
 				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d views, %d connectors",
 					len(ws.Elements), viewCount, len(ws.Connectors))
 			} else {
-				term.Warnf(cmd.OutOrStdout(), "nothing to validate")
+				term.Warnf(cmd.OutOrStdout(), "nothing to validate in %s source; no elements or connectors were checked", source)
 			}
 
 			if len(warnings) > 0 {
@@ -243,6 +241,7 @@ rule runs regardless of the configured strictness level or exclude list.`,
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
 	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero on architectural warnings")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for the local database used to identify codeindex elements")
+	cmdutil.AddReadSourceFlag(c)
 	c.AddCommand(newRulesCmd())
 	return c
 }

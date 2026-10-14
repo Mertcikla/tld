@@ -66,8 +66,15 @@ same file is safe. The whole batch is applied in a single transaction: if any
 part fails, nothing is committed. Use "-" to read from stdin.
 
 Use --schema to print the exact accepted import schema without network access.
-Omitted metadata and coordinates are preserved. Changing a connector's label,
+Omitted resources, metadata, placements, and coordinates are preserved.
+An import adds placements; it does not move elements or remove old placements.
+Use 'tld view unplace <view> <element>' to remove a placement, or 'tld view place
+<destination> <element> --from <old-view>' to move one. Shared placements can copy
+existing relationships into the destination view; these appear in the refreshed
+cache and live listings. Changing a connector's label,
 view, or endpoints creates another connector; use 'update connector' to edit it.
+Unapplied YAML edits must be synced before a write refreshes the cache; use
+'import --dry-run' to preview without discarding them.
 Connector tags require 'update connector'; the batch API cannot apply them.
 
 Workspace schemas:
@@ -122,6 +129,11 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 		return fail(err)
 	}
 
+	if !dryRun {
+		if err := sess.RequireAppliedCache(); err != nil {
+			return fail(err)
+		}
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
@@ -133,6 +145,7 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 		return fail(fmt.Errorf("import aborted before any changes were made: %w", err))
 	}
 
+	setImportDiagnostics(plan, ws, doc.Elements)
 	if dryRun {
 		return reportImport(cmd, format, compact, "import", "dry-run", plan)
 	}
@@ -152,6 +165,9 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 		}
 	}
 
+	if sess.HasWorkspace() {
+		plan.Views = ws.ViewDiagnostics()
+	}
 	return reportImport(cmd, format, compact, "import", "ok", plan, resp)
 }
 
@@ -178,7 +194,7 @@ func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&doc); err != nil {
-		return nil, cmdutil.WithCode(fmt.Errorf("parse import file %s: %w", label, err), "invalid_document", strings.TrimSpace(schemaHint()))
+		return nil, cmdutil.WithCode(fmt.Errorf("parse import file %s: %w", label, err), "invalid_document", strings.TrimSpace(schemaHint())+" Use block YAML or quote descriptions containing commas in {flow mappings}; inspect the reported line for accidental keys.")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
@@ -347,41 +363,11 @@ func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportP
 		for ref, meta := range resp.GetConnectorMetadata() {
 			ws.Meta.Connectors[ref] = protoMetadata(meta)
 		}
-		// Cache applied resource values, including fields omitted in a patch and
-		// coordinates selected by the target's layout engine.
+		// Refresh the complete target snapshot: placement writes can copy related
+		// connectors not explicitly declared in this batch.
 		actual := cmdutil.ConvertExportResponse(ws, exported)
-		for ref, el := range actual.Elements {
-			if plan.ElementSpecs[ref] == nil {
-				continue
-			}
-			if cached := ws.Elements[ref]; cached != nil {
-				el.Owner, el.Symbol, el.DensityLevel, el.BypassNoiseGate = cached.Owner, cached.Symbol, cached.DensityLevel, cached.BypassNoiseGate
-				for i := range el.Placements {
-					for _, placement := range cached.Placements {
-						if placement.ParentRef == el.Placements[i].ParentRef {
-							el.Placements[i].VisibilityDelta = placement.VisibilityDelta
-						}
-					}
-				}
-			}
-			ws.Elements[ref] = el
-		}
-		for ref, connector := range actual.Connectors {
-			imported := false
-			for _, spec := range plan.Connectors {
-				if workspace.ConnectorKey(spec) == ref {
-					imported = true
-					break
-				}
-			}
-			if !imported {
-				continue
-			}
-			if cached := ws.Connectors[ref]; cached != nil {
-				connector.VisibilityDelta = cached.VisibilityDelta
-			}
-			ws.Connectors[ref] = connector
-		}
+		cmdutil.PreservePendingResources(ws, actual)
+		*ws = *actual
 	}
 
 	if err := workspace.Save(ws); err != nil {
@@ -544,6 +530,10 @@ func protoMetadata(meta *diagv1.ResourceMetadata) *workspace.ResourceMetadata {
 func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan, responses ...*diagv1.ApplyPlanResponse) error {
 	elements := plan.ElementsCreated + plan.ElementsUpdated
 	connectors := plan.ConnectorsCreated + plan.ConnectorsUpdated
+	omitted := 0
+	for _, view := range plan.Views {
+		omitted += len(view.OmittedConnectors)
+	}
 
 	if cmdutil.WantsJSON(format) {
 		var response *diagv1.ApplyPlanResponse
@@ -591,7 +581,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			Command: command,
 			Status:  status,
 			Items:   items,
+			Extra:   map[string]any{"views": plan.Views, "preserved_placements": plan.PreservedPlacements},
 			Summary: map[string]int{
+				"omitted_connectors": omitted,
 				"elements_created":   plan.ElementsCreated,
 				"elements_updated":   plan.ElementsUpdated,
 				"views_created":      plan.ViewsCreated,
@@ -601,6 +593,20 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 		})
 	}
 
+	for _, view := range plan.Views {
+		term.Infof(cmd.OutOrStdout(), "view %s: %d elements, %d connectors (%d visible, %d omitted)", view.View, view.Elements, view.Connectors, view.RenderedConnectors, len(view.OmittedConnectors))
+	}
+	if len(plan.PreservedPlacements) > 0 {
+		refs := make([]string, 0, len(plan.PreservedPlacements))
+		for ref := range plan.PreservedPlacements {
+			refs = append(refs, ref)
+		}
+		sort.Strings(refs)
+		for _, ref := range refs {
+			term.Infof(cmd.OutOrStdout(), "kept existing placements for %s: %s", ref, strings.Join(plan.PreservedPlacements[ref], ", "))
+		}
+		term.Infof(cmd.OutOrStdout(), "Use 'tld view unplace <view> <element>' to remove a placement.")
+	}
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
 			"dry-run: would %s %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
@@ -620,4 +626,69 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 		term.Infof(cmd.OutOrStdout(), "created %d view(s)", plan.ViewsCreated)
 	}
 	return nil
+}
+
+// Describe the merged state, including placements an upsert deliberately keeps.
+func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declared map[string]*workspace.Element) {
+	projected := &workspace.Workspace{Elements: map[string]*workspace.Element{}, Connectors: map[string]*workspace.Connector{}}
+	for ref, el := range ws.Elements {
+		projected.Elements[ref] = el
+	}
+	for key, c := range ws.Connectors {
+		projected.Connectors[key] = c
+	}
+	plan.PreservedPlacements = map[string][]string{}
+	for ref, el := range plan.ElementSpecs {
+		merged := mergeImportElement(ws.Elements[ref], el)
+		copy := *merged
+		projected.Elements[ref] = &copy
+	}
+	for _, el := range plan.Request.Elements {
+		if el.HasView {
+			projected.Elements[el.Ref].HasView = true
+		}
+	}
+	for ref, spec := range declared {
+		if old := ws.Elements[ref]; old != nil {
+			parents := map[string]bool{}
+			for _, p := range spec.Placements {
+				parents[cmdutil.NormalizeParentRef(p.ParentRef)] = true
+			}
+			for _, p := range old.Placements {
+				parent := cmdutil.NormalizeParentRef(p.ParentRef)
+				if !parents[parent] {
+					plan.PreservedPlacements[ref] = append(plan.PreservedPlacements[ref], parent)
+				}
+			}
+			sort.Strings(plan.PreservedPlacements[ref])
+		}
+	}
+	for _, c := range plan.Connectors {
+		projected.Connectors[workspace.ConnectorKey(c)] = c
+	}
+	// A newly shared endpoint causes the target to copy existing relationships
+	// whose opposite endpoint is already placed in the destination view.
+	for ref, spec := range declared {
+		for _, p := range spec.Placements {
+			view := cmdutil.NormalizeParentRef(p.ParentRef)
+			if ws.ElementPlacedInView(ref, view) {
+				continue
+			}
+			for _, old := range ws.Connectors {
+				if old == nil || cmdutil.NormalizeParentRef(old.View) == view || (old.Source != ref && old.Target != ref) {
+					continue
+				}
+				if !projected.ElementPlacedInView(old.Source, view) || !projected.ElementPlacedInView(old.Target, view) {
+					continue
+				}
+				copy := *old
+				copy.View = view
+				key := workspace.ConnectorKey(&copy)
+				if projected.Connectors[key] == nil {
+					projected.Connectors[key] = &copy
+				}
+			}
+		}
+	}
+	plan.Views = projected.ViewDiagnostics()
 }

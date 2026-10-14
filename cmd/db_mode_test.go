@@ -159,12 +159,21 @@ func TestDBModeInspectTargetSource(t *testing.T) {
 	}
 }
 
-func TestDBModeValidateRequiresWorkspace(t *testing.T) {
+func TestDBModeValidateChecksTarget(t *testing.T) {
 	dir := t.TempDir()
-	_, _, err := RunCmd(t, dir, "validate")
-	if err == nil || !strings.Contains(err.Error(), "requires a workspace") {
-		t.Fatalf("validate err = %v, want workspace-required error", err)
+	MustRunCmd(t, dir, "add", "API")
+	out, _ := MustRunCmd(t, dir, "validate", "--format", "json")
+	var result struct {
+		Summary map[string]int `json:"summary"`
+		Extra   map[string]any `json:"extra"`
 	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary["elements"] != 1 || result.Extra["source"] != "live" {
+		t.Fatalf("validate did not check target: %s", out)
+	}
+	assertNoWorkspaceFiles(t, dir)
 }
 
 func TestYamlFlagForcesWorkspaceMode(t *testing.T) {
