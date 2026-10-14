@@ -75,7 +75,11 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
 	}
-	if g != nil && temporaryID(snap.Id) {
+	if g == nil {
+		return fmt.Errorf("publish: graph is required")
+	}
+	g.Reused = map[string]bool{}
+	if temporaryID(snap.Id) {
 		if !numericID(snap.RepositoryId) {
 			resolved, err := s.ResolveRepository(ctx, root, "", false, uuid.Nil)
 			if err != nil {
@@ -83,7 +87,6 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 			}
 			snap.RepositoryId = resolved.ID
 		}
-		normalizeReuse(g, snap.RepositoryId)
 		first, err := s.AllocateIDs(ctx, graphIDCount(g))
 		if err != nil {
 			return err
@@ -105,6 +108,16 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		} else if n == 0 {
 			return fmt.Errorf("upsert repository: %w", sql.ErrNoRows)
 		}
+		// The repository upsert serializes publications of this repository before
+		// selecting existing rows, including concurrent PostgreSQL publishers.
+		factHashes, err := deduplicateFacts(ctx, tx, g)
+		if err != nil {
+			return err
+		}
+		edgeHashes, err := deduplicateEdges(ctx, tx, g)
+		if err != nil {
+			return err
+		}
 		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_edges"} {
 			where, scopeArgs := scope(ctx).clause("org_id")
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snap.Id}, scopeArgs...)...).Exec(ctx); err != nil {
@@ -117,10 +130,10 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		if err := saveSources(ctx, tx, snap, g); err != nil {
 			return err
 		}
-		if err := saveFacts(ctx, tx, snap, g); err != nil {
+		if err := saveFacts(ctx, tx, g, factHashes); err != nil {
 			return err
 		}
-		if err := saveEdges(ctx, tx, g); err != nil {
+		if err := saveEdges(ctx, tx, g, edgeHashes); err != nil {
 			return err
 		}
 		if err := saveMembership(ctx, tx, snap, g); err != nil {
@@ -351,58 +364,60 @@ func existingArtifactKeys(ctx context.Context, tx bun.Tx, org any, keys [][2]str
 	return existing, nil
 }
 
-func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
-	if g == nil {
-		return nil
-	}
+// factValues is shared by persistence and fingerprinting so reuse compares
+// precisely the fields a reader receives, rather than extraction-only metadata.
+func factValues(f *pb.CodeFact) []any {
+	anchor, _ := marshalJSON(f.Anchor)
+	evidence, _ := marshalJSON(f.Evidence)
+	imports, _ := marshalJSON(f.Imports)
+	return []any{f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
+		f.Signature, f.Documentation, f.BodyHash, storedID(f.ParentFactId), f.LogicalKey,
+		f.GetAnchor().GetPath(), anchor, evidence, imports}
+}
+
+func saveFacts(ctx context.Context, tx bun.Tx, g *graph.Graph, hashes map[string]string) error {
 	org := scope(ctx).value()
 	var rows [][]any
 	for _, f := range sortedFacts(g) {
 		if g.Reused[f.Id] {
 			continue
 		}
-		anchor, _ := marshalJSON(f.Anchor)
-		evidence, _ := marshalJSON(f.Evidence)
-		imports, _ := marshalJSON(f.Imports)
-		path := ""
-		if f.Anchor != nil {
-			path = f.Anchor.Path
-		}
-		rows = append(rows, []any{
-			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
-			f.Signature, f.Documentation, f.BodyHash, storedID(f.ParentFactId), f.LogicalKey, path, anchor, evidence, imports, org,
-		})
+		row := append([]any{f.Id, f.RepositoryId, f.SnapshotId}, factValues(f)...)
+		rows = append(rows, append(row, org, hashes[f.Id]))
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_facts
-		(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id) VALUES `,
-		` ON CONFLICT(org_id, id) DO NOTHING`, 18, rows); err != nil {
+		(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id, content_hash) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 19, rows); err != nil {
 		return fmt.Errorf("insert facts: %w", err)
 	}
 	return nil
 }
 
-func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
-	if g == nil {
-		return nil
+func edgeValues(e *pb.EdgeFact) ([]any, error) {
+	key, err := graph.DecodeEdgeLogicalKey(e.LogicalKey)
+	if err != nil {
+		return nil, fmt.Errorf("edge %s: %w", e.Id, err)
 	}
+	return []any{int(e.Kind), storedID(e.FromFactId), storedID(e.ToFactId), e.TargetSymbolKey, key, e.Weight}, nil
+}
+
+func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph, hashes map[string]string) error {
 	org := scope(ctx).value()
 	var rows [][]any
 	for _, e := range sortedEdges(g) {
 		if g.Reused[e.Id] {
 			continue
 		}
-		key, err := graph.DecodeEdgeLogicalKey(e.LogicalKey)
+		values, err := edgeValues(e)
 		if err != nil {
-			return fmt.Errorf("edge %s: %w", e.Id, err)
+			return err
 		}
-		rows = append(rows, []any{
-			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), storedID(e.FromFactId), storedID(e.ToFactId), e.TargetSymbolKey,
-			key, e.Weight, org,
-		})
+		row := append([]any{e.Id, e.RepositoryId, e.SnapshotId}, values...)
+		rows = append(rows, append(row, org, hashes[e.Id]))
 	}
 	if err := insertRows(ctx, tx, `INSERT INTO codeindex_edges
-		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, org_id) VALUES `,
-		` ON CONFLICT(org_id, id) DO NOTHING`, 10, rows); err != nil {
+		(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, org_id, content_hash) VALUES `,
+		` ON CONFLICT(org_id, id) DO NOTHING`, 11, rows); err != nil {
 		return fmt.Errorf("insert edges: %w", err)
 	}
 	return nil
@@ -706,8 +721,8 @@ func (s *Store) Facts(ctx context.Context, snapshotID string, kind pb.FactKind, 
 
 // FactVersions returns every snapshot's version of a logical fact, newest first.
 func (s *Store) FactVersions(ctx context.Context, logicalKey string) ([]*pb.CodeFact, error) {
-	where, scopeArgs := scope(ctx).clause("org_id")
-	query := `SELECT ` + factColumns + ` FROM codeindex_facts WHERE logical_key = ?` + where + ` ORDER BY snapshot_id DESC`
+	where, scopeArgs := scope(ctx).clause("f.org_id")
+	query := `SELECT ` + factColumnsQualified + ` FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.org_id=f.org_id AND m.fact_id=f.id WHERE f.logical_key = ?` + where + ` ORDER BY m.snapshot_id DESC`
 	return s.scanFacts(ctx, query, append([]any{logicalKey}, scopeArgs...)...)
 }
 
@@ -773,8 +788,8 @@ func (s *Store) EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.Edge
 	if err != nil {
 		return nil, err
 	}
-	where, scopeArgs := scope(ctx).clause("org_id")
-	return s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE logical_key = ?`+where+` ORDER BY snapshot_id DESC`, append([]any{key}, scopeArgs...)...)
+	where, scopeArgs := scope(ctx).clause("e.org_id")
+	return s.scanEdges(ctx, `SELECT `+edgeColumnsQualified+` FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.org_id=e.org_id AND m.edge_id=e.id WHERE e.logical_key = ?`+where+` ORDER BY m.snapshot_id DESC`, append([]any{key}, scopeArgs...)...)
 }
 
 func escapeLike(s string) string {

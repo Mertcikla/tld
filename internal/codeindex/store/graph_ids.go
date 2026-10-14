@@ -64,14 +64,24 @@ func assignGraphIDs(snap *pb.Snapshot, g *graph.Graph, first int64) {
 	g.Facts = make(map[string]*pb.CodeFact, len(facts))
 	for _, f := range facts {
 		f.Id, f.ParentFactId = mapped(f.Id), mapped(f.ParentFactId)
-		f.RepositoryId, f.SnapshotId = snap.RepositoryId, mapped(f.SnapshotId)
+		f.RepositoryId, f.SnapshotId = snap.RepositoryId, snap.Id
 		g.Facts[f.Id] = f
 	}
 	g.EdgeFacts = make(map[string]*pb.EdgeFact, len(edges))
 	for _, e := range edges {
 		e.Id, e.FromFactId, e.ToFactId = mapped(e.Id), mapped(e.FromFactId), mapped(e.ToFactId)
-		e.RepositoryId, e.SnapshotId = snap.RepositoryId, mapped(e.SnapshotId)
+		e.RepositoryId, e.SnapshotId = snap.RepositoryId, snap.Id
 		g.EdgeFacts[e.Id] = e
+	}
+	rewriteGraphCaches(g, remap)
+}
+
+func rewriteGraphCaches(g *graph.Graph, remap map[string]string) {
+	mapped := func(id string) string {
+		if next, ok := remap[id]; ok {
+			return next
+		}
+		return id
 	}
 	// Caches contain extracted facts. Refresh their rows so subsequent indexing
 	// sees assigned IDs rather than resurrecting temporary references.
@@ -81,10 +91,11 @@ func assignGraphIDs(snap *pb.Snapshot, g *graph.Graph, first int64) {
 		case map[string]any:
 			if id, ok := v["id"].(string); ok {
 				if fact := g.Facts[mapped(id)]; fact != nil {
-					raw, _ := json.Marshal(fact)
-					var row map[string]any
-					if json.Unmarshal(raw, &row) == nil {
-						return row
+					// Extraction caches contain syntax metadata, not later SCIP
+					// enrichment. Rewrite references without replacing that payload.
+					v["id"], v["repository_id"], v["snapshot_id"] = fact.Id, g.RepositoryID, g.SnapshotID
+					if parent, ok := v["parent_fact_id"].(string); ok {
+						v["parent_fact_id"] = mapped(parent)
 					}
 				}
 			}
@@ -110,27 +121,6 @@ func assignGraphIDs(snap *pb.Snapshot, g *graph.Graph, first int64) {
 			raw, err := json.Marshal(rewrite(value))
 			if err == nil {
 				*cache = string(raw)
-			}
-		}
-	}
-}
-
-// normalizeReuse prevents cached rows from another repository or a replaced
-// parent from being published as shared rows with different references.
-func normalizeReuse(g *graph.Graph, repositoryID string) {
-	for id, fact := range g.Facts {
-		if temporaryID(id) || fact.RepositoryId != repositoryID {
-			g.Reused[id] = false
-		}
-	}
-	for changed := true; changed; {
-		changed = false
-		for id, fact := range g.Facts {
-			if g.Reused[id] && fact.ParentFactId != "" {
-				if _, present := g.Facts[fact.ParentFactId]; present && !g.Reused[fact.ParentFactId] {
-					g.Reused[id] = false
-					changed = true
-				}
 			}
 		}
 	}

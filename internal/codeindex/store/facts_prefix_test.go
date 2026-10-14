@@ -47,7 +47,7 @@ func testFactsLiteralPathPrefix(t *testing.T, st *Store) {
 			for i, path := range []string{tc.path, tc.otherPath} {
 				for j, kind := range []pb.FactKind{pb.FactKind_FACT_KIND_FUNCTION, pb.FactKind_FACT_KIND_TYPE, pb.FactKind_FACT_KIND_FUNCTION} {
 					id := idAt(i, j)
-					g.Facts[id] = &pb.CodeFact{Id: id, RepositoryId: snap.RepositoryId, SnapshotId: snap.Id, Kind: kind, Anchor: &pb.SourceAnchor{Path: path}}
+					g.Facts[id] = &pb.CodeFact{Id: id, RepositoryId: snap.RepositoryId, SnapshotId: snap.Id, Kind: kind, Name: tc.name + id, Anchor: &pb.SourceAnchor{Path: path}}
 				}
 			}
 			if err := st.Publish(ctx, "/prefix-repo", snap, g); err != nil {

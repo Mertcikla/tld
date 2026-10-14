@@ -41,3 +41,16 @@ edge anchor and evidence fields unset. Fresh databases have no `details` column.
 SQLite reuses freed pages but does not automatically shrink its database file.
 After rebuilding, stop database users and run a separate maintenance `VACUUM`
 to reclaim disk space. Startup migrations never run `VACUUM`.
+
+Publication shares exact fact and edge rows within a repository. A SHA-256
+fingerprint covers every stored payload field, including fact locations,
+evidence, symbol versions and parent IDs. An equal row is reused through the
+existing `codeindex_snapshot_facts` or `codeindex_snapshot_edges` membership
+table. Repeated equal observations remain separate rows to preserve counts.
+The migration adds fingerprint columns and indexes; it preserves existing rows,
+which remain readable and acquire no fingerprints retroactively.
+
+Sources and extraction artifacts keep their existing whole-payload sharing.
+Memberships and inventories are still stored per snapshot, and changes to
+positions or versioned symbols require new fact rows. Storage growth therefore
+includes these costs rather than being strictly proportional to edited bytes.

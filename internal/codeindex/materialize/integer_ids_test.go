@@ -138,6 +138,21 @@ func testIndexFormatUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.
 	if _, err := b.NewRaw(`INSERT INTO codeindex_snapshot_edges(snapshot_id,edge_id,org_id) VALUES (?,?,?)`, oldSnapshot, "3", org.String()).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Current writers use the compact sentinel, but this fixture models a
+	// database created before that migration (including nullable element orgs).
+	if dialect == dbrepo.DialectSQLite && org == uuid.Nil {
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range []string{"codeindex_repositories", "codeindex_repository_settings", "codeindex_elements"} {
+			if _, err := b.NewRaw(`UPDATE `+table+` SET org_id=? WHERE org_id=''`, org.String()).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if dialect == dbrepo.DialectSQLite {
 		if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_integer_ids BEFORE INSERT ON bun_migrations WHEN NEW.name='`+cutoff+`' BEGIN SELECT RAISE(ABORT,'injected history failure'); END`); err != nil {
 			t.Fatal(err)
@@ -166,9 +181,13 @@ func testIndexFormatUpgrade(t *testing.T, db *sql.DB, b *bun.DB, dialect dbrepo.
 	if cutoff == "20261014000200" && id != oldID {
 		t.Fatalf("edge format migration changed repository ID: %s -> %s", oldID, id)
 	}
+	storedOrg := org.String()
+	if dialect == dbrepo.DialectSQLite && org == uuid.Nil {
+		storedOrg = ""
+	}
 	var remoteURL string
 	var managed bool
-	if err := b.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id=? AND org_id=?`, id, org.String()).Scan(ctx, &remoteURL, &managed); err != nil || remoteURL != "https://github.com/owner/repo" || !managed {
+	if err := b.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id=? AND org_id=?`, id, storedOrg).Scan(ctx, &remoteURL, &managed); err != nil || remoteURL != "https://github.com/owner/repo" || !managed {
 		t.Fatalf("repository configuration lost: %s %v %v", remoteURL, managed, err)
 	}
 	namespace, err := idx.MappingNamespace(ctx, id)

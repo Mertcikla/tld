@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -34,6 +35,8 @@ func TestCompactEdgePublishRejectsInvalidData(t *testing.T) {
 	ctx := context.Background()
 	for _, e := range []*pb.EdgeFact{
 		{LogicalKey: "legacy"},
+		{LogicalKey: graph.EdgeLogicalKey(0, "a", "b"), Weight: math.NaN()},
+		{LogicalKey: graph.EdgeLogicalKey(0, "a", "b"), Weight: math.Inf(1)},
 	} {
 		g := graph.NewGraph("10", "100")
 		e.Id, e.RepositoryId, e.SnapshotId = "101", "10", "100"
@@ -109,7 +112,7 @@ func testCompactEdgeQueries(t *testing.T, st *Store) {
 		t.Fatal(err)
 	}
 	versions, err = st.EdgeVersions(ctx, key)
-	if err != nil || len(versions) != 1 || versions[0].Id != "201" {
+	if err != nil || len(versions) != 1 || versions[0].Id != "101" {
 		t.Fatalf("deletion changed remaining versions: %v %v", versions, err)
 	}
 }
