@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { RepeatIcon, TimeIcon } from '@chakra-ui/icons'
-import { faCodeBranch } from '@fortawesome/free-solid-svg-icons'
+import { faCodeBranch, faEllipsis, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { Box, Button, Code, Flex, Grid, HStack, Popover, PopoverBody, PopoverContent, PopoverTrigger, Portal, Spinner, Switch, Text, Tooltip } from '@chakra-ui/react'
 import type { RepositoryImpactScene, RepositoryWatchStatus } from '../api/client'
 import type { MapChangeTarget } from '../utils/repositoryChangeHistory'
@@ -8,65 +9,79 @@ import FontAwesomeIcon from './FontAwesomeIcon'
 
 import { watcherActivity, type RepositoryFollowMode } from '../utils/repositoryWatcher'
 
-export default function RepositoryWatcherPanel({ status, repositoryRoot, branch, revision, busy, onStart, onStop, onRestart, onRefresh, scene = null, onFocusChanges, followMode = 'off', onFollowModeChange }: {
-  status: RepositoryWatchStatus | null; repositoryRoot: string; branch: string; revision: string; busy: boolean
+export default function RepositoryWatcherPanel({ status, repositoryRoot, branch, revision, commitMessage = '', worktreeStats = null, busy, onStart, onStop, onRestart, scene = null, onFocusChanges, followMode = 'off', onFollowModeChange }: {
+  status: RepositoryWatchStatus | null; repositoryRoot: string; branch: string; revision: string; commitMessage?: string; busy: boolean
+  worktreeStats?: { additions: number; deletions: number } | null
   scene?: RepositoryImpactScene | null; onFocusChanges?: (targets: MapChangeTarget[]) => void
   followMode?: RepositoryFollowMode; onFollowModeChange?: (mode: RepositoryFollowMode) => void
-  onStart: () => void; onStop: () => void; onRestart: () => void; onRefresh: () => void
+  onStart: () => void; onStop: () => void; onRestart: () => void
 }) {
+  const [lastGit, setLastGit] = useState({ repositoryRoot, branch, revision, commitMessage })
+  useEffect(() => {
+    // Startup publishes empty Git metadata before the first capture finishes.
+    if (branch || revision || repositoryRoot !== lastGit.repositoryRoot) {
+      setLastGit((previous) => ({ repositoryRoot, branch, revision, commitMessage: commitMessage || (previous.repositoryRoot === repositoryRoot && previous.revision === revision ? previous.commitMessage : '') }))
+    }
+  }, [repositoryRoot, branch, revision, commitMessage, lastGit.repositoryRoot])
+  const git = branch || revision ? { branch, revision, commitMessage: commitMessage || (lastGit.repositoryRoot === repositoryRoot && lastGit.revision === revision ? lastGit.commitMessage : '') } : lastGit.repositoryRoot === repositoryRoot ? lastGit : { branch: '', revision: '', commitMessage: '' }
   const activity = watcherActivity(status)
   const stopping = status?.stopRequested || status?.state === 'stopping'
   const unavailable = status?.cliAvailable === false
   const hasError = !!status?.error || status?.state === 'error'
   const statusColor = hasError ? 'orange.300' : status?.running ? 'green.300' : 'gray.400'
-  const statusLabel = !status ? 'Connecting' : stopping ? 'Stopping' : hasError ? 'Needs attention' : status.running ? 'Live' : 'Stopped'
   const lastIndexed = status?.lastScanUnix ? new Date(status.lastScanUnix * 1000) : null
+  const following = followMode === 'following'
 
   return (
     <Box as="section" aria-label="Repository watcher" px={{ base: 4, md: 5 }} pt={4} pb={3} borderBottom="1px solid" borderColor="whiteAlpha.200" bg="var(--bg-canvas)" flexShrink={0} data-testid="repository-watcher">
-      <Flex align="start" justify="space-between" gap={4} wrap="wrap">
+      <Flex align="stretch" justify="space-between" gap={4} wrap="wrap">
         <HStack spacing={3} minW={0} flex="1 1 260px" align="start">
-          {(branch || revision) && <Box aria-label="Watched Git revision" minW={0} maxW={{ base: '130px', md: '190px' }} flexShrink={0} border="1px solid" borderColor="rgba(var(--accent-rgb), 0.20)" bg="rgba(var(--accent-rgb), 0.05)" borderRadius="lg" px={3} py={2}>
+          {(git.branch || git.revision) && <Box aria-label="Watched Git revision" minW={0} w={{ base: '160px', md: '280px' }} maxW="full" flexShrink={0} border="1px solid" borderColor="rgba(var(--accent-rgb), 0.20)" bg="rgba(var(--accent-rgb), 0.05)" borderRadius="lg" px={3} py={2}>
             <HStack spacing={1.5} color="var(--accent)" minW={0}>
               <FontAwesomeIcon icon={faCodeBranch} size={12} />
-              <Text fontSize="xs" fontWeight="semibold" isTruncated title={branch || 'Detached HEAD'}>{branch || 'Detached HEAD'}</Text>
-            </HStack>
-            {revision && <HStack mt={1.5} spacing={1.5}>
-              <Text fontSize="9px" color="gray.500" letterSpacing="0.05em">HEAD</Text>
-              <Text fontFamily="mono" fontSize="10px" color="gray.300" title={revision}>{revision.slice(0, 7)}</Text>
-            </HStack>}
-          </Box>}
-          <Box minW={0}>
-            <HStack spacing={2} mb={1}>
-              <HStack spacing={1.5} px={1.5} py="1px" borderRadius="md" bg="whiteAlpha.50" color={statusColor} fontSize="10px" fontWeight="semibold">
-                <Box boxSize="5px" bg="currentColor" borderRadius="full" aria-hidden="true" />
-                <Text>{statusLabel}</Text>
+              <Text flex={1} minW={0} fontSize="xs" fontWeight="semibold" isTruncated title={git.branch || 'Detached HEAD'}>{git.branch || 'Detached HEAD'}</Text>
+              <HStack spacing={1.5} flexShrink={0} fontFamily="mono" fontSize="10px" fontWeight="medium" aria-label="Worktree line changes" title={worktreeStats ? `Worktree against the current commit: ${worktreeStats.additions.toLocaleString()} lines added, ${worktreeStats.deletions.toLocaleString()} lines deleted` : 'Loading worktree line totals.'}>
+                <Text color="green.300" data-testid="watch-lines-added">+{worktreeStats ? worktreeStats.additions.toLocaleString() : '—'}</Text>
+                <Text color="red.300" data-testid="watch-lines-removed">−{worktreeStats ? worktreeStats.deletions.toLocaleString() : '—'}</Text>
               </HStack>
             </HStack>
+            {git.revision && <HStack mt={1.5} spacing={1.5}>
+              {git.commitMessage && <Text flex={1} minW={0} fontSize="10px" color="gray.400" isTruncated title={git.commitMessage} data-testid="watch-commit-message">{git.commitMessage.split('\n')[0]}</Text>}
+              <Text fontFamily="mono" fontSize="10px" color="gray.500" flexShrink={0} title={git.revision}>{git.revision.slice(0, 7)}</Text>
+            </HStack>}
+          </Box>}
+          <Box minW={0} alignSelf="center">
             <HStack spacing={2}>
-              {activity.active && <Spinner size="xs" color="var(--accent)" />}
-              <Text fontSize="md" lineHeight="short" fontWeight="semibold" letterSpacing="-0.02em" data-testid="watch-state" aria-live="polite">{activity.label === 'Idle · watching for changes' ? 'Watching for changes' : activity.label}</Text>
+              {activity.active ? <Spinner size="xs" color="var(--accent)" /> : <Box boxSize="6px" flexShrink={0} bg={statusColor} borderRadius="full" aria-hidden="true" />}
+              <Text fontSize={{ base: 'lg', md: 'xl' }} lineHeight="short" fontWeight="semibold" letterSpacing="-0.02em" title={activity.detail} data-testid="watch-state" aria-live="polite">{activity.label === 'Idle · watching for changes' ? 'Watching for changes' : activity.label}</Text>
             </HStack>
-            <Text fontSize="xs" color="gray.400" mt={1}>{activity.detail}</Text>
           </Box>
         </HStack>
-        <Flex direction="column" align="end" gap={1.5} flexShrink={0}>
-          <HStack spacing={1.5} flexWrap="wrap" rowGap={2}>
-            {status?.running ? <>
-              <Button size="xs" h="30px" px={3} variant="outline" borderColor="whiteAlpha.300" leftIcon={<Box boxSize="6px" bg="currentColor" borderRadius="1px" />} isDisabled={busy || !!stopping} onClick={onStop} data-testid="watch-stop">{stopping ? 'Stopping…' : 'Stop watcher'}</Button>
-            </> : <Tooltip label={unavailable ? status?.installHint || 'Install the tld CLI to start a watcher' : undefined}>
-              <Button size="sm" h="30px" px={4} bg="var(--accent)" color="white" fontWeight="semibold" _hover={{ bg: 'var(--accent)', filter: 'brightness(1.08)' }} _active={{ bg: 'var(--accent)', filter: 'brightness(0.95)' }} isLoading={busy} isDisabled={unavailable || !status} onClick={onStart} data-testid="watch-start">{status?.error ? 'Retry watcher' : 'Start watcher'}</Button>
+        <Box display="flex" alignSelf="stretch" w="fit-content" maxW="full" flexShrink={0} border="1px solid" borderColor="whiteAlpha.200" borderRadius="xl" bg="whiteAlpha.50" boxShadow="0 2px 8px rgba(0, 0, 0, 0.08)">
+          <HStack spacing={1} p={1} align="stretch" flex={1}>
+            {status?.running ? <Button size="sm" flex={1} h="auto" minH="48px" px={3} py={2} borderRadius="lg" variant="ghost" bg="whiteAlpha.50" color="gray.200" fontSize="xs" fontWeight="medium" leftIcon={<Box boxSize="7px" bg="currentColor" borderRadius="2px" />} _hover={{ bg: 'rgba(252, 129, 129, 0.10)', color: 'red.200' }} _active={{ bg: 'rgba(252, 129, 129, 0.16)' }} _focusVisible={{ boxShadow: 'inset 0 0 0 2px var(--accent)' }} isDisabled={busy || !!stopping} onClick={onStop} data-testid="watch-stop">Stop watcher</Button> : <Tooltip label={unavailable ? status?.installHint || 'Install the tld CLI to start a watcher' : undefined}>
+              <Button size="sm" flex={1} h="48px" minH="auto" px={3} py={2} borderRadius="lg" bg="var(--accent)" color="white" fontSize="xs" fontWeight="semibold" leftIcon={<FontAwesomeIcon icon={faPlay} size={9} />} _hover={{ bg: 'var(--accent)', filter: 'brightness(1.08)' }} _active={{ bg: 'var(--accent)', filter: 'brightness(0.95)' }} _focusVisible={{ boxShadow: 'inset 0 0 0 2px white' }} isLoading={busy} isDisabled={unavailable || !status} onClick={onStart} data-testid="watch-start">{status?.error ? 'Retry watcher' : 'Start watcher'}</Button>
             </Tooltip>}
+            {onFollowModeChange && <>
+              <Box h="16px" w="1px" bg="whiteAlpha.200" alignSelf="center" aria-hidden="true" />
+              <Tooltip label="Keep changed code in view. Manual navigation pauses following." openDelay={300} closeOnPointerDown closeOnScroll>
+                <Box as="span" display="flex" alignItems="stretch">
+                  <Switch size="sm" minH="auto" px={2} py={2} display="flex" flexDirection="row-reverse" alignItems="center" justifyContent="space-between" gap={2} borderRadius="lg" color={following ? 'var(--accent)' : 'gray.400'} bg={following ? 'rgba(var(--accent-rgb), 0.04)' : 'transparent'} _hover={{ bg: 'whiteAlpha.50' }} aria-label="Follow" isChecked={following} onChange={(event) => onFollowModeChange(event.target.checked ? 'following' : 'off')} sx={{ '& .chakra-switch__label': { margin: 0 }, '& .chakra-switch__track': { margin: 0, bg: 'whiteAlpha.300' }, '& .chakra-switch__track[data-checked]': { bg: 'var(--accent)' }, '& .chakra-switch__track[data-focus-visible]': { boxShadow: '0 0 0 2px var(--bg-canvas), 0 0 0 4px var(--accent)' } }}>
+                    <Text as="span" fontSize="11px" lineHeight="16px" fontWeight="medium" whiteSpace="nowrap">Follow</Text>
+                  </Switch>
+                </Box>
+              </Tooltip>
+            </>}
+            <Box h="16px" w="1px" bg="whiteAlpha.200" alignSelf="center" aria-hidden="true" />
             <Popover placement="bottom-end" isLazy>
               <PopoverTrigger>
-                <Button size="xs" boxSize="30px" minW="30px" variant="ghost" aria-label="Watcher options" fontSize="lg" lineHeight={1}>…</Button>
+                <Button size="sm" w="30px" h="auto" minH="auto" minW="30px" borderRadius="lg" variant="ghost" color="gray.400" _hover={{ bg: 'whiteAlpha.100', color: 'gray.100' }} _expanded={{ bg: 'whiteAlpha.100', color: 'var(--accent)' }} _focusVisible={{ boxShadow: 'inset 0 0 0 2px var(--accent)' }} aria-label="Watcher options"><FontAwesomeIcon icon={faEllipsis} size={14} /></Button>
               </PopoverTrigger>
               <Portal>
                 <PopoverContent w="360px" maxW="calc(100vw - 32px)" bg="var(--bg-panel)" borderColor="whiteAlpha.200" borderRadius="lg" boxShadow="lg" _focus={{ boxShadow: 'lg' }} data-testid="watch-options-panel">
                   <PopoverBody p={0} maxH="min(440px, calc(100dvh - 100px))" overflowY="auto">
                     <Box p={1.5} borderBottom="1px solid" borderColor="whiteAlpha.100">
                       {status?.running && <Button size="sm" w="full" justifyContent="flex-start" variant="ghost" fontSize="xs" leftIcon={<RepeatIcon />} isDisabled={busy || !!stopping || unavailable} title={unavailable ? status?.installHint || 'Install the tld CLI to restart the watcher' : undefined} onClick={onRestart} data-testid="watch-restart">Restart watcher</Button>}
-                      <Button size="sm" w="full" justifyContent="flex-start" variant="ghost" fontSize="xs" isDisabled={busy} onClick={onRefresh} data-testid="watch-refresh">Refresh status</Button>
                     </Box>
                     <Box p={3} fontSize="xs" color="gray.400">
                       <Text fontWeight="semibold" color="gray.300" mb={2}>Watcher details</Text>
@@ -84,16 +99,7 @@ export default function RepositoryWatcherPanel({ status, repositoryRoot, branch,
               </Portal>
             </Popover>
           </HStack>
-          {onFollowModeChange && <HStack spacing={1}>
-            <Tooltip label="Keep changed code in view. Manual navigation pauses following." openDelay={300} closeOnPointerDown closeOnScroll>
-              <Box as="span" display="inline-flex">
-                <Switch size="sm" minH="24px" display="flex" alignItems="center" aria-label="Follow changes" isChecked={followMode === 'following'} onChange={(event) => onFollowModeChange(event.target.checked ? 'following' : 'off')} sx={{ '& .chakra-switch__track[data-checked]': { bg: 'var(--accent)' } }}>
-                  <Text as="span" fontSize="xs" color="gray.400">Follow changes</Text>
-                </Switch>
-              </Box>
-            </Tooltip>
-          </HStack>}
-        </Flex>
+        </Box>
       </Flex>
 
       <RepositoryChangeHistory scene={scene} onFocus={onFocusChanges} summary={

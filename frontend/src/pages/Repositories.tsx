@@ -361,10 +361,33 @@ export default function Repositories() {
   const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
   const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
+  const [watchCommit, setWatchCommit] = useState<{ repositoryId: string; revision: string; message: string } | null>(null)
+  const [worktreeStats, setWorktreeStats] = useState<{ repositoryId: string; additions: number; deletions: number } | null>(null)
   const [followMode, setFollowMode] = useState<RepositoryFollowMode>('off')
   const [watchScene, setWatchScene] = useState<RepositoryImpactScene | null>(null)
   const [focusChangeRequest, setFocusChangeRequest] = useState<MapChangeFocusRequest | null>(null)
   const [mode, setMode] = useState(() => params.get('mode') === 'snapshots' ? 'snapshots' : params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
+  const watchRevision = watch?.gitRevision || live?.gitRevision || history?.headSha || ''
+  const historyCommit = history?.commits.find((commit) => commit.sha === watchRevision)
+  const watchCommitMessage = (historyCommit?.body || historyCommit?.subject || '').trim() || (watchCommit?.repositoryId === selectedId && watchCommit.revision === watchRevision ? watchCommit.message : '')
+  useEffect(() => {
+    if (mode !== 'live' || !selectedId || !watchRevision || watchCommitMessage) return
+    let stale = false
+    void api.repositories.commitDetails(selectedId, watchRevision).then(({ commit }) => {
+      if (!stale && commit?.sha === watchRevision) {
+        setWatchCommit({ repositoryId: selectedId, revision: watchRevision, message: (commit.body || commit.subject).trim() })
+      }
+    }).catch(() => { /* Git metadata can be temporarily unavailable during a checkout. */ })
+    return () => { stale = true }
+  }, [mode, selectedId, watchRevision, watchCommitMessage])
+  useEffect(() => {
+    if (mode !== 'live' || !selectedId) return
+    const controller = new AbortController()
+    void api.repositories.rangeSummary(selectedId, { base: 'HEAD', headWorkingTree: true, signal: controller.signal }).then((summary) => {
+      if (!controller.signal.aborted) setWorktreeStats({ repositoryId: selectedId, additions: summary.additions, deletions: summary.deletions })
+    }).catch(() => { /* Keep the last totals during transient checkout changes. */ })
+    return () => controller.abort()
+  }, [mode, selectedId, watch?.gitRevision, watch?.lastScanUnix, watch?.state, live?.diagram?.version])
   const [watchEnabled, setWatchEnabled] = useState(true)
   // Self-hosted servers disable watching; hide the Watch tab entirely.
   useEffect(() => {
@@ -770,16 +793,6 @@ export default function Repositories() {
       if (selectedRef.current === repositoryId) setWatch(started)
     } catch (err) {
       if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not restart watcher')
-    } finally { setWatchBusy(false) }
-  }
-  const refreshWatch = async () => {
-    const repositoryId = selectedId
-    setWatchBusy(true); setOperationError('')
-    try {
-      const [status, result] = await Promise.all([api.repositories.watchStatus(repositoryId), api.repositories.liveImpact(repositoryId)])
-      if (selectedRef.current === repositoryId) { setWatch(status); setLive(result) }
-    } catch (err) {
-      if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not refresh watcher')
     } finally { setWatchBusy(false) }
   }
   const selectRepo = (id: string) => {
@@ -1580,7 +1593,7 @@ export default function Repositories() {
                 />}
                 {mode === 'live' && (
                   <>
-                    <RepositoryWatcherPanel key={selected.id} followMode={followMode} onFollowModeChange={setFollowMode} scene={live?.diagram?.scene?.repositoryId === selectedId ? live.diagram.scene : watchScene?.repositoryId === selectedId ? watchScene : null} onFocusChanges={(targets) => { setSelectedPath(''); setFocusChangeRequest({ repositoryId: selectedId, targets }) }} status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
+                    <RepositoryWatcherPanel key={selected.id} followMode={followMode} onFollowModeChange={setFollowMode} scene={live?.diagram?.scene?.repositoryId === selectedId ? live.diagram.scene : watchScene?.repositoryId === selectedId ? watchScene : null} onFocusChanges={(targets) => { setSelectedPath(''); setFocusChangeRequest({ repositoryId: selectedId, targets }) }} status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watchRevision} commitMessage={watchCommitMessage} worktreeStats={worktreeStats?.repositoryId === selectedId ? worktreeStats : null} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} />
                     <ErrorMessage message={live?.error || ''} />
                   </>
                 )}

@@ -5,7 +5,7 @@ import type { RepositoryImpactScene } from '../api/client'
 import RepositoryChangeHistory from './RepositoryChangeHistory'
 
 vi.mock('@chakra-ui/react', () => {
-  const Box = ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('div', props, children)
+  const Box = React.forwardRef<HTMLDivElement, { children?: React.ReactNode }>(({ children, ...props }, ref) => React.createElement('div', { ...props, ref }, children))
   const Button = ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('button', props, children)
   return { Box, Button, Flex: Box, HStack: Box, Text: Box, Tooltip: Box }
 })
@@ -24,6 +24,62 @@ function rows(renderer: ReturnType<typeof create>) {
 }
 
 describe('compact materialization log', () => {
+  it('shows clickable changes inline when they fit and restores counts and expansion on resize', async () => {
+    let width = 1000
+    let resize = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    const onFocus = vi.fn()
+    let renderer!: ReturnType<typeof create>
+    try {
+      await act(async () => {
+        renderer = create(<RepositoryChangeHistory scene={scene()} onFocus={onFocus} />, { createNodeMock: (element) => {
+          if (element.props['data-testid'] === 'history-change-row') return { get clientWidth() { return width } }
+          if (element.props['data-testid'] === 'history-change-measure') return { scrollWidth: 210 }
+          if (element.props['data-testid'] === 'history-change-metadata') return { offsetWidth: 80 }
+          return null
+        } })
+      })
+      const buttons = () => renderer.root.findAllByType('button')
+      const resources = () => buttons().filter((node) => node.props['aria-label']?.startsWith('Focus element modified:'))
+      expect(renderer.root.findAllByProps({ 'data-testid': 'history-inline-changes' }).length).toBeGreaterThan(0)
+      expect(resources()).toHaveLength(1)
+      expect(buttons().some((node) => node.props['aria-label'] === `Expand changes for ${path}`)).toBe(false)
+      await act(async () => resources()[0].props.onClick())
+      expect(onFocus).toHaveBeenCalledWith([expect.objectContaining({ kind: 'element' })])
+      await act(async () => { width = 400; resize() })
+      expect(resources()).toHaveLength(0)
+      expect(buttons().some((node) => node.props['aria-label'] === `Focus element changes in ${path}`)).toBe(true)
+      await act(async () => buttons().find((node) => node.props['aria-label'] === `Expand changes for ${path}`)!.props.onClick())
+      expect(resources()).toHaveLength(1)
+      await act(async () => { width = 1000; resize() })
+      expect(renderer.root.findAllByProps({ 'data-testid': 'history-change-details' })).toHaveLength(0)
+      expect(resources()).toHaveLength(1)
+    } finally {
+      if (renderer) await act(async () => renderer.unmount())
+      vi.unstubAllGlobals()
+    }
+    expect(disconnect).toHaveBeenCalled()
+  })
+
+  it('colors individual changes by action in the expanded overflow', async () => {
+    const current = scene(3)
+    current.overlays[0].change = 'removed'
+    current.overlays[1].change = 'added'
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryChangeHistory scene={current} onFocus={vi.fn()} />) })
+    await act(async () => renderer.root.findAllByType('button').find((node) => node.props['aria-label'] === `Expand changes for ${path}`)!.props.onClick())
+    const buttons = renderer.root.findAllByType('button')
+    expect(buttons.find((node) => node.props['aria-label'] === 'Focus element removed: Element 0')?.props.color).toBe('red.200')
+    expect(buttons.find((node) => node.props['aria-label'] === 'Focus element added: Element 1')?.props.color).toBe('green.200')
+    expect(buttons.find((node) => node.props['aria-label'] === 'Focus element modified: Element 2')?.props.color).toBe('orange.200')
+    await act(async () => renderer.unmount())
+  })
+
   it('restarts the flash only for changed rows without remounting their controls', async () => {
     // Even pushes within the same millisecond must restart an existing row's flash.
     const now = vi.spyOn(Date, 'now').mockReturnValue(1000)

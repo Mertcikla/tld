@@ -5,6 +5,7 @@ import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Repositories from './Repositories'
+import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
 import type { RepositoryIndexerCheck } from '../api/client'
 
 const missingIndexerCheck: RepositoryIndexerCheck = {
@@ -59,6 +60,7 @@ vi.mock('../api/client', () => ({
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      commitDetails: vi.fn(async (_id: string, revision: string) => ({ commit: { sha: revision, subject: 'Latest change', body: 'Latest change\n\nFull commit details.', author: 'Developer', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })),
       rangeSummary: vi.fn(async () => ({ commits: 3, additions: 10, deletions: 4, changed: 6, files: 2 })),
       openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
       pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
@@ -189,7 +191,7 @@ vi.mock('@chakra-ui/react', async () => {
     Portal: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
     Progress: BoxLike,
     Select: BoxLike,
-    Spinner: BoxLike,
+    Spinner: (props: Record<string, unknown>) => ReactModule.createElement('span', { ...props, 'data-testid': 'mock-spinner' }),
     Switch: SwitchLike,
     Text: BoxLike,
     Tooltip: BoxLike,
@@ -635,6 +637,61 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-go')).toHaveLength(0)
     renderer.unmount()
   })
+  it('shows the commit subject with its full message on hover and worktree totals', async () => {
+    const message = 'Improve watcher controls and materialization history\n\nPreserve status and focus while indexing.'
+    const props = { status: null, repositoryRoot: '/repo/demo', branch: 'main', revision: 'abc123456', commitMessage: message, busy: false, onStart: vi.fn(), onStop: vi.fn(), onRestart: vi.fn() }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryWatcherPanel {...props} worktreeStats={{ additions: 3400, deletions: 1234 }} />) })
+    const commit = renderer.root.findByProps({ 'data-testid': 'watch-commit-message' })
+    expect(commit.props.children).toBe(message.split('\n')[0])
+    expect(commit.props.title).toBe(message)
+    const lineText = (testId: string) => hostNodes(renderer, testId)[0].children.join('')
+    expect(lineText('watch-lines-added')).toBe('+3,400')
+    expect(lineText('watch-lines-removed')).toBe('−1,234')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} worktreeStats={{ additions: 0, deletions: 0 }} />))
+    expect(lineText('watch-lines-added')).toBe('+0')
+    expect(lineText('watch-lines-removed')).toBe('−0')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} />))
+    expect(lineText('watch-lines-added')).toBe('+—')
+    expect(lineText('watch-lines-removed')).toBe('−—')
+    await act(async () => renderer.unmount())
+  })
+
+  it('loads the exact watched commit message when Git history does not contain it', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.commitDetails).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    expect(api.repositories.commitDetails).toHaveBeenCalledWith('repo-1', 'abc')
+    expect(api.repositories.rangeSummary).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: 'HEAD', headWorkingTree: true, signal: expect.any(AbortSignal) }))
+    expect(hostNodes(renderer, 'watch-lines-added')[0].children.join('')).toBe('+10')
+    expect(hostNodes(renderer, 'watch-lines-removed')[0].children.join('')).toBe('−4')
+    expect(renderer.root.findByProps({ 'data-testid': 'watch-commit-message' }).props.title).toBe('Latest change\n\nFull commit details.')
+    await act(async () => renderer.unmount())
+  })
+
+  it('keeps the latest Git identity through empty startup updates without leaking it to another checkout', async () => {
+    const props = {
+      status: null, repositoryRoot: '/repo/demo', branch: 'main', revision: 'abc123456', commitMessage: 'Initial commit', busy: false,
+      onStart: vi.fn(), onStop: vi.fn(), onRestart: vi.fn(), onRefresh: vi.fn(),
+    }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryWatcherPanel {...props} />) })
+    const badgeText = () => renderer.root.findByProps({ 'aria-label': 'Watched Git revision' }).findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child): child is string => typeof child === 'string'))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['main', 'abc1234']))
+    expect(renderer.root.findByProps({ 'data-testid': 'watch-commit-message' }).props.children).toBe('Initial commit')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="feature" revision="def123456" />))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['feature', 'def1234']))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="fed123456" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['Detached HEAD', 'fed1234']))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} repositoryRoot="/repo/other" branch="" revision="" />))
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Watched Git revision' })).toHaveLength(0)
+    await act(async () => renderer.unmount())
+  })
+
   it.each([
     { family: 'go', tool: 'gopls', languages: ['go'], installHint: 'go install golang.org/x/tools/gopls@latest', downloadUrl: 'https://go.dev/gopls/' },
     { family: 'web', tool: 'typescript-language-server', languages: ['typescript'], installHint: 'npm install -g typescript-language-server typescript', downloadUrl: 'https://github.com/typescript-language-server/typescript-language-server' },
@@ -1121,15 +1178,37 @@ describe('Repositories map action', () => {
     vi.useRealTimers()
   })
 
-  it('hosts follow controls below the watcher actions and shares pause state with the canvas', async () => {
+  it.each([
+    { state: 'stopping', running: true, label: 'Stopping…' },
+    { state: 'stopped', running: false, label: 'Stopped' },
+  ])('announces $state once and keeps watcher actions named for their action', async ({ state, running, label }) => {
+    const { api } = await import('../api/client')
+    const current = await api.repositories.watchStatus('repo-1')
+    vi.mocked(api.repositories.watchStatus).mockResolvedValueOnce({ ...current, state, running, stopRequested: running, error: '' })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
-    const follow = () => renderer.root.findByProps({ 'aria-label': 'Follow changes' })
-    expect(follow().props.isChecked).toBe(false)
-    expect(follow().parent?.findAllByProps({ 'data-testid': 'watch-start' }).length).toBe(0)
     const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
-    expect(panel.findByProps({ 'aria-label': 'Follow changes' })).toBeTruthy()
+    const text = panel.findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child): child is string => typeof child === 'string'))
+    expect(text.filter((value) => value.startsWith(state === 'stopping' ? 'Stopping' : 'Stopped'))).toEqual([label])
+    if (running) {
+      expect(panel.findByProps({ 'data-testid': 'watch-stop' }).props.children).toBe('Stop watcher')
+      expect(panel.findByProps({ 'data-testid': 'watch-stop' }).props.isDisabled).toBe(true)
+      expect(panel.findAllByProps({ 'data-testid': 'mock-spinner' })).toHaveLength(1)
+    } else {
+      expect(panel.findByProps({ 'data-testid': 'watch-start' }).props.children).toBe('Start watcher')
+    }
+    await act(async () => renderer.unmount())
+  })
+
+  it('shares the follow toggle and pause state with the canvas', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const follow = () => renderer.root.findByProps({ 'aria-label': 'Follow' })
+    expect(follow().props.isChecked).toBe(false)
+    const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
+    expect(panel.findByProps({ 'aria-label': 'Follow' })).toBeTruthy()
     await act(async () => follow().props.onChange({ target: { checked: true } }))
     const canvas = () => renderer.root.findByProps({ 'data-testid': 'mock-impact' })
     expect(canvas().props.followMode).toBe('following')
@@ -1143,7 +1222,7 @@ describe('Repositories map action', () => {
     await act(async () => renderer.unmount())
   })
 
-  it('hosts restart, refresh, and diagnostics in the options popover', async () => {
+  it('hosts restart and diagnostics in the options popover', async () => {
     const { api } = await import('../api/client')
     const current = await api.repositories.watchStatus('repo-1')
     vi.mocked(api.repositories.watchStatus).mockResolvedValueOnce({ ...current, running: true, state: 'idle' })
@@ -1162,9 +1241,6 @@ describe('Repositories map action', () => {
     expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
     expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', { materialize: false })
     expect(vi.mocked(api.repositories.stopWatch).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.repositories.startWatch).mock.invocationCallOrder[0])
-    vi.mocked(api.repositories.watchStatus).mockClear()
-    await act(async () => { options.findByProps({ 'data-testid': 'watch-refresh' }).props.onClick() })
-    expect(api.repositories.watchStatus).toHaveBeenCalledWith('repo-1')
     await act(async () => { renderer.unmount() })
   })
 
