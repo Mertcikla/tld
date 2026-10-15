@@ -626,15 +626,18 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-go')).toHaveLength(0)
     renderer.unmount()
   })
-  it('shows language server health failures and their install action', async () => {
+  it.each([
+    { family: 'go', tool: 'gopls', languages: ['go'], installHint: 'go install golang.org/x/tools/gopls@latest', downloadUrl: 'https://go.dev/gopls/' },
+    { family: 'web', tool: 'typescript-language-server', languages: ['typescript'], installHint: 'npm install -g typescript-language-server typescript', downloadUrl: 'https://github.com/typescript-language-server/typescript-language-server' },
+  ])('shows $tool health failures and their install action', async ({ family, tool, languages, installHint, downloadUrl }) => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
       ready: false,
       indexers: [{
-        family: 'go', tool: 'gopls', languages: ['go'], installed: false,
-        installHint: 'go install golang.org/x/tools/gopls@latest',
-        version: 'golang.org/x/tools/gopls v0.24.0', minVersion: '', belowMinimum: false,
-        downloadUrl: 'https://go.dev/gopls/', path: '/usr/local/bin/gopls',
+        family, tool, languages, installed: false,
+        installHint,
+        version: '', minVersion: '', belowMinimum: false,
+        downloadUrl, path: `/usr/local/bin/${tool}`,
         checkError: 'LSP health check: language server disconnected',
       }],
     })
@@ -642,9 +645,9 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
-    expect(hostNodes(renderer, 'repositories-indexer-gopls')).toHaveLength(1)
+    expect(hostNodes(renderer, `repositories-indexer-${tool}`)).toHaveLength(1)
     expect(renderer.root.findAll((node) => node.props.children === 'LSP health check: language server disconnected').length).toBeGreaterThan(0)
-    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-gopls')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === `repositories-indexer-download-${tool}`)).toHaveLength(1)
     renderer.unmount()
   })
   it('collapses the indexer checklist when every indexer is ready', async () => {

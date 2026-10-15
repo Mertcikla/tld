@@ -45,3 +45,15 @@ func TestGoplsConfiguration(t *testing.T) {
 		t.Fatalf("env gopls=%q", got)
 	}
 }
+
+func TestTypeScriptLanguageServerConfiguration(t *testing.T) {
+	global := workspace.DefaultConfig()
+	global.Index.Tools.TypeScriptLanguageServer = "/opt/typescript-language-server"
+	if got := FromGlobal(global).Tools.TypeScriptLanguageServer; got != "/opt/typescript-language-server" {
+		t.Fatalf("server=%q", got)
+	}
+	t.Setenv("CODEINDEX_TYPESCRIPT_LANGUAGE_SERVER", "/env/typescript-language-server")
+	if got := FromGlobal(global).Tools.TypeScriptLanguageServer; got != "/env/typescript-language-server" {
+		t.Fatalf("env server=%q", got)
+	}
+}

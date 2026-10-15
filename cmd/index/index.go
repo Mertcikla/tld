@@ -82,10 +82,11 @@ change overlay, available in Repositories > Live changes. Compare maps can
 compare commits or saved snapshots, always showing the full computed
 neighbourhood of unchanged elements by dependency hops.
 
-Go watches warm gopls alongside the initial SCIP index and use it for supported
-function-body edits. Other changes and unavailable language servers fall back
-to SCIP. Configure gopls with index.tools.gopls or CODEINDEX_GOPLS, and check
-language server health with tld doctor.`,
+Go and TypeScript watches warm language servers alongside the initial SCIP
+index and use them for supported function-body edits. Other changes and
+unavailable language servers fall back to SCIP. Configure index.tools.gopls and
+index.tools.typescript_language_server, or their CODEINDEX_* environment
+overrides, and check language server health with tld doctor.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."

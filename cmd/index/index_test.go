@@ -189,8 +189,20 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 
 func TestWatchedLSPSnapshotCommit(t *testing.T) {
 	if os.Getenv("CODEINDEX_TEST_LSP") == "" {
-		t.Skip("set CODEINDEX_TEST_LSP=1 for watch LSP persistence parity")
+		t.Skip("set CODEINDEX_TEST_LSP=1 for watch Go LSP persistence parity")
 	}
+	testWatchedSemanticSnapshotCommit(t, "go")
+}
+
+func TestWatchedTypeScriptLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_TS_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_TS_LSP=1 for watch TypeScript LSP persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "typescript")
+}
+
+func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
+	t.Helper()
 	t.Setenv("GOWORK", "off")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -198,9 +210,17 @@ func TestWatchedLSPSnapshotCommit(t *testing.T) {
 	testGit(t, dir, "init", "-b", "main")
 	testGit(t, dir, "config", "user.name", "Test")
 	testGit(t, dir, "config", "user.email", "test@example.com")
-	writeSource(t, dir, "go.mod", "module example.com/watchlsp\n\ngo 1.26\n")
+	filename := "a.go"
 	initialSource := "package fixture\nfunc A() { B() }\nfunc B() {}\nfunc C() {}\n"
-	writeSource(t, dir, "a.go", initialSource)
+	if language == "typescript" {
+		filename = "a.ts"
+		initialSource = "export function A():void { B() }\nexport function B():void {}\nexport function C():void {}\n"
+		writeSource(t, dir, "package.json", `{"name":"watch-typescript-lsp","version":"1.0.0"}`)
+		writeSource(t, dir, "tsconfig.json", `{"compilerOptions":{"strict":true,"target":"ES2022"},"include":["*.ts"]}`)
+	} else {
+		writeSource(t, dir, "go.mod", "module example.com/watchlsp\n\ngo 1.26\n")
+	}
+	writeSource(t, dir, filename, initialSource)
 	testGit(t, dir, "add", ".")
 	testGit(t, dir, "commit", "-m", "initial")
 	initial := testGit(t, dir, "rev-parse", "HEAD")
@@ -227,7 +247,7 @@ func TestWatchedLSPSnapshotCommit(t *testing.T) {
 		return snap
 	}
 	scan("")
-	writeSource(t, dir, "a.go", strings.Replace(initialSource, "{ B() }", "{ C() }", 1))
+	writeSource(t, dir, filename, strings.Replace(initialSource, "{ B() }", "{ C() }", 1))
 	dirty := scan(initial)
 	if dirty.Provenance != "working_tree" || dirty.GitRevision != initial {
 		t.Fatalf("dirty metadata: %+v", dirty)
@@ -254,7 +274,7 @@ func TestWatchedLSPSnapshotCommit(t *testing.T) {
 	if fingerprint(dirty, saved) != fingerprint(freshSnap, fresh) {
 		t.Fatal("persisted LSP snapshot differs from SCIP")
 	}
-	testGit(t, dir, "add", "a.go")
+	testGit(t, dir, "add", filename)
 	testGit(t, dir, "commit", "-m", "commit live edit")
 	committed := scan(initial)
 	if committed.Id == dirty.Id || committed.Provenance != "commit" || committed.GitRevision == initial || committed.CommitMessage != "commit live edit" {

@@ -299,6 +299,7 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
 	{Key: "serve.public_url", Env: []string{"TLD_PUBLIC_URL"}, Description: "Public root URL for reverse-proxied self-hosted deployments."},
 	{Key: "serve.allowed_origins", Env: []string{"TLD_ALLOWED_ORIGINS"}, Description: "Additional comma-separated HTTP(S) origins allowed by local server CORS."},
+	{Key: "index.tools.typescript_language_server", Env: []string{"TLD_INDEX_TYPESCRIPT_LANGUAGE_SERVER"}, Description: "Path or name of typescript-language-server used for TypeScript watch updates."},
 	{Key: "index.tools.gopls", Env: []string{"TLD_INDEX_GOPLS"}, Description: "Path or name of gopls used for Go watch updates."},
 	{Key: "index.tools.scip_go", Env: []string{"TLD_INDEX_SCIP_GO"}, Description: "Path or name of the scip-go indexer."},
 	{Key: "index.tools.scip_typescript", Env: []string{"TLD_INDEX_SCIP_TYPESCRIPT"}, Description: "Path or name of the scip-typescript indexer."},
@@ -423,6 +424,7 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"serve.data_dir", "TLD_DATA_DIR"},
 		{"serve.public_url", "TLD_PUBLIC_URL"},
 		{"serve.allowed_origins", "TLD_ALLOWED_ORIGINS"},
+		{"index.tools.typescript_language_server", "TLD_INDEX_TYPESCRIPT_LANGUAGE_SERVER"},
 		{"index.tools.gopls", "TLD_INDEX_GOPLS"},
 		{"index.tools.scip_go", "TLD_INDEX_SCIP_GO"},
 		{"index.tools.scip_typescript", "TLD_INDEX_SCIP_TYPESCRIPT"},
@@ -568,6 +570,8 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Serve.PublicURL = normalizePublicURLValue(value)
 	case "serve.allowed_origins":
 		cfg.Serve.AllowedOrigins = parseStringList(value)
+	case "index.tools.typescript_language_server":
+		cfg.Index.Tools.TypeScriptLanguageServer = strings.TrimSpace(value)
 	case "index.tools.gopls":
 		cfg.Index.Tools.Gopls = strings.TrimSpace(value)
 	case "index.tools.scip_go":
@@ -734,6 +738,8 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Serve.PublicURL
 	case "serve.allowed_origins":
 		return cfg.Serve.AllowedOrigins
+	case "index.tools.typescript_language_server":
+		return cfg.Index.Tools.TypeScriptLanguageServer
 	case "index.tools.gopls":
 		return cfg.Index.Tools.Gopls
 	case "index.tools.scip_go":
@@ -841,6 +847,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 
 	indexNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	indexTools := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(indexTools, "typescript_language_server", cfg.Index.Tools.TypeScriptLanguageServer, desc("index.tools.typescript_language_server"))
 	addScalar(indexTools, "gopls", cfg.Index.Tools.Gopls, desc("index.tools.gopls"))
 	addScalar(indexTools, "scip_go", cfg.Index.Tools.SCIPGo, desc("index.tools.scip_go"))
 	addScalar(indexTools, "scip_typescript", cfg.Index.Tools.SCIPTypeScript, desc("index.tools.scip_typescript"))
@@ -853,7 +860,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addScalar(indexTools, "scip_ruby", cfg.Index.Tools.SCIPRuby, desc("index.tools.scip_ruby"))
 	addScalar(indexTools, "rust_analyzer", cfg.Index.Tools.RustAnalyzer, desc("index.tools.rust_analyzer"))
 	addScalar(indexTools, "timeout_seconds", cfg.Index.Tools.TimeoutSeconds, desc("index.tools.timeout_seconds"))
-	appendUnknownEntries(indexTools, mappingValueNode(mappingValueNode(existing, "index"), "tools"), setOf("gopls", "scip_go", "scip_typescript", "scip_python", "scip_dotnet", "scip_clang", "scip_java", "scip_dart", "scip_php", "scip_ruby", "rust_analyzer", "timeout_seconds"))
+	appendUnknownEntries(indexTools, mappingValueNode(mappingValueNode(existing, "index"), "tools"), setOf("typescript_language_server", "gopls", "scip_go", "scip_typescript", "scip_python", "scip_dotnet", "scip_clang", "scip_java", "scip_dart", "scip_php", "scip_ruby", "rust_analyzer", "timeout_seconds"))
 	addMap(indexNode, "tools", indexTools, "External SCIP indexer and language server binaries resolved on PATH.")
 
 	appendUnknownEntries(indexNode, mappingValueNode(existing, "index"), setOf("tools"))

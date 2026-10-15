@@ -174,18 +174,19 @@ type IndexConfig struct {
 
 // IndexToolsConfig overrides the external SCIP indexer binaries resolved on PATH.
 type IndexToolsConfig struct {
-	Gopls          string `yaml:"gopls"`
-	SCIPGo         string `yaml:"scip_go"`
-	SCIPTypeScript string `yaml:"scip_typescript"`
-	SCIPPython     string `yaml:"scip_python"`
-	SCIPDotnet     string `yaml:"scip_dotnet"`
-	SCIPClang      string `yaml:"scip_clang"`
-	SCIPJava       string `yaml:"scip_java"`
-	SCIPDart       string `yaml:"scip_dart"`
-	SCIPPhp        string `yaml:"scip_php"`
-	SCIPRuby       string `yaml:"scip_ruby"`
-	RustAnalyzer   string `yaml:"rust_analyzer"`
-	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	Gopls                    string `yaml:"gopls"`
+	TypeScriptLanguageServer string `yaml:"typescript_language_server"`
+	SCIPGo                   string `yaml:"scip_go"`
+	SCIPTypeScript           string `yaml:"scip_typescript"`
+	SCIPPython               string `yaml:"scip_python"`
+	SCIPDotnet               string `yaml:"scip_dotnet"`
+	SCIPClang                string `yaml:"scip_clang"`
+	SCIPJava                 string `yaml:"scip_java"`
+	SCIPDart                 string `yaml:"scip_dart"`
+	SCIPPhp                  string `yaml:"scip_php"`
+	SCIPRuby                 string `yaml:"scip_ruby"`
+	RustAnalyzer             string `yaml:"rust_analyzer"`
+	TimeoutSeconds           int    `yaml:"timeout_seconds"`
 }
 
 // ApplyConfig controls where CLI workspace plans are materialized.
@@ -254,18 +255,19 @@ func DefaultConfig() *Config {
 		},
 		Index: IndexConfig{
 			Tools: IndexToolsConfig{
-				Gopls:          "gopls",
-				SCIPGo:         "scip-go",
-				SCIPTypeScript: "scip-typescript",
-				SCIPPython:     "scip-python",
-				SCIPDotnet:     "scip-dotnet",
-				SCIPClang:      "scip-clang",
-				SCIPJava:       "scip-java",
-				SCIPDart:       "scip-dart",
-				SCIPPhp:        "scip-php",
-				SCIPRuby:       "scip-ruby",
-				RustAnalyzer:   "rust-analyzer",
-				TimeoutSeconds: 300,
+				Gopls:                    "gopls",
+				TypeScriptLanguageServer: "typescript-language-server",
+				SCIPGo:                   "scip-go",
+				SCIPTypeScript:           "scip-typescript",
+				SCIPPython:               "scip-python",
+				SCIPDotnet:               "scip-dotnet",
+				SCIPClang:                "scip-clang",
+				SCIPJava:                 "scip-java",
+				SCIPDart:                 "scip-dart",
+				SCIPPhp:                  "scip-php",
+				SCIPRuby:                 "scip-ruby",
+				RustAnalyzer:             "rust-analyzer",
+				TimeoutSeconds:           300,
 			},
 		},
 		Map: MapConfig{

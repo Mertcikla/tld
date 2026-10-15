@@ -616,3 +616,24 @@ func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
 		t.Fatalf("unrelated watcher was stopped: %+v, %v", state, err)
 	}
 }
+
+func TestRepositoryServiceTypeScriptTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{"compilerOptions":{"strict":true},"include":["*.ts"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.ts"), []byte("export function a():number{return 1}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := workspace.DefaultConfig()
+	cfg.Index.Tools.SCIPTypeScript = filepath.Join(t.TempDir(), "missing-scip-typescript")
+	cfg.Index.Tools.TypeScriptLanguageServer = filepath.Join(t.TempDir(), "missing-typescript-language-server")
+	service := &repositoryService{config: cfg}
+	tools, err := service.requiredIndexers(context.Background(), dir)
+	if err != nil || len(tools) != 2 {
+		t.Fatalf("TypeScript tools: %+v %v", tools, err)
+	}
+	if tools[0].Tool != "scip-typescript" || tools[1].Tool != "typescript-language-server" || tools[1].Installed || tools[1].CheckError == "" || !strings.Contains(tools[1].InstallHint, "typescript-language-server") {
+		t.Fatalf("TypeScript requirements: %+v", tools)
+	}
+}
