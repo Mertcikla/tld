@@ -272,14 +272,7 @@ var warningRules = []warningRule{
 				if element == nil {
 					continue
 				}
-				isRootLevel := len(element.Placements) == 0
-				for _, placement := range element.Placements {
-					if normalizeWarningViewRef(placement.ParentRef) == syntheticRootViewRef {
-						isRootLevel = true
-						break
-					}
-				}
-				if isRootLevel {
+				if ctx.ws.ElementPlacedInView(elementRef, syntheticRootViewRef) {
 					lowerType := strings.ToLower(element.Kind)
 					if lowerType == "function" || lowerType == "class" {
 						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Kind: %s)", elementRef, element.Kind))

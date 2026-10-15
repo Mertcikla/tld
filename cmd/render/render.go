@@ -200,19 +200,9 @@ func renderMermaid(ws *workspace.Workspace, view string) (string, error) {
 
 func viewElements(ws *workspace.Workspace, view string) []string {
 	refs := make([]string, 0)
-	for ref, element := range ws.Elements {
-		if element == nil {
-			continue
-		}
-		if len(element.Placements) == 0 && view == workspace.RootRef {
+	for ref := range ws.Elements {
+		if ws.ElementPlacedInView(ref, view) {
 			refs = append(refs, ref)
-			continue
-		}
-		for _, placement := range element.Placements {
-			if normalizeViewRef(placement.ParentRef) == view {
-				refs = append(refs, ref)
-				break
-			}
 		}
 	}
 	return refs

@@ -356,10 +356,12 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 		}
 		placements := el.Placements
 		if len(placements) == 0 {
-			directElements["root"]++
-			if el.HasView {
-				childViews["root"]++
-				registerView("root", ref)
+			if ws.ElementPlacedInView(ref, workspace.RootRef) {
+				directElements["root"]++
+				if el.HasView {
+					childViews["root"]++
+					registerView("root", ref)
+				}
 			}
 			continue
 		}

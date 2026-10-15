@@ -1,12 +1,57 @@
 package view_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestUnplaceFinalPlacementStaysOutOfRoot(t *testing.T) {
+	for _, parent := range []string{"root", "platform"} {
+		t.Run(parent, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd.MustInitWorkspace(t, dir)
+			if parent != "root" {
+				cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", parent)
+			}
+			cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "class", "--parent", parent)
+			cmd.MustRunCmd(t, dir, "view", "create", "api")
+			cmd.MustRunCmd(t, dir, "view", "unplace", parent, "api")
+			cmd.MustRunCmd(t, dir, "validate", "ARC007", "--strict", "--source", "live")
+			for _, source := range []string{"cache", "live"} {
+				out, _ := cmd.MustRunCmd(t, dir, "render", "root", "--source", source)
+				if strings.Contains(out, "n_api[") {
+					t.Fatalf("%s render resurrected unplaced element:\n%s", source, out)
+				}
+				out, _ = cmd.MustRunCmd(t, dir, "list", "views", "--source", source, "--format", "json")
+				var result struct {
+					Extra struct {
+						Views []struct {
+							Ref  string `json:"ref"`
+							Path string `json:"path"`
+						} `json:"views"`
+					} `json:"extra"`
+				}
+				if err := json.Unmarshal([]byte(out), &result); err != nil {
+					t.Fatal(err)
+				}
+				for _, view := range result.Extra.Views {
+					if view.Ref == "api" && view.Path != "unreachable" {
+						t.Fatalf("%s listing attached unplaced owner to root: %s", source, out)
+					}
+				}
+			}
+			cmd.MustRunCmd(t, dir, "view", "place", "root", "api")
+			out, _ := cmd.MustRunCmd(t, dir, "render", "root", "--source", "live")
+			if !strings.Contains(out, "n_api[") {
+				t.Fatalf("explicitly placed element missing:\n%s", out)
+			}
+		})
+	}
+}
 
 func TestViewCmdCreateRenameSetLevelDelete(t *testing.T) {
 	dir := t.TempDir()

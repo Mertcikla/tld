@@ -2,6 +2,7 @@ package importcmd_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,26 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
+
+func TestImportCmd_PreviewKeepsUnplacedElementsOutOfRoot(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
+	cmd.MustRunCmd(t, dir, "view", "unplace", "root", "api")
+	file := writeImportFile(t, "elements:\n  api:\n    name: API\n    description: edited\n")
+	out, _ := cmd.MustRunCmd(t, dir, "import", file, "--dry-run", "--format", "json")
+	var result struct {
+		Extra struct {
+			Views []workspace.ViewDiagnostics `json:"views"`
+		} `json:"extra"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Extra.Views) != 1 || result.Extra.Views[0].View != "root" || result.Extra.Views[0].Elements != 0 {
+		t.Fatalf("preview resurrected unplaced element: %s", out)
+	}
+}
 
 func TestImportCmd_PreservesOmittedVisibility(t *testing.T) {
 	dir := t.TempDir()

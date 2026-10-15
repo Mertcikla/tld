@@ -6,6 +6,23 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
+func TestUnplacedPersistedEndpointHasNoImplicitRootPlacement(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{"pending": {Name: "Pending"}, "unplaced": {Name: "Unplaced"}},
+		Meta:     &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{"unplaced": {ID: 1}}},
+	}
+	if !ws.ElementPlacedInView("pending", "root") || ws.ElementPlacedInView("unplaced", "root") {
+		t.Fatal("implicit root placement must apply only to unapplied YAML elements")
+	}
+	d := ws.DiagnoseConnector(&workspace.Connector{View: "root", Source: "pending", Target: "unplaced"})
+	if d.Mode != "off-view" || len(d.EndpointViews["unplaced"]) != 0 || len(d.OffViewEndpoints) != 1 {
+		t.Fatalf("unplaced endpoint reported as directly placed: %+v", d)
+	}
+	if got := d.Description(); got != "off-view (unplaced unplaced)" {
+		t.Fatalf("incorrect unplaced endpoint description: %q", got)
+	}
+}
+
 func TestConnectorVisibilitySeparatesOffViewFromUnresolved(t *testing.T) {
 	ws := &workspace.Workspace{Elements: map[string]*workspace.Element{
 		"runtime": {Name: "Runtime", HasView: true},

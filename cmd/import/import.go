@@ -633,7 +633,7 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 
 // Describe the merged state, including placements an upsert deliberately keeps.
 func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declared map[string]*workspace.Element) {
-	projected := &workspace.Workspace{Elements: map[string]*workspace.Element{}, Connectors: map[string]*workspace.Connector{}}
+	projected := &workspace.Workspace{Elements: map[string]*workspace.Element{}, Connectors: map[string]*workspace.Connector{}, Meta: ws.Meta}
 	for ref, el := range ws.Elements {
 		projected.Elements[ref] = el
 	}

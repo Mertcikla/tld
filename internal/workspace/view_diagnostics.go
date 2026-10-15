@@ -47,7 +47,7 @@ func (ws *Workspace) DiagnoseConnector(c *Connector) ConnectorVisibility {
 			continue
 		}
 		views := map[string]bool{}
-		if len(el.Placements) == 0 {
+		if len(el.Placements) == 0 && ws.ElementPlacedInView(ref, RootRef) {
 			views[RootRef] = true
 		}
 		for _, p := range el.Placements {
@@ -77,7 +77,11 @@ func (ws *Workspace) DiagnoseConnector(c *Connector) ConnectorVisibility {
 func (d ConnectorVisibility) Description() string {
 	details := []string{}
 	for _, ref := range d.OffViewEndpoints {
-		details = append(details, ref+" in "+strings.Join(d.EndpointViews[ref], ", "))
+		if views := d.EndpointViews[ref]; len(views) > 0 {
+			details = append(details, ref+" in "+strings.Join(views, ", "))
+		} else {
+			details = append(details, ref+" unplaced")
+		}
 	}
 	for _, ref := range d.MissingEndpoints {
 		details = append(details, ref+" missing")
@@ -88,7 +92,8 @@ func (d ConnectorVisibility) Description() string {
 	return d.Mode + " (" + strings.Join(details, "; ") + ")"
 }
 
-// ElementPlacedInView uses the same implicit root placement as workspace renders.
+// ElementPlacedInView gives unapplied YAML elements an implicit root placement.
+// Persisted elements with no placements remain unplaced in every view.
 func (ws *Workspace) ElementPlacedInView(ref, view string) bool {
 	el := ws.Elements[ref]
 	if el == nil {
@@ -98,6 +103,11 @@ func (ws *Workspace) ElementPlacedInView(ref, view string) bool {
 		view = RootRef
 	}
 	if len(el.Placements) == 0 {
+		if ws.Meta != nil {
+			if meta := ws.Meta.Elements[ref]; meta != nil && meta.ID != 0 {
+				return false
+			}
+		}
 		return view == RootRef
 	}
 	for _, p := range el.Placements {

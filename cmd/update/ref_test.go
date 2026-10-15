@@ -2,6 +2,7 @@ package update_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,46 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestRefRenamePreservesCacheSyncState(t *testing.T) {
+	for _, operation := range []string{"update", "rename"} {
+		for _, dirty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/dirty=%t", operation, dirty), func(t *testing.T) {
+				dir := t.TempDir()
+				cmd.MustInitWorkspace(t, dir)
+				cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
+				wsDir := workspace.ResolveDir(dir)
+				if dirty {
+					if err := workspace.UpdateElementField(wsDir, "api", "description", "Pending edit"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				args := []string{"update", "element", "api", "ref", "backend"}
+				if operation == "rename" {
+					args = []string{"rename", "--from", "api", "--to", "backend"}
+				}
+				cmd.MustRunCmd(t, dir, args...)
+				if err := cmdutil.EnsureCacheInSync(wsDir); (err != nil) != dirty {
+					t.Fatalf("cache sync error = %v, want dirty=%t", err, dirty)
+				}
+				_, _, err := cmd.RunCmd(t, dir, "add", "DB", "--ref", "db")
+				if (err != nil) != dirty {
+					t.Fatalf("write after rename: %v, want dirty=%t", err, dirty)
+				}
+				ws, err := workspace.Load(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ws.Elements["api"] != nil || ws.Elements["backend"] == nil || ws.Meta == nil || ws.Meta.Elements["backend"] == nil || ws.Meta.Elements["backend"].ID == 0 {
+					t.Fatalf("renamed element or metadata lost: %+v", ws)
+				}
+				if dirty && ws.Elements["backend"].Description != "Pending edit" {
+					t.Fatal("rename lost unapplied edits")
+				}
+			})
+		}
+	}
+}
 
 func TestUpdateElementRefCascadesReferencesAndPreservesMetadata(t *testing.T) {
 	dir := t.TempDir()

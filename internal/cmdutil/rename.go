@@ -21,8 +21,32 @@ func RenameWorkspaceElement(cmd *cobra.Command, wdir, from, to string, dryRun bo
 		}
 		return nil
 	}
+	lock, err := workspace.LoadLockFile(wdir)
+	if err != nil {
+		return err
+	}
+	clean := false
+	if lock != nil && lock.WorkspaceHash != "" {
+		hash, err := workspace.CalculateWorkspaceHash(wdir)
+		if err != nil {
+			return err
+		}
+		clean = hash == lock.WorkspaceHash
+	}
 	if err := workspace.RenameElement(wdir, from, to); err != nil {
 		return fmt.Errorf("rename element: %w", err)
+	}
+	if clean {
+		// Reload the lock to retain the metadata cascade performed by the rename.
+		lock, err := workspace.LoadLockFile(wdir)
+		if err != nil {
+			return err
+		}
+		lock.WorkspaceHash, err = workspace.CalculateWorkspaceHash(wdir)
+		if err != nil {
+			return err
+		}
+		return workspace.WriteLockFile(wdir, lock)
 	}
 	return nil
 }
