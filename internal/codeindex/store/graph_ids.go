@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/mertcikla/codeindex/graph"
+	"sort"
 	"strconv"
 )
 
@@ -39,44 +40,51 @@ func assignGraphIDs(snap *pb.Snapshot, g *graph.Graph, first int64) {
 	snap.Id = strconv.FormatInt(first, 10)
 	first++
 	remap := map[string]string{oldSnapshot: snap.Id, g.RepositoryID: snap.RepositoryId}
-	facts, edges := g.SortedFacts(), g.SortedEdgeFacts()
-	for _, f := range facts {
+	var freshFacts []*pb.CodeFact
+	var freshEdges []*pb.EdgeFact
+	for _, f := range g.Facts {
+		if !g.Reused[f.Id] || temporaryID(f.Id) {
+			freshFacts = append(freshFacts, f)
+		}
+	}
+	for _, e := range g.EdgeFacts {
+		if !g.Reused[e.Id] || temporaryID(e.Id) {
+			freshEdges = append(freshEdges, e)
+		}
+	}
+	sort.Slice(freshFacts, func(i, j int) bool { return freshFacts[i].Id < freshFacts[j].Id })
+	sort.Slice(freshEdges, func(i, j int) bool { return freshEdges[i].Id < freshEdges[j].Id })
+	for _, f := range freshFacts {
 		if !g.Reused[f.Id] || temporaryID(f.Id) {
 			g.Reused[f.Id] = false
 			remap[f.Id] = strconv.FormatInt(first, 10)
 			first++
 		}
 	}
-	for _, e := range edges {
+	for _, e := range freshEdges {
 		if !g.Reused[e.Id] || temporaryID(e.Id) {
 			g.Reused[e.Id] = false
 			remap[e.Id] = strconv.FormatInt(first, 10)
 			first++
 		}
 	}
-	mapped := func(id string) string {
-		if next, ok := remap[id]; ok {
-			return next
-		}
-		return id
-	}
 	g.RepositoryID, g.SnapshotID = snap.RepositoryId, snap.Id
-	g.Facts = make(map[string]*pb.CodeFact, len(facts))
-	for _, f := range facts {
-		f.Id, f.ParentFactId = mapped(f.Id), mapped(f.ParentFactId)
+	for _, f := range g.Facts {
 		f.RepositoryId, f.SnapshotId = snap.RepositoryId, snap.Id
-		g.Facts[f.Id] = f
 	}
-	g.EdgeFacts = make(map[string]*pb.EdgeFact, len(edges))
-	for _, e := range edges {
-		e.Id, e.FromFactId, e.ToFactId = mapped(e.Id), mapped(e.FromFactId), mapped(e.ToFactId)
+	for _, e := range g.EdgeFacts {
 		e.RepositoryId, e.SnapshotId = snap.RepositoryId, snap.Id
-		g.EdgeFacts[e.Id] = e
 	}
-	rewriteGraphCaches(g, remap)
+	remapEntities(g, remap)
 }
 
 func rewriteGraphCaches(g *graph.Graph, remap map[string]string) {
+	paths := map[string]bool{}
+	for _, id := range remap {
+		if f := g.Facts[id]; f != nil {
+			paths[f.GetAnchor().GetPath()] = true
+		}
+	}
 	mapped := func(id string) string {
 		if next, ok := remap[id]; ok {
 			return next
@@ -110,6 +118,9 @@ func rewriteGraphCaches(g *graph.Graph, remap map[string]string) {
 		return value
 	}
 	for _, src := range g.Sources {
+		if !paths[src.Path] {
+			continue
+		}
 		for _, cache := range []*string{&src.SyntaxCache, &src.FileCache} {
 			if *cache == "" {
 				continue

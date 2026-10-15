@@ -131,6 +131,8 @@ type engine struct {
 	// scans only rehash files that moved.
 	manifests gitstate.ManifestCache
 	semantics *indexer.WatchSession
+	cache     ingest.WatchCache
+	baseline  *indexer.IncrementalBase
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -675,7 +677,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
 	defer tracker.Finish()
-	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Semantics: e.semantics, Progress: func(p indexer.Progress) {
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Semantics: e.semantics, Cache: &e.cache, State: &state, Progress: func(p indexer.Progress) {
 		reportStage(p.Stage)
 		tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail)
 	}}
@@ -719,7 +721,13 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
 	service := impact.Service{Workspace: e.ws, Index: e.store}
-	diagram, err := service.CompareSnapshots(ctx, repoID, base.Id, snap.Id, impact.DefaultBlastRadius)
+	if e.baseline == nil || e.baseline.Snapshot.Id != base.Id {
+		e.baseline, err = engine.Base(ctx, base.Id)
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
+	}
+	diagram, err := service.CompareGraphs(ctx, e.baseline.Snapshot, snap, e.baseline.Graph, graph, impact.DefaultBlastRadius)
 	if err != nil {
 		return nil, parity.Report{}, nil, nil, err
 	}

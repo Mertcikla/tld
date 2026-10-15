@@ -33,8 +33,9 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	snapshotScoped := []string{
 		"codeindex_project_artifacts",
 		"codeindex_sources",
-		"codeindex_snapshot_facts",
-		"codeindex_snapshot_edges",
+		"codeindex_snapshot_facts_direct",
+		"codeindex_snapshot_edges_direct",
+		"codeindex_snapshot_membership",
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
@@ -93,6 +94,9 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 // anti-join is negligible compared with the storage it reclaims.
 func collectOrphanContent(ctx context.Context, tx bun.Tx) error {
 	org := scope(ctx).value()
+	if err := collectOrphanMembership(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.NewRaw(`DELETE FROM codeindex_blobs WHERE org_id = ? AND NOT EXISTS (
 		SELECT 1 FROM codeindex_sources s
 		WHERE s.org_id = codeindex_blobs.org_id AND s.hash = codeindex_blobs.hash AND s.language = codeindex_blobs.language)`, org).Exec(ctx); err != nil {
@@ -133,8 +137,9 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			"codeindex_completed_maps",
 			"codeindex_project_artifacts",
 			"codeindex_sources",
-			"codeindex_snapshot_facts",
-			"codeindex_snapshot_edges",
+			"codeindex_snapshot_facts_direct",
+			"codeindex_snapshot_edges_direct",
+			"codeindex_snapshot_membership",
 		} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
@@ -178,9 +183,9 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.Repository, error) 
 	query := `SELECT
 		r.id, r.root, CASE WHEN CAST(r.latest_snapshot_id AS TEXT)='0' THEN '' ELSE CAST(r.latest_snapshot_id AS TEXT) END, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
-		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
-		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id)
+		COALESCE(s.fact_count, (SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id)),
+		COALESCE(s.edge_count, (SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id)),
+		COALESCE(s.source_count, (SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id))
 		FROM codeindex_repositories r
 		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id AND s.org_id = r.org_id`
 	args := []any{}

@@ -14,6 +14,7 @@ import (
 	"github.com/mertcikla/codeindex/graph"
 	"github.com/mertcikla/codeindex/symbols"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // insertRows executes a multi-row INSERT for rows of cols values each, chunked
@@ -50,7 +51,18 @@ func insertRows(ctx context.Context, tx bun.Tx, sqlPrefix, sqlSuffix string, col
 			args = append(args, rows[i]...)
 		}
 		b.WriteString(sqlSuffix)
-		if _, err := tx.NewRaw(b.String(), args...).Exec(ctx); err != nil {
+		// SQLite can bind large artifact/blob values directly. Bun's literal
+		// formatting hex-encodes them into the SQL statement and reparses them.
+		if tx.Dialect().Name() == dialect.SQLite {
+			for i, arg := range args {
+				if _, ok := arg.(noOrgValue); ok {
+					args[i] = ""
+				}
+			}
+			if _, err := tx.Tx.ExecContext(ctx, b.String(), args...); err != nil {
+				return err
+			}
+		} else if _, err := tx.NewRaw(b.String(), args...).Exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -64,15 +76,15 @@ func (s *Store) Publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
 	}
-	return s.publish(ctx, root, snap, g, true)
+	return s.publish(ctx, root, snap, g, true, nil)
 }
 
 // PublishHistorical retains the live repository's latest pointer.
 func (s *Store) PublishHistorical(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph) error {
-	return s.publish(ctx, root, snap, g, false)
+	return s.publish(ctx, root, snap, g, false, nil)
 }
 
-func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph, advanceLatest bool) error {
+func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph, advanceLatest bool, base *graph.Graph) error {
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
 	}
@@ -80,6 +92,11 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		return fmt.Errorf("publish: graph is required")
 	}
 	g.Reused = map[string]bool{}
+	if base != nil {
+		if err := reusePublishedGraph(g, base); err != nil {
+			return err
+		}
+	}
 	if temporaryID(snap.Id) {
 		if !numericID(snap.RepositoryId) {
 			resolved, err := s.ResolveRepository(ctx, root, "", false, uuid.Nil)
@@ -120,12 +137,13 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		if err != nil {
 			return err
 		}
-		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_edges"} {
+		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts_direct", "codeindex_snapshot_edges_direct", "codeindex_snapshot_membership"} {
 			where, scopeArgs := scope(ctx).clause("org_id")
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snap.Id}, scopeArgs...)...).Exec(ctx); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
 		}
+		snap.Statistics = &pb.SnapshotStatistics{Facts: uint32(len(g.Facts)), Edges: uint32(len(g.EdgeFacts)), Sources: uint32(len(snap.Sources))}
 		if err := saveSnapshotRow(ctx, tx, snap, versions); err != nil {
 			return err
 		}
@@ -145,27 +163,6 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	})
 }
 
-// saveMembership records which entities belong to a snapshot. Membership is
-// small and lets reused entities be shared across snapshots.
-func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
-	org := scope(ctx).value()
-	factRows := make([][]any, 0, len(g.Facts))
-	for id := range g.Facts {
-		factRows = append(factRows, []any{snap.Id, id, org})
-	}
-	if err := insertRows(ctx, tx, `INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES `, ` ON CONFLICT(org_id, snapshot_id, fact_id) DO NOTHING`, 3, factRows); err != nil {
-		return fmt.Errorf("membership facts: %w", err)
-	}
-	edgeRows := make([][]any, 0, len(g.EdgeFacts))
-	for id := range g.EdgeFacts {
-		edgeRows = append(edgeRows, []any{snap.Id, id, org})
-	}
-	if err := insertRows(ctx, tx, `INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id) VALUES `, ` ON CONFLICT(org_id, snapshot_id, edge_id) DO NOTHING`, 3, edgeRows); err != nil {
-		return fmt.Errorf("membership edges: %w", err)
-	}
-	return nil
-}
-
 func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, versions map[string]string) error {
 	symbolVersions, _ := marshalJSON(versions)
 	projects, _ := marshalJSON(snap.Projects)
@@ -176,8 +173,8 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, versions
 		return err
 	}
 	res, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id, manifest_json, symbol_versions_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id, manifest_json, symbol_versions_json, fact_count, edge_count, source_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
@@ -188,9 +185,10 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, versions
 			warnings_json = excluded.warnings_json,
 			tool_versions_json = excluded.tool_versions_json,
         provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
-        commit_message = excluded.commit_message, manifest_json = excluded.manifest_json, symbol_versions_json = excluded.symbol_versions_json`,
+        commit_message = excluded.commit_message, manifest_json = excluded.manifest_json, symbol_versions_json = excluded.symbol_versions_json,
+        fact_count = excluded.fact_count, edge_count = excluded.edge_count, source_count = excluded.source_count`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value(), manifest, symbolVersions).Exec(ctx)
+		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value(), manifest, symbolVersions, snap.Statistics.Facts, snap.Statistics.Edges, snap.Statistics.Sources).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -429,7 +427,9 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph, hashes map[string
 func sortedFacts(g *graph.Graph) []*pb.CodeFact {
 	out := make([]*pb.CodeFact, 0, len(g.Facts))
 	for _, f := range g.Facts {
-		out = append(out, f)
+		if !g.Reused[f.Id] {
+			out = append(out, f)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
 	return out
@@ -438,7 +438,9 @@ func sortedFacts(g *graph.Graph) []*pb.CodeFact {
 func sortedEdges(g *graph.Graph) []*pb.EdgeFact {
 	out := make([]*pb.EdgeFact, 0, len(g.EdgeFacts))
 	for _, e := range g.EdgeFacts {
-		out = append(out, e)
+		if !g.Reused[e.Id] {
+			out = append(out, e)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
 	return out
@@ -455,11 +457,12 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 		createdUnix                         int64
 		gitRevision, gitBranch              string
 		ingestion, configHash, repository   string
+		facts, edges, sources               sql.NullInt64
 	)
 	where, scopeArgs := scope(ctx).clause("org_id")
-	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, manifest_json
+	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, manifest_json, fact_count, edge_count, source_count
 		FROM codeindex_snapshots WHERE id = ?`+where, append([]any{id}, scopeArgs...)...).
-		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage, &manifest)
+		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage, &manifest, &facts, &edges, &sources)
 	if err != nil {
 		return nil, err
 	}
@@ -496,26 +499,28 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	snap.Statistics = &pb.SnapshotStatistics{}
-	statQuery := `SELECT
-		(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?)`
-	statArgs := []any{id, id, id}
-	if statsWhere, statsScopeArgs := scope(ctx).clause("org_id"); statsWhere != "" {
-		statQuery = `SELECT
-			(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?` + statsWhere + `),
-			(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?` + statsWhere + `),
-			(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?` + statsWhere + `)`
-		statArgs = []any{}
-		for i := 0; i < 3; i++ {
-			statArgs = append(statArgs, id)
-			statArgs = append(statArgs, statsScopeArgs...)
+	snap.Statistics = &pb.SnapshotStatistics{Facts: uint32(facts.Int64), Edges: uint32(edges.Int64), Sources: uint32(sources.Int64)}
+	if !facts.Valid || !edges.Valid || !sources.Valid {
+		statQuery := `SELECT
+			(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?),
+			(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?),
+			(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?)`
+		statArgs := []any{id, id, id}
+		if statsWhere, statsScopeArgs := scope(ctx).clause("org_id"); statsWhere != "" {
+			statQuery = `SELECT
+				(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?` + statsWhere + `),
+				(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?` + statsWhere + `),
+				(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?` + statsWhere + `)`
+			statArgs = []any{}
+			for i := 0; i < 3; i++ {
+				statArgs = append(statArgs, id)
+				statArgs = append(statArgs, statsScopeArgs...)
+			}
 		}
-	}
-	if err := s.bun.NewRaw(statQuery, statArgs...).
-		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources); err != nil {
-		return nil, fmt.Errorf("load snapshot statistics: %w", err)
+		if err := s.bun.NewRaw(statQuery, statArgs...).
+			Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources); err != nil {
+			return nil, fmt.Errorf("load snapshot statistics: %w", err)
+		}
 	}
 	setSnapshotCompatibility(&snap)
 	return &snap, nil
@@ -531,9 +536,9 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		id, repository_id, created_unix, git_revision, git_branch,
 		ingestion_status, config_hash,
 		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message,
-		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
-		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)
+		COALESCE(fact_count, (SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)),
+		COALESCE(edge_count, (SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)),
+		COALESCE(source_count, (SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id))
 		FROM codeindex_snapshots
 		WHERE repository_id = ?`+where+`
 		ORDER BY created_unix, capture_order, id`, append([]any{repositoryID}, scopeArgs...)...)

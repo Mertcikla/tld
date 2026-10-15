@@ -71,7 +71,12 @@ func entityRemap(hashes map[string]string, candidates map[string][]string, reuse
 	remap := map[string]string{}
 	for _, id := range ids {
 		hash := hashes[id]
-		if available := candidates[hash]; len(available) > 0 {
+		available := candidates[hash]
+		for len(available) > 0 && reused[available[0]] {
+			available = available[1:]
+		}
+		candidates[hash] = available
+		if len(available) > 0 {
 			remap[id] = available[0]
 			reused[available[0]] = true
 			candidates[hash] = available[1:]
@@ -81,22 +86,39 @@ func entityRemap(hashes map[string]string, candidates map[string][]string, reuse
 }
 
 func remapEntities(g *graph.Graph, remap map[string]string) {
+	if len(remap) == 0 {
+		return
+	}
 	mapped := func(id string) string {
 		if next, ok := remap[id]; ok {
 			return next
 		}
 		return id
 	}
-	facts := g.Facts
-	g.Facts = make(map[string]*pb.CodeFact, len(facts))
+	// Most warm remaps touch only edited declarations and their edges. Move
+	// those keys after iteration rather than rebuilding both complete maps.
+	var facts []*pb.CodeFact
+	for id, f := range g.Facts {
+		f.ParentFactId = mapped(f.ParentFactId)
+		if next := mapped(f.Id); next != id {
+			delete(g.Facts, id)
+			f.Id = next
+			facts = append(facts, f)
+		}
+	}
 	for _, f := range facts {
-		f.Id = mapped(f.Id)
 		g.Facts[f.Id] = f
 	}
-	edges := g.EdgeFacts
-	g.EdgeFacts = make(map[string]*pb.EdgeFact, len(edges))
+	var edges []*pb.EdgeFact
+	for id, e := range g.EdgeFacts {
+		e.FromFactId, e.ToFactId = mapped(e.FromFactId), mapped(e.ToFactId)
+		if next := mapped(e.Id); next != id {
+			delete(g.EdgeFacts, id)
+			e.Id = next
+			edges = append(edges, e)
+		}
+	}
 	for _, e := range edges {
-		e.Id, e.FromFactId, e.ToFactId = mapped(e.Id), mapped(e.FromFactId), mapped(e.ToFactId)
 		g.EdgeFacts[e.Id] = e
 	}
 	rewriteGraphCaches(g, remap)
@@ -105,7 +127,9 @@ func remapEntities(g *graph.Graph, remap map[string]string) {
 func deduplicateFacts(ctx context.Context, tx bun.Tx, g *graph.Graph, versions map[string]string) (map[string]string, error) {
 	pending := make(map[string]*pb.CodeFact, len(g.Facts))
 	for id, f := range g.Facts {
-		pending[id] = f
+		if !g.Reused[id] {
+			pending[id] = f
+		}
 	}
 	hashes, remap := map[string]string{}, map[string]string{}
 	// Resolve parents before children: a reused child must refer to the exact
@@ -151,6 +175,9 @@ func deduplicateFacts(ctx context.Context, tx bun.Tx, g *graph.Graph, versions m
 func deduplicateEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) (map[string]string, error) {
 	hashes := map[string]string{}
 	for id, e := range g.EdgeFacts {
+		if g.Reused[id] {
+			continue
+		}
 		values, err := edgeValues(e)
 		if err != nil {
 			return nil, err

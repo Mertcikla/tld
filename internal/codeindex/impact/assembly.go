@@ -63,7 +63,7 @@ type sceneAssembly struct {
 
 // assemble is the only semantic scene construction pipeline for new comparisons.
 // Analysis is immutable; only audit-relevant decisions are retained.
-func assemble(ctx context.Context, service Service, diagram *model.Diagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, capturedRepositories ...[]*pb.Repository) (*model.Assembly, error) {
+func assemble(ctx context.Context, service Service, diagram *model.Diagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, repositories []*pb.Repository, capturedSnapshots map[string]*pb.Snapshot) (*model.Assembly, error) {
 	helper := &sceneEvidence{diagram: diagram, workspace: workspace, mappings: mappings, root: root, store: service.Index, ctx: ctx}
 	helper.nodes = map[string]*model.Node{}
 	helper.sources = map[string]*pb.SourceChange{}
@@ -115,15 +115,6 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 	}
 	a.repositoryRemote = repo.RemoteUrl
 	a.ambiguousPaths = map[string]bool{}
-	var repositories []*pb.Repository
-	if len(capturedRepositories) > 0 {
-		repositories = capturedRepositories[0]
-	} else {
-		repositories, err = service.Index.ListRepositories(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
 	for _, candidate := range repositories {
 		if candidate.Id == diagram.RepositoryId {
 			a.repositoryRemote = candidate.RemoteUrl
@@ -148,9 +139,12 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 		if snapshotID == "" {
 			continue
 		}
-		snapshot, err := service.Index.Snapshot(ctx, snapshotID)
-		if err != nil {
-			return nil, err
+		snapshot := capturedSnapshots[snapshotID]
+		if snapshot == nil {
+			snapshot, err = service.Index.Snapshot(ctx, snapshotID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		paths := make([]string, 0, len(snapshot.Sources))
 		for _, source := range snapshot.Sources {
