@@ -5,19 +5,28 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"path/filepath"
+	"strconv"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/mertcikla/codeindex/identity"
-	"math"
-	"strconv"
+	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/uptrace/bun"
 )
 
 // AllocateIDs reserves a block from the database-wide 64-bit sequence.
 func (s *Store) AllocateIDs(ctx context.Context, count int) (int64, error) {
+	return allocateIDs(ctx, s.bun, count)
+}
+
+func allocateIDs(ctx context.Context, db bun.IDB, count int) (int64, error) {
 	if count <= 0 {
 		return 0, fmt.Errorf("ID allocation count must be positive")
 	}
 	var last int64
-	err := s.bun.NewRaw(`UPDATE codeindex_id_sequence SET value=value+? WHERE singleton=1 AND value<=?-? RETURNING value`, count, int64(math.MaxInt64), count).Scan(ctx, &last)
+	err := db.NewRaw(`UPDATE codeindex_id_sequence SET value=value+? WHERE singleton=1 AND value<=?-? RETURNING value`, count, int64(math.MaxInt64), count).Scan(ctx, &last)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("codeindex IDs exhausted")
 	}
@@ -31,38 +40,59 @@ func storedID(id string) any {
 	return id
 }
 func (s *Store) RepositoryByRoot(ctx context.Context, root string) (string, bool, error) {
+	return repositoryByRoot(ctx, s.bun, root)
+}
+
+func repositoryByRoot(ctx context.Context, db bun.IDB, root string) (string, bool, error) {
 	where, args := scope(ctx).clause("org_id")
 	var id string
-	err := s.bun.NewRaw(`SELECT id FROM codeindex_repositories WHERE root=?`+where+` ORDER BY id LIMIT 1`, append([]any{root}, args...)...).Scan(ctx, &id)
+	err := db.NewRaw(`SELECT id FROM codeindex_repositories WHERE root=?`+where+` ORDER BY id LIMIT 1`, append([]any{root}, args...)...).Scan(ctx, &id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return id, err == nil, err
 }
 
-// ResolveRepository also works with the pinned codeindex identity resolver,
-// whose fallback uses path hashes. Only database identities become integers.
-func (s *Store) ResolveRepository(ctx context.Context, root, remoteURL string, managed bool, org uuid.UUID) (identity.Resolved, error) {
-	resolved, err := identity.Resolve(ctx, s, root, "", remoteURL, org)
-	if err != nil {
-		return resolved, err
+// ResolveRepository atomically finds or creates an integer repository identity.
+// Tenant isolation comes from ctx, as with the other store operations.
+func (s *Store) ResolveRepository(ctx context.Context, root, remoteURL string, managed bool, _ uuid.UUID) (identity.Resolved, error) {
+	root = filepath.Clean(root)
+	if strings.TrimSpace(remoteURL) == "" {
+		remoteURL = repolink.GitRemoteURL(ctx, root)
 	}
-	if !numericID(resolved.ID) {
-		id, ok, err := s.RepositoryByRoot(ctx, root)
-		if err != nil {
-			return resolved, err
+	resolved := identity.Resolved{Root: root, RemoteURL: remoteURL, RemoteKey: repolink.RemoteKey(remoteURL), Managed: managed}
+	err := s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock the existing sequence row before any identity lookup. This takes
+		// SQLite's write lock and a PostgreSQL row lock, so another connection
+		// cannot create an identity from a stale lookup, even without a remote.
+		if _, err := tx.NewRaw(`UPDATE codeindex_id_sequence SET value=value WHERE singleton=1`).Exec(ctx); err != nil {
+			return err
 		}
-		if !ok {
-			first, err := s.AllocateIDs(ctx, 1)
+		if resolved.RemoteKey != "" {
+			id, found, err := repositoryByRemoteKey(ctx, tx, resolved.RemoteKey)
 			if err != nil {
-				return resolved, err
+				return err
 			}
-			id = strconv.FormatInt(first, 10)
+			if found {
+				resolved.ID = id
+			}
 		}
-		resolved.ID = id
-	}
-	resolved.Managed = managed
-	err = s.EnsureRepositoryIdentity(ctx, resolved.ID, resolved.Root, resolved.RemoteURL, resolved.RemoteKey, managed)
+		if resolved.ID == "" {
+			id, _, err := repositoryByRoot(ctx, tx, root)
+			if err != nil {
+				return err
+			}
+			resolved.ID = id
+		}
+		if resolved.ID == "" {
+			first, err := allocateIDs(ctx, tx, 1)
+			if err != nil {
+				return err
+			}
+			resolved.ID = strconv.FormatInt(first, 10)
+		}
+		return ensureRepositoryIdentity(ctx, tx, resolved.ID, resolved.Root, resolved.RemoteURL, resolved.RemoteKey, managed)
+	})
 	if err != nil && resolved.RemoteKey != "" {
 		if id, ok, lookupErr := s.RepositoryByRemoteKey(ctx, resolved.RemoteKey); lookupErr == nil && ok {
 			resolved.ID = id

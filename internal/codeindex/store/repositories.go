@@ -248,13 +248,17 @@ func (s *Store) SetRepositoryRemoteURL(ctx context.Context, repositoryID, remote
 // then the most recently updated. Rows written before remote_key existed are
 // matched by normalizing their remote_url in Go.
 func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (string, bool, error) {
+	return repositoryByRemoteKey(ctx, s.bun, remoteKey)
+}
+
+func repositoryByRemoteKey(ctx context.Context, db bun.IDB, remoteKey string) (string, bool, error) {
 	remoteKey = strings.TrimSpace(remoteKey)
 	if remoteKey == "" {
 		return "", false, nil
 	}
 	where, scopeArgs := scope(ctx).clause("org_id")
 	var id string
-	err := s.bun.NewRaw(`SELECT id FROM codeindex_repositories WHERE remote_key = ?`+where+`
+	err := db.NewRaw(`SELECT id FROM codeindex_repositories WHERE remote_key = ?`+where+`
 		ORDER BY managed DESC, updated_at DESC, id LIMIT 1`, append([]any{remoteKey}, scopeArgs...)...).Scan(ctx, &id)
 	if err == nil && id != "" {
 		return id, true, nil
@@ -269,7 +273,7 @@ func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (st
 	}
 	var rows []row
 	where, scopeArgs = scope(ctx).clause("org_id")
-	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories
+	if err := db.NewRaw(`SELECT id, remote_url FROM codeindex_repositories
 		WHERE remote_url <> ''`+where+` ORDER BY managed DESC, updated_at DESC, id`, scopeArgs...).Scan(ctx, &rows); err != nil {
 		return "", false, fmt.Errorf("repository by remote key: %w", err)
 	}
@@ -300,11 +304,15 @@ func (s *Store) RepositoryExists(ctx context.Context, id string) (bool, error) {
 // values only are applied on conflict, so a later scan from another checkout
 // cannot blank a good remote URL or remote key.
 func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteURL, remoteKey string, managed bool) error {
+	return ensureRepositoryIdentity(ctx, s.bun, id, root, remoteURL, remoteKey, managed)
+}
+
+func ensureRepositoryIdentity(ctx context.Context, db bun.IDB, id, root, remoteURL, remoteKey string, managed bool) error {
 	if strings.TrimSpace(id) == "" {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
+	res, err := db.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
 		VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
