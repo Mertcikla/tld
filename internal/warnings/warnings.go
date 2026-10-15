@@ -192,13 +192,23 @@ var warningRules = []warningRule{
 		Mediation:   "Create nested views to establish a zoomable hierarchy.",
 		Level:       1,
 		Check: func(ctx *warningContext, rule warningRule) {
-			viewCount := 0
+			elementCount := 0
 			for _, element := range ctx.ws.Elements {
-				if element != nil && element.HasView {
-					viewCount++
+				if element == nil {
+					continue
+				}
+				elementCount++
+				if element.HasView {
+					// Placing a view owner creates a drilldown from its parent
+					// view, including when that parent is the workspace root.
+					if len(element.Placements) > 0 {
+						return
+					}
 				}
 			}
-			if ctx.maxDepth < 1 && viewCount > 1 {
+			// A nontrivial diagram with no drilldowns is flat, even when
+			// it has only the implicit workspace view.
+			if elementCount > 1 {
 				ctx.addWarning(rule.Code, "Workspace views")
 			}
 		},
@@ -802,7 +812,6 @@ type warningContext struct {
 	viewElements        map[string][]string
 	elementViews        map[string]map[string]int
 	viewConnectors      map[string]int
-	maxDepth            int
 	codeindexClassifier func(*workspace.Element) bool
 	linkTargets         []LinkedRepository
 	linkCoverageMin     int
@@ -948,21 +957,10 @@ func (ctx *warningContext) prepareData() {
 			elementViews[viewRef]++
 		}
 	}
-
-	ctx.calculateMaxDepth()
 }
 
-func (ctx *warningContext) calculateMaxDepth() {
-	for _, depth := range ctx.viewDepthMap() {
-		if depth > ctx.maxDepth {
-			ctx.maxDepth = depth
-		}
-	}
-}
-
-// viewDepthMap returns the nesting depth of every view-owning element, using
-// the same scheme as ARC004: a top-level view is 0 and each nested level adds 1.
-// The synthetic root is implicit at 0.
+// viewDepthMap returns the placement depth of every view-owning element:
+// an owner in the root is at 0 and each nested level adds 1.
 func (ctx *warningContext) viewDepthMap() map[string]int {
 	memo := make(map[string]int)
 	visiting := make(map[string]bool)

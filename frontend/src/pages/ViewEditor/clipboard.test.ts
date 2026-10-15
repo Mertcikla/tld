@@ -57,6 +57,28 @@ function connector(id: number, sourceElementId: number, targetElementId: number,
 }
 
 describe('ViewEditor clipboard helpers', () => {
+  it('skips relationships already copied by placement insertion', () => {
+    const payload = buildViewSelectionClipboardPayload(10, [placement(1, 0, 0), placement(2, 200, 0)], [connector(1, 1, 2)], [1, 2])!
+    expect(planViewSelectionPasteConnectors(payload, new Map(), [{ ...connector(1, 1, 2, 20), id: 50 }])).toHaveLength(0)
+  })
+
+  it('preserves intentional parallel connector counts when matching existing copies', () => {
+    const first = connector(1, 1, 2)
+    const second = { ...first, id: 2 }
+    const payload = buildViewSelectionClipboardPayload(10, [placement(1, 0, 0), placement(2, 200, 0)], [first, second], [1, 2])!
+    expect(planViewSelectionPasteConnectors(payload, new Map(), [{ ...first, id: 50, view_id: 20 }])).toHaveLength(1)
+    expect(planViewSelectionPasteConnectors(payload, new Map(), [{ ...first, id: 50 }, { ...second, id: 51 }])).toHaveLength(0)
+  })
+
+  it('matches mapped endpoints and route changes without merging different relationships', () => {
+    const original = connector(1, 1, 2)
+    const payload = buildViewSelectionClipboardPayload(10, [placement(1, 0, 0), placement(2, 200, 0)], [original], [1, 2])!
+    const existing = { ...original, source_element_id: 11, target_element_id: 22, source_handle: 'top', target_handle: 'bottom' }
+    const ids = new Map([[1, 11], [2, 22]])
+    expect(planViewSelectionPasteConnectors(payload, ids, [existing])).toHaveLength(0)
+    expect(planViewSelectionPasteConnectors(payload, ids, [{ ...existing, direction: 'backward' }])).toHaveLength(1)
+  })
+
   it('builds payloads from selected placements only', () => {
     const payload = buildViewSelectionClipboardPayload(
       10,
