@@ -440,6 +440,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	if ownerKind == "" {
 		ownerKind = "cli"
 	}
+	debounce := newWatchDebounce(e.opts.debounce)
 	status := cstore.WatchState{
 		RepositoryID:   watchKey,
 		OwnerKind:      ownerKind,
@@ -449,7 +450,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		RepoRoot:       root,
 		StartedUnix:    time.Now().Unix(),
 		PollIntervalMS: e.opts.pollInterval.Milliseconds(),
-		DebounceMS:     e.opts.debounce.Milliseconds(),
+		DebounceMS:     debounce.delay.Milliseconds(),
 	}
 	if err := e.store.ClaimWatch(ctx, status); err != nil {
 		if errors.Is(err, cstore.ErrWatchActive) {
@@ -535,28 +536,40 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 
 	detector := watch.NewDetector(watch.Options{
 		Root:    root,
-		Exclude: e.opts.exclude,
+		Exclude: watchExcludes(root, e.dataDir, e.opts.exclude),
 		OnState: func(state string) {
-			persist(func(s *cstore.WatchState) { s.State = state; s.Stage = "" })
+			persist(func(s *cstore.WatchState) {
+				s.State = state
+				s.Stage = ""
+				s.DebounceMS = debounce.delay.Milliseconds()
+			})
+			if state == "debouncing" {
+				debounce.begin(time.Now())
+			}
 		},
-		Debounce:     e.opts.debounce,
-		MaxWait:      2*e.opts.debounce + time.Second,
+		Debounce:     debounce.base,
+		MaxWait:      min(2*debounce.base+time.Second, maxWatchDebounce),
 		PollInterval: e.opts.pollInterval,
 	})
 	defer func() { _ = detector.Close() }()
 	// captured carries the QuickState of the capture that woke the detector, so
 	// each scan snapshots Git once instead of twice.
 	var captured gitstate.QuickState
+	lastSignature, lastRevision := "", ""
 	capture := func(captureCtx context.Context) (string, error) {
-		qs, err := gitstate.CaptureQuick(captureCtx, root)
-		if err != nil {
+		if err := debounce.wait(captureCtx); err != nil {
 			return "", err
 		}
+		qs, err := gitstate.CaptureQuick(captureCtx, root)
+		if err != nil {
+			debounce.deadline = time.Time{}
+			return "", err
+		}
+		debounce.finish(qs.Signature() != lastSignature)
 		captured = qs
 		return qs.Signature(), nil
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s, poll %s)\n", root, e.opts.debounce, e.opts.pollInterval)
-	lastSignature, lastRevision := "", ""
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s–%s, poll %s)\n", root, debounce.base, maxWatchDebounce, e.opts.pollInterval)
 	var prev *pb.Snapshot
 	for {
 		if runCtx.Err() != nil {
@@ -588,6 +601,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		persist(func(s *cstore.WatchState) {
 			s.State = "scanning"
 			s.Stage = "discover"
+			s.DebounceMS = debounce.delay.Milliseconds()
 			s.ChangedFiles = len(qs.Paths)
 			s.PendingFiles = len(qs.Paths)
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision

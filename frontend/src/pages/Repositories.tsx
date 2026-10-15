@@ -34,15 +34,14 @@ import {
 } from '@chakra-ui/icons'
 import {
   faCamera,
-  faCodeBranch,
   faCodeCompare,
   faCodePullRequest,
   faEye,
   faFolder,
   faFolderOpen,
   faFolderTree,
-  type IconDefinition,
 } from '@fortawesome/free-solid-svg-icons'
+import { faGitAlt } from '@fortawesome/free-brands-svg-icons'
 import {
   api,
   type CodeSnapshot,
@@ -71,6 +70,7 @@ import RepositoryTargetPicker from '../components/RepositoryTargetPicker'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
 import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
+import FontAwesomeIcon from '../components/FontAwesomeIcon'
 import type { RepositoryFollowMode } from '../utils/repositoryWatcher'
 import type { MapChangeFocusRequest } from '../utils/repositoryChangeFocus'
 import RepositoryPullRequestPanel from '../components/RepositoryPullRequestPanel'
@@ -142,16 +142,7 @@ function Glyph({ name }: { name: string }) {
 }
 function RepositoryModeIcon({ mode }: { mode: 'snapshots' | 'compare' | 'live' | 'pr' }) {
   const icon = mode === 'snapshots' ? faCamera : mode === 'compare' ? faCodeCompare : mode === 'live' ? faEye : faCodePullRequest
-  return <SolidIcon icon={icon} />
-}
-function SolidIcon({ icon, size = 13 }: { icon: IconDefinition; size?: number }) {
-  const [width, height, , , pathData] = icon.icon
-  const paths = Array.isArray(pathData) ? pathData : [pathData]
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
-      {paths.map((path, index) => <path key={index} d={path} />)}
-    </svg>
-  )
+  return <FontAwesomeIcon icon={icon} />
 }
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -328,7 +319,7 @@ function FilesCollapsedRail({ fileCount, symbolCount, onExpand }: {
         _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
         data-testid="repositories-files-collapsed"
       >
-        <SolidIcon icon={faFolderTree} size={20} />
+        <FontAwesomeIcon icon={faFolderTree} size={20} />
       </Flex>
     </Tooltip>
   )
@@ -1409,14 +1400,18 @@ export default function Repositories() {
                     px={2.5}
                     py={1}
                     my={{ base: 2, md: 0 }}
-                    title={selected.name || nameOf(selected.root)}
+                    title={selected.root}
+                    aria-label="Selected repository"
                   >
                     <Box color="var(--accent)" display="flex" flexShrink={0}>
-                      <SolidIcon icon={faCodeBranch} size={15} />
+                      <FontAwesomeIcon icon={faGitAlt} size={18} />
                     </Box>
-                    <Text fontSize="15px" fontWeight="semibold" lineHeight="18px" isTruncated>
-                      {selected.name || nameOf(selected.root)}
-                    </Text>
+                    <Box minW={0}>
+                      <Text fontSize="13px" fontWeight="semibold" lineHeight="18px" isTruncated>
+                        {selected.name || nameOf(selected.root)}
+                      </Text>
+                      <Text fontSize="10px" color="gray.500" lineHeight="14px" isTruncated>{selected.root}</Text>
+                    </Box>
                   </HStack>
                   <HStack spacing={1} h="44px" maxW="full" overflowX="auto" justifySelf="center" aria-label="Repository mode">
                     {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
@@ -1477,7 +1472,7 @@ export default function Repositories() {
                                       {`${rangeSummary.commits.toLocaleString()} ${rangeSummary.commits === 1 ? 'commit' : 'commits'}`}
                                     </Text>
                                   )}
-                                  <SolidIcon icon={faCodeCompare} />
+                                  <FontAwesomeIcon icon={faCodeCompare} />
                                   {rangeSummary && (
                                     <HStack spacing={1} fontSize="2xs" whiteSpace="nowrap">
                                       <Text color="green.300">{`+${rangeSummary.additions.toLocaleString()}`}</Text>
