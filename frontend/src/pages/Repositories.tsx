@@ -34,6 +34,7 @@ import {
 } from '@chakra-ui/icons'
 import {
   faCamera,
+  faCodeBranch,
   faCodeCompare,
   faCodePullRequest,
   faEye,
@@ -1130,6 +1131,7 @@ export default function Repositories() {
                 role="group"
                 borderBottom="1px solid"
                 borderColor="whiteAlpha.100"
+                bg={repo.id === selectedId ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
               >
                 <Flex
                   position="relative"
@@ -1159,6 +1161,7 @@ export default function Repositories() {
                     size="sm"
                     variant="unstyled"
                     aria-label={`Select ${repo.name || nameOf(repo.root)}`}
+                    aria-pressed={repo.id === selectedId}
                     onClick={() => selectRepo(repo.id)}
                   >
                     <Glyph name={repo.name || nameOf(repo.root)} />
@@ -1380,24 +1383,41 @@ export default function Repositories() {
               <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }} />
             ) : (
               <>
-                <Flex
-                  px={2}
+                <Box
+                  display="grid"
+                  gridTemplateColumns={{ base: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) auto minmax(0, 1fr)' }}
+                  px={4}
                   py={0}
-                  h="44px"
+                  minH="44px"
                   flexShrink={0}
-                  gap={3}
-                  align="center"
-                  justify="center"
-                  wrap="wrap"
+                  columnGap={3}
+                  alignItems="center"
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.100"
                 >
-                  <HStack spacing={1} h="100%" aria-label="Repository mode">
+                  <HStack
+                    spacing={2}
+                    w="fit-content"
+                    maxW="full"
+                    minW={0}
+                    px={2.5}
+                    py={1}
+                    my={{ base: 2, md: 0 }}
+                    title={selected.name || nameOf(selected.root)}
+                  >
+                    <Box color="var(--accent)" display="flex" flexShrink={0}>
+                      <SolidIcon icon={faCodeBranch} size={15} />
+                    </Box>
+                    <Text fontSize="15px" fontWeight="semibold" lineHeight="18px" isTruncated>
+                      {selected.name || nameOf(selected.root)}
+                    </Text>
+                  </HStack>
+                  <HStack spacing={1} h="44px" maxW="full" overflowX="auto" justifySelf="center" aria-label="Repository mode">
                     {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
                       <Button key={value} size="sm" variant="ghost" borderRadius="0" borderBottom="2px solid" borderColor={mode === value ? 'var(--accent)' : 'transparent'} px={3} h="100%" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" isDisabled={adding} bg="transparent" color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: 'whiteAlpha.50', color: 'white' }} _active={{ bg: 'transparent' }} transition="color 0.2s, border-color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
                     ))}
                   </HStack>
-                </Flex>
+                </Box>
                 {mode !== 'live' && historyError && (
                   <Text p={3} fontSize="xs" color="orange.300">
                     {historyError} · Saved snapshots remain available.
