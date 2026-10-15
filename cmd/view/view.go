@@ -462,6 +462,12 @@ func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		if err != nil {
 			return fail(sess.CacheError(err))
 		}
+		// Removing the last current view empties that metadata bucket. The
+		// legacy loader can then fall back to the pre-delete sync baseline.
+		// Do not save the deleted view ID back into the refreshed cache.
+		if cached.Meta != nil {
+			delete(cached.Meta.Views, ref)
+		}
 		if err := exec.SaveCache(wdir, cached); err != nil {
 			return fail(sess.CacheError(err))
 		}

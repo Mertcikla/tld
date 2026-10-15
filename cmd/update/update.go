@@ -286,11 +286,6 @@ and refresh the YAML cache when present.`,
 					if err := exec.RecordConnectorMeta(sess.Context(cmd.Context()), *wdir, newKey, updated); err != nil {
 						return fail(sess.CacheError(err))
 					}
-					// Advance the local current watermark so pull can detect a
-					// concurrent server edit instead of silently overwriting it.
-					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
-						return fail(sess.CacheError(err))
-					}
 				}
 			}
 			if cmdutil.WantsJSON(*format) {
@@ -368,21 +363,26 @@ func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *work
 	if !sess.HasWorkspace() || updated == nil {
 		return nil
 	}
-	if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
-		return sess.CacheError(err)
+	// Language is target metadata derived from technology links in YAML; it
+	// has no editable workspace field. Do not fail after committing its write.
+	if field != "language" {
+		if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
+			return sess.CacheError(err)
+		}
+	}
+	if el := ws.Elements[ref]; field == "name" && el != nil && el.HasView && el.ViewName == "" {
+		// An omitted view_name represents the old element name. Renaming the
+		// element must not also rename its separately persisted owned view.
+		if err := workspace.UpdateElementField(sess.Wdir, ref, "view_name", el.Name); err != nil {
+			return sess.CacheError(err)
+		}
 	}
 	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
 		return sess.CacheError(err)
 	}
 
-	if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-		return sess.CacheError(err)
-	}
-	if viewID != 0 {
-		if err := workspace.TouchCurrentViewMetadata(sess.Wdir, ref); err != nil {
-			return sess.CacheError(err)
-		}
-	}
+	// RecordElementMeta already recorded the committed target timestamp in
+	// both current metadata and the sync baseline. This is not a local edit.
 	return nil
 }
 

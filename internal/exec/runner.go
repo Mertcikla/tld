@@ -382,7 +382,7 @@ func (r *remoteRunner) CreateConnector(ctx context.Context, input api.ConnectorI
 
 func (r *remoteRunner) UpdateConnector(ctx context.Context, id int32, input api.ConnectorInput) (*diagv1.Connector, error) {
 	c := r.client()
-	req := &diagv1.UpdateConnectorRequest{ConnectorId: id}
+	req := &diagv1.UpdateConnectorRequest{ConnectorId: id, ViewId: input.ViewID}
 	if input.SourceID != 0 {
 		req.SourceElementId = &input.SourceID
 	}

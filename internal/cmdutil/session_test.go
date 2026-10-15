@@ -35,6 +35,7 @@ func resolveWorkspace() *workspace.Workspace {
 
 func TestResolveElementArg(t *testing.T) {
 	ws := resolveWorkspace()
+	ws.Elements["db-lowercase"] = &workspace.Element{Name: "database"}
 	cases := []struct {
 		name string
 		arg  string
@@ -64,8 +65,10 @@ func TestResolveElementArgErrors(t *testing.T) {
 	if _, err := ResolveElementArg(ws, "missing"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing err = %v", err)
 	}
-	if _, err := ResolveElementArg(ws, "same name"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("ambiguous err = %v", err)
+	for _, arg := range []string{"Same Name", "same name"} {
+		if _, err := ResolveElementArg(ws, arg); err == nil || !strings.Contains(err.Error(), "ambiguous: same-a, same-b") {
+			t.Fatalf("ambiguous %q err = %v", arg, err)
+		}
 	}
 	if _, err := ResolveElementArg(ws, ""); err == nil {
 		t.Fatal("empty arg should error")

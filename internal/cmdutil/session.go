@@ -322,22 +322,23 @@ func ResolveElementArg(ws *workspace.Workspace, arg string) (string, error) {
 			return ref, nil
 		}
 	}
-	exact := ""
-	var folded []string
+	var exact, folded []string
 	for ref, el := range ws.Elements {
 		if el == nil {
 			continue
 		}
 		if el.Name == arg {
-			exact = ref
-			break
+			exact = append(exact, ref)
 		}
 		if strings.EqualFold(strings.TrimSpace(el.Name), arg) {
 			folded = append(folded, ref)
 		}
 	}
-	if exact != "" {
-		return exact, nil
+	if len(exact) == 1 {
+		return exact[0], nil
+	}
+	if len(exact) > 1 {
+		folded = exact
 	}
 	if len(folded) == 1 {
 		return folded[0], nil
