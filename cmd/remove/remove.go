@@ -141,6 +141,9 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 // server synchronously, before the YAML cache entry is removed. A NotFound is
 // tolerated so a retry after a partial failure can converge.
 func runRemoveElementServer(cmd *cobra.Command, sess *cmdutil.Session, elementID, viewID int32) error {
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	if elementID == 0 {
 		// No cached ID (e.g. hand-written YAML): nothing to delete server-side.
 		return nil
@@ -296,6 +299,9 @@ func matchConnectorKeys(ws *workspace.Workspace, view, from, to, label string) [
 // cached IDs are skipped, and a NotFound is tolerated so a retry after a
 // partial failure can converge.
 func runRemoveConnectorsServer(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, keys []string) error {
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	var ids []int32
 	if ws.Meta != nil {
 		for _, k := range keys {

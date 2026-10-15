@@ -178,6 +178,9 @@ func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 		}
 		return err
 	}
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)

@@ -612,6 +612,9 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 		}
 		return nil
 	}
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	ctx := sess.Context(cmd.Context())
 	runner, err := sess.Runner()
 	if err != nil {

@@ -262,6 +262,9 @@ and refresh the YAML cache when present.`,
 				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
 				return nil
 			}
+			if err := sess.RequireAppliedCache(); err != nil {
+				return fail(err)
+			}
 			preSpec := ws.Connectors[ref]
 			var preID int32
 			if ws.Meta != nil {
@@ -355,6 +358,9 @@ func unsupportedElementFieldError(field string) error {
 }
 
 func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref, field, value string) error {
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
 	if err != nil {
 		return err

@@ -1,13 +1,70 @@
 package view_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestPlacePreservesTargetCoordinates(t *testing.T) {
+	for _, scenario := range []string{"stale coordinates", "missing cached placement", "move to existing placement"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd.MustInitWorkspace(t, dir)
+			cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--position-x", "10", "--position-y", "20")
+			if scenario == "move to existing placement" {
+				cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform")
+				cmd.MustRunCmd(t, dir, "view", "create", "platform")
+				cmd.MustRunCmd(t, dir, "view", "place", "platform", "api")
+			}
+			ws, err := workspace.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner, err := exec.NewRunner(ws.Config, "local", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := runner.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			ctx := context.Background()
+			rootID, err := exec.RootViewID(ctx, runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			elementID := int32(ws.Meta.Elements["api"].ID)
+			if scenario == "missing cached placement" {
+				cmd.MustRunCmd(t, dir, "view", "unplace", "root", "api")
+				if err := runner.AddPlacement(ctx, rootID, elementID, 800, 900); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := runner.UpdatePlacement(ctx, rootID, elementID, 800, 900); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"view", "place", "root", "api"}
+			if scenario == "move to existing placement" {
+				args = append(args, "--from", "platform")
+			}
+			cmd.MustRunCmd(t, dir, args...)
+			ws, err = workspace.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			placements := ws.Elements["api"].Placements
+			if len(placements) != 1 || placements[0].ParentRef != "root" || placements[0].PositionX != 800 || placements[0].PositionY != 900 {
+				t.Fatalf("target placement was not preserved: %+v", placements)
+			}
+		})
+	}
+}
 
 func TestUnplaceFinalPlacementStaysOutOfRoot(t *testing.T) {
 	for _, parent := range []string{"root", "platform"} {

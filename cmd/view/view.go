@@ -113,6 +113,9 @@ automatically. Use 'tld list views --tree' to inspect the resulting hierarchy.`,
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, viewName)
 			}
+			if err := sess.RequireAppliedCache(); err != nil {
+				return failf(cmd, *format, *compact, "view create", err)
+			}
 			runner, err := sess.Runner()
 			if err != nil {
 				return failf(cmd, *format, *compact, "view create", err)
@@ -354,6 +357,9 @@ func ensureViewEmpty(ws *workspace.Workspace, ref string) error {
 // updateView sets the view name and/or level label on the server and in YAML.
 func updateView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, command, ref string, newName, newLabel *string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, command, err) }
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	el := ws.Elements[ref]
 	runner, err := sess.Runner()
 	if err != nil {
@@ -419,6 +425,9 @@ func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *st
 
 func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, ref string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, "view delete", err) }
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)

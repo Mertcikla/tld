@@ -88,19 +88,33 @@ func newPlacementCmd(wdir, format *string, compact *bool, remove bool) *cobra.Co
 				if err != nil {
 					return err
 				}
-				var x, y float64
 				if !remove {
-					if p := cmdutil.FindPlacement(ws, ref, viewRef); p != nil {
-						x, y = p.PositionX, p.PositionY
-					} else {
-						x, y, _ = cmdutil.AutoPlace(ws, viewRef, ref, nil)
-					}
 					viewID, err := exec.ResolveParentViewID(ctx, runner, ws, sess.Wdir, viewRef)
 					if err != nil {
 						return err
 					}
-					if err := runner.AddPlacement(ctx, viewID, elementID, x, y); err != nil {
+					exported, err := runner.ExportWorkspace(ctx)
+					if err != nil {
 						return err
+					}
+					// Repeating place must not replay stale YAML coordinates over a UI move.
+					placed := false
+					for _, p := range exported.GetPlacements() {
+						if p.GetViewId() == viewID && p.GetElementId() == elementID {
+							placed = true
+							break
+						}
+					}
+					if !placed {
+						var x, y float64
+						if p := cmdutil.FindPlacement(ws, ref, viewRef); p != nil {
+							x, y = p.PositionX, p.PositionY
+						} else {
+							x, y, _ = cmdutil.AutoPlace(ws, viewRef, ref, nil)
+						}
+						if err := runner.AddPlacement(ctx, viewID, elementID, x, y); err != nil {
+							return err
+						}
 					}
 				}
 				if oldView != "" && cmdutil.FindPlacement(ws, ref, oldView) != nil {
