@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -250,11 +251,13 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	for _, want := range []string{
 		"%% tld-scene",
 		`subgraph view_neg1["Changes"]`,
-		`el_neg1_neg1["◇ a.go`,
 	} {
 		if !strings.Contains(mermaid, want) {
 			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
 		}
+	}
+	if !regexp.MustCompile(`el_neg1_neg[0-9]+\["◇ a.go`).MatchString(mermaid) {
+		t.Fatalf("scene mermaid missing stable transient file identity: %s", mermaid)
 	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)

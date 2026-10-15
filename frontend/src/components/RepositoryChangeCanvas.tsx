@@ -1,3 +1,4 @@
+import { changedScenePlacements } from '../utils/liveSceneChanges'
 import { computeLayout } from './ZUI/layout'
 import { filterLayoutByTags, visiblePlacementKeys } from './ZUI/tagVisibility'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -26,18 +27,20 @@ const seedTagColors = (): Record<string, Tag> =>
   Object.fromEntries(
     Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
   )
-export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded }: {
+export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded, live = false }: {
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
   busy?: boolean
+  live?: boolean
   /** A frozen imported scene; disables all API reads and backend selection. */
   embedded?: { scene: RepositoryImpactScene; markdown: string }
 }) {
   const canvas = useRef<ZUICanvasHandle>(null)
   const splitRef = useRef<HTMLDivElement | null>(null)
   const [loadedScene, setScene] = useState<RepositoryImpactScene | null>(null)
-  const scene = embedded?.scene ?? loadedScene
+  const scene = embedded?.scene ?? (loadedScene?.repositoryId === diagram?.repositoryId ? loadedScene : null)
   const [error, setError] = useState('')
   const [selectedKey, setSelectedKey] = useState('')
+  const [followMode, setFollowMode] = useState<'off' | 'following' | 'paused'>('off')
   const [inspectorEnabled] = useState(() => !embedded && new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
   const [debug, setDebug] = useState(inspectorEnabled)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
@@ -60,13 +63,16 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     let active = true
     const controller = new AbortController()
     setError('')
-    setScene(null)
     if (embedded || !repositoryId || !comparisonKey) return undefined
+    if (diagram?.scene && !debug && displayMode === 'standard') {
+      setScene(diagram.scene)
+      return
+    }
     void api.repositories.impactScene(repositoryId, comparisonKey, controller.signal, { debugProvenance: debug, plain: displayMode === 'plain' })
       .then((result) => { if (active) setScene(result) })
       .catch((err: unknown) => { if (active && !controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
     return () => { active = false; controller.abort() }
-  }, [repositoryId, comparisonKey, version, debug, displayMode, embedded])
+  }, [repositoryId, comparisonKey, version, debug, displayMode, embedded, diagram?.scene])
   const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
   useEffect(() => {
     if (!diagram || embedded) return
@@ -102,12 +108,18 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const handleHoverTag = useCallback((tag: string | null) => {
     setHighlightedTags(tag ? [tag] : [])
   }, [])
+  const followSuppressed = useRef(false)
+  const pauseFollow = useCallback(() => {
+    followSuppressed.current = true
+    setFollowMode((old) => old === 'following' ? 'paused' : old)
+  }, [])
   const selectPrimitive = useCallback((key: string) => {
+    pauseFollow()
     setSelectedKey(key)
     const entry = scene?.placements?.[key]
     if (!entry) return
     canvas.current?.focusElement(entry.viewId, entry.resourceId)
-  }, [scene])
+  }, [scene, pauseFollow])
   const focusSelected = useCallback(() => {
     if (!view || !selectedPath) return
     const key = scene?.coverage?.find((entry) => entry.path === selectedPath)?.placementKeys[0]
@@ -117,7 +129,32 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
       if (element && canvas.current?.focusElement(Number(viewId), element.element_id)) { setSelectedKey(`placement|${viewId}|${element.element_id}`); return }
     }
   }, [view, selectedPath, scene, selectPrimitive])
-  useEffect(focusSelected, [focusSelected])
+  const lastSelectedPath = useRef('')
+  useEffect(() => {
+    if (!view || selectedPath === lastSelectedPath.current) return
+    lastSelectedPath.current = selectedPath
+    if (selectedPath) { pauseFollow(); focusSelected() }
+  }, [view, selectedPath, focusSelected, pauseFollow])
+  const observedScene = useRef<RepositoryImpactScene | null>(null)
+  const pendingFollow = useRef<Array<{ viewId: number; elementId: number }>>([])
+  const followVersion = useRef('')
+  useEffect(() => {
+    if (!scene || !live) return
+    const previous = observedScene.current
+    // Display-mode and filter changes are presentation, not new code revisions.
+    if (previous?.version !== scene.version) {
+      pendingFollow.current = changedScenePlacements(previous, scene)
+      observedScene.current = scene
+    }
+    if (followMode !== 'following' || followSuppressed.current || followVersion.current === scene.version) return
+    followVersion.current = scene.version
+    canvas.current?.followElements(pendingFollow.current)
+  }, [scene, live, followMode])
+  const changeFollowMode = useCallback((mode: 'off' | 'following' | 'paused') => {
+    if (mode === 'following') { followVersion.current = ''; followSuppressed.current = false }
+    else canvas.current?.cancelCameraTransition()
+    setFollowMode(mode)
+  }, [])
   const coverageLayout = useMemo(() => view && inspectorEnabled ? computeLayout(view.data) : null, [view, inspectorEnabled])
   const hiddenChanges = useMemo(() => {
     if (!coverageLayout) return 0
@@ -135,9 +172,11 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!(embedded ? embedded.scene.files?.length : diagram?.nodes.length) && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} onSelectObject={inspectorEnabled ? (selection) => setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') : undefined} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate animateUpdates onPan={pauseFollow} onZoom={pauseFollow} highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={() => { if (selectedPath) focusSelected(); else if (followMode === 'following' && !followSuppressed.current) canvas.current?.followElements(pendingFollow.current) }} onSelectObject={(selection) => { if (selection) pauseFollow(); if (inspectorEnabled) setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') }} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               showViewMode={!embedded}
+              followMode={live && !embedded ? followMode : undefined}
+              onFollowModeChange={changeFollowMode}
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
@@ -194,6 +233,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             embeddedMarkdown={embedded?.markdown}
             repositoryId={repositoryId}
             comparisonKey={comparisonKey}
+            version={version}
             plain={displayMode === 'plain'}
             open
             collapsed={sidePane.isCollapsed}

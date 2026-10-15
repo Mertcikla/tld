@@ -336,6 +336,7 @@ export interface RepositoryImpactProvenance {
   grounding: string; role: string; paths: string[]; distance: number
 }
 export interface LiveRepositoryImpact {
+  watchStatus?: RepositoryWatchStatus
   diagram: RepositoryImpact | null
   watching: boolean
   error: string
@@ -2400,8 +2401,21 @@ export const api = {
     },
     liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
       const result = await codeIndexClient.getLiveImpact({ id: repositoryId }, { signal })
-      return { ...result, diagram: result.scene ? mapImpact(result.scene) : null }
+      return { ...result, diagram: result.scene ? mapImpact(result.scene) : null, watchStatus: result.watchStatus ? mapWatchStatus(result.watchStatus) : undefined }
     }),
+    watchLiveImpact: async (repositoryId: string, options: { signal: AbortSignal; onUpdate: (update: LiveRepositoryImpact) => void }): Promise<void> => {
+      const stream = codeIndexClient.watchLiveImpact({ repositoryId }, { signal: options.signal })
+      let diagram: RepositoryImpact | null = null
+      for await (const result of stream) {
+        if (options.signal.aborted) return
+        if (result.scene) diagram = mapImpact(result.scene)
+        options.onUpdate({
+          watching: result.watching, error: result.error, gitBranch: result.gitBranch, gitRevision: result.gitRevision,
+          diagram,
+          watchStatus: result.watchStatus ? mapWatchStatus(result.watchStatus) : undefined,
+        })
+      }
+    },
     watchStatus: (repositoryId: string, signal?: AbortSignal): Promise<RepositoryWatchStatus> => rpc(async () => {
       const result = await codeIndexRepositoryClient.getWatchStatus({ id: repositoryId }, { signal })
       return mapWatchStatus(result)

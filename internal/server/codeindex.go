@@ -437,8 +437,10 @@ type codeIndexService struct {
 	ws     *app.Store
 	config *workspace.Config
 
-	mu      sync.Mutex
-	running map[string]string
+	mu              sync.Mutex
+	running         map[string]string
+	liveSubscribers map[string]map[chan struct{}]struct{}
+	repositories    *repositoryService
 }
 
 func (s *codeIndexService) ListFacts(ctx context.Context, req *connect.Request[codeindexv1.CodeFactFilter]) (*connect.Response[codeindexv1.CodeFactPage], error) {
@@ -585,7 +587,7 @@ func registerCodeIndexHandlers(mux *http.ServeMux, appStore *app.Store, dataDir 
 	manager := newWatchManager(dataDir, idx)
 
 	repoSvc := &repositoryService{store: idx, ws: appStore, dataDir: dataDir, watches: manager, selfHosted: selfHosted}
-	factSvc := &codeIndexService{store: idx, ws: appStore, running: map[string]string{}}
+	factSvc := &codeIndexService{store: idx, ws: appStore, running: map[string]string{}, repositories: repoSvc}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 		factSvc.config = configs[0]

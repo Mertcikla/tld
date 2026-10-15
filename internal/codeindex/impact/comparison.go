@@ -57,7 +57,7 @@ func captureComparison(ctx context.Context, idx *cstore.Store, diagram *model.Di
 	for _, change := range diff.GetSources() {
 		file := &pb.ImpactFile{Path: change.Path, Change: change.Change,
 			LinesAdded: change.LinesAdded, LinesRemoved: change.LinesRemoved, LineCountsBasis: "captured_source",
-			BaseAnalysis: availability(before, change.Path), HeadAnalysis: availability(after, change.Path), MetadataOnly: change.MetadataOnly}
+			BaseAnalysis: availability(before, change.Path), HeadAnalysis: availability(after, change.Path), MetadataOnly: change.MetadataOnly, BaseHash: change.FromHash, HeadHash: change.ToHash}
 		if change.FactsUnavailable {
 			file.AnalysisUnavailableReason = "Source contents were not captured; extraction/dependency evidence is unavailable"
 		}

@@ -7,6 +7,8 @@ import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import { withUnplacedElements } from '../../crossBranch/unplacedElements'
 import { computeLayout } from './layout'
+import { useAnimatedLayout } from './useAnimatedLayout'
+import { followViewport } from './followViewport'
 import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
@@ -33,9 +35,11 @@ declare global {
 
 export interface ZUICanvasHandle {
   fitView(): void
+  cancelCameraTransition(): void
   focusDiagram(viewId: number): boolean
   focusElement(viewId: number, elementId: number): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
+  followElements(targets: Array<{ viewId: number; elementId: number }>): boolean
 }
 
 export interface ZUICameraFrame {
@@ -44,6 +48,7 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  animateUpdates?: boolean
   preserveCameraOnUpdate?: boolean
   changeOverlays?: Record<number, ZUIChangeOverlay>
   data: ExploreData
@@ -64,6 +69,7 @@ interface Props {
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   preserveCameraOnUpdate = false,
+  animateUpdates = false,
   changeOverlays,
   data,
   onReady,
@@ -91,10 +97,12 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
-  const layout = useMemo(() => {
+  const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   }, [data, changeOverlays])
+  const layout = useAnimatedLayout(targetLayout, animateUpdates)
+  const visibleTargetLayout = useMemo(() => filterLayoutByTags(targetLayout, selectedTags, hiddenTags), [targetLayout, selectedTags, hiddenTags])
   const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags), [layout, selectedTags, hiddenTags])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
@@ -313,11 +321,20 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     ref,
     () => ({
       fitView: fitCurrentView,
+      cancelCameraTransition: camera.cancelTransition,
       focusDiagram,
       focusElement,
       setCameraFrame,
+      followElements: (targets) => {
+        const el = containerRef.current
+        if (!el) return false
+        const next = followViewport(visibleTargetLayout.groups, targets, viewStateRef.current, el.offsetWidth, el.offsetHeight, maxZoom, visibleLayout.groups)
+        if (!next) return false
+        camera.animateToViewport(next)
+        return true
+      },
     }),
-    [fitCurrentView, focusDiagram, focusElement, setCameraFrame],
+    [fitCurrentView, focusDiagram, focusElement, setCameraFrame, visibleTargetLayout.groups, visibleLayout.groups, viewStateRef, maxZoom, camera],
   )
 
   return (

@@ -464,6 +464,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		_ = e.store.ReleaseWatch(cleanup, watchKey, ownerID)
+		e.notifyLive(cleanup)
 		_ = localserver.RemoveProcess(os.Getpid())
 	}()
 
@@ -486,7 +487,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		mu.Unlock()
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		if err := e.store.WatchHeartbeat(writeCtx, snapshot); errors.Is(err, cstore.ErrWatchOwnershipLost) {
+		if err := e.store.WatchHeartbeat(writeCtx, snapshot); err == nil {
+			e.notifyLive(writeCtx)
+		} else if errors.Is(err, cstore.ErrWatchOwnershipLost) {
 			// Another watcher took over this repository. Exit so two watchers
 			// never index concurrently.
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "another watcher took over %s; exiting\n", root)

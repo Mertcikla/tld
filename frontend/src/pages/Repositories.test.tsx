@@ -1,4 +1,5 @@
 import React from 'react'
+import type { LiveRepositoryImpact } from '../api/client'
 import { create as createMessage } from '@bufbuild/protobuf'
 import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { act, create } from 'react-test-renderer'
@@ -67,6 +68,12 @@ vi.mock('../api/client', () => ({
         repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', maxRadius: 2,
         nodes: [], edges: [], diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', fromGitRevision: 'old', toGitRevision: 'abc', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
       })),
+      watchLiveImpact: vi.fn(async (_id: string, options: { signal: AbortSignal; onUpdate: (update: LiveRepositoryImpact) => void }) => {
+        const { api } = await import('../api/client')
+        const watchStatus = await api.repositories.watchStatus(_id)
+        if (!options.signal.aborted) options.onUpdate({ diagram: null, watching: watchStatus.running, error: '', gitBranch: 'main', gitRevision: 'abc', watchStatus })
+        await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }))
+      }),
       liveImpact: vi.fn(async () => ({ diagram: null, watching: false, error: '', gitBranch: 'main', gitRevision: 'abc' })),
       watchStatus: vi.fn(async () => ({
         repositoryId: 'repo-1', running: false, managed: false, state: 'stopped', stage: '',
@@ -1035,15 +1042,58 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
     vi.mocked(api.repositories.compare).mockClear()
-    vi.mocked(api.repositories.liveImpact).mockResolvedValue({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+    vi.mocked(api.repositories.watchLiveImpact).mockImplementationOnce(async (_id, options) => {
+      options.onUpdate({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+      await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
-    expect(api.repositories.liveImpact).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
+    expect(api.repositories.watchLiveImpact).toHaveBeenCalledWith('repo-1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.repositories.liveImpact).not.toHaveBeenCalled()
     expect(api.repositories.compare).not.toHaveBeenCalled()
     expect(api.repositories.map).not.toHaveBeenCalled()
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.comparisonKey).toBe('live')
     await act(async () => { renderer.unmount() })
+    vi.useRealTimers()
+  })
+
+  it('applies successive pushed scenes without remounting and aborts on leaving live mode', async () => {
+    const { api } = await import('../api/client')
+    const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    let update!: (event: LiveRepositoryImpact) => void
+    let signal!: AbortSignal
+    vi.mocked(api.repositories.watchLiveImpact).mockImplementationOnce(async (_id, options) => {
+      update = options.onUpdate; signal = options.signal
+      options.onUpdate({ diagram, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const canvas = renderer.root.findByProps({ 'data-testid': 'mock-impact' })
+    const next = { ...diagram, version: 'v2', comparisonKey: 'next' }
+    await act(async () => update({ diagram: next, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' }))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' })).toBe(canvas)
+    expect(canvas.props.diagram).toBe(next)
+    await act(async () => update({ diagram: { ...next }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' }))
+    expect(canvas.props.diagram).toBe(next)
+    await act(async () => renderer.unmount())
+    expect(signal.aborted).toBe(true)
+    expect(api.repositories.liveImpact).not.toHaveBeenCalled()
+  })
+
+  it('reconnects a failed live subscription', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.watchLiveImpact).mockRejectedValueOnce(new Error('Disconnected'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const attempts = vi.mocked(api.repositories.watchLiveImpact).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(api.repositories.watchLiveImpact).toHaveBeenCalledTimes(attempts + 1)
+    await act(async () => renderer.unmount())
     vi.useRealTimers()
   })
 

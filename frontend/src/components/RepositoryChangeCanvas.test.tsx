@@ -6,13 +6,21 @@ import type { PlacedElement, ViewTreeNode } from '../types'
 import { ZUICanvas } from './ZUI'
 import { PANEL_COLLAPSE_SNAP, PANEL_OVERLAY_SNAP, PANEL_RAIL_WIDTH } from '../hooks/useResizableColumn'
 import RepositoryChangeCanvas from './RepositoryChangeCanvas'
+import { changedScenePlacements } from '../utils/liveSceneChanges'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
 import RepositoryImpactInspector from './RepositoryImpactInspector'
 import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const storageKey = 'tld:repositories:mermaidPaneWidth'
 
-vi.mock('./ZUI', () => ({ ZUICanvas: () => null }))
+const canvasActions = vi.hoisted(() => ({ followElements: vi.fn(), focusElement: vi.fn(() => true), cancelCameraTransition: vi.fn() }))
+vi.mock('./ZUI', async () => {
+  const ReactModule = await import('react')
+  return { ZUICanvas: ReactModule.forwardRef((_props, ref) => {
+    ReactModule.useImperativeHandle(ref, () => canvasActions)
+    return null
+  }) }
+})
 vi.mock('./RepositoryImpactInspector', () => ({
   default: (props: Record<string, unknown>) =>
     React.createElement('div', {
@@ -137,6 +145,61 @@ describe('RepositoryChangeCanvas side panel', () => {
       grounding: 'file', role: 'direct', paths: [], distance: 0,
     }])),
     coverage: [1, 2].map((id) => ({ path: `${id}.txt`, placementKeys: [`placement|1|${id}`], factsUnavailable: false })),
+  })
+
+  it('retains the canvas while the next scene loads, including failed updates', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.impactScene).mockResolvedValueOnce(taggedScene())
+    const renderer = await renderCanvas()
+    const canvas = renderer.root.findByType(ZUICanvas)
+    let reject!: (reason: Error) => void
+    vi.mocked(api.repositories.impactScene).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+    await act(async () => renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'new', version: 'v2' }} selectedPath="" />))
+    expect(renderer.root.findByType(ZUICanvas)).toBe(canvas)
+    await act(async () => reject(new Error('Connection lost')))
+    expect(renderer.root.findByType(ZUICanvas)).toBe(canvas)
+    expect(canvas.props.data.views[1].placements[0].name).toBe('Go')
+    renderer.unmount()
+  })
+
+  it('consumes pushed scenes directly and pauses and resumes follow on manual navigation', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    const first = taggedScene()
+    first.overlays[1] = { change: 'modified', path: '1.txt', symbols: [], symbolDetails: [], distance: 0, reason: 'direct' }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryChangeCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live />) })
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    const canvas = renderer.root.findByType(ZUICanvas)
+    expect(api.repositories.impactScene).not.toHaveBeenCalled()
+    expect(menu().props.followMode).toBe('off')
+    expect(canvasActions.followElements).not.toHaveBeenCalled()
+    await act(async () => menu().props.onFollowModeChange('following'))
+    expect(canvasActions.followElements).toHaveBeenLastCalledWith([{ viewId: 1, elementId: 1 }])
+    await act(async () => canvas.props.onPan())
+    expect(menu().props.followMode).toBe('paused')
+    canvasActions.followElements.mockClear()
+    const next = { ...first, version: 'v2' }
+    await act(async () => renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, version: 'v2', scene: next }} selectedPath="" live />))
+    expect(renderer.root.findByType(ZUICanvas)).toBe(canvas)
+    expect(canvasActions.followElements).not.toHaveBeenCalled()
+    await act(async () => menu().props.onFollowModeChange('following'))
+    expect(canvasActions.followElements).toHaveBeenCalledTimes(1)
+    await act(async () => canvas.props.onZoom())
+    expect(menu().props.followMode).toBe('paused')
+    await act(async () => menu().props.onFollowModeChange('off'))
+    expect(canvasActions.cancelCameraTransition).toHaveBeenCalled()
+    renderer.unmount()
+  })
+
+  it('identifies equal-sized edits and reversions without following unchanged cumulative changes', () => {
+    const first = taggedScene()
+    first.files = [{ path: '1.txt', baseHash: 'base', headHash: 'one', symbols: [] }, { path: '2.txt', baseHash: 'base2', headHash: 'two', symbols: [] }] as unknown as RepositoryImpactScene['files']
+    const next = { ...first, version: 'v2', files: first.files!.map((file) => file.path === '1.txt' ? { ...file, headHash: 'new' } : file) }
+    expect(changedScenePlacements(first, next)).toEqual([{ viewId: 1, elementId: 1 }])
+    expect(changedScenePlacements(next, { ...next, version: 'v3', files: next.files.map((file) => ({ ...file, symbols: ['renumbered-symbol-ref'] })) })).toEqual([])
+    expect(changedScenePlacements(next, { ...next, version: 'v4', files: next.files.filter((file) => file.path !== '1.txt') })).toEqual([{ viewId: 1, elementId: 1 }])
   })
 
   it('updates inspector coverage when selected tags hide changes', async () => {

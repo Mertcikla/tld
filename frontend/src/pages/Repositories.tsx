@@ -630,39 +630,36 @@ export default function Repositories() {
     if (mode !== 'live' || !selectedId) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout>
-    let fetching = false
-    const poll = async () => {
-      if (controller.signal.aborted || fetching) return
-      if (typeof document !== 'undefined' && document.hidden) return
-      fetching = true
+    let retry = 500
+    setLive(null)
+    liveVersion.current = ''
+    const subscribe = async () => {
       try {
-        if (!operation.current) {
-          const [result, status] = await Promise.all([
-            api.repositories.liveImpact(selectedId, controller.signal),
-            api.repositories.watchStatus(selectedId, controller.signal).catch(() => null),
-          ])
-          if (!controller.signal.aborted && !operation.current) {
+        await api.repositories.watchLiveImpact(selectedId, {
+          signal: controller.signal,
+          onUpdate: (result) => {
+            if (controller.signal.aborted) return
+            retry = 500
             setLive((old) => ({ ...result, diagram: result.diagram?.version === old?.diagram?.version ? old?.diagram ?? null : result.diagram }))
-            if (status) setWatch(status)
+            if (result.watchStatus) setWatch(result.watchStatus)
             setOperationError('')
             if (result.diagram && result.diagram.version !== liveVersion.current) {
               liveVersion.current = result.diagram.version
               setNonce((n) => n + 1)
               void reload()
             }
-          }
-        }
+          },
+        })
       } catch (err) {
-        if (!controller.signal.aborted) setOperationError(err instanceof Error ? err.message : 'Could not load live changes')
-      } finally {
-        fetching = false
-        if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000)
+        if (!controller.signal.aborted) setOperationError(err instanceof Error ? err.message : 'Live connection interrupted')
+      }
+      if (!controller.signal.aborted) {
+        timer = setTimeout(() => void subscribe(), retry)
+        retry = Math.min(retry * 2, 10000)
       }
     }
-    const visibility = () => { if (!document.hidden) { clearTimeout(timer); void poll() } }
-    void poll()
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visibility)
-    return () => { controller.abort(); clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visibility) }
+    void subscribe()
+    return () => { controller.abort(); clearTimeout(timer) }
   }, [mode, selectedId, reload])
   const changeMode = (next: string) => {
     if (next === mode) return
@@ -1695,7 +1692,7 @@ export default function Repositories() {
                         />
                     </>
                   )}
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}`} live={mode === 'live'} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
                 )}
               </>

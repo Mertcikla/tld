@@ -7,6 +7,8 @@ export type RepositoryChangeViewMode = 'standard' | 'plain'
 
 export default function RepositoryChangeMenu({
   showViewMode = true,
+  followMode,
+  onFollowModeChange,
   busy = false,
   viewMode,
   onViewModeChange,
@@ -21,6 +23,8 @@ export default function RepositoryChangeMenu({
   onToggleTagVisibility,
 }: {
   showViewMode?: boolean
+  followMode?: 'off' | 'following' | 'paused'
+  onFollowModeChange?: (mode: 'off' | 'following' | 'paused') => void
   busy?: boolean
   viewMode: RepositoryChangeViewMode
   onViewModeChange: (mode: RepositoryChangeViewMode) => void
@@ -57,6 +61,10 @@ export default function RepositoryChangeMenu({
         px={1.5}
         py={1.5}
       >
+        {followMode && onFollowModeChange && <HStack spacing={1} px={1}>
+          <Button size="xs" h="28px" aria-label="Follow changes" aria-pressed={followMode !== 'off'} variant={followMode === 'off' ? 'ghost' : 'solid'} onClick={() => onFollowModeChange(followMode === 'off' ? 'following' : 'off')}>Follow</Button>
+          {followMode === 'paused' && <Button size="xs" h="28px" onClick={() => onFollowModeChange('following')}>Resume follow</Button>}
+        </HStack>}
         {showViewMode && <HStack spacing={1} align="center" data-testid="repositories-view-mode" px={1}>
           {(['standard', 'plain'] as const).map((option) => (
             <Button

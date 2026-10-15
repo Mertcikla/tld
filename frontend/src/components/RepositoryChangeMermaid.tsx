@@ -21,6 +21,7 @@ export default function RepositoryChangeMermaid({
   embeddedMarkdown,
   repositoryId,
   comparisonKey,
+  version,
   plain,
   open,
   collapsed = false,
@@ -30,6 +31,7 @@ export default function RepositoryChangeMermaid({
   embeddedMarkdown?: string
   repositoryId: string
   comparisonKey: string
+  version?: string
   /** Mirrors the canvas plain toggle so the pane never disagrees with it. */
   plain: boolean
   open: boolean
@@ -59,7 +61,7 @@ export default function RepositoryChangeMermaid({
         setState({ status: 'error', markdown: '', warnings: [], error: err instanceof Error ? err.message : 'Could not load the change diagram' })
       })
     return () => controller.abort()
-  }, [open, repositoryId, comparisonKey, plain, embeddedMarkdown])
+  }, [open, repositoryId, comparisonKey, version, plain, embeddedMarkdown])
 
   useEffect(() => {
     setCopied(false)

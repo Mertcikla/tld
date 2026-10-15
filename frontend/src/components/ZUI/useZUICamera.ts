@@ -8,6 +8,7 @@ import { clamp01, easeOutQuart, findFirstExpandableNode, fitWorldRect, type Path
 import { rawCameraView } from './layoutEngine'
 
 export interface ZUICameraController {
+  animateToViewport: (to: ZUIViewState) => void
   fitInitialView: (w: number, h: number) => void
   fitCurrentView: () => void
   focusDiagram: (viewId: number) => boolean
@@ -60,6 +61,10 @@ export function useZUICamera({
   const animateToViewport = useCallback((to: ZUIViewState) => {
     cancelTransition()
 
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setViewState(to)
+      return
+    }
     const from = rawCameraView(viewStateRef.current)
     const duration = 520
     const startedAt = performance.now()
@@ -221,6 +226,7 @@ export function useZUICamera({
   useEffect(() => cancelTransition, [cancelTransition])
 
   return {
+    animateToViewport,
     fitInitialView,
     fitCurrentView,
     focusDiagram,
