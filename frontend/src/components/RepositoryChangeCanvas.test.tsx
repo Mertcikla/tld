@@ -13,7 +13,7 @@ import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const storageKey = 'tld:repositories:mermaidPaneWidth'
 
-const canvasActions = vi.hoisted(() => ({ followElements: vi.fn(), focusElement: vi.fn(() => true), cancelCameraTransition: vi.fn() }))
+const canvasActions = vi.hoisted(() => ({ followElements: vi.fn(), focusElements: vi.fn(() => true), focusDiagram: vi.fn(() => true), focusElement: vi.fn(() => true), cancelCameraTransition: vi.fn() }))
 vi.mock('./ZUI', async () => {
   const ReactModule = await import('react')
   return { ZUICanvas: ReactModule.forwardRef((_props, ref) => {
@@ -115,6 +115,11 @@ function divTestIdAncestry(node: { type: unknown; props: Record<string, unknown>
   return chain
 }
 
+function LiveCanvas(props: React.ComponentProps<typeof RepositoryChangeCanvas>) {
+  const [followMode, setFollowMode] = React.useState<'off' | 'following' | 'paused'>('off')
+  return <RepositoryChangeCanvas {...props} followMode={followMode} onFollowModeChange={setFollowMode} />
+}
+
 async function renderCanvas() {
   let renderer!: ReturnType<typeof create>
   await act(async () => {
@@ -169,28 +174,70 @@ describe('RepositoryChangeCanvas side panel', () => {
     const first = taggedScene()
     first.overlays[1] = { change: 'modified', path: '1.txt', symbols: [], symbolDetails: [], distance: 0, reason: 'direct' }
     let renderer!: ReturnType<typeof create>
-    await act(async () => { renderer = create(<RepositoryChangeCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live />) })
-    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    await act(async () => { renderer = create(<LiveCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live />) })
     const canvas = renderer.root.findByType(ZUICanvas)
     expect(api.repositories.impactScene).not.toHaveBeenCalled()
-    expect(menu().props.followMode).toBe('off')
+    expect(renderer.root.findByType(RepositoryChangeCanvas).props.followMode).toBe('off')
     expect(canvasActions.followElements).not.toHaveBeenCalled()
-    await act(async () => menu().props.onFollowModeChange('following'))
+    await act(async () => renderer.root.findByType(RepositoryChangeCanvas).props.onFollowModeChange('following'))
     expect(canvasActions.followElements).toHaveBeenLastCalledWith([{ viewId: 1, elementId: 1 }])
     await act(async () => canvas.props.onPan())
-    expect(menu().props.followMode).toBe('paused')
+    expect(renderer.root.findByType(RepositoryChangeCanvas).props.followMode).toBe('paused')
     canvasActions.followElements.mockClear()
     const next = { ...first, version: 'v2' }
-    await act(async () => renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, version: 'v2', scene: next }} selectedPath="" live />))
+    await act(async () => renderer.update(<LiveCanvas diagram={{ ...diagram, version: 'v2', scene: next }} selectedPath="" live />))
     expect(renderer.root.findByType(ZUICanvas)).toBe(canvas)
     expect(canvasActions.followElements).not.toHaveBeenCalled()
-    await act(async () => menu().props.onFollowModeChange('following'))
+    await act(async () => renderer.root.findByType(RepositoryChangeCanvas).props.onFollowModeChange('following'))
     expect(canvasActions.followElements).toHaveBeenCalledTimes(1)
     await act(async () => canvas.props.onZoom())
-    expect(menu().props.followMode).toBe('paused')
-    await act(async () => menu().props.onFollowModeChange('off'))
+    expect(renderer.root.findByType(RepositoryChangeCanvas).props.followMode).toBe('paused')
+    await act(async () => renderer.root.findByType(RepositoryChangeCanvas).props.onFollowModeChange('off'))
     expect(canvasActions.cancelCameraTransition).toHaveBeenCalled()
     renderer.unmount()
+  })
+
+  it('focuses history clicks, clears hiding filters, pauses follow, and does not refocus later pushes', async () => {
+    stubEnvironment()
+    const first = taggedScene()
+    const target = { key: 'placement|1|2', kind: 'element' as const, viewId: 1, elementIds: [{ viewId: 1, elementId: 2 }], ancestorViewIds: [] }
+    let renderer!: ReturnType<typeof create>
+    const onLiveScene = vi.fn()
+    await act(async () => { renderer = create(<LiveCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live onLiveScene={onLiveScene} />) })
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    await act(async () => renderer.root.findByType(RepositoryChangeCanvas).props.onFollowModeChange('following'))
+    await act(async () => menu().props.onToggleTagVisibility('javascript'))
+    const request = { repositoryId: 'repo-1', targets: [target] }
+    await act(async () => renderer.update(<LiveCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live onLiveScene={onLiveScene} focusRequest={request} />))
+    expect(menu().props.hiddenTags).toEqual([])
+    expect(renderer.root.findByType(RepositoryChangeCanvas).props.followMode).toBe('paused')
+    expect(canvasActions.focusElement).toHaveBeenCalledWith(1, 2)
+    expect(onLiveScene).toHaveBeenCalledWith(first)
+    canvasActions.focusElement.mockClear()
+    await act(async () => renderer.update(<LiveCanvas diagram={{ ...diagram, version: 'v2', scene: { ...first, version: 'v2' } }} selectedPath="" live focusRequest={request} />))
+    expect(canvasActions.focusElement).not.toHaveBeenCalled()
+    await act(async () => renderer.update(<LiveCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live focusRequest={{ ...request }} />))
+    expect(canvasActions.focusElement).toHaveBeenCalledWith(1, 2)
+    await act(async () => renderer.unmount())
+  })
+
+  it('excludes plain presentation scenes from history and restores the canonical scene before focusing', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    const first = taggedScene()
+    const onLiveScene = vi.fn()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryChangeCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live onLiveScene={onLiveScene} />) })
+    onLiveScene.mockClear()
+    vi.mocked(api.repositories.impactScene).mockResolvedValueOnce({ ...first, views: {} })
+    await act(async () => renderer.root.findByType(RepositoryChangeMenu).props.onViewModeChange('plain'))
+    expect(onLiveScene).not.toHaveBeenCalled()
+    const request = { repositoryId: 'repo-1', targets: [{ key: 'placement|1|2', kind: 'element' as const, viewId: 1, elementIds: [{ viewId: 1, elementId: 2 }], ancestorViewIds: [] }] }
+    await act(async () => renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, scene: first }} selectedPath="" live onLiveScene={onLiveScene} focusRequest={request} />))
+    expect(renderer.root.findByType(RepositoryChangeMenu).props.viewMode).toBe('standard')
+    expect(onLiveScene).toHaveBeenLastCalledWith(first)
+    expect(canvasActions.focusElement).toHaveBeenCalledWith(1, 2)
+    await act(async () => renderer.unmount())
   })
 
   it('identifies equal-sized edits and reversions without following unchanged cumulative changes', () => {

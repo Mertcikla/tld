@@ -9,6 +9,7 @@ import { withUnplacedElements } from '../../crossBranch/unplacedElements'
 import { computeLayout } from './layout'
 import { useAnimatedLayout } from './useAnimatedLayout'
 import { followViewport } from './followViewport'
+import { viewportForElements } from './focus'
 import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
@@ -38,6 +39,7 @@ export interface ZUICanvasHandle {
   cancelCameraTransition(): void
   focusDiagram(viewId: number): boolean
   focusElement(viewId: number, elementId: number): boolean
+  focusElements(targets: Array<{ viewId: number; elementId: number }>): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
   followElements(targets: Array<{ viewId: number; elementId: number }>): boolean
 }
@@ -325,6 +327,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       focusDiagram,
       focusElement,
       setCameraFrame,
+      focusElements: (targets) => {
+        const el = containerRef.current
+        if (!el) return false
+        const next = viewportForElements(visibleLayout.groups, targets, el.offsetWidth, el.offsetHeight, maxZoom)
+        if (!next) return false
+        setHoveredItem(null, true)
+        camera.animateToViewport(next)
+        return true
+      },
       followElements: (targets) => {
         const el = containerRef.current
         if (!el) return false
@@ -334,7 +345,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         return true
       },
     }),
-    [fitCurrentView, focusDiagram, focusElement, setCameraFrame, visibleTargetLayout.groups, visibleLayout.groups, viewStateRef, maxZoom, camera],
+    [fitCurrentView, focusDiagram, focusElement, setCameraFrame, visibleTargetLayout.groups, visibleLayout.groups, viewStateRef, maxZoom, camera, setHoveredItem],
   )
 
   return (

@@ -1,5 +1,7 @@
 import type { RepositoryWatchStatus } from '../api/client'
 
+export type RepositoryFollowMode = 'off' | 'following' | 'paused'
+
 const indexStageLabels: Record<string, string> = {
   clone: 'Cloning repository',
   discover: 'Discovering sources',

@@ -1,3 +1,5 @@
+import { focusMapChanges, type MapChangeFocusRequest } from '../utils/repositoryChangeFocus'
+import type { RepositoryFollowMode } from '../utils/repositoryWatcher'
 import { changedScenePlacements } from '../utils/liveSceneChanges'
 import { computeLayout } from './ZUI/layout'
 import { filterLayoutByTags, visiblePlacementKeys } from './ZUI/tagVisibility'
@@ -27,20 +29,24 @@ const seedTagColors = (): Record<string, Tag> =>
   Object.fromEntries(
     Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
   )
-export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded, live = false }: {
+export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded, live = false, onLiveScene, focusRequest, followMode = 'off', onFollowModeChange }: {
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
   busy?: boolean
   live?: boolean
+  followMode?: RepositoryFollowMode
+  onFollowModeChange?: (mode: RepositoryFollowMode) => void
+  onLiveScene?: (scene: RepositoryImpactScene) => void
+  focusRequest?: MapChangeFocusRequest | null
   /** A frozen imported scene; disables all API reads and backend selection. */
   embedded?: { scene: RepositoryImpactScene; markdown: string }
 }) {
   const canvas = useRef<ZUICanvasHandle>(null)
   const splitRef = useRef<HTMLDivElement | null>(null)
-  const [loadedScene, setScene] = useState<RepositoryImpactScene | null>(null)
+  const [loaded, setLoaded] = useState<{ scene: RepositoryImpactScene; canonical: boolean } | null>(null)
+  const loadedScene = loaded?.scene ?? null
   const scene = embedded?.scene ?? (loadedScene?.repositoryId === diagram?.repositoryId ? loadedScene : null)
   const [error, setError] = useState('')
   const [selectedKey, setSelectedKey] = useState('')
-  const [followMode, setFollowMode] = useState<'off' | 'following' | 'paused'>('off')
   const [inspectorEnabled] = useState(() => !embedded && new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
   const [debug, setDebug] = useState(inspectorEnabled)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
@@ -65,14 +71,20 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     setError('')
     if (embedded || !repositoryId || !comparisonKey) return undefined
     if (diagram?.scene && !debug && displayMode === 'standard') {
-      setScene(diagram.scene)
+      setLoaded({ scene: diagram.scene, canonical: true })
+      if (live) onLiveScene?.(diagram.scene)
       return
     }
     void api.repositories.impactScene(repositoryId, comparisonKey, controller.signal, { debugProvenance: debug, plain: displayMode === 'plain' })
-      .then((result) => { if (active) setScene(result) })
+      .then((result) => {
+        if (!active) return
+        const canonical = !debug && displayMode === 'standard'
+        setLoaded({ scene: result, canonical })
+        if (live && canonical) onLiveScene?.(result)
+      })
       .catch((err: unknown) => { if (active && !controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
     return () => { active = false; controller.abort() }
-  }, [repositoryId, comparisonKey, version, debug, displayMode, embedded, diagram?.scene])
+  }, [repositoryId, comparisonKey, version, debug, displayMode, embedded, diagram?.scene, live, onLiveScene])
   const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
   useEffect(() => {
     if (!diagram || embedded) return
@@ -111,8 +123,8 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const followSuppressed = useRef(false)
   const pauseFollow = useCallback(() => {
     followSuppressed.current = true
-    setFollowMode((old) => old === 'following' ? 'paused' : old)
-  }, [])
+    if (followMode === 'following') onFollowModeChange?.('paused')
+  }, [followMode, onFollowModeChange])
   const selectPrimitive = useCallback((key: string) => {
     pauseFollow()
     setSelectedKey(key)
@@ -139,6 +151,10 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const pendingFollow = useRef<Array<{ viewId: number; elementId: number }>>([])
   const followVersion = useRef('')
   useEffect(() => {
+    if (followMode === 'following') { followVersion.current = ''; followSuppressed.current = false }
+    else canvas.current?.cancelCameraTransition()
+  }, [followMode])
+  useEffect(() => {
     if (!scene || !live) return
     const previous = observedScene.current
     // Display-mode and filter changes are presentation, not new code revisions.
@@ -150,11 +166,24 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     followVersion.current = scene.version
     canvas.current?.followElements(pendingFollow.current)
   }, [scene, live, followMode])
-  const changeFollowMode = useCallback((mode: 'off' | 'following' | 'paused') => {
-    if (mode === 'following') { followVersion.current = ''; followSuppressed.current = false }
-    else canvas.current?.cancelCameraTransition()
-    setFollowMode(mode)
-  }, [])
+  const preparedFocus = useRef<MapChangeFocusRequest | null>(null)
+  const completedFocus = useRef<MapChangeFocusRequest | null>(null)
+  const focusHistory = useCallback(() => {
+    if (!live || !focusRequest || focusRequest.repositoryId !== repositoryId || completedFocus.current === focusRequest) return
+    if (preparedFocus.current !== focusRequest) {
+      preparedFocus.current = focusRequest
+      pauseFollow()
+      setDisplayMode('standard')
+      setDebug(false)
+      resetFilters()
+    }
+    if (!scene || !loaded?.canonical || scene.version !== version || debug || displayMode !== 'standard' || selectedTags.length || hiddenTags.length || !canvas.current) return
+    if (focusMapChanges(scene, focusRequest.targets, canvas.current)) {
+      completedFocus.current = focusRequest
+      setSelectedKey(focusRequest.targets[0]?.key ?? '')
+    }
+  }, [live, focusRequest, repositoryId, pauseFollow, resetFilters, scene, loaded?.canonical, version, debug, displayMode, selectedTags, hiddenTags])
+  useEffect(() => { focusHistory() }, [focusHistory])
   const coverageLayout = useMemo(() => view && inspectorEnabled ? computeLayout(view.data) : null, [view, inspectorEnabled])
   const hiddenChanges = useMemo(() => {
     if (!coverageLayout) return 0
@@ -172,11 +201,9 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!(embedded ? embedded.scene.files?.length : diagram?.nodes.length) && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate animateUpdates onPan={pauseFollow} onZoom={pauseFollow} highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={() => { if (selectedPath) focusSelected(); else if (followMode === 'following' && !followSuppressed.current) canvas.current?.followElements(pendingFollow.current) }} onSelectObject={(selection) => { if (selection) pauseFollow(); if (inspectorEnabled) setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') }} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate animateUpdates onPan={pauseFollow} onZoom={pauseFollow} highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={() => { focusHistory(); if (selectedPath) focusSelected(); else if (followMode === 'following' && !followSuppressed.current) canvas.current?.followElements(pendingFollow.current) }} onSelectObject={(selection) => { if (selection) pauseFollow(); if (inspectorEnabled) setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') }} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               showViewMode={!embedded}
-              followMode={live && !embedded ? followMode : undefined}
-              onFollowModeChange={changeFollowMode}
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}

@@ -112,6 +112,7 @@ vi.mock('@chakra-ui/icons', () => ({
   ExternalLinkIcon: () => null,
   DeleteIcon: () => null,
   RepeatIcon: () => null,
+  TimeIcon: () => null,
   SettingsIcon: () => null,
   ChevronLeftIcon: () => null,
   ChevronRightIcon: () => null,
@@ -157,6 +158,7 @@ vi.mock('@chakra-ui/react', async () => {
     FormControl: BoxLike,
     Grid: BoxLike,
     HStack: BoxLike,
+    Icon: BoxLike,
     IconButton: ButtonLike,
     Input: (props: Record<string, unknown>) => ReactModule.createElement('input', props),
     Modal: ModalLike,
@@ -1117,6 +1119,28 @@ describe('Repositories map action', () => {
     expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
     await act(async () => { renderer.unmount() })
     vi.useRealTimers()
+  })
+
+  it('hosts follow controls below the watcher actions and shares pause state with the canvas', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const follow = () => renderer.root.findByProps({ 'aria-label': 'Follow changes' })
+    expect(follow().props.isChecked).toBe(false)
+    expect(follow().parent?.findAllByProps({ 'data-testid': 'watch-start' }).length).toBe(0)
+    const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
+    expect(panel.findByProps({ 'aria-label': 'Follow changes' })).toBeTruthy()
+    await act(async () => follow().props.onChange({ target: { checked: true } }))
+    const canvas = () => renderer.root.findByProps({ 'data-testid': 'mock-impact' })
+    expect(canvas().props.followMode).toBe('following')
+    await act(async () => canvas().props.onFollowModeChange('paused'))
+    expect(follow().props.isChecked).toBe(false)
+    expect(renderer.root.findAllByType('button').some((button) => button.children.includes('Resume follow'))).toBe(false)
+    await act(async () => follow().props.onChange({ target: { checked: true } }))
+    expect(canvas().props.followMode).toBe('following')
+    await act(async () => follow().props.onChange({ target: { checked: false } }))
+    expect(canvas().props.followMode).toBe('off')
+    await act(async () => renderer.unmount())
   })
 
   it('restarts the watcher through UI controls and keeps the CLI fallback collapsed', async () => {

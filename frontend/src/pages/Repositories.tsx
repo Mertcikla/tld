@@ -58,6 +58,7 @@ import {
   type RepositoryImpact as RepositoryImpactResult,
   type LiveRepositoryImpact,
   type RepositoryWatchStatus,
+  type RepositoryImpactScene,
   type SnapshotSourceChange,
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -70,6 +71,8 @@ import RepositoryTargetPicker from '../components/RepositoryTargetPicker'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
 import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
+import type { RepositoryFollowMode } from '../utils/repositoryWatcher'
+import type { MapChangeFocusRequest } from '../utils/repositoryChangeFocus'
 import RepositoryPullRequestPanel from '../components/RepositoryPullRequestPanel'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import {
@@ -367,6 +370,9 @@ export default function Repositories() {
   const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
   const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
+  const [followMode, setFollowMode] = useState<RepositoryFollowMode>('off')
+  const [watchScene, setWatchScene] = useState<RepositoryImpactScene | null>(null)
+  const [focusChangeRequest, setFocusChangeRequest] = useState<MapChangeFocusRequest | null>(null)
   const [mode, setMode] = useState(() => params.get('mode') === 'snapshots' ? 'snapshots' : params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
   const [watchEnabled, setWatchEnabled] = useState(true)
   // Self-hosted servers disable watching; hide the Watch tab entirely.
@@ -632,6 +638,9 @@ export default function Repositories() {
     let timer: ReturnType<typeof setTimeout>
     let retry = 500
     setLive(null)
+    setFollowMode('off')
+    setWatchScene(null)
+    setFocusChangeRequest(null)
     liveVersion.current = ''
     const subscribe = async () => {
       try {
@@ -1576,7 +1585,7 @@ export default function Repositories() {
                 />}
                 {mode === 'live' && (
                   <>
-                    <RepositoryWatcherPanel status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
+                    <RepositoryWatcherPanel key={selected.id} followMode={followMode} onFollowModeChange={setFollowMode} scene={live?.diagram?.scene?.repositoryId === selectedId ? live.diagram.scene : watchScene?.repositoryId === selectedId ? watchScene : null} onFocusChanges={(targets) => { setSelectedPath(''); setFocusChangeRequest({ repositoryId: selectedId, targets }) }} status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
                     <ErrorMessage message={live?.error || ''} />
                   </>
                 )}
@@ -1692,7 +1701,7 @@ export default function Repositories() {
                         />
                     </>
                   )}
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}`} live={mode === 'live'} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}`} live={mode === 'live'} followMode={followMode} onFollowModeChange={setFollowMode} onLiveScene={setWatchScene} focusRequest={focusChangeRequest} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
                 )}
               </>

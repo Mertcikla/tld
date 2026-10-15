@@ -1,5 +1,6 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { getExpandThresholds } from './layoutEngine'
+import { fitWorldRect } from './camera'
 
 interface Rect {
   x: number
@@ -309,4 +310,12 @@ export function viewportForNodeRevealTarget(
     minTargetScreenW: getExpandThresholds(canvasW).end * 1.02,
     minChildScreenW: isMobileLayout ? 76 : 104,
   })
+}
+
+/** Explicit history navigation fits every requested endpoint, including
+ * cross-view connectors, and can zoom in even when the targets are on screen. */
+export function viewportForElements(groups: DiagramGroupLayout[], refs: Array<{ viewId: number; elementId: number }>, width: number, height: number, maxZoom: number): ZUIViewState | null {
+  const targets = refs.map((ref) => findElementFocusTarget(groups, ref.viewId, ref.elementId)).filter((target) => target !== null)
+  const bounds = boundsForRects(targets.map((target) => ({ x: target.absX, y: target.absY, w: target.absW, h: target.absH })))
+  return bounds && width > 0 && height > 0 ? fitWorldRect(bounds, width, height, maxZoom, 0.18) : null
 }
