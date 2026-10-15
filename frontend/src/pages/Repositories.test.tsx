@@ -4,6 +4,15 @@ import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Repositories from './Repositories'
+import type { RepositoryIndexerCheck } from '../api/client'
+
+const missingIndexerCheck: RepositoryIndexerCheck = {
+  ready: false,
+  indexers: [
+    { family: 'go', tool: 'scip-go', languages: ['go'], installed: true, version: '0.2.7', minVersion: '0.1.26', belowMinimum: false, installHint: '', downloadUrl: '', path: '/usr/local/bin/scip-go' },
+    { family: 'dotnet', tool: 'scip-dotnet', languages: ['csharp'], installed: false, version: '', minVersion: '0.2.14', belowMinimum: false, installHint: 'dotnet tool install --global scip-dotnet', downloadUrl: 'https://github.com/sourcegraph/scip-dotnet/releases', path: '' },
+  ],
+}
 
 const { navigateMock, searchParamsMock, setParamsMock } = vi.hoisted(() => ({ navigateMock: vi.fn(), searchParamsMock: vi.fn(), setParamsMock: vi.fn() }))
 
@@ -425,7 +434,9 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith(
+      { path: '/repo/new' }, { signal: expect.any(AbortSignal) },
+    )
     expect(api.repositories.add).toHaveBeenCalledWith(
       { path: '/repo/new' },
       expect.objectContaining({
@@ -460,11 +471,76 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith(
+      { remoteUrl: 'facebook/react' }, { signal: expect.any(AbortSignal) },
+    )
     expect(api.repositories.add).toHaveBeenCalledWith(
       { remoteUrl: 'facebook/react' },
       expect.objectContaining({ materialize: false, onProgress: expect.any(Function) }),
     )
+    renderer.unmount()
+  })
+  it('automatically checks indexers in the add dialog and waits for missing tools to be installed', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce(missingIndexerCheck)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(1)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-go')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'dotnet tool install --global scip-dotnet').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-indexer-download-scip-dotnet' }).props.href).toBe('https://github.com/sourcegraph/scip-dotnet/releases')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(true)
+    // Enter must respect the same requirement as the disabled submit button.
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onKeyDown({ key: 'Enter' }) })
+    expect(api.repositories.add).not.toHaveBeenCalled()
+
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({ ready: true, indexers: [] })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-indexers-recheck' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(2)
+    expect(api.repositories.add).toHaveBeenCalledTimes(1)
+    renderer.unmount()
+  })
+  it('ignores stale indexer checks after changing the repository input', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    let finish!: (check: RepositoryIndexerCheck) => void
+    vi.mocked(api.repositories.checkIndexers).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/old' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    const signal = vi.mocked(api.repositories.checkIndexers).mock.calls[0][1]?.signal
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    await act(async () => { finish(missingIndexerCheck) })
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    expect(api.repositories.checkIndexers).toHaveBeenLastCalledWith({ path: '/repo/new' }, { signal: expect.any(AbortSignal) })
+    renderer.unmount()
+  })
+  it('shows check failures in the dialog and allows a re-check', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockRejectedValueOnce(new Error('Repository is unavailable'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.add).not.toHaveBeenCalled()
+    expect(renderer.root.findAll((node) => node.props.children === 'Repository is unavailable').length).toBeGreaterThan(0)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.props.children === 'Repository is unavailable')).toHaveLength(0)
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(2)
     renderer.unmount()
   })
   it('checks required indexers from the Snapshots tab and re-checks on demand', async () => {
@@ -626,6 +702,45 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: false, deleteClone: true })
+    renderer.unmount()
+  })
+  it('keeps progress visible in the dialog while adding the first repository, then opens Snapshots', async () => {
+    const { api } = await import('../api/client')
+    const added = { ...(await api.repositories.list())[0], id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' }
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([]).mockResolvedValueOnce([added])
+    let finish!: (value: typeof added) => void
+    vi.mocked(api.repositories.add).mockImplementationOnce((_path, handlers) => new Promise((resolve) => {
+      handlers?.onProgress?.({ stage: 'clone', current: 0, total: 0, detail: 'Fetching repository' })
+      finish = resolve
+    }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'Cloning repository · Fetching repository').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.isDisabled).toBe(true)
+    await act(async () => { finish(added) })
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-add-path' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
+    renderer.unmount()
+  })
+  it('keeps the dialog open with an error when adding the first repository fails', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([])
+    vi.mocked(api.repositories.add).mockRejectedValueOnce(new Error('Indexing failed'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.props.children === 'Indexing failed').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/repo/new')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.isDisabled).toBe(false)
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(0)
     renderer.unmount()
   })
   it('shows indexing progress on the Snapshots tab while adding a repository', async () => {

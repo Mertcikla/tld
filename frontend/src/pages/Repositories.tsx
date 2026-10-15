@@ -61,6 +61,7 @@ import {
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RepositorySnapshotsPanel from '../components/RepositorySnapshotsPanel'
+import RepositoryIndexerChecklist from '../components/RepositoryIndexerChecklist'
 import '../styles/editor-panels.css'
 import RepositorySettings from './RepositorySettings'
 import RepositoryHistory from '../components/RepositoryHistory'
@@ -417,9 +418,58 @@ export default function Repositories() {
   const [adding, setAdding] = useState(false)
   const [addTarget, setAddTarget] = useState('')
   const [addError, setAddError] = useState('')
+  const [addIndexerCheck, setAddIndexerCheck] = useState<RepositoryIndexerCheck | null>(null)
+  const [addIndexerError, setAddIndexerError] = useState('')
+  const [checkingAddIndexers, setCheckingAddIndexers] = useState(false)
+  const addIndexerRequest = useRef<{
+    value: string
+    controller: AbortController
+    promise: Promise<RepositoryIndexerCheck | null>
+  } | null>(null)
+  const addSubmitting = useRef(false)
   const [indexerCheck, setIndexerCheck] = useState<RepositoryIndexerCheck | null>(null)
   const [indexersOpen, setIndexersOpen] = useState(true)
   const [checkingIndexers, setCheckingIndexers] = useState(false)
+  const checkAddIndexers = useCallback((value: string, force = false) => {
+    const previous = addIndexerRequest.current
+    if (!force && previous?.value === value) return previous.promise
+    previous?.controller.abort()
+    const controller = new AbortController()
+    setCheckingAddIndexers(true)
+    setAddIndexerCheck(null)
+    setAddIndexerError('')
+    const promise = api.repositories.checkIndexers(parseRepositoryAddInput(value), { signal: controller.signal })
+      .then((check) => {
+        if (controller.signal.aborted) return null
+        setAddIndexerCheck(check)
+        return check
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setAddIndexerError(err instanceof Error ? err.message : 'Could not check required indexers')
+        }
+        return null
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCheckingAddIndexers(false)
+      })
+    addIndexerRequest.current = { value, controller, promise }
+    return promise
+  }, [])
+  useEffect(() => {
+    setAddIndexerCheck(null)
+    setAddIndexerError('')
+    setCheckingAddIndexers(false)
+    const value = addPath.trim()
+    const timer = addOpen && value
+      ? setTimeout(() => { void checkAddIndexers(value) }, 500)
+      : undefined
+    return () => {
+      clearTimeout(timer)
+      addIndexerRequest.current?.controller.abort()
+      addIndexerRequest.current = null
+    }
+  }, [addOpen, addPath, checkAddIndexers])
   const initialized = useRef('')
   const operation = useRef<AbortController | null>(null)
   const selectedRef = useRef(selectedId)
@@ -938,10 +988,7 @@ export default function Repositories() {
       setDeletingSnapshot(false)
     }
   }
-  // checkRepositoryIndexers scouts the selected repository's checkout for the
-  // external SCIP indexers it needs. It backs the checklist on the Snapshots
-  // tab; the add dialog stays low friction and lets the server reject a
-  // repository whose indexers are missing.
+  // Check the selected checkout again after installing or updating indexers.
   const checkRepositoryIndexers = async () => {
     const repository = selected
     if (!repository || checkingIndexers) return
@@ -966,16 +1013,19 @@ export default function Repositories() {
     }
   }
   const handleAddRepository = async () => {
-    if (adding) return
+    if (adding || addSubmitting.current) return
     const value = addPath.trim()
     if (!value) {
       setAddError('Enter a repository path or URL')
       return
     }
-    setAdding(true)
     setAddError('')
+    addSubmitting.current = true
+    const check = await checkAddIndexers(value)
+    addSubmitting.current = false
+    if (!check?.ready) return
+    setAdding(true)
     setAddTarget(value)
-    setAddOpen(false)
     setShowRepositorySettings(false)
     // Switch to the snapshots tab so the page shows the operation progress.
     changeMode('snapshots')
@@ -991,8 +1041,6 @@ export default function Repositories() {
           },
         },
       )
-      setAddPath('')
-      setIndexerCheck(null)
       toast({
         title: 'Repository added',
         description: value,
@@ -1003,6 +1051,10 @@ export default function Repositories() {
       // selectRepo swaps the selection but not the tab; re-assert snapshots so
       // the newly added repository lands on its snapshots page.
       changeMode('snapshots')
+      setIndexerCheck(check)
+      setIndexersOpen(!check.indexers.every((indexer) => indexer.installed && !indexer.belowMinimum))
+      setAddOpen(false)
+      setAddPath('')
     } catch (err) {
       setAddError(
         err instanceof Error ? err.message : 'Could not add repository',
@@ -1253,6 +1305,37 @@ export default function Repositories() {
                         }}
                       />
                     </FormControl>
+                    {addPath.trim() && (
+                      <Box mt={4}>
+                        <RepositoryIndexerChecklist
+                          check={addIndexerCheck}
+                          loading={checkingAddIndexers}
+                          open
+                          onCheck={() => { if (!adding) void checkAddIndexers(addPath.trim(), true) }}
+                        />
+                        {checkingAddIndexers && (
+                          <Text fontSize="xs" color="gray.400" role="status">
+                            Checking required indexers… Remote repositories may need to be cloned first.
+                          </Text>
+                        )}
+                        {addIndexerCheck && !addIndexerCheck.ready && (
+                          <Text fontSize="xs" color="orange.300">
+                            Install the missing indexers on the machine running tlDiagram using the commands or downloads above, then re-check to continue.
+                          </Text>
+                        )}
+                        <ErrorMessage message={addIndexerError} />
+                      </Box>
+                    )}
+                    {adding && (
+                      <Box mt={4} role="status" aria-live="polite" data-testid="repositories-add-progress">
+                        <Text fontSize="sm" mb={2}>
+                          {progress
+                            ? `${indexStageLabel(progress.stage) || progress.stage} · ${progress.detail}${progress.total ? ` · ${progress.current}/${progress.total}` : ''}`
+                            : 'Preparing repository…'}
+                        </Text>
+                        <Progress size="xs" isIndeterminate={!progress?.total} value={progress?.total ? (progress.current / progress.total) * 100 : undefined} />
+                      </Box>
+                    )}
                     {addError && (
                       <Alert status="error" mt={3} borderRadius="md">
                         <AlertIcon />
@@ -1273,8 +1356,9 @@ export default function Repositories() {
                       size="sm"
                       style={accentStyle}
                       data-testid="repositories-add-submit"
-                      isLoading={adding}
-                      isDisabled={!addPath.trim()}
+                      isLoading={adding || checkingAddIndexers}
+                      loadingText={adding ? 'Adding repository' : 'Checking indexers'}
+                      isDisabled={!addPath.trim() || (!!addIndexerCheck && !addIndexerCheck.ready)}
                       onClick={() => void handleAddRepository()}
                     >
                       Add repository

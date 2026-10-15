@@ -33,7 +33,7 @@ export interface RepositoryIndexerChecklistProps {
   check: RepositoryIndexerCheck | null
   loading: boolean
   open: boolean
-  onToggle: () => void
+  onToggle?: () => void
   onCheck: () => void
 }
 
@@ -73,7 +73,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
   return (
     <Box mb={3} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" data-testid="repositories-indexers">
       <Flex px={2} py={1.5} align="center" gap={2}>
-        <IconButton
+        {onToggle && <IconButton
           size="xs"
           variant="ghost"
           aria-label={open ? 'Collapse indexer checks' : 'Expand indexer checks'}
@@ -81,7 +81,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
           data-testid="repositories-indexers-toggle"
           icon={<FaIcon icon={open ? faChevronUp : faChevronDown} size={11} />}
           onClick={onToggle}
-        />
+        />}
         <Text fontSize="xs" fontWeight="semibold">Indexers</Text>
         <Badge
           colorScheme={missing.length ? 'red' : outdated.length ? 'orange' : 'green'}
@@ -140,7 +140,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
                     )}
                   </HStack>
                   <Text fontSize="2xs" color="gray.500">
-                    {indexer.languages.join(', ')}
+                    {[...new Set(indexer.languages)].join(', ')}
                     {indexer.installed ? '' : ' · not installed'}
                     {indexer.belowMinimum ? ' · update recommended' : ''}
                   </Text>

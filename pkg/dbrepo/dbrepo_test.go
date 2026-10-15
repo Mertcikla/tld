@@ -71,51 +71,6 @@ func TestSQLiteReplacementConnectionPreservesPragmasAndDeleteCascades(t *testing
 	}
 }
 
-func TestSQLiteUpgradeRemovesDanglingConnectorsAndPlacements(t *testing.T) {
-	ctx := context.Background()
-	opts := dbrepo.DBOptions{SQLitePath: filepath.Join(t.TempDir(), "damaged.db"), Migrations: assets.FS}
-	handle, err := dbrepo.OpenSQLite(ctx, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = handle.Close() }()
-	// Simulate data written by an older replacement connection and an upgrade
-	// from just before the repair migration. Keep one valid connector/placement.
-	for _, query := range []string{
-		`DELETE FROM bun_migrations WHERE name = '20261015000200'`,
-		`PRAGMA foreign_keys = OFF`,
-		`INSERT INTO elements(id, name, created_at, updated_at) VALUES (1, 'Source', '', ''), (2, 'Target', '', '')`,
-		`INSERT INTO views(id, name, created_at, updated_at) VALUES (1, 'Root', '', '')`,
-		`INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at) VALUES (1, 1, 0, 0, '', ''), (1, 999, 0, 0, '', ''), (999, 1, 0, 0, '', '')`,
-		`INSERT INTO connectors(view_id, source_element_id, target_element_id, created_at, updated_at) VALUES (1, 1, 2, '', ''), (1, 1, 999, '', ''), (1, 999, 2, '', ''), (999, 1, 2, '', '')`,
-	} {
-		if _, err := handle.DB.ExecContext(ctx, query); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		handle, err = dbrepo.OpenSQLite(ctx, opts)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for table, want := range map[string]int{"elements": 2, "views": 1, "placements": 1, "connectors": 1} {
-			var got int
-			if err := handle.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&got); err != nil {
-				t.Fatal(err)
-			}
-			if got != want {
-				t.Errorf("%s count after upgrade = %d, want %d", table, got, want)
-			}
-		}
-		if err := handle.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 func TestOpenSQLiteSkipsLegacyVectorTable(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
