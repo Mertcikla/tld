@@ -108,7 +108,7 @@ language server health with tld doctor.`,
 	c.Flags().BoolVar(&opts.mapGraph, "map", false, "group the dependency graph and materialize the map view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
-	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
+	c.Flags().DurationVar(&opts.debounce, "debounce", watch.DefaultDebounce, "delay used to batch file changes")
 	c.Flags().StringArrayVar(&opts.exclude, "exclude", nil, "repository-relative path to exclude (repeatable)")
 	c.AddCommand(newStatusCmd(), newStopCmd())
 	return c
