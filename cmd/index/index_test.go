@@ -208,6 +208,13 @@ func TestWatchedRustLSPSnapshotCommit(t *testing.T) {
 	testWatchedSemanticSnapshotCommit(t, "rust")
 }
 
+func TestWatchedPyrightSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_PYRIGHT") == "" {
+		t.Skip("set CODEINDEX_TEST_PYRIGHT=1 for Python watch persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "python")
+}
+
 func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
 	t.Helper()
 	t.Setenv("GOWORK", "off")
@@ -220,6 +227,11 @@ func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
 	filename := "a.go"
 	initialSource := "package fixture\nfunc A() { B() }\nfunc B() {}\nfunc C() {}\n"
 	switch language {
+	case "python":
+		filename = "a.py"
+		initialSource = "def A() -> None:\n    B()\n\ndef B() -> None:\n    pass\n\ndef C() -> None:\n    pass\n"
+		writeSource(t, dir, "pyproject.toml", "[project]\nname=\"watch-pyright\"\nversion=\"1.0.0\"\n")
+		writeSource(t, dir, "pyrightconfig.json", `{"include":["*.py"],"typeCheckingMode":"basic"}`)
 	case "rust":
 		filename = "src/lib.rs"
 		if err := os.MkdirAll(filepath.Join(dir, "src"), 0700); err != nil {
@@ -264,7 +276,11 @@ func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
 		return snap
 	}
 	scan("")
-	writeSource(t, dir, filename, strings.Replace(initialSource, "{ B() }", "{ C() }", 1))
+	changedSource := strings.Replace(initialSource, "{ B() }", "{ C() }", 1)
+	if language == "python" {
+		changedSource = strings.Replace(initialSource, "    B()", "    C()", 1)
+	}
+	writeSource(t, dir, filename, changedSource)
 	dirty := scan(initial)
 	if dirty.Provenance != "working_tree" || dirty.GitRevision != initial {
 		t.Fatalf("dirty metadata: %+v", dirty)

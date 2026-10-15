@@ -17,6 +17,7 @@ func FromGlobal(global *workspace.Config) ci.Config {
 		tools := global.Index.Tools
 		cfg.Tools.TypeScriptLanguageServer = firstNonEmpty(tools.TypeScriptLanguageServer, cfg.Tools.TypeScriptLanguageServer)
 		cfg.Tools.Gopls = firstNonEmpty(tools.Gopls, cfg.Tools.Gopls)
+		cfg.Tools.Pyright = firstNonEmpty(tools.Pyright, cfg.Tools.Pyright)
 		cfg.Tools.SCIPGo = firstNonEmpty(tools.SCIPGo, cfg.Tools.SCIPGo)
 		cfg.Tools.SCIPTypeScript = firstNonEmpty(tools.SCIPTypeScript, cfg.Tools.SCIPTypeScript)
 		cfg.Tools.SCIPPython = firstNonEmpty(tools.SCIPPython, cfg.Tools.SCIPPython)

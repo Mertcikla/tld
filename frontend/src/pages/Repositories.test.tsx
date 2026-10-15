@@ -630,6 +630,7 @@ describe('Repositories map action', () => {
     { family: 'go', tool: 'gopls', languages: ['go'], installHint: 'go install golang.org/x/tools/gopls@latest', downloadUrl: 'https://go.dev/gopls/' },
     { family: 'web', tool: 'typescript-language-server', languages: ['typescript'], installHint: 'npm install -g typescript-language-server typescript', downloadUrl: 'https://github.com/typescript-language-server/typescript-language-server' },
     { family: 'rust', tool: 'rust-analyzer', languages: ['rust'], installHint: 'rustup component add rust-analyzer rust-src', downloadUrl: 'https://rust-analyzer.github.io/' },
+    { family: 'python', tool: 'pyright-langserver', languages: ['python'], installHint: 'npm install -g pyright', downloadUrl: 'https://github.com/microsoft/pyright' },
   ])('shows $tool health failures and their install action', async ({ family, tool, languages, installHint, downloadUrl }) => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({

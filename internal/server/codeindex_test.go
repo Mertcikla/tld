@@ -657,3 +657,24 @@ func TestRepositoryServiceRustTool(t *testing.T) {
 		t.Fatalf("Rust requirement: %+v", tools)
 	}
 }
+
+func TestRepositoryServicePyrightTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname=\"fixture\"\nversion=\"1.0.0\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.py"), []byte("def a() -> None:\n    pass\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := workspace.DefaultConfig()
+	cfg.Index.Tools.SCIPPython = filepath.Join(t.TempDir(), "missing-scip-python")
+	cfg.Index.Tools.Pyright = filepath.Join(t.TempDir(), "missing-pyright")
+	service := &repositoryService{config: cfg}
+	tools, err := service.requiredIndexers(context.Background(), dir)
+	if err != nil || len(tools) != 2 {
+		t.Fatalf("Python tools: %+v %v", tools, err)
+	}
+	if tools[0].Tool != "scip-python" || tools[1].Tool != "pyright-langserver" || tools[1].Installed || tools[1].CheckError == "" || !strings.Contains(tools[1].InstallHint, "pyright") {
+		t.Fatalf("Pyright requirement: %+v", tools)
+	}
+}

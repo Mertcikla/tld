@@ -175,6 +175,7 @@ type IndexConfig struct {
 // IndexToolsConfig overrides the external SCIP indexer binaries resolved on PATH.
 type IndexToolsConfig struct {
 	Gopls                    string `yaml:"gopls"`
+	Pyright                  string `yaml:"pyright"`
 	TypeScriptLanguageServer string `yaml:"typescript_language_server"`
 	SCIPGo                   string `yaml:"scip_go"`
 	SCIPTypeScript           string `yaml:"scip_typescript"`
@@ -256,6 +257,7 @@ func DefaultConfig() *Config {
 		Index: IndexConfig{
 			Tools: IndexToolsConfig{
 				Gopls:                    "gopls",
+				Pyright:                  "pyright-langserver",
 				TypeScriptLanguageServer: "typescript-language-server",
 				SCIPGo:                   "scip-go",
 				SCIPTypeScript:           "scip-typescript",

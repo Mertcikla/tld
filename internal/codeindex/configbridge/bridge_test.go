@@ -57,3 +57,15 @@ func TestTypeScriptLanguageServerConfiguration(t *testing.T) {
 		t.Fatalf("env server=%q", got)
 	}
 }
+
+func TestPyrightConfiguration(t *testing.T) {
+	global := workspace.DefaultConfig()
+	global.Index.Tools.Pyright = "/opt/pyright-langserver"
+	if got := FromGlobal(global).Tools.Pyright; got != "/opt/pyright-langserver" {
+		t.Fatalf("server=%q", got)
+	}
+	t.Setenv("CODEINDEX_PYRIGHT", "/env/pyright-langserver")
+	if got := FromGlobal(global).Tools.Pyright; got != "/env/pyright-langserver" {
+		t.Fatalf("env server=%q", got)
+	}
+}
