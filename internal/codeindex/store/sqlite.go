@@ -517,6 +517,7 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources); err != nil {
 		return nil, fmt.Errorf("load snapshot statistics: %w", err)
 	}
+	setSnapshotCompatibility(&snap)
 	return &snap, nil
 }
 
@@ -561,6 +562,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		_ = json.Unmarshal([]byte(projects), &snap.Projects)
 		_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
 		_ = json.Unmarshal([]byte(tools), &snap.ToolVersions)
+		setSnapshotCompatibility(&snap)
 		out = append(out, &snap)
 	}
 	if err := rows.Err(); err != nil {
@@ -604,6 +606,7 @@ func (s *Store) SnapshotRefs(ctx context.Context, repositoryID string) ([]*pb.Sn
 		_ = json.Unmarshal([]byte(projects), &snap.Projects)
 		_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
 		_ = json.Unmarshal([]byte(tools), &snap.ToolVersions)
+		setSnapshotCompatibility(&snap)
 		out = append(out, &snap)
 	}
 	if err := rows.Err(); err != nil {

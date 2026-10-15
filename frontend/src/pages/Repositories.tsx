@@ -113,6 +113,7 @@ function targetSummary(value: string, snapshots: CodeSnapshot[]) {
 }
 function targetStatus(value: string, snapshots: CodeSnapshot[], maps: CompletedRepositoryMap[]) {
   const snapshot = snapshotForTarget(value, snapshots)
+  if (snapshot && snapshot.compatible !== true) return { label: 'Incompatible', colorScheme: 'red' }
   const mapped = !!snapshot && maps.some((map) => map.result.snapshotId === snapshot.id)
   return mapped
     ? { label: 'Mapped', colorScheme: 'green' }
@@ -762,8 +763,12 @@ export default function Repositories() {
     restored.current = { base: '', head: '' }
     setSelectedId(id)
   }
+  const targetUsable = (target: string) => !!target && (
+    !target.startsWith('snapshot:') || snapshotForTarget(target, snapshots)?.compatible === true
+  )
   const run = async (kind: 'base' | 'head' | 'compare') => {
     if (!selected || busy || (mode === 'pr' && !pullRequest)) return
+    if (kind === 'compare' ? !targetUsable(base) || !targetUsable(head) : !targetUsable(kind === 'base' ? base : head)) return
     const repositoryId = selected.id
     const controller = new AbortController()
     operation.current = controller
@@ -859,7 +864,7 @@ export default function Repositories() {
     }
   }
   const handleMapSnapshot = async (snapshot: CodeSnapshot) => {
-    if (!selected || busy) return
+    if (!selected || busy || snapshot.compatible !== true) return
     const repositoryId = selected.id
     const controller = new AbortController()
     operation.current = controller
@@ -1397,7 +1402,7 @@ export default function Repositories() {
                                       { value: 'working_tree', label: 'Working tree · local contents' },
                                       ...(!value || !value.startsWith('commit:') ? [] : [{ value, label: targetSummary(value, snapshots) }]),
                                     ] },
-                                    { label: 'Saved snapshots', options: [...snapshots].reverse().map((snapshot) => ({
+                                    { label: 'Saved snapshots', options: [...snapshots].reverse().filter((snapshot) => snapshot.compatible === true).map((snapshot) => ({
                                       value: `snapshot:${snapshot.id}`,
                                       label: `${short(snapshot.gitRevision)} · ${snapshot.gitBranch || 'detached / non-Git'}${snapshot.commitMessage ? ` · ${snapshot.commitMessage}` : ''} · ${age(snapshot.createdUnix)}`,
                                     })) },
@@ -1456,7 +1461,7 @@ export default function Repositories() {
                           data-testid="repositories-compare"
                           isLoading={busy}
                           loadingText="Comparing…"
-                          isDisabled={!base || !head || dataLoading}
+                          isDisabled={!targetUsable(base) || !targetUsable(head) || dataLoading}
                           onClick={() => void run('compare')}
                         >
                           Compare

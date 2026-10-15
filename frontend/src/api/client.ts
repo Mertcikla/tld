@@ -208,6 +208,8 @@ export interface CodeSnapshot {
   gitRevision: string
   gitBranch: string
   ingestionStatus: string
+  compatible?: boolean
+  incompatibilityReason?: string
   projects: CodeSnapshotProject[]
   warnings: string[]
   provenance?: string
@@ -610,6 +612,8 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
     gitRevision: snapshot.gitRevision,
     gitBranch: snapshot.gitBranch,
     ingestionStatus: snapshot.ingestionStatus,
+    compatible: snapshot.compatible,
+    incompatibilityReason: snapshot.incompatibilityReason,
     projects: snapshot.projects.map((project) => ({
       root: project.root,
       language: project.language,

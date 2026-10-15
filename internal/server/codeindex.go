@@ -535,6 +535,7 @@ func (s *codeIndexService) CaptureSnapshot(ctx context.Context, req *connect.Req
 	if err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	snapshot.Compatible = indexer.CheckSnapshot(snapshot) == nil
 	return stream.Send(&codeindexv1.CaptureSnapshotEvent{Event: &codeindexv1.CaptureSnapshotEvent_Snapshot{Snapshot: snapshot}})
 }
 
@@ -542,6 +543,15 @@ func (s *codeIndexService) DiffSnapshots(ctx context.Context, req *connect.Reque
 	msg := req.Msg
 	if msg.GetFromSnapshotId() == "" || msg.GetToSnapshotId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("from_snapshot_id and to_snapshot_id are required"))
+	}
+	for _, id := range []string{msg.GetFromSnapshotId(), msg.GetToSnapshotId()} {
+		snapshot, err := s.store.Snapshot(ctx, id)
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		if err := indexer.CheckSnapshot(snapshot); err != nil {
+			return nil, impactError(err)
+		}
 	}
 	diff, err := s.store.Diff(ctx, msg.GetFromSnapshotId(), msg.GetToSnapshotId(), msg.GetSourcesOnly())
 	if err != nil {

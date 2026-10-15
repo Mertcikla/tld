@@ -338,7 +338,8 @@ export default function RepositorySnapshotsPanel({
                 <Badge colorScheme={provenanceColorScheme(snapshot.provenance)} fontSize="2xs" textTransform="none">
                   {provenanceLabel(snapshot.provenance)}
                 </Badge>
-                {mapped && <Badge colorScheme="green" fontSize="2xs" textTransform="none">Mapped</Badge>}
+                {snapshot.compatible === true && mapped && <Badge colorScheme="green" fontSize="2xs" textTransform="none">Mapped</Badge>}
+                {snapshot.compatible !== true && <Badge colorScheme="red" fontSize="2xs" textTransform="none">Incompatible</Badge>}
                 {snapshot.ingestionStatus !== 'complete' && (
                   <Badge colorScheme="orange" fontSize="2xs" textTransform="none">
                     {snapshot.ingestionStatus || 'Incomplete'}
@@ -372,16 +373,18 @@ export default function RepositorySnapshotsPanel({
                 </Text>
               )}
               <HStack spacing={2} mt={2}>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  color="gray.300"
-                  data-testid={`repositories-snapshot-view-${snapshot.id}`}
-                  aria-expanded={viewing}
-                  onClick={() => setViewingId(viewing ? '' : snapshot.id)}
-                >
-                  {viewing ? 'Hide details' : 'View details'}
-                </Button>
+                {snapshot.compatible === true && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    color="gray.300"
+                    data-testid={`repositories-snapshot-view-${snapshot.id}`}
+                    aria-expanded={viewing}
+                    onClick={() => setViewingId(viewing ? '' : snapshot.id)}
+                  >
+                    {viewing ? 'Hide details' : 'View details'}
+                  </Button>
+                )}
                 <Box flex={1} />
                 <Tooltip label="Delete snapshot" placement="top" openDelay={200}>
                   <IconButton
@@ -399,7 +402,12 @@ export default function RepositorySnapshotsPanel({
                   />
                 </Tooltip>
               </HStack>
-              {viewing && <SnapshotDetails snapshot={snapshot} mapped={mapped} busy={busy} onMap={onMap} onOpenMap={onOpenMap} />}
+              {snapshot.compatible !== true && (
+                <Text fontSize="xs" color="red.300" mt={2}>
+                  {snapshot.incompatibilityReason || 'Snapshot version is unavailable or incompatible. Delete it and capture a new snapshot.'}
+                </Text>
+              )}
+              {viewing && snapshot.compatible === true && <SnapshotDetails snapshot={snapshot} mapped={mapped} busy={busy} onMap={onMap} onOpenMap={onOpenMap} />}
             </Box>
           )
         })}

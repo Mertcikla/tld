@@ -210,6 +210,8 @@ describe('codeindex snapshot mapping', () => {
     expect(mapCodeSnapshot(snapshot)).toEqual({
       id: 'snap-1',
       repositoryId: 'repo-1',
+      compatible: false,
+      incompatibilityReason: '',
       createdUnix: 100,
       gitRevision: 'abc',
       gitBranch: 'main',

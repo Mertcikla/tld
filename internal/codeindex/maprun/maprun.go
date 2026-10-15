@@ -17,6 +17,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/community"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/metrics"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
@@ -59,6 +60,16 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		}
 	}
 	repositoryID, snapshotID := req.RepositoryID, req.SnapshotID
+	snapshot, err := deps.Codeindex.Snapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, false, err
+	}
+	if snapshot.RepositoryId != repositoryID {
+		return nil, false, fmt.Errorf("snapshot belongs to another repository")
+	}
+	if err := indexer.CheckSnapshot(snapshot); err != nil {
+		return nil, false, err
+	}
 	overrides, err := deps.Codeindex.RepositoryMapOverrides(ctx, repositoryID)
 	if err != nil {
 		return nil, false, err

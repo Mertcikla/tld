@@ -2,6 +2,7 @@ package maprun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/community"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -38,6 +40,36 @@ func TestBuildFileInputsUsesStableKeys(t *testing.T) {
 	}
 }
 
+func TestRunRejectsIncompatibleSnapshotBeforeCachedMap(t *testing.T) {
+	ctx := context.Background()
+	ws, err := wsstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &codeindexv1.Snapshot{Id: "snapshot", RepositoryId: "repo", IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions()}
+	g := cgraph.NewGraph("repo", snap.Id)
+	g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, "a.go", "go", &codeindexv1.SourceAnchor{Path: "a.go"}, "", "", nil)
+	if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{Workspace: ws, Codeindex: idx, Options: mapconfig.FromGlobal(nil)}
+	req := Request{RepositoryID: "repo", SnapshotID: snap.Id}
+	if _, _, err := Run(ctx, deps, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an upgrade making the producer stamps obsolete while the map
+	// remains cached. Validation must precede the active-map cache lookup.
+	if _, err := ws.DB().ExecContext(ctx, `UPDATE codeindex_snapshots SET tool_versions_json = '{}' WHERE id = ?`, snap.Id); err != nil {
+		t.Fatal(err)
+	}
+	result, cached, err := Run(ctx, deps, req, nil)
+	if !errors.Is(err, indexer.ErrIncompatibleSnapshot) || cached || result != nil {
+		t.Fatalf("incompatible cached map accepted: cached=%v result=%v err=%v", cached, result, err)
+	}
+}
+
 func TestStableFactKeyFallsBackToStructuralKey(t *testing.T) {
 	fact := &codeindexv1.CodeFact{
 		Id:     "snap-1-file-a",
@@ -64,7 +96,7 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		for _, path := range []string{"shared.go", "only-" + name + ".go"} {
 			g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, path, "go", &codeindexv1.SourceAnchor{Path: path}, "", "", nil)
 		}
-		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{Id: name, RepositoryId: "repo"}, g); err != nil {
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: name, RepositoryId: "repo"}, g); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -229,7 +261,7 @@ func TestColdSnapshotsKeepCommunityResources(t *testing.T) {
 				}
 			}
 		}
-		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{Id: snapshot, RepositoryId: "repo"}, g); err != nil {
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: snapshot, RepositoryId: "repo"}, g); err != nil {
 			t.Fatal(err)
 		}
 		res, cached, err := Run(ctx, deps, Request{RepositoryID: "repo", SnapshotID: snapshot}, nil)

@@ -13,11 +13,21 @@ const snapshot = (id: string, provenance: string): CodeSnapshot => ({
   gitRevision: 'sha',
   gitBranch: 'main',
   ingestionStatus: 'complete',
+  compatible: true,
   projects: [],
   warnings: [],
   contentFingerprint: 'fp',
 })
 describe('repository targets', () => {
+  it('excludes incompatible and unversioned snapshots from defaults and commit reuse', () => {
+    const current = snapshot('current', 'commit')
+    const old = { ...snapshot('old', 'commit'), compatible: false }
+    const legacy = { ...snapshot('legacy', 'commit'), compatible: undefined }
+    const history = { headSha: 'head', commits: [{ sha: 'head', parents: ['parent'] }] } as RepositoryGitHistory
+    expect(defaultRepositoryTargets([current, old, legacy], history)).toEqual(['commit:parent', 'commit:head'])
+    expect(snapshotForTarget('commit:sha', [current, old, legacy])?.id).toBe('current')
+    expect(defaultRepositoryTargets([current, old, snapshot('second', 'commit')], null)).toEqual(['snapshot:current', 'snapshot:second'])
+  })
   it('uses two latest saved snapshots rather than forcing head to the repository latest pointer', () => {
     expect(
       defaultRepositoryTargets(

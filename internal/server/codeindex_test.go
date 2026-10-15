@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -31,6 +32,7 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	repoID := cgraph.RepositoryID(root)
 
 	base := &codeindexv1.Snapshot{
+		IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(),
 		Id:           "snap-1",
 		RepositoryId: repoID,
 		CreatedUnix:  100,
@@ -49,6 +51,7 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	}
 
 	next := &codeindexv1.Snapshot{
+		IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(),
 		Id:           "snap-2",
 		RepositoryId: repoID,
 		CreatedUnix:  200,

@@ -8,6 +8,7 @@ import (
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
 )
@@ -106,7 +107,7 @@ func (s *codeIndexService) mapWithCommunities(ctx context.Context, req *connect.
 		send(&codeindexv1.Progress{Stage: stage, Current: uint32(current), Total: uint32(total), Detail: detail})
 	})
 	if err != nil {
-		if errors.Is(err, maprun.ErrNoFileFacts) {
+		if errors.Is(err, maprun.ErrNoFileFacts) || errors.Is(err, indexer.ErrIncompatibleSnapshot) {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)

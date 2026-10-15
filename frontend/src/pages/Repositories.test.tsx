@@ -38,11 +38,11 @@ vi.mock('../api/client', () => ({
       }]),
       checkIndexers: vi.fn(async () => ({ ready: true, indexers: [] })),
       snapshots: vi.fn(async () => [
-        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
-        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', projects: [], warnings: [] },
+        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
+        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
       ]),
       captureSnapshot: vi.fn(async (_repositoryId: string, _handlers?: { workingTree?: boolean; onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => ({
-        id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', projects: [], warnings: [],
+        id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [],
       })),
       settings: vi.fn(async () => ({ mapDefaults: { resolution: 1, minGroupSize: 2, minRootGroups: 3, maxRootGroups: 20, maxChildren: 8, maxDepth: 4, maxLeafFiles: 40, maxConnectorsPerView: 40, maxLeafConnectorsPerView: 12, crossViewConnectors: true, crossViewMaxViews: 8, crossViewMaxElementsPerView: 2, crossViewMaxConnectorsPerView: 8, crossViewMaxConnectorsPerElement: 8 }, mapOverrides: {}, effectiveMap: {}, remotes: [], isGit: false, currentBranch: '', headSha: '' })),
       updateMapConfiguration: vi.fn(),
@@ -1038,7 +1038,7 @@ describe('Repositories map action', () => {
       createdUnix: 100 + index,
       gitRevision: `rev-${index}`,
       gitBranch: 'main',
-      ingestionStatus: 'complete',
+      ingestionStatus: 'complete', compatible: true,
       projects: [],
       warnings: [],
       provenance: 'commit',
@@ -1146,6 +1146,35 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-map-snap-1' }).props.onClick() })
     expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-1', signal: expect.any(AbortSignal) }))
+    await act(async () => { renderer.unmount() })
+  })
+
+  it.each([false, undefined])('makes incompatible snapshots deletion-only (compatible=%s)', async (compatible) => {
+    const { api } = await import('../api/client')
+    const snapshots = await api.repositories.snapshots('repo-1')
+    const versionedSnapshots = [
+      { ...snapshots[0], compatible, incompatibilityReason: 'Snapshot versions are incompatible. Capture a new snapshot.' },
+      snapshots[1],
+    ]
+    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(versionedSnapshots).mockResolvedValueOnce(versionedSnapshots)
+    searchParamsMock.mockReturnValue(new URLSearchParams('base=snapshot:snap-0&head=snapshot:snap-1'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const basePicker = renderer.root.findByProps({ 'data-testid': 'repositories-base-target' })
+    const snapshotChoices = basePicker.props.groups.flatMap((group: { options: { value: string }[] }) => group.options)
+    expect(snapshotChoices.some((option: { value: string }) => option.value === 'snapshot:snap-0')).toBe(false)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.isDisabled).toBe(true)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(api.repositories.compare).not.toHaveBeenCalled()
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    const row = renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-snap-0' })
+    expect(row.findAll((node) => node.props.children === 'Incompatible').length).toBeGreaterThan(0)
+    for (const action of ['view', 'map', 'open-map']) {
+      expect(row.findAllByProps({ 'data-testid': `repositories-snapshot-${action}-snap-0` })).toHaveLength(0)
+    }
+    await act(async () => { row.findByProps({ 'data-testid': 'repositories-snapshot-delete-snap-0' }).props.onClick({ stopPropagation: () => {} }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick() })
+    expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-0')
     await act(async () => { renderer.unmount() })
   })
 
