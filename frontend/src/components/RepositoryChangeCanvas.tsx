@@ -174,7 +174,10 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
           zIndex={sidePane.isOverlay ? 30 : undefined}
           borderTop={{ base: '1px solid', lg: 'none' }}
           borderColor="whiteAlpha.100"
+          data-zui-native-wheel="true"
+          onMouseMove={(event) => event.stopPropagation()}
         >
+          <Box position="absolute" inset={0} overflow="hidden">
           {inspectorEnabled ? <RepositoryImpactInspector
             scene={scene}
             selectedKey={selectedKey}
@@ -198,6 +201,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             onExpand={sidePane.expand}
             onDock={sidePane.collapse}
           />}
+          </Box>
         </Box>
         </Flex>
       </Flex>}
