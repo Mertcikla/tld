@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import { CheckCircleIcon, EditIcon, WarningIcon } from '@chakra-ui/icons'
 import { ImportIcon, NavigationIcon } from '../Icons'
-import { MermaidMarkdownContext } from './mermaidContext'
+import { MermaidHeaderActionsContext, MermaidMarkdownContext } from './mermaidContext'
 
 type MermaidApi = typeof import('mermaid').default
 
@@ -133,6 +133,7 @@ function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean, view
 }
 
 export function MermaidPreview({ code }: MermaidPreviewProps) {
+  const headerActions = useContext(MermaidHeaderActionsContext)
   const {
     blockStatusByCode,
     canEdit,
@@ -250,6 +251,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
             <EditIcon boxSize="14px" />
           </button>
         )}
+        {headerActions && <span style={{ display: 'inline-flex', alignItems: 'center', position: 'absolute', left: '50%', transform: 'translateX(-50%)', gap: 4 }}>{headerActions}</span>}
       </figcaption>
       {renderState.status === 'empty' ? (
         <div className="tld-mermaid-preview__empty">Empty Mermaid block</div>

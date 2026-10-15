@@ -7,6 +7,7 @@ import { toast } from '../utils/toast'
 import { MarkdownIcon } from './Icons'
 import { MarkdownPreview } from './ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from './ViewMarkdownPanel/styles'
+import { MermaidHeaderActionsContext } from './ViewMarkdownPanel/mermaidContext'
 
 type MermaidPaneState =
   | { status: 'idle'; markdown: string; warnings: string[]; error: '' }
@@ -42,6 +43,7 @@ export default function RepositoryChangeMermaid({
   const [remoteState, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', warnings: [], error: '' })
   const state: MermaidPaneState = embeddedMarkdown == null ? remoteState : { status: 'ready', markdown: embeddedMarkdown, warnings: [], error: '' }
   const [copied, setCopied] = useState(false)
+  const [zoom, setZoom] = useState(1)
 
   useEffect(() => {
     if (embeddedMarkdown != null || !open || !repositoryId || !comparisonKey) return undefined
@@ -61,6 +63,7 @@ export default function RepositoryChangeMermaid({
 
   useEffect(() => {
     setCopied(false)
+    setZoom(1)
   }, [state.markdown])
 
   const handleCopy = useCallback(async () => {
@@ -158,8 +161,17 @@ export default function RepositoryChangeMermaid({
       <Box
         flex={1}
         minH={0}
-        overflowY="auto"
-        sx={markdownPanelBodySx}
+        overflow="auto"
+        bg="var(--bg-main)"
+        sx={{
+          ...markdownPanelBodySx,
+          '& .tld-markdown-preview': { padding: 0, minHeight: 0 },
+          '& .tld-mermaid-preview': { margin: 0, border: 0, borderRadius: 0, overflow: 'visible', background: 'var(--bg-main)' },
+          '& .tld-mermaid-preview__header': { position: 'sticky', top: 0, left: 0, zIndex: 1 },
+          '& .tld-mermaid-preview__body': { padding: 0, minHeight: 0, overflow: 'visible' },
+          '.tld-mermaid-preview__body > div': { width: `${zoom * 100}%` },
+          '.tld-mermaid-preview__body svg': { display: 'block', width: '100%', maxWidth: 'none !important', height: 'auto', margin: 0 },
+        }}
         data-testid="repository-change-mermaid"
       >
         {state.status === 'loading' ? (
@@ -171,13 +183,19 @@ export default function RepositoryChangeMermaid({
             {state.error}
           </Text>
         ) : state.markdown ? (
-          <Box p={4}>
+          <Box>
             {state.warnings.length > 0 && (
               <Text mb={2} fontSize="xs" color="orange.300">
                 {state.warnings.join(' ')}
               </Text>
             )}
-            <MarkdownPreview markdown={state.markdown} />
+            <MermaidHeaderActionsContext.Provider value={<>
+              <Button size="xs" variant="ghost" aria-label="Zoom out diagram" isDisabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>−</Button>
+              <Button size="xs" variant="ghost" aria-label="Reset diagram zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</Button>
+              <Button size="xs" variant="ghost" aria-label="Zoom in diagram" isDisabled={zoom >= 4} onClick={() => setZoom((value) => Math.min(4, value + 0.25))}>+</Button>
+            </>}>
+              <MarkdownPreview markdown={state.markdown} />
+            </MermaidHeaderActionsContext.Provider>
           </Box>
         ) : (
           <Text p={4} fontSize="sm" color="gray.500">

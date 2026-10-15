@@ -4,6 +4,32 @@ import { waitForStableZuiCamera, zuiViewState } from '../helpers/zui'
 
 const hash = '#' + readFileSync(new URL('../../../internal/mermaid/fixtures/scene-url.txt', import.meta.url), 'utf8').trim().split('#')[1]
 
+test('diagram zoom uses native SVG sizing without moving the repository canvas', async ({ page }) => {
+  await page.route((url) => url.pathname.startsWith('/api/'), (route) => route.abort())
+  await page.goto('/compare?debugZuiTest=1' + hash)
+  const diagram = page.getByTestId('repository-change-mermaid').locator('.tld-mermaid-preview__body svg')
+  await expect(diagram).toBeVisible()
+  await expect(page.locator('.tld-mermaid-preview__header').getByRole('button', { name: 'Zoom in diagram', exact: true })).toBeVisible()
+  const header = (await page.locator('.tld-mermaid-preview__header').boundingBox())!
+  const reset = (await page.getByRole('button', { name: 'Reset diagram zoom', exact: true }).boundingBox())!
+  expect(Math.abs(reset.x + reset.width / 2 - header.x - header.width / 2)).toBeLessThan(1)
+  expect(await page.locator('.tld-mermaid-preview__body').evaluate((element) => ({
+    padding: getComputedStyle(element).padding,
+    overflow: getComputedStyle(element).overflow,
+  }))).toEqual({ padding: '0px', overflow: 'visible' })
+  expect(await page.getByTestId('markdown-preview').evaluate((element) => getComputedStyle(element).padding)).toBe('0px')
+  const originalWidth = (await diagram.boundingBox())!.width
+  const camera = await waitForStableZuiCamera(page)
+  await page.getByRole('button', { name: 'Zoom in diagram', exact: true }).click()
+  await expect.poll(async () => (await diagram.boundingBox())!.width).toBeGreaterThan(originalWidth * 1.2)
+  expect(await zuiViewState(page)).toEqual(camera)
+  const viewport = page.getByTestId('repository-change-mermaid')
+  await viewport.evaluate((element) => { element.scrollLeft = 40 })
+  expect(await viewport.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Reset diagram zoom', exact: true }).click()
+  await expect.poll(async () => Math.round((await diagram.boundingBox())!.width)).toBe(Math.round(originalWidth))
+})
+
 for (const width of [380, 1000]) {
   test(`change diagram scrolls without interacting with the canvas at ${width}px`, async ({ page, browserName, isMobile }) => {
     await page.addInitScript((width) => {

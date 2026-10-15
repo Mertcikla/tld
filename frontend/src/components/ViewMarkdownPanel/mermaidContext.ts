@@ -1,5 +1,7 @@
-import { createContext } from 'react'
+import { createContext, type ReactNode } from 'react'
 import type { MermaidMarkdownSyncStatus } from '../../api/client'
+
+export const MermaidHeaderActionsContext = createContext<ReactNode>(null)
 
 export interface MermaidMarkdownContextValue {
   blockStatusByCode: Map<string, MermaidMarkdownSyncStatus>
