@@ -498,28 +498,20 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		}
 	}
 
-	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(runCtx)
 	defer stopHeartbeat()
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		stoppingSince := time.Time{}
 		for {
 			if requested, err := e.store.WatchStopRequested(heartbeatCtx, watchKey); err == nil && requested {
-				if stoppingSince.IsZero() {
-					stoppingSince = time.Now()
-					persist(func(s *cstore.WatchState) { s.State = "stopping" })
-				}
-				// Escalate if the scan loop does not stop promptly, so a stop can
-				// never leave the watcher stuck.
-				if time.Since(stoppingSince) > cstore.WatchStopDeadline {
-					cancelRun()
-					return
-				}
-			} else {
-				stoppingSince = time.Time{}
+				// Interrupt the detector, indexing work, and semantic subprocesses
+				// now. The controller's deadline is only for failed shutdowns.
+				cancelRun()
+				persist(func(s *cstore.WatchState) { s.State = "stopping" })
+				return
 			}
 			persist(nil)
 			select {
@@ -594,6 +586,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			// A detector transition without a fresh capture should not happen;
 			// capture directly rather than scanning a zero state.
 			if qs, err = gitstate.CaptureQuick(runCtx, root); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
 				persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 				continue
 			}
@@ -616,6 +611,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			}
 			persist(func(s *cstore.WatchState) { s.Stage = stage; s.State = "scanning" })
 		})
+		if runCtx.Err() != nil {
+			return nil
+		}
 		if err != nil {
 			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
