@@ -1,7 +1,11 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -271,6 +275,7 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 
 	missingCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{
 		SCIPGo: filepath.Join(t.TempDir(), "scip-go-does-not-exist"),
+		Gopls:  filepath.Join(t.TempDir(), "gopls-does-not-exist"),
 	}}}
 	_, missingRoutes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: missingCfg})
 	missingServer := httptest.NewServer(missingRoutes)
@@ -285,8 +290,8 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 		t.Fatal("check should not be ready while scip-go is missing")
 	}
 	indexers := check.Msg.GetIndexers()
-	if len(indexers) != 1 {
-		t.Fatalf("indexers = %+v, want one", indexers)
+	if len(indexers) != 2 {
+		t.Fatalf("indexers = %+v, want SCIP and LSP", indexers)
 	}
 	if indexer := indexers[0]; indexer.GetFamily() != "go" || indexer.GetTool() != "scip-go" || indexer.GetInstalled() {
 		t.Fatalf("indexer = %+v, want a missing scip-go", indexer)
@@ -296,6 +301,9 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	}
 	if indexers[0].GetMinVersion() == "" || indexers[0].GetDownloadUrl() == "" {
 		t.Fatalf("indexer metadata = %+v, want a minimum version and download URL", indexers[0])
+	}
+	if indexers[1].GetTool() != "gopls" || indexers[1].GetInstalled() || !strings.Contains(indexers[1].GetInstallHint(), "gopls") {
+		t.Fatalf("expected missing gopls prerequisite: %+v", indexers[1])
 	}
 
 	stream, err := missingClient.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: dir}))
@@ -312,7 +320,17 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	if err := os.WriteFile(tool, []byte("#!/bin/sh\necho scip-go 0.1.0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	readyCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{SCIPGo: tool}}}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TLD_TEST_GOPLS_HEALTH", "1")
+	gopls := filepath.Join(t.TempDir(), "gopls")
+	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'golang.org/x/tools/gopls v0.24.0'; exit 0; fi\nexec '" + strings.ReplaceAll(exe, "'", "'\\''") + "' -test.run=TestGoplsHealthProcess\n"
+	if err := os.WriteFile(gopls, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	readyCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{SCIPGo: tool, Gopls: gopls}}}
 	_, readyRoutes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: readyCfg})
 	readyServer := httptest.NewServer(readyRoutes)
 	defer readyServer.Close()
@@ -325,11 +343,65 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	if !check.Msg.GetReady() {
 		t.Fatalf("check = %+v, want ready", check.Msg)
 	}
-	if indexers := check.Msg.GetIndexers(); len(indexers) != 1 || !indexers[0].GetInstalled() {
+	if indexers := check.Msg.GetIndexers(); len(indexers) != 2 || !indexers[0].GetInstalled() || !indexers[1].GetInstalled() {
 		t.Fatalf("indexers = %+v, want installed scip-go", indexers)
 	}
 	if indexer := check.Msg.GetIndexers()[0]; indexer.GetVersion() == "" || !indexer.GetBelowMinimum() {
 		t.Fatalf("indexer = %+v, want a detected version below the minimum", indexer)
+	}
+	// A runnable executable that cannot speak LSP is unavailable, and the UI
+	// receives the concrete probe failure through the existing Connect RPC.
+	readyCfg.Index.Tools.Gopls = tool
+	check, err = readyClient.CheckRepositoryIndexers(ctx, connect.NewRequest(&codeindexv1.CheckRepositoryIndexersRequest{Path: dir}))
+	if err != nil || check.Msg.GetReady() || check.Msg.GetIndexers()[1].GetInstalled() || !strings.Contains(check.Msg.GetIndexers()[1].GetCheckError(), "LSP health check:") {
+		t.Fatalf("unhealthy gopls: %+v %v", check, err)
+	}
+}
+
+// TestGoplsHealthProcess is a subprocess fixture for the real LSP health probe.
+// It prevents readiness checks from depending on developer-machine tooling.
+func TestGoplsHealthProcess(t *testing.T) {
+	if os.Getenv("TLD_TEST_GOPLS_HEALTH") != "1" {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		size := 0
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				os.Exit(0)
+			}
+			if strings.TrimSpace(line) == "" {
+				break
+			}
+			if strings.HasPrefix(line, "Content-Length:") {
+				size, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:")))
+			}
+		}
+		data := make([]byte, size)
+		if _, err := io.ReadFull(reader, data); err != nil {
+			os.Exit(1)
+		}
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(data, &req); err != nil {
+			os.Exit(1)
+		}
+		if req.Method == "exit" {
+			os.Exit(0)
+		}
+		if len(req.ID) == 0 {
+			continue
+		}
+		var result any
+		if req.Method == "initialize" {
+			result = map[string]any{"capabilities": map[string]any{"definitionProvider": true}}
+		}
+		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+		_, _ = fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(response), response)
 	}
 }
 

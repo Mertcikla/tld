@@ -14,8 +14,10 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/digest"
 	"github.com/mertcikla/codeindex/gitstate"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -182,6 +184,89 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	}
 	if len(empty.Nodes) != 0 {
 		t.Fatal("revert did not clear live comparison")
+	}
+}
+
+func TestWatchedLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_LSP=1 for watch LSP persistence parity")
+	}
+	t.Setenv("GOWORK", "off")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "config", "user.name", "Test")
+	testGit(t, dir, "config", "user.email", "test@example.com")
+	writeSource(t, dir, "go.mod", "module example.com/watchlsp\n\ngo 1.26\n")
+	initialSource := "package fixture\nfunc A() { B() }\nfunc B() {}\nfunc C() {}\n"
+	writeSource(t, dir, "a.go", initialSource)
+	testGit(t, dir, "add", ".")
+	testGit(t, dir, "commit", "-m", "initial")
+	initial := testGit(t, dir, "rev-parse", "HEAD")
+	sq, err := localstore.OpenLocal(ctx, &workspace.Config{}, t.TempDir(), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sq.Close() }()
+	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+	cfg := config.Default()
+	semantic := indexer.NewWatchSession(ctx, cfg, dir)
+	defer semantic.Close()
+	eng := &engine{store: idx, ws: sq, cfg: cfg, out: io.Discard, semantics: semantic}
+	scan := func(previous string) *pb.Snapshot {
+		t.Helper()
+		state, err := gitstate.CaptureQuick(ctx, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, _, _, _, err := eng.scanWatched(ctx, dir, state, previous)
+		if err != nil || len(snap.GetWarnings()) != 0 {
+			t.Fatalf("scan: %v %v", err, snap.GetWarnings())
+		}
+		return snap
+	}
+	scan("")
+	writeSource(t, dir, "a.go", strings.Replace(initialSource, "{ B() }", "{ C() }", 1))
+	dirty := scan(initial)
+	if dirty.Provenance != "working_tree" || dirty.GitRevision != initial {
+		t.Fatalf("dirty metadata: %+v", dirty)
+	}
+	saved, err := idx.LoadGraph(ctx, dirty.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshSnap, fresh, err := (indexer.Pipeline{Config: cfg, RepositoryID: eng.repoID}).Build(ctx, &pb.IndexRequest{Directory: dir}, nil)
+	if err != nil || len(freshSnap.GetWarnings()) != 0 {
+		t.Fatalf("fresh: %v %v", err, freshSnap.GetWarnings())
+	}
+	fingerprint := func(snap *pb.Snapshot, g *graph.Graph) string {
+		facts := make([]*pb.CodeFact, 0, len(g.Facts))
+		for _, fact := range g.Facts {
+			facts = append(facts, fact)
+		}
+		edges := make([]*pb.EdgeFact, 0, len(g.EdgeFacts))
+		for _, edge := range g.EdgeFacts {
+			edges = append(edges, edge)
+		}
+		return digest.Snapshot(snap, facts, edges)
+	}
+	if fingerprint(dirty, saved) != fingerprint(freshSnap, fresh) {
+		t.Fatal("persisted LSP snapshot differs from SCIP")
+	}
+	testGit(t, dir, "add", "a.go")
+	testGit(t, dir, "commit", "-m", "commit live edit")
+	committed := scan(initial)
+	if committed.Id == dirty.Id || committed.Provenance != "commit" || committed.GitRevision == initial || committed.CommitMessage != "commit live edit" {
+		t.Fatalf("commit metadata: %+v", committed)
+	}
+	old, err := idx.Snapshot(ctx, dirty.Id)
+	if err != nil || old.Provenance != "working_tree" || old.GitRevision != initial {
+		t.Fatalf("dirty snapshot was mutated: %+v %v", old, err)
+	}
+	live, err := idx.Impact(ctx, eng.repoID, "live")
+	if err != nil || len(live.Nodes) != 0 {
+		t.Fatalf("commit did not clear live changes: %+v %v", live, err)
 	}
 }
 

@@ -245,6 +245,7 @@ func (s *repositoryService) requiredIndexers(ctx context.Context, root string) (
 			BelowMinimum: status.BelowMinimum,
 			DownloadUrl:  status.DownloadURL,
 			Path:         status.Path,
+			CheckError:   status.Error,
 		})
 	}
 	return requirements, nil

@@ -80,7 +80,12 @@ incremental indexing after a debounce. Each new commit gets an immutable
 snapshot from its committed contents. Watch always saves an affected-file
 change overlay, available in Repositories > Live changes. Compare maps can
 compare commits or saved snapshots, always showing the full computed
-neighbourhood of unchanged elements by dependency hops.`,
+neighbourhood of unchanged elements by dependency hops.
+
+Go watches warm gopls alongside the initial SCIP index and use it for supported
+function-body edits. Other changes and unavailable language servers fall back
+to SCIP. Configure gopls with index.tools.gopls or CODEINDEX_GOPLS, and check
+language server health with tld doctor.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -123,6 +128,7 @@ type engine struct {
 	// manifests persists working-tree file hashes across watch scans so repeat
 	// scans only rehash files that moved.
 	manifests gitstate.ManifestCache
+	semantics *indexer.WatchSession
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -459,6 +465,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	// Warm the language server while the initial committed SCIP baseline builds.
+	e.semantics = indexer.NewWatchSession(runCtx, e.cfg, root)
+	defer e.semantics.Close()
 
 	var mu sync.Mutex
 	persist := func(mutate func(*cstore.WatchState)) {
@@ -664,7 +673,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
 	defer tracker.Finish()
-	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Progress: func(p indexer.Progress) {
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Semantics: e.semantics, Progress: func(p indexer.Progress) {
 		reportStage(p.Stage)
 		tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail)
 	}}

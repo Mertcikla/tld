@@ -387,7 +387,7 @@ export interface RepositoryIndexProgress {
   detail: string
 }
 
-// RepositoryIndexerRequirement is one external SCIP indexer a repository needs
+// RepositoryIndexerRequirement is one external indexing tool a repository needs
 // based on the project families discovered in it.
 export interface RepositoryIndexerRequirement {
   family: string
@@ -400,6 +400,7 @@ export interface RepositoryIndexerRequirement {
   belowMinimum: boolean
   downloadUrl: string
   path: string
+  checkError?: string
 }
 
 // RepositoryIndexerCheck is the result of inspecting a repository's required
@@ -2218,6 +2219,7 @@ export const api = {
             belowMinimum: item.belowMinimum,
             downloadUrl: item.downloadUrl,
             path: item.path,
+            checkError: item.checkError,
           })),
         }
       } catch (e) {

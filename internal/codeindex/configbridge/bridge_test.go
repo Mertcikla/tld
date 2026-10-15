@@ -33,3 +33,15 @@ func TestFromGlobalEnvOverridesGlobal(t *testing.T) {
 		t.Fatalf("tool path = %q, want env override", cfg.Tools.SCIPGo)
 	}
 }
+
+func TestGoplsConfiguration(t *testing.T) {
+	global := workspace.DefaultConfig()
+	global.Index.Tools.Gopls = "/opt/gopls"
+	if got := FromGlobal(global).Tools.Gopls; got != "/opt/gopls" {
+		t.Fatalf("gopls=%q", got)
+	}
+	t.Setenv("CODEINDEX_GOPLS", "/env/gopls")
+	if got := FromGlobal(global).Tools.Gopls; got != "/env/gopls" {
+		t.Fatalf("env gopls=%q", got)
+	}
+}

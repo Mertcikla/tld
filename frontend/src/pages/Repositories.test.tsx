@@ -626,6 +626,27 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-go')).toHaveLength(0)
     renderer.unmount()
   })
+  it('shows language server health failures and their install action', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
+      ready: false,
+      indexers: [{
+        family: 'go', tool: 'gopls', languages: ['go'], installed: false,
+        installHint: 'go install golang.org/x/tools/gopls@latest',
+        version: 'golang.org/x/tools/gopls v0.24.0', minVersion: '', belowMinimum: false,
+        downloadUrl: 'https://go.dev/gopls/', path: '/usr/local/bin/gopls',
+        checkError: 'LSP health check: language server disconnected',
+      }],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+    expect(hostNodes(renderer, 'repositories-indexer-gopls')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'LSP health check: language server disconnected').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-gopls')).toHaveLength(1)
+    renderer.unmount()
+  })
   it('collapses the indexer checklist when every indexer is ready', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
