@@ -310,7 +310,7 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "index.tools.scip_dart", Env: []string{"TLD_INDEX_SCIP_DART"}, Description: "Path or name of the scip-dart indexer."},
 	{Key: "index.tools.scip_php", Env: []string{"TLD_INDEX_SCIP_PHP"}, Description: "Path or name of the scip-php indexer."},
 	{Key: "index.tools.scip_ruby", Env: []string{"TLD_INDEX_SCIP_RUBY"}, Description: "Path or name of the scip-ruby indexer."},
-	{Key: "index.tools.rust_analyzer", Env: []string{"TLD_INDEX_RUST_ANALYZER"}, Description: "Path or name of the rust-analyzer binary used for SCIP."},
+	{Key: "index.tools.rust_analyzer", Env: []string{"TLD_INDEX_RUST_ANALYZER"}, Description: "Path or name of rust-analyzer used for SCIP and Rust watch updates."},
 	{Key: "index.tools.timeout_seconds", Env: []string{"TLD_INDEX_TOOL_TIMEOUT_SECONDS"}, Description: "Per-indexer invocation timeout in seconds."},
 	{Key: "map.grouping.resolution", Env: []string{"TLD_MAP_GROUPING_RESOLUTION"}, Description: "Louvain resolution: higher values produce more, smaller communities."},
 	{Key: "map.grouping.min_group_size", Env: []string{"TLD_MAP_GROUPING_MIN_GROUP_SIZE"}, Description: "Merge leaf groups smaller than this into their strongest sibling."},

@@ -201,6 +201,13 @@ func TestWatchedTypeScriptLSPSnapshotCommit(t *testing.T) {
 	testWatchedSemanticSnapshotCommit(t, "typescript")
 }
 
+func TestWatchedRustLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_RUST_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_RUST_LSP=1 for watch Rust LSP persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "rust")
+}
+
 func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
 	t.Helper()
 	t.Setenv("GOWORK", "off")
@@ -212,12 +219,22 @@ func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
 	testGit(t, dir, "config", "user.email", "test@example.com")
 	filename := "a.go"
 	initialSource := "package fixture\nfunc A() { B() }\nfunc B() {}\nfunc C() {}\n"
-	if language == "typescript" {
+	switch language {
+	case "rust":
+		filename = "src/lib.rs"
+		if err := os.MkdirAll(filepath.Join(dir, "src"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		initialSource = "pub fn a() { B() }\n#[allow(non_snake_case)] fn B() {}\n#[allow(non_snake_case)] fn C() {}\n"
+		writeSource(t, dir, "Cargo.toml", "[package]\nname=\"watch-rust-lsp\"\nversion=\"0.1.0\"\nedition=\"2021\"\n")
+		writeSource(t, dir, ".gitignore", "target/\n")
+		writeSource(t, dir, "Cargo.lock", "version = 4\n\n[[package]]\nname = \"watch-rust-lsp\"\nversion = \"0.1.0\"\n")
+	case "typescript":
 		filename = "a.ts"
 		initialSource = "export function A():void { B() }\nexport function B():void {}\nexport function C():void {}\n"
 		writeSource(t, dir, "package.json", `{"name":"watch-typescript-lsp","version":"1.0.0"}`)
 		writeSource(t, dir, "tsconfig.json", `{"compilerOptions":{"strict":true,"target":"ES2022"},"include":["*.ts"]}`)
-	} else {
+	default:
 		writeSource(t, dir, "go.mod", "module example.com/watchlsp\n\ngo 1.26\n")
 	}
 	writeSource(t, dir, filename, initialSource)

@@ -637,3 +637,23 @@ func TestRepositoryServiceTypeScriptTools(t *testing.T) {
 		t.Fatalf("TypeScript requirements: %+v", tools)
 	}
 }
+
+func TestRepositoryServiceRustTool(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname=\"fixture\"\nversion=\"0.1.0\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib.rs"), []byte("pub fn a() {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := workspace.DefaultConfig()
+	cfg.Index.Tools.RustAnalyzer = filepath.Join(t.TempDir(), "missing-rust-analyzer")
+	service := &repositoryService{config: cfg}
+	tools, err := service.requiredIndexers(context.Background(), dir)
+	if err != nil || len(tools) != 1 {
+		t.Fatalf("Rust tools: %+v %v", tools, err)
+	}
+	if tools[0].Tool != "rust-analyzer" || tools[0].Installed || tools[0].CheckError == "" || !strings.Contains(tools[0].InstallHint, "rust-src") {
+		t.Fatalf("Rust requirement: %+v", tools)
+	}
+}
