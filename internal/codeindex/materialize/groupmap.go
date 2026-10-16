@@ -24,6 +24,7 @@ type GroupMapInput struct {
 	RepositoryRoot   string
 	// RepositoryRemoteURL is the canonical remote of the repository, when known.
 	RepositoryRemoteURL string
+	RepositoryBranch    string
 	SnapshotID          string
 	// Files are the repository's file facts, indexed by group member.
 	Files []community.File
@@ -57,6 +58,7 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 		RepositoryName:      input.RepositoryName,
 		RepositoryRoot:      input.RepositoryRoot,
 		RepositoryRemoteURL: input.RepositoryRemoteURL,
+		RepositoryBranch:    input.RepositoryBranch,
 		SnapshotID:          input.SnapshotID,
 		Files:               input.Files,
 		Edges:               input.Edges,

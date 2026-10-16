@@ -63,6 +63,7 @@ import {
 import ConfirmDialog from '../components/ConfirmDialog'
 import RepositorySnapshotsPanel from '../components/RepositorySnapshotsPanel'
 import RepositoryIndexerChecklist from '../components/RepositoryIndexerChecklist'
+import RepositoryFolderPicker from '../components/RepositoryFolderPicker'
 import '../styles/editor-panels.css'
 import RepositorySettings from './RepositorySettings'
 import RepositoryHistory from '../components/RepositoryHistory'
@@ -436,6 +437,7 @@ export default function Repositories() {
   const [deletingSnapshot, setDeletingSnapshot] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
   const [adding, setAdding] = useState(false)
   const [addTarget, setAddTarget] = useState('')
   const [addError, setAddError] = useState('')
@@ -1245,12 +1247,14 @@ export default function Repositories() {
                 _hover={{ bg: 'whiteAlpha.50' }}
                 onClick={() => {
                   setAddError('')
+                  setFolderPickerOpen(false)
                   setAddOpen(true)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     setAddError('')
+                    setFolderPickerOpen(false)
                     setAddOpen(true)
                   }
                 }}
@@ -1302,21 +1306,48 @@ export default function Repositories() {
                         Index a local repository or clone a remote one
                         (path, owner/repo or Git URL).
                       </Text>
-                      <Input
-                        autoFocus
-                        size="sm"
-                        placeholder="/path/to/repository or owner/repo"
-                        value={addPath}
-                        data-testid="repositories-add-path"
-                        isDisabled={adding}
-                        onChange={(e) => {
-                          setAddPath(e.target.value)
-                          setAddError('')
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void handleAddRepository()
-                        }}
-                      />
+                      <HStack align="start">
+                        <Input
+                          autoFocus
+                          size="sm"
+                          minW={0}
+                          aria-label="Repository path or URL"
+                          placeholder="/path/to/repository or owner/repo"
+                          value={addPath}
+                          data-testid="repositories-add-path"
+                          isDisabled={adding}
+                          onChange={(e) => {
+                            setAddPath(e.target.value)
+                            setAddError('')
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void handleAddRepository()
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          flexShrink={0}
+                          leftIcon={<FontAwesomeIcon icon={faFolderOpen} />}
+                          isDisabled={adding}
+                          aria-expanded={folderPickerOpen}
+                          data-testid="repositories-add-browse"
+                          onClick={() => setFolderPickerOpen((open) => !open)}
+                        >
+                          Browse
+                        </Button>
+                      </HStack>
+                      {folderPickerOpen && !adding && (
+                        <RepositoryFolderPicker
+                          initialPath={parseRepositoryAddInput(addPath.trim()).path ?? ''}
+                          onSelect={(path) => {
+                            setAddPath(path)
+                            setAddError('')
+                            setFolderPickerOpen(false)
+                          }}
+                          onCancel={() => setFolderPickerOpen(false)}
+                        />
+                      )}
                     </FormControl>
                     {addPath.trim() && (
                       <Box mt={4}>
@@ -1337,11 +1368,17 @@ export default function Repositories() {
                           </Text>
                         )}
                         <ErrorMessage message={addIndexerError} />
+                        {addIndexerCheck?.warnings?.map((warning) => (
+                          <Alert key={warning} status="warning" mt={2} borderRadius="md" alignItems="flex-start">
+                            <AlertIcon />
+                            <Text fontSize="xs" minW={0} wordBreak="break-word">{warning}</Text>
+                          </Alert>
+                        ))}
                       </Box>
                     )}
                     {adding && (
                       <Box mt={4} role="status" aria-live="polite" data-testid="repositories-add-progress">
-                        <Text fontSize="sm" mb={2}>
+                        <Text fontSize="sm" mb={2} isTruncated title={progress?.detail}>
                           {progress
                             ? `${indexStageLabel(progress.stage) || progress.stage} · ${progress.detail}${progress.total ? ` · ${progress.current}/${progress.total}` : ''}`
                             : 'Preparing repository…'}

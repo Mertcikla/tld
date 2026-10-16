@@ -25,6 +25,7 @@ type MapInput struct {
 	// one. Materialized elements carry it so source links survive across
 	// checkouts and machines; the local root is only a fallback.
 	RepositoryRemoteURL string
+	RepositoryBranch    string
 	SnapshotID          string
 	Files               []community.File
 	// Edges are file-to-file dependencies resolved from symbol edges.
@@ -1126,13 +1127,22 @@ func mapViewName(input MapInput) string {
 
 func mapTopElement(input MapInput) core.LibraryElement {
 	kind := "repository"
-	description := "Repository map"
-	if input.RepositoryRemoteURL != "" {
-		description = "Repository map · " + input.RepositoryRemoteURL
-	} else if input.RepositoryRoot != "" {
-		description = "Repository map · " + input.RepositoryRoot
+	description := "Generated map for code grounding"
+	repo := input.RepositoryRemoteURL
+	if repo == "" {
+		repo = input.RepositoryRoot
 	}
-	return core.LibraryElement{Name: mapViewName(input), Kind: &kind, Description: &description}
+	if repo == "" {
+		repo = input.RepositoryName
+	}
+	return core.LibraryElement{
+		Name:         mapViewName(input),
+		Kind:         &kind,
+		Description:  &description,
+		Repo:         optionalStr(repo),
+		RepositoryID: optionalStr(input.RepositoryID),
+		Branch:       optionalStr(input.RepositoryBranch),
+	}
 }
 
 // ownerMatches reports whether an existing view's owner satisfies the desired

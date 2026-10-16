@@ -409,6 +409,13 @@ export interface RepositoryIndexerRequirement {
 export interface RepositoryIndexerCheck {
   indexers: RepositoryIndexerRequirement[]
   ready: boolean
+  warnings?: string[]
+}
+
+export interface RepositoryFolders {
+  path: string
+  parentPath: string
+  folders: string[]
 }
 
 // RepositoryMapResult summarizes a completed mapper run.
@@ -2198,6 +2205,10 @@ export const api = {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
+    browseFolders: (path = '', signal?: AbortSignal): Promise<RepositoryFolders> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.browseRepositoryFolders({ path }, { signal })
+      return { path: response.path, parentPath: response.parentPath, folders: response.folders }
+    }),
     checkIndexers: async (
       input: string | { path?: string; remoteUrl?: string },
       options: { signal?: AbortSignal } = {},
@@ -2209,6 +2220,7 @@ export const api = {
         const response = await codeIndexRepositoryClient.checkRepositoryIndexers(request, { signal: options.signal })
         return {
           ready: response.ready,
+          warnings: response.warnings,
           indexers: response.indexers.map((item) => ({
             family: item.family,
             tool: item.tool,

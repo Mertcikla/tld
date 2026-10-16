@@ -210,6 +210,7 @@ func (s *repositoryService) CheckRepositoryIndexers(ctx context.Context, req *co
 	return connect.NewResponse(&codeindexv1.CheckRepositoryIndexersResponse{
 		Indexers: requirements,
 		Ready:    len(missingTools(requirements)) == 0,
+		Warnings: repositoryAddWarnings(ctx, root, requirements),
 	}), nil
 }
 

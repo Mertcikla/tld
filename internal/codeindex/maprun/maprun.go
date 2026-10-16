@@ -202,6 +202,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		RepositoryName:      repositoryName,
 		RepositoryRoot:      repositoryRoot,
 		RepositoryRemoteURL: repositoryRemote,
+		RepositoryBranch:    snapshot.GetGitBranch(),
 		SnapshotID:          snapshotID,
 		Files:               files,
 		Groups:              grouping.Groups,

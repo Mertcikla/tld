@@ -96,9 +96,13 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		for _, path := range []string{"shared.go", "only-" + name + ".go"} {
 			g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, path, "go", &codeindexv1.SourceAnchor{Path: path}, "", "", nil)
 		}
-		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: name, RepositoryId: "repo"}, g); err != nil {
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: name, RepositoryId: "repo", GitBranch: "branch-" + name}, g); err != nil {
 			t.Fatal(err)
 		}
+	}
+	const remote = "https://github.com/acme/repo.git"
+	if err := idx.SetRepositoryOrigin(ctx, "repo", remote, false); err != nil {
+		t.Fatal(err)
 	}
 	deps := Deps{Workspace: ws, Codeindex: idx, Options: mapconfig.FromGlobal(nil)}
 	run := func(id string, wantCached bool) *codeindexv1.MapResult {
@@ -106,6 +110,15 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		result, cached, err := Run(ctx, deps, Request{RepositoryID: "repo", SnapshotID: id}, nil)
 		if err != nil || cached != wantCached {
 			t.Fatalf("map %s: cached=%v err=%v", id, cached, err)
+		}
+		var repo, repositoryID, branch, description string
+		if err := ws.DB().QueryRowContext(ctx,
+			`SELECT e.repo, e.repository_id, e.branch, e.description FROM elements e JOIN views v ON v.owner_element_id = e.id WHERE v.id = ?`,
+			result.ViewId).Scan(&repo, &repositoryID, &branch, &description); err != nil {
+			t.Fatal(err)
+		}
+		if repo != remote || repositoryID != "repo" || branch != "branch-"+id || description != "Repository map" {
+			t.Fatalf("map %s repository metadata: repo=%q repository_id=%q branch=%q description=%q", id, repo, repositoryID, branch, description)
 		}
 		var count int
 		if err := ws.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, "only-"+id+".go").Scan(&count); err != nil {

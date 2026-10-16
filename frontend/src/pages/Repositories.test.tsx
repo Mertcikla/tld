@@ -48,6 +48,7 @@ vi.mock('../api/client', () => ({
         managed: false,
       }]),
       checkIndexers: vi.fn(async () => ({ ready: true, indexers: [] })),
+      browseFolders: vi.fn(async (path: string) => ({ path: path || '/home/dev', parentPath: '/', folders: ['project'] })),
       snapshots: vi.fn(async () => [
         { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
         { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
@@ -489,6 +490,61 @@ describe('Repositories map action', () => {
       { remoteUrl: 'facebook/react' },
       expect.objectContaining({ materialize: false, onProgress: expect.any(Function) }),
     )
+    renderer.unmount()
+  })
+  it('browses folders and checks the selected absolute path before adding', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-browse' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenCalledWith('', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Open folder project' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenLastCalledWith('/home/dev/project', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-folder-up' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenLastCalledWith('/', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Open folder project' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-folder-select' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/project')
+    expect(hostNodes(renderer, 'repositories-folder-picker')).toHaveLength(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({ path: '/project' }, { signal: expect.any(AbortSignal) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.add).toHaveBeenCalledWith({ path: '/project' }, expect.any(Object))
+    renderer.unmount()
+  })
+  it('preserves the repository input when folder selection is cancelled or fails', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.browseFolders).mockRejectedValueOnce(new Error('Cannot browse folder'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/existing' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-browse' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenCalledWith('/repo/existing', expect.any(AbortSignal))
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-folder-select' }).props.isDisabled).toBe(true)
+    expect(renderer.root.findAll((node) => node.props.children === 'Cannot browse folder').length).toBeGreaterThan(0)
+    act(() => { renderer.root.findAll((node) => node.type === 'button' && node.props.children === 'Cancel selection')[0].props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/repo/existing')
+    renderer.unmount()
+  })
+  it('shows Git and indexer warnings without blocking Add or Enter', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    const warnings = ['No Git repository was found at this folder\'s root.', 'No required indexers were detected.']
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({ ready: true, indexers: [], warnings } as RepositoryIndexerCheck)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    for (const warning of warnings) {
+      expect(renderer.root.findAll((node) => node.props.children === warning).length).toBeGreaterThan(0)
+    }
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onKeyDown({ key: 'Enter' }) })
+    expect(api.repositories.add).toHaveBeenCalledTimes(1)
     renderer.unmount()
   })
   it('automatically checks indexers in the add dialog and waits for missing tools to be installed', async () => {
