@@ -1627,47 +1627,55 @@ export default function Repositories() {
                         })}
                       </Flex>
                       <HStack spacing={2} flexShrink={0} ml="auto" flexWrap="wrap">Impact
-                        <VStack spacing={2} data-testid="repositories-radius">
-                          <Text fontSize="9px" lineHeight="10px" color="gray.500" letterSpacing="0.02em">Impact radius</Text>
-                          <HStack spacing={1} h="22px">
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              minW="15px"
-                              h="24px"
-                              px={0}
-                              fontSize="md"
-                              aria-label="Decrease comparison context"
-                              isDisabled={busy || blastRadius === 0}
-                              onClick={() => setBlastRadius((radius) => Math.max(0, radius - 1))}
-                            >−</Button>
-                            <Text minW="12px" textAlign="center" fontSize="sm" fontWeight="semibold" color="gray.200" aria-label={`Comparison context ${blastRadius}`}>
-                              {blastRadius}
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              minW="15px"
-                              h="24px"
-                              px={0}
-                              fontSize="md"
-                              aria-label="Increase comparison context"
-                              isDisabled={busy || blastRadius === 2}
-                              onClick={() => setBlastRadius((radius) => Math.min(2, radius + 1))}
-                            >+</Button>
-                          </HStack>
-                          <svg aria-label={`Comparison context graph, ${blastRadius} hops`} role="img" width="68" height="12" viewBox="0 0 68 14" fill="none">
-                            <path d="M14 7H30" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
-                            <path d="M38 7H54" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
-                            <rect x="1" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--accent)" strokeWidth="1.5" />
-                            <rect x="27" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
-                            <rect x="54" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
-                          </svg>
-                        </VStack>
+                        <Tooltip
+                          label="Controls how much surrounding context appears on the map: 0 shows direct changes only, 1 includes directly connected code, and 2 extends one connection further."
+                          placement="top"
+                          openDelay={200}
+                          hasArrow
+                          maxW="280px"
+                        >
+                          <VStack spacing={2} data-testid="repositories-radius" tabIndex={0}>
+                            <Text fontSize="9px" lineHeight="10px" color="gray.500" letterSpacing="0.02em">Impact radius</Text>
+                            <HStack spacing={1} h="22px">
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                minW="15px"
+                                h="24px"
+                                px={0}
+                                fontSize="md"
+                                aria-label="Decrease comparison context"
+                                isDisabled={busy || blastRadius === 0}
+                                onClick={() => setBlastRadius((radius) => Math.max(0, radius - 1))}
+                              >−</Button>
+                              <Text minW="12px" textAlign="center" fontSize="sm" fontWeight="semibold" color="gray.200" aria-label={`Comparison context ${blastRadius}`}>
+                                {blastRadius}
+                              </Text>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                minW="15px"
+                                h="24px"
+                                px={0}
+                                fontSize="md"
+                                aria-label="Increase comparison context"
+                                isDisabled={busy || blastRadius === 2}
+                                onClick={() => setBlastRadius((radius) => Math.min(2, radius + 1))}
+                              >+</Button>
+                            </HStack>
+                            <svg aria-label={`Comparison context graph, ${blastRadius} hops`} role="img" width="68" height="12" viewBox="0 0 68 14" fill="none">
+                              <path d="M14 7H30" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
+                              <path d="M38 7H54" stroke="var(--border-color,#4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
+                              <rect x="1" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--accent)" strokeWidth="1.5" />
+                              <rect x="27" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 1 ? 1 : 0.2} />
+                              <rect x="54" y="2" width="15" height="10" rx="3" fill="var(--bg-element)" stroke="var(--border-color, #4A5568)" strokeWidth="1.5" opacity={blastRadius >= 2 ? 1 : 0.2} />
+                            </svg>
+                          </VStack>
+                        </Tooltip>
                         <Button
                           {...accentStyle}
                           size="sm"
-                          h="40px"
+                          h="48px"
                           px={4}
                           borderRadius="md"
                           leftIcon={<RepositoryModeIcon mode="compare" />}
