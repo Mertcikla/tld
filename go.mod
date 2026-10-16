@@ -3,8 +3,8 @@ module github.com/mertcikla/tld/v2
 go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261012095416-f5a9ce65b701.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261012095416-f5a9ce65b701.2
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261016000016-18fb90417569.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261016000016-18fb90417569.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/google/uuid v1.6.0
