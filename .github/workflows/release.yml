@@ -92,7 +92,7 @@ jobs:
   goreleaser:
     if: ${{ !inputs.npm_only }}
     needs: verify-binaries
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     environment: release
     permissions:
       contents: write
@@ -121,16 +121,23 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Import Apple Certificates
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --timeout 90m
         env:
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
 
       - name: Attest release artifacts provenance
         uses: actions/attest@v4
@@ -140,6 +147,55 @@ jobs:
             dist/*.zip
             dist/checksums.txt
 
+      - name: Save Linux release archive for Docker
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-linux-release
+          path: dist/tld_Linux_x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Commit version bump
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "chore: bump version to ${{ env.RELEASE_TAG }} [skip ci]"
+          branch: main
+          file_pattern: 'frontend/package.json frontend/package-lock.json cmd/version/version.go go.mod go.sum'
+
+      - name: Publish @tldiagram/core-ui to npm
+        working-directory: frontend
+        shell: bash
+        run: |
+          npm run build
+          NPM_TAG=latest
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            NPM_TAG=beta
+          fi
+          npm publish --access public --tag "$NPM_TAG" --provenance
+
+  docker:
+    if: ${{ !inputs.npm_only }}
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
+
+      - name: Download Linux release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-linux-release
+          path: dist
+
       - name: Extract standalone Linux release binary for Docker
         run: tar -xzf dist/tld_Linux_x86_64.tar.gz tld
 
@@ -148,7 +204,6 @@ jobs:
           docker build --platform linux/amd64 \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             -t tld:ci .
-
 
       - name: Publish Docker image to GitHub Container Registry
         id: docker_publish
@@ -174,24 +229,6 @@ jobs:
           subject-digest: ${{ steps.docker_publish.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
-
-      - name: Commit version bump
-        uses: stefanzweifel/git-auto-commit-action@v7
-        with:
-          commit_message: "chore: bump version to ${{ env.RELEASE_TAG }} [skip ci]"
-          branch: main
-          file_pattern: 'frontend/package.json frontend/package-lock.json cmd/version/version.go go.mod go.sum'
-
-      - name: Publish @tldiagram/core-ui to npm
-        working-directory: frontend
-        shell: bash
-        run: |
-          npm run build
-          NPM_TAG=latest
-          if [[ "${RELEASE_TAG}" == *-* ]]; then
-            NPM_TAG=beta
-          fi
-          npm publish --access public --tag "$NPM_TAG" --provenance
 
   npm-retry:
     name: Retry npm publish

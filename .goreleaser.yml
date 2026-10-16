@@ -5,7 +5,8 @@ project_name: tld
 before:
   hooks:
     - go mod tidy
-    - sed -i 's/Version = ".*"/Version = "{{ .Version }}"/' cmd/version/version.go
+    - >-
+      sh -c 'sed "s/Version = \".*\"/Version = \"{{ .Version }}\"/" cmd/version/version.go > cmd/version/version.go.tmp && mv cmd/version/version.go.tmp cmd/version/version.go'
     - npm --prefix frontend version --no-git-tag-version --allow-same-version {{ .Version }}
     - npm --prefix frontend ci
     - npm --prefix frontend run build:app
@@ -24,6 +25,12 @@ builds:
     binary: tld
     ldflags:
       - -s -w -X github.com/mertcikla/tld/v2/cmd/version.Version={{.Version}}
+    hooks:
+      post:
+        # Signing must finish before GoReleaser creates archives and checksums.
+        # Snapshots remain usable locally without Apple credentials.
+        - cmd: '{{ if and (eq .Os "darwin") (not .IsSnapshot) }}bash scripts/ci/sign-notarize-cli.sh "{{ .Path }}"{{ else }}true{{ end }}'
+          output: true
 
 archives:
   - formats:
