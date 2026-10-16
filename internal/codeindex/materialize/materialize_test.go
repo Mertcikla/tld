@@ -35,8 +35,12 @@ func TestMapTopElementRepositoryMetadata(t *testing.T) {
 			if got.Branch == nil || *got.Branch != "feature/map" {
 				t.Fatalf("branch = %v, want feature/map", got.Branch)
 			}
-			if got.Description == nil || *got.Description != "Repository map" {
-				t.Fatalf("description = %v, want Repository map", got.Description)
+			const wantDescription = "Generated map for code grounding"
+			if got.Description == nil {
+				t.Fatalf("description = nil, want %q", wantDescription)
+			}
+			if *got.Description != wantDescription {
+				t.Fatalf("description = %q, want %q", *got.Description, wantDescription)
 			}
 		})
 	}

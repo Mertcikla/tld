@@ -117,7 +117,7 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 			result.ViewId).Scan(&repo, &repositoryID, &branch, &description); err != nil {
 			t.Fatal(err)
 		}
-		if repo != remote || repositoryID != "repo" || branch != "branch-"+id || description != "Repository map" {
+		if repo != remote || repositoryID != "repo" || branch != "branch-"+id || description != "Generated map for code grounding" {
 			t.Fatalf("map %s repository metadata: repo=%q repository_id=%q branch=%q description=%q", id, repo, repositoryID, branch, description)
 		}
 		var count int
