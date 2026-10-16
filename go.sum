@@ -249,8 +249,8 @@ github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
 github.com/mattn/go-runewidth v0.0.23 h1:7ykA0T0jkPpzSvMS5i9uoNn2Xy3R383f9HDx3RybWcw=
 github.com/mattn/go-runewidth v0.0.23/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
-github.com/mertcikla/codeindex v0.0.5 h1:320W8dClbIAIXJjTpyRPiSN8LXiCfapnS4amm8iwdM0=
-github.com/mertcikla/codeindex v0.0.5/go.mod h1:4sCYJwFcDeSU+lmBAVvkBPgUMJrXdIga1YJ4V9zuIdc=
+github.com/mertcikla/codeindex v0.0.6 h1:+eq87nQUmDIpmCL6XtcEuxvTrQ9nqS/W553TAMSiGHs=
+github.com/mertcikla/codeindex v0.0.6/go.mod h1:FbqQOc7nOpcTkAnpQvsLcuCYaYCY2o9kwSEof3X8fDo=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
 github.com/mitchellh/hashstructure/v2 v2.0.2 h1:vGKWl0YJqUNxE8d+h8f6NJLcCJrgbhC4NcD46KavDd4=
