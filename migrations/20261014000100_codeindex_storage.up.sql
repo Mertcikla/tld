@@ -1,5 +1,7 @@
--- Index format 2: discard derived graphs; retain repository configuration and
--- diagram ownership. Old mapping keys/tags keep their original namespace.
+-- Consolidated codeindex storage format: integer IDs, compact edges, binary
+-- caches, reusable rows and per-file snapshot memberships. Discard derived
+-- graphs once; retain repository configuration, diagram ownership and mapping
+-- namespaces. The SQLite migrator commits the schema and history atomically.
 CREATE TEMP TABLE codeindex_repository_ids AS
   SELECT org_id, id AS old_id, ROW_NUMBER() OVER (ORDER BY org_id, id) AS new_id
   FROM codeindex_repositories;
@@ -35,10 +37,22 @@ DROP TABLE codeindex_repository_settings;
 DROP TABLE codeindex_elements;
 DROP TABLE codeindex_repositories;
 
-DELETE FROM codeindex_blobs;
+DROP TABLE codeindex_blobs;
 DELETE FROM codeindex_artifacts;
 DELETE FROM codeindex_watch_state;
 DELETE FROM codeindex_leases;
+
+-- Binary caches store gzip payloads without base64 overhead.
+CREATE TABLE codeindex_blobs (
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  hash TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT '',
+  content BLOB,
+  syntax_cache BLOB NOT NULL DEFAULT X'',
+  file_cache BLOB NOT NULL DEFAULT X'',
+  compression INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (org_id, hash, language)
+);
 
 CREATE TABLE codeindex_repositories (
   id INTEGER NOT NULL,
@@ -54,11 +68,11 @@ CREATE TABLE codeindex_repositories (
   PRIMARY KEY (org_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_repositories_remote_key
+CREATE INDEX idx_codeindex_repositories_remote_key
   ON codeindex_repositories(remote_key);
-CREATE INDEX IF NOT EXISTS idx_codeindex_repositories_org_id
+CREATE INDEX idx_codeindex_repositories_org_id
   ON codeindex_repositories(org_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_codeindex_repositories_org_remote_key_unique
+CREATE UNIQUE INDEX idx_codeindex_repositories_org_remote_key_unique
   ON codeindex_repositories(org_id, remote_key) WHERE remote_key <> '';
 
 CREATE TABLE codeindex_repository_settings (
@@ -69,7 +83,7 @@ CREATE TABLE codeindex_repository_settings (
   FOREIGN KEY (org_id, repository_id) REFERENCES codeindex_repositories(org_id, id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_repository_settings_org_id ON codeindex_repository_settings(org_id);
+CREATE INDEX idx_codeindex_repository_settings_org_id ON codeindex_repository_settings(org_id);
 
 CREATE TABLE codeindex_elements (
   logical_key TEXT NOT NULL,
@@ -82,9 +96,9 @@ CREATE TABLE codeindex_elements (
   PRIMARY KEY (org_id, logical_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_elements_snapshot ON codeindex_elements(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_elements_resource ON codeindex_elements(resource_type, resource_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_elements_org_id ON codeindex_elements(org_id);
+CREATE INDEX idx_codeindex_elements_snapshot ON codeindex_elements(snapshot_id);
+CREATE INDEX idx_codeindex_elements_resource ON codeindex_elements(resource_type, resource_id);
+CREATE INDEX idx_codeindex_elements_org_id ON codeindex_elements(org_id);
 
 CREATE TABLE codeindex_impacts (
   repository_id INTEGER NOT NULL,
@@ -94,7 +108,7 @@ CREATE TABLE codeindex_impacts (
   PRIMARY KEY (org_id, repository_id, comparison_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_impacts_org_id ON codeindex_impacts(org_id);
+CREATE INDEX idx_codeindex_impacts_org_id ON codeindex_impacts(org_id);
 
 CREATE TABLE codeindex_snapshots (
   id INTEGER NOT NULL,
@@ -113,14 +127,18 @@ CREATE TABLE codeindex_snapshots (
   commit_message TEXT NOT NULL DEFAULT '',
   manifest_json TEXT NOT NULL DEFAULT '{}',
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  symbol_versions_json TEXT NOT NULL DEFAULT '{}',
+  fact_count INTEGER,
+  edge_count INTEGER,
+  source_count INTEGER,
   PRIMARY KEY (org_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshots_repository
+CREATE INDEX idx_codeindex_snapshots_repository
   ON codeindex_snapshots(repository_id, created_unix);
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_revision
+CREATE INDEX idx_codeindex_snapshot_revision
   ON codeindex_snapshots(repository_id, git_revision, provenance, config_hash);
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshots_org_id
+CREATE INDEX idx_codeindex_snapshots_org_id
   ON codeindex_snapshots(org_id);
 
 CREATE TABLE codeindex_facts (
@@ -142,14 +160,16 @@ CREATE TABLE codeindex_facts (
   evidence_json TEXT NOT NULL DEFAULT '[]',
   imports_json TEXT NOT NULL DEFAULT '[]',
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  content_hash TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_facts_snapshot ON codeindex_facts(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_facts_logical ON codeindex_facts(snapshot_id, logical_key);
-CREATE INDEX IF NOT EXISTS idx_codeindex_facts_symbol ON codeindex_facts(snapshot_id, symbol_key);
-CREATE INDEX IF NOT EXISTS idx_codeindex_facts_path ON codeindex_facts(snapshot_id, path);
-CREATE INDEX IF NOT EXISTS idx_codeindex_facts_org_id ON codeindex_facts(org_id);
+CREATE INDEX idx_codeindex_facts_snapshot ON codeindex_facts(snapshot_id);
+CREATE INDEX idx_codeindex_facts_logical ON codeindex_facts(snapshot_id, logical_key);
+CREATE INDEX idx_codeindex_facts_symbol ON codeindex_facts(snapshot_id, symbol_key);
+CREATE INDEX idx_codeindex_facts_path ON codeindex_facts(snapshot_id, path);
+CREATE INDEX idx_codeindex_facts_org_id ON codeindex_facts(org_id);
+CREATE INDEX idx_codeindex_facts_content ON codeindex_facts(org_id, repository_id, content_hash);
 
 CREATE TABLE codeindex_edges (
   id INTEGER NOT NULL,
@@ -159,19 +179,18 @@ CREATE TABLE codeindex_edges (
   from_fact_id INTEGER NOT NULL DEFAULT 0,
   to_fact_id INTEGER NOT NULL DEFAULT 0,
   target_symbol_key TEXT NOT NULL DEFAULT '',
-  logical_key TEXT NOT NULL DEFAULT '',
+  logical_key BLOB NOT NULL CHECK (typeof(logical_key) = 'blob' AND length(logical_key) = 32),
   weight REAL NOT NULL DEFAULT 0,
-  anchor_json TEXT NOT NULL DEFAULT 'null',
-  evidence_json TEXT NOT NULL DEFAULT '[]',
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  content_hash TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_codeindex_edges_snapshot ON codeindex_edges(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_edges_logical ON codeindex_edges(snapshot_id, logical_key);
-CREATE INDEX IF NOT EXISTS idx_codeindex_edges_from ON codeindex_edges(from_fact_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_edges_to ON codeindex_edges(to_fact_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_edges_org_id ON codeindex_edges(org_id);
+CREATE INDEX idx_codeindex_edges_snapshot ON codeindex_edges(snapshot_id);
+CREATE INDEX idx_codeindex_edges_logical ON codeindex_edges(org_id, logical_key, snapshot_id);
+CREATE INDEX idx_codeindex_edges_from ON codeindex_edges(from_fact_id);
+CREATE INDEX idx_codeindex_edges_to ON codeindex_edges(to_fact_id);
+CREATE INDEX idx_codeindex_edges_org_id ON codeindex_edges(org_id);
+CREATE INDEX idx_codeindex_edges_content ON codeindex_edges(org_id, repository_id, content_hash);
 
 CREATE TABLE codeindex_sources (
   snapshot_id INTEGER NOT NULL,
@@ -185,9 +204,9 @@ CREATE TABLE codeindex_sources (
   PRIMARY KEY (org_id, snapshot_id, path)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_sources_hash
+CREATE INDEX idx_codeindex_sources_hash
   ON codeindex_sources(hash);
-CREATE INDEX IF NOT EXISTS idx_codeindex_sources_org_id
+CREATE INDEX idx_codeindex_sources_org_id
   ON codeindex_sources(org_id);
 
 CREATE TABLE codeindex_project_artifacts (
@@ -198,28 +217,28 @@ CREATE TABLE codeindex_project_artifacts (
   PRIMARY KEY (org_id, snapshot_id, project_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_project_artifacts_org_id ON codeindex_project_artifacts(org_id);
+CREATE INDEX idx_codeindex_project_artifacts_org_id ON codeindex_project_artifacts(org_id);
 CREATE INDEX idx_codeindex_project_artifacts_key ON codeindex_project_artifacts(org_id, project_key, fingerprint);
 
-CREATE TABLE codeindex_snapshot_edges (
+CREATE TABLE codeindex_snapshot_edges_direct (
   snapshot_id INTEGER NOT NULL,
   edge_id INTEGER NOT NULL,
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
   PRIMARY KEY (org_id, snapshot_id, edge_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_edges_edge ON codeindex_snapshot_edges(edge_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_edges_org_id ON codeindex_snapshot_edges(org_id);
+CREATE INDEX idx_codeindex_snapshot_edges_edge ON codeindex_snapshot_edges_direct(edge_id);
+CREATE INDEX idx_codeindex_snapshot_edges_org_id ON codeindex_snapshot_edges_direct(org_id);
 
-CREATE TABLE codeindex_snapshot_facts (
+CREATE TABLE codeindex_snapshot_facts_direct (
   snapshot_id INTEGER NOT NULL,
   fact_id INTEGER NOT NULL,
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
   PRIMARY KEY (org_id, snapshot_id, fact_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts(fact_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts(org_id);
+CREATE INDEX idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts_direct(fact_id);
+CREATE INDEX idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts_direct(org_id);
 
 CREATE TABLE codeindex_completed_maps (
   run_id INTEGER NOT NULL,
@@ -232,9 +251,9 @@ CREATE TABLE codeindex_completed_maps (
   PRIMARY KEY (org_id, run_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_completed_maps_repository
+CREATE INDEX idx_codeindex_completed_maps_repository
   ON codeindex_completed_maps(repository_id, completed_unix);
-CREATE INDEX IF NOT EXISTS idx_codeindex_completed_maps_org_id ON codeindex_completed_maps(org_id);
+CREATE INDEX idx_codeindex_completed_maps_org_id ON codeindex_completed_maps(org_id);
 
 CREATE TABLE codeindex_analysis_runs (
   id INTEGER NOT NULL,
@@ -247,7 +266,7 @@ CREATE TABLE codeindex_analysis_runs (
   PRIMARY KEY (org_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_analysis_runs_org_id ON codeindex_analysis_runs(org_id);
+CREATE INDEX idx_codeindex_analysis_runs_org_id ON codeindex_analysis_runs(org_id);
 
 CREATE TABLE codeindex_groups (
   id INTEGER NOT NULL,
@@ -260,7 +279,7 @@ CREATE TABLE codeindex_groups (
   PRIMARY KEY (org_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_groups_org_id ON codeindex_groups(org_id);
+CREATE INDEX idx_codeindex_groups_org_id ON codeindex_groups(org_id);
 
 CREATE TABLE codeindex_group_members (
   group_id INTEGER NOT NULL,
@@ -269,7 +288,7 @@ CREATE TABLE codeindex_group_members (
   PRIMARY KEY (org_id, group_id, fact_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_group_members_org_id ON codeindex_group_members(org_id);
+CREATE INDEX idx_codeindex_group_members_org_id ON codeindex_group_members(org_id);
 
 CREATE TABLE codeindex_active_maps (
   repository_id INTEGER NOT NULL,
@@ -279,7 +298,50 @@ CREATE TABLE codeindex_active_maps (
   FOREIGN KEY (org_id, run_id) REFERENCES codeindex_completed_maps(org_id, run_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_codeindex_active_maps_org_id ON codeindex_active_maps(org_id);
+CREATE INDEX idx_codeindex_active_maps_org_id ON codeindex_active_maps(org_id);
+
+-- Share immutable per-file memberships without parent-snapshot dependencies.
+CREATE TABLE codeindex_membership_groups (
+  group_key TEXT NOT NULL,
+  repository_id INTEGER NOT NULL,
+  org_id TEXT NOT NULL,
+  PRIMARY KEY (org_id, group_key)
+);
+CREATE TABLE codeindex_membership_facts (
+  group_key TEXT NOT NULL,
+  fact_id INTEGER NOT NULL,
+  org_id TEXT NOT NULL,
+  PRIMARY KEY (org_id, group_key, fact_id)
+);
+CREATE INDEX idx_codeindex_membership_fact ON codeindex_membership_facts(org_id, fact_id);
+CREATE TABLE codeindex_membership_edges (
+  group_key TEXT NOT NULL,
+  edge_id INTEGER NOT NULL,
+  org_id TEXT NOT NULL,
+  PRIMARY KEY (org_id, group_key, edge_id)
+);
+CREATE INDEX idx_codeindex_membership_edge ON codeindex_membership_edges(org_id, edge_id);
+CREATE TABLE codeindex_snapshot_membership (
+  snapshot_id INTEGER NOT NULL,
+  group_key TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  PRIMARY KEY (org_id, snapshot_id, group_key)
+);
+CREATE INDEX idx_codeindex_snapshot_membership_group ON codeindex_snapshot_membership(org_id, group_key);
+CREATE VIEW codeindex_snapshot_facts AS
+  SELECT snapshot_id, fact_id, org_id FROM codeindex_snapshot_facts_direct
+  UNION ALL
+  SELECT s.snapshot_id, f.fact_id, s.org_id FROM codeindex_snapshot_membership s
+  JOIN codeindex_membership_facts f ON f.org_id=s.org_id AND f.group_key=s.group_key;
+CREATE VIEW codeindex_snapshot_edges AS
+  SELECT snapshot_id, edge_id, org_id FROM codeindex_snapshot_edges_direct
+  UNION ALL
+  SELECT s.snapshot_id, e.edge_id, s.org_id FROM codeindex_snapshot_membership s
+  JOIN codeindex_membership_edges e ON e.org_id=s.org_id AND e.group_key=s.group_key;
+
+CREATE INDEX idx_codeindex_snapshot_facts_direct_snapshot ON codeindex_snapshot_facts_direct(snapshot_id);
+CREATE INDEX idx_codeindex_snapshot_edges_direct_snapshot ON codeindex_snapshot_edges_direct(snapshot_id);
+CREATE INDEX idx_codeindex_snapshot_membership_snapshot ON codeindex_snapshot_membership(snapshot_id);
 
 INSERT INTO codeindex_repositories
   (id, mapping_namespace, root, remote_url, remote_key, managed, created_at, updated_at, org_id)

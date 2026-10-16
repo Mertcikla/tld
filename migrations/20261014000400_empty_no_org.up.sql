@@ -2,6 +2,9 @@
 -- Real tenant IDs are preserved. PostgreSQL keeps native UUID columns.
 -- The SQLite migrator commits this table rebuild and its history atomically.
 
+DROP VIEW codeindex_snapshot_facts;
+DROP VIEW codeindex_snapshot_edges;
+
 CREATE TEMP TABLE saved_codeindex_analysis_runs_org AS SELECT * FROM codeindex_analysis_runs;
 CREATE TEMP TABLE saved_codeindex_artifacts_org AS SELECT * FROM codeindex_artifacts;
 CREATE TEMP TABLE saved_codeindex_blobs_org AS SELECT * FROM codeindex_blobs;
@@ -15,8 +18,8 @@ CREATE TEMP TABLE saved_codeindex_impacts_org AS SELECT * FROM codeindex_impacts
 CREATE TEMP TABLE saved_codeindex_leases_org AS SELECT * FROM codeindex_leases;
 CREATE TEMP TABLE saved_codeindex_project_artifacts_org AS SELECT * FROM codeindex_project_artifacts;
 CREATE TEMP TABLE saved_codeindex_repositories_org AS SELECT * FROM codeindex_repositories;
-CREATE TEMP TABLE saved_codeindex_snapshot_edges_org AS SELECT * FROM codeindex_snapshot_edges;
-CREATE TEMP TABLE saved_codeindex_snapshot_facts_org AS SELECT * FROM codeindex_snapshot_facts;
+CREATE TEMP TABLE saved_codeindex_snapshot_edges_org AS SELECT * FROM codeindex_snapshot_edges_direct;
+CREATE TEMP TABLE saved_codeindex_snapshot_facts_org AS SELECT * FROM codeindex_snapshot_facts_direct;
 CREATE TEMP TABLE saved_codeindex_snapshots_org AS SELECT * FROM codeindex_snapshots;
 CREATE TEMP TABLE saved_codeindex_sources_org AS SELECT * FROM codeindex_sources;
 CREATE TEMP TABLE saved_codeindex_watch_state_org AS SELECT * FROM codeindex_watch_state;
@@ -30,8 +33,8 @@ DROP TABLE tags;
 DROP TABLE codeindex_watch_state;
 DROP TABLE codeindex_sources;
 DROP TABLE codeindex_snapshots;
-DROP TABLE codeindex_snapshot_facts;
-DROP TABLE codeindex_snapshot_edges;
+DROP TABLE codeindex_snapshot_facts_direct;
+DROP TABLE codeindex_snapshot_edges_direct;
 DROP TABLE codeindex_repositories;
 DROP TABLE codeindex_project_artifacts;
 DROP TABLE codeindex_leases;
@@ -118,10 +121,11 @@ CREATE TABLE codeindex_edges (
   logical_key BLOB NOT NULL CHECK (typeof(logical_key) = 'blob' AND length(logical_key) = 32),
   weight REAL NOT NULL DEFAULT 0,
   org_id TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, id)
 );
-INSERT INTO codeindex_edges (id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, org_id)
-  SELECT id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END
+INSERT INTO codeindex_edges (id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, org_id, content_hash)
+  SELECT id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END, content_hash
   FROM saved_codeindex_edges_org;
 DROP TABLE saved_codeindex_edges_org;
 CREATE INDEX idx_codeindex_edges_from ON codeindex_edges(from_fact_id);
@@ -129,6 +133,7 @@ CREATE INDEX idx_codeindex_edges_logical ON codeindex_edges(org_id, logical_key,
 CREATE INDEX idx_codeindex_edges_org_id ON codeindex_edges(org_id);
 CREATE INDEX idx_codeindex_edges_snapshot ON codeindex_edges(snapshot_id);
 CREATE INDEX idx_codeindex_edges_to ON codeindex_edges(to_fact_id);
+CREATE INDEX idx_codeindex_edges_content ON codeindex_edges(org_id, repository_id, content_hash);
 
 CREATE TABLE codeindex_elements (
   logical_key TEXT NOT NULL,
@@ -167,10 +172,11 @@ CREATE TABLE codeindex_facts (
   evidence_json TEXT NOT NULL DEFAULT '[]',
   imports_json TEXT NOT NULL DEFAULT '[]',
   org_id TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, id)
 );
-INSERT INTO codeindex_facts (id, repository_id, snapshot_id, language, kind, name, body_hash, qualified_name, symbol_key, signature, documentation, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id)
-  SELECT id, repository_id, snapshot_id, language, kind, name, body_hash, qualified_name, symbol_key, signature, documentation, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END
+INSERT INTO codeindex_facts (id, repository_id, snapshot_id, language, kind, name, body_hash, qualified_name, symbol_key, signature, documentation, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id, content_hash)
+  SELECT id, repository_id, snapshot_id, language, kind, name, body_hash, qualified_name, symbol_key, signature, documentation, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END, content_hash
   FROM saved_codeindex_facts_org;
 DROP TABLE saved_codeindex_facts_org;
 CREATE INDEX idx_codeindex_facts_logical ON codeindex_facts(snapshot_id, logical_key);
@@ -178,6 +184,7 @@ CREATE INDEX idx_codeindex_facts_org_id ON codeindex_facts(org_id);
 CREATE INDEX idx_codeindex_facts_path ON codeindex_facts(snapshot_id, path);
 CREATE INDEX idx_codeindex_facts_snapshot ON codeindex_facts(snapshot_id);
 CREATE INDEX idx_codeindex_facts_symbol ON codeindex_facts(snapshot_id, symbol_key);
+CREATE INDEX idx_codeindex_facts_content ON codeindex_facts(org_id, repository_id, content_hash);
 
 CREATE TABLE codeindex_group_members (
   group_id INTEGER NOT NULL,
@@ -271,31 +278,31 @@ CREATE UNIQUE INDEX idx_codeindex_repositories_org_remote_key_unique
 CREATE INDEX idx_codeindex_repositories_remote_key
   ON codeindex_repositories(remote_key);
 
-CREATE TABLE codeindex_snapshot_edges (
+CREATE TABLE codeindex_snapshot_edges_direct (
   snapshot_id INTEGER NOT NULL,
   edge_id INTEGER NOT NULL,
   org_id TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, snapshot_id, edge_id)
 );
-INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id)
+INSERT INTO codeindex_snapshot_edges_direct (snapshot_id, edge_id, org_id)
   SELECT snapshot_id, edge_id, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END
   FROM saved_codeindex_snapshot_edges_org;
 DROP TABLE saved_codeindex_snapshot_edges_org;
-CREATE INDEX idx_codeindex_snapshot_edges_edge ON codeindex_snapshot_edges(edge_id);
-CREATE INDEX idx_codeindex_snapshot_edges_org_id ON codeindex_snapshot_edges(org_id);
+CREATE INDEX idx_codeindex_snapshot_edges_edge ON codeindex_snapshot_edges_direct(edge_id);
+CREATE INDEX idx_codeindex_snapshot_edges_org_id ON codeindex_snapshot_edges_direct(org_id);
 
-CREATE TABLE codeindex_snapshot_facts (
+CREATE TABLE codeindex_snapshot_facts_direct (
   snapshot_id INTEGER NOT NULL,
   fact_id INTEGER NOT NULL,
   org_id TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, snapshot_id, fact_id)
 );
-INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id)
+INSERT INTO codeindex_snapshot_facts_direct (snapshot_id, fact_id, org_id)
   SELECT snapshot_id, fact_id, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END
   FROM saved_codeindex_snapshot_facts_org;
 DROP TABLE saved_codeindex_snapshot_facts_org;
-CREATE INDEX idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts(fact_id);
-CREATE INDEX idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts(org_id);
+CREATE INDEX idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts_direct(fact_id);
+CREATE INDEX idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts_direct(org_id);
 
 CREATE TABLE codeindex_snapshots (
   id INTEGER NOT NULL,
@@ -314,10 +321,14 @@ CREATE TABLE codeindex_snapshots (
   commit_message TEXT NOT NULL DEFAULT '',
   manifest_json TEXT NOT NULL DEFAULT '{}',
   org_id TEXT NOT NULL DEFAULT '',
+  symbol_versions_json TEXT NOT NULL DEFAULT '{}',
+  fact_count INTEGER,
+  edge_count INTEGER,
+  source_count INTEGER,
   PRIMARY KEY (org_id, id)
 );
-INSERT INTO codeindex_snapshots (id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order, commit_message, manifest_json, org_id)
-  SELECT id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order, commit_message, manifest_json, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END
+INSERT INTO codeindex_snapshots (id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order, commit_message, manifest_json, org_id, symbol_versions_json, fact_count, edge_count, source_count)
+  SELECT id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order, commit_message, manifest_json, CASE WHEN org_id = '00000000-0000-0000-0000-000000000000' THEN '' ELSE org_id END, symbol_versions_json, fact_count, edge_count, source_count
   FROM saved_codeindex_snapshots_org;
 DROP TABLE saved_codeindex_snapshots_org;
 CREATE INDEX idx_codeindex_snapshot_revision
@@ -416,3 +427,23 @@ INSERT INTO codeindex_repository_settings (repository_id, map_overrides, org_id)
   FROM saved_codeindex_repository_settings_org;
 DROP TABLE saved_codeindex_repository_settings_org;
 CREATE INDEX idx_codeindex_repository_settings_org_id ON codeindex_repository_settings(org_id);
+
+-- These tables have no org-id defaults to rebuild. Normalize their keys in place.
+UPDATE codeindex_membership_groups SET org_id = '' WHERE org_id = '00000000-0000-0000-0000-000000000000';
+UPDATE codeindex_membership_facts SET org_id = '' WHERE org_id = '00000000-0000-0000-0000-000000000000';
+UPDATE codeindex_membership_edges SET org_id = '' WHERE org_id = '00000000-0000-0000-0000-000000000000';
+UPDATE codeindex_snapshot_membership SET org_id = '' WHERE org_id = '00000000-0000-0000-0000-000000000000';
+
+CREATE INDEX idx_codeindex_snapshot_facts_direct_snapshot ON codeindex_snapshot_facts_direct(snapshot_id);
+CREATE INDEX idx_codeindex_snapshot_edges_direct_snapshot ON codeindex_snapshot_edges_direct(snapshot_id);
+
+CREATE VIEW codeindex_snapshot_facts AS
+  SELECT snapshot_id, fact_id, org_id FROM codeindex_snapshot_facts_direct
+  UNION ALL
+  SELECT s.snapshot_id, f.fact_id, s.org_id FROM codeindex_snapshot_membership s
+  JOIN codeindex_membership_facts f ON f.org_id=s.org_id AND f.group_key=s.group_key;
+CREATE VIEW codeindex_snapshot_edges AS
+  SELECT snapshot_id, edge_id, org_id FROM codeindex_snapshot_edges_direct
+  UNION ALL
+  SELECT s.snapshot_id, e.edge_id, s.org_id FROM codeindex_snapshot_membership s
+  JOIN codeindex_membership_edges e ON e.org_id=s.org_id AND e.group_key=s.group_key;
