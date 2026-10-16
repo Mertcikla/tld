@@ -9,6 +9,38 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+func TestConvertExportResponseUsesExportedBypassNoiseGate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cached *bool
+		target bool
+	}{
+		{name: "target enables bypass", cached: new(false), target: true},
+		{name: "target disables bypass", cached: new(true), target: false},
+		{name: "uncached enabled bypass", target: true},
+		{name: "uncached disabled bypass", target: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &workspace.Workspace{}
+			if tc.cached != nil {
+				base.Elements = map[string]*workspace.Element{
+					"api": {Name: "API", BypassNoiseGate: tc.cached},
+				}
+				base.Meta = &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{
+					"api": {ID: 1},
+				}}
+			}
+			got := ConvertExportResponse(base, &diagv1.ExportOrganizationResponse{
+				Elements: []*diagv1.Element{{Id: 1, Name: "API", BypassNoiseGate: tc.target}},
+			})
+			bypass := got.Elements["api"].BypassNoiseGate
+			if bypass == nil || *bypass != tc.target {
+				t.Fatalf("bypass_noise_gate = %v, want explicit %t from target", bypass, tc.target)
+			}
+		})
+	}
+}
+
 func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 	updated := timestamppb.New(time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC))
 	base := &workspace.Workspace{

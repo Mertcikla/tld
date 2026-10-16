@@ -37,20 +37,21 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 		ref := objectIDToRef[e.Id]
 		kind := e.GetKind()
 		newWS.Elements[ref] = &workspace.Element{
-			Name:         e.Name,
-			Kind:         kind,
-			Description:  e.GetDescription(),
-			Technology:   e.GetTechnology(),
-			URL:          e.GetUrl(),
-			LogoURL:      e.GetLogoUrl(),
-			Repo:         e.GetRepo(),
-			RepositoryID: e.GetRepositoryId(),
-			Branch:       e.GetBranch(),
-			Language:     e.GetLanguage(),
-			FilePath:     e.GetFilePath(),
-			Tags:         cloneStrings(e.GetTags()),
-			HasView:      e.GetHasView(),
-			ViewLabel:    strings.TrimSpace(e.GetViewLabel()),
+			Name:            e.Name,
+			Kind:            kind,
+			Description:     e.GetDescription(),
+			Technology:      e.GetTechnology(),
+			URL:             e.GetUrl(),
+			LogoURL:         e.GetLogoUrl(),
+			Repo:            e.GetRepo(),
+			RepositoryID:    e.GetRepositoryId(),
+			Branch:          e.GetBranch(),
+			Language:        e.GetLanguage(),
+			FilePath:        e.GetFilePath(),
+			Tags:            cloneStrings(e.GetTags()),
+			HasView:         e.GetHasView(),
+			ViewLabel:       strings.TrimSpace(e.GetViewLabel()),
+			BypassNoiseGate: new(e.GetBypassNoiseGate()),
 		}
 		// These fields are workspace-only and cannot be reconstructed from the target.
 		if cached := baseWS.Elements[ref]; cached != nil {
@@ -62,7 +63,6 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 				el.ViewLabel = cached.ViewLabel
 			}
 			el.DensityLevel, el.DensityLevelSet = cached.DensityLevel, cached.DensityLevelSet
-			el.BypassNoiseGate = cached.BypassNoiseGate
 		}
 		newWS.Meta.Elements[ref] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
