@@ -12,7 +12,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/layout"
-	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/pkg/api"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1195,7 +1194,7 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 		p.TechnologyLinks = append(p.TechnologyLinks, item)
 	}
 	if p.LogoUrl == nil {
-		p.LogoUrl = derivedTechnologyLogoURL(element.TechnologyConnectors)
+		p.LogoUrl = api.TechnologyLogoURL(element.TechnologyConnectors)
 	}
 	return p
 }
@@ -1254,32 +1253,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 		p.TechnologyLinks = append(p.TechnologyLinks, entry)
 	}
 	if p.LogoUrl == nil {
-		p.LogoUrl = derivedTechnologyLogoURL(item.TechnologyConnectors)
+		p.LogoUrl = api.TechnologyLogoURL(item.TechnologyConnectors)
 	}
 	return p
-}
-
-func derivedTechnologyLogoURL(links []app.TechnologyConnector) *string {
-	var fallback string
-	for _, link := range links {
-		if link.Type != "catalog" || link.Slug == "" {
-			continue
-		}
-		path, ok := tech.IconURLForSlug(link.Slug)
-		if !ok {
-			continue
-		}
-		if link.IsPrimaryIcon {
-			return &path
-		}
-		if fallback == "" {
-			fallback = path
-		}
-	}
-	if fallback == "" {
-		return nil
-	}
-	return &fallback
 }
 
 func connectorToProto(connector app.Connector) *diagv1.Connector {

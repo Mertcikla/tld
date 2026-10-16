@@ -1106,6 +1106,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 		}
 		p.TechnologyLinks = append(p.TechnologyLinks, item)
 	}
+	if p.LogoUrl == nil {
+		p.LogoUrl = TechnologyLogoURL(element.TechnologyConnectors)
+	}
 	return p
 }
 
@@ -1161,6 +1164,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 			entry.Slug = &slug
 		}
 		p.TechnologyLinks = append(p.TechnologyLinks, entry)
+	}
+	if p.LogoUrl == nil {
+		p.LogoUrl = TechnologyLogoURL(item.TechnologyConnectors)
 	}
 	return p
 }
