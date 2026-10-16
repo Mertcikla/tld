@@ -335,17 +335,6 @@ export default function RepositoryHistory({
       </Flex>}
       {!collapsed && (
         <>
-          {pending && (
-            <Flex px={4} py={2} gap={3} align="center" wrap="wrap" bg="whiteAlpha.50" borderBottom="1px solid" borderColor="whiteAlpha.100">
-              <HStack minW={0} flex="1 1 200px" spacing={2}>
-                <Text fontSize="xs" color="gray.400" flexShrink={0}>First commit</Text>
-                <Code fontSize="xs" flexShrink={0}>{pending.commit.sha.slice(0, 7)}</Code>
-                <Text fontSize="xs" color="gray.200" isTruncated title={pending.commit.subject}>{pending.commit.subject}</Text>
-              </HStack>
-              <Text fontSize="xs" color="gray.400" role="status">{resolvingRange ? 'Selecting range…' : 'Select another commit to compare.'}</Text>
-              <Button size="xs" variant="ghost" isDisabled={resolvingRange} onClick={() => { setPendingSelection(null); setSelectionError('') }}>Start over</Button>
-            </Flex>
-          )}
           {selectionError && <Text px={4} py={2} fontSize="xs" color="red.300" role="alert">{selectionError}</Text>}
           {filtersError && <Text px={4} py={2} fontSize="xs" color="red.300" role="alert">{filtersError}</Text>}
           {!search.active && !history?.isGit && (

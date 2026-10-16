@@ -93,7 +93,6 @@ describe('RepositoryHistory selection', () => {
     act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-newer' }).props.onClick() })
     act(() => { renderer.root.findByProps({ 'aria-label': 'Filter commits' }).props.onChange({ target: { value: 'no match' } }) })
     await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-    expect(renderer.root.findAll((node) => node.props.children === 'First commit').length).toBeGreaterThan(0)
     expect(onRange).toHaveBeenCalledTimes(1)
     vi.mocked(api.repositories.history).mockResolvedValueOnce({ ...history, commits: [skewedHistory.commits[2]] })
     act(() => {
@@ -106,7 +105,6 @@ describe('RepositoryHistory selection', () => {
     act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-older' }).props.onClick() })
     expect(onRange).toHaveBeenLastCalledWith(skewedHistory.commits[2], skewedHistory.commits[0])
     expect(api.repositories.rangeSummary).not.toHaveBeenCalled()
-    expect(renderer.root.findAll((node) => node.props.children === 'First commit')).toHaveLength(0)
     act(() => { renderer.unmount() })
   })
 
@@ -137,18 +135,15 @@ describe('RepositoryHistory selection', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('forgets the pending selection when changing repository', async () => {
+  it.each([['other', 'main'], ['third', 'feature']])('forgets the pending selection when changing to repository %s on branch %s', async (repositoryId, branch) => {
     const onRange = vi.fn()
     let renderer!: ReturnType<typeof create>
     const render = (repositoryId: string, branch: string) => <RepositoryHistory repositoryId={repositoryId} branch={branch} history={history} base="" head="" collapsed={false} onToggle={() => {}} onRange={onRange} />
     await act(async () => { renderer = create(render('repo', 'main')) })
-    for (const [repositoryId, branch] of [['other', 'main'], ['third', 'feature']]) {
-      act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-newer' }).props.onClick() })
-      await act(async () => { renderer.update(render(repositoryId, branch)) })
-      act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-older' }).props.onClick() })
-      expect(onRange).toHaveBeenLastCalledWith(commits[2], commits[2])
-      act(() => { renderer.root.findAllByType('button').find((node) => node.props.children === 'Start over')!.props.onClick() })
-    }
+    act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-newer' }).props.onClick() })
+    await act(async () => { renderer.update(render(repositoryId, branch)) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-older' }).props.onClick() })
+    expect(onRange).toHaveBeenLastCalledWith(commits[2], commits[2])
     act(() => { renderer.unmount() })
   })
 
