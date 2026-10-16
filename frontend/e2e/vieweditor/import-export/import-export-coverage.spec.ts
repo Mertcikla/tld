@@ -75,6 +75,8 @@ test('export cancel closes the modal without downloading', async ({ page }) => {
 })
 
 test('round-trips TLD metadata through Mermaid export and import', async ({ page }) => {
+  // This covers an export and two UI imports, which exceed the default budget on CI WebKit.
+  test.slow()
   const prefix = uniqueName('Round Trip')
   const sourceView = await createApiView(page, `${prefix} Source`)
   const api = await createPlacedElement(page, sourceView.id, {

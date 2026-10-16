@@ -29,6 +29,9 @@ require (
 	modernc.org/sqlite v1.50.0
 )
 
+// Development-only dependency for the opt-in cliworkflow tests.
+require pgregory.net/rapid v1.3.0
+
 require (
 	cel.dev/expr v0.25.2 // indirect
 	charm.land/bubbles/v2 v2.1.0 // indirect

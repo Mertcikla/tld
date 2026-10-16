@@ -2,6 +2,7 @@ package importcmd_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,26 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
+
+func TestImportCmd_PreviewKeepsUnplacedElementsOutOfRoot(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
+	cmd.MustRunCmd(t, dir, "view", "unplace", "root", "api")
+	file := writeImportFile(t, "elements:\n  api:\n    name: API\n    description: edited\n")
+	out, _ := cmd.MustRunCmd(t, dir, "import", file, "--dry-run", "--format", "json")
+	var result struct {
+		Extra struct {
+			Views []workspace.ViewDiagnostics `json:"views"`
+		} `json:"extra"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Extra.Views) != 1 || result.Extra.Views[0].View != "root" || result.Extra.Views[0].Elements != 0 {
+		t.Fatalf("preview resurrected unplaced element: %s", out)
+	}
+}
 
 func TestImportCmd_PreservesOmittedVisibility(t *testing.T) {
 	dir := t.TempDir()
@@ -339,8 +360,8 @@ func TestImportCmd_MalformedYamlShowsSchemaHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "elements.schema.json") || !strings.Contains(err.Error(), "connectors.schema.json") {
-		t.Fatalf("error should link the schemas, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "tld import --schema") {
+		t.Fatalf("error should show how to discover the accepted schema, got: %s", err.Error())
 	}
 }
 

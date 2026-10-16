@@ -50,10 +50,10 @@ func TestValidate_ElementNameRequired(t *testing.T) {
 	}
 }
 
-func TestValidate_ElementKindRequired(t *testing.T) {
+func TestValidate_ElementKindOptional(t *testing.T) {
 	err := buildWorkspace(map[string]*workspace.Element{"api": {Name: "API"}}, nil).Validate()
-	if !containsValidationError(err, "elements.yaml[api]", "kind is required") {
-		t.Fatalf("expected missing kind error, got %v", err)
+	if len(err) != 0 {
+		t.Fatalf("optional kind rejected: %v", err)
 	}
 }
 

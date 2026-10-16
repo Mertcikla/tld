@@ -40,7 +40,31 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add or update an element",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add or update an element.
+
+Custom --ref values are workspace-local aliases and require a YAML workspace
+(run 'tld init' first, or pass --yaml). Database mode derives convenience refs
+from element names; those refs can change when the names change.
+
+Reusing a workspace ref updates the existing element. Use the same ref with a
+different --parent to place it in another view. The parent must already exist;
+placing a child under it automatically creates its owned view. Omit --parent
+for root. Use 'tld view create' to create an owned view before adding children.
+Supplied nonempty fields replace existing values; omitted fields are preserved.
+Use 'update element' to clear a field or change an existing kind.
+Use 'view place <view> <element>' to add a placement without changing metadata.
+
+Changes apply to the target immediately and refresh the YAML cache when present.
+Next, connect elements with 'tld connect' or inspect them with 'tld list elements'.`,
+		Example: `  tld add "API" --kind service --technology Go
+
+  # Custom refs and drill-down views in a YAML workspace
+  tld init
+  tld add "Platform" --ref platform
+  tld add "API" --ref api --parent platform --kind service
+  tld add "API" --ref api --parent root
+  tld list views --tree`,
+		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
@@ -48,6 +72,13 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 			return completion.ElementRefsWithNames(wdir)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("ref") && !cmdutil.WorkspaceConfigured(cmd, *wdir) {
+				err := cmdutil.WithHint(fmt.Errorf("--ref requires a YAML workspace"), "Run 'tld init' first or pass --yaml to use a workspace-local ref; omit --ref to work directly on the database.")
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "add", err)
+				}
+				return err
+			}
 			name := args[0]
 			if strings.TrimSpace(kind) == "" {
 				kind = ""
@@ -94,9 +125,12 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				placementParent = resolvedParent
 			}
+			if placementParent == r {
+				return cmdutil.WithHint(fmt.Errorf("an element cannot be placed inside its own view"), "Choose another --parent, or add a child component to this view.")
+			}
 			// Place the element automatically unless the caller pinned it. An
 			// element that already has a placement keeps its position (re-add
-			// must not reset the canvas), otherwise the layout engine drops the
+			// must not reset the view), otherwise the layout engine drops the
 			// new node into the nearest free slot, anchored to any existing
 			// connectors.
 			positionSet := cmd.Flags().Changed("position-x") || cmd.Flags().Changed("position-y")
@@ -138,6 +172,9 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				ViewLabel:   viewLabel,
 				Placements:  []workspace.ViewPlacement{placement},
 			}
+			if _, err := workspace.MergeElementFields(r, ws.Elements[r], spec); err != nil {
+				return cmdutil.WithHint(err, fmt.Sprintf("Use 'tld update element %s kind %s' to change its kind.", r, kind))
+			}
 			validateAndWarnTechnology(cmd, technology)
 			if dryRun {
 				if sess.HasWorkspace() {
@@ -173,9 +210,9 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&logoURL, "logo-url", "", "logo image URL")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
-	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal canvas position")
-	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
-	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
+	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal position in the view")
+	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical position in the view")
+	c.Flags().StringVar(&ref, "ref", "", "workspace-local ref (YAML mode only; default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&viewLabel, "view-label", "", "label for the diagram created when this element becomes a parent")
@@ -200,6 +237,9 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "add", err)
 		}
 		return err
+	}
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
 	}
 	runner, err := sess.Runner()
 	if err != nil {
@@ -262,18 +302,23 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 	// Refresh YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := workspace.UpsertElement(sess.Wdir, ref, spec); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+			return fail(sess.CacheError(err))
 		}
-		// UpsertElement merges fill-empty-only, but an explicit --link flag
-		// must overwrite (matching `tld link`) so the cache does not diverge
-		// from the server when relinking an existing element.
+		// Keep explicit source-link updates aligned with the target.
 		if linkFilePath != "" {
 			if err := workspace.UpdateElementField(sess.Wdir, ref, "file_path", linkFilePath); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
-			return fail(fmt.Errorf("update cache metadata: %w", err))
+			return fail(sess.CacheError(err))
+		}
+		cached, err := workspace.Load(sess.Wdir)
+		if err != nil {
+			return fail(sess.CacheError(err))
+		}
+		if err := sess.RefreshCache(cached); err != nil {
+			return fail(sess.CacheError(err))
 		}
 	}
 
@@ -282,7 +327,7 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 		if updated {
 			action = "update"
 		}
-		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "add", action, ref)
+		return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), compact, "add", action, ref, "element", elementID)
 	}
 	if updated {
 		term.Successf(cmd.OutOrStdout(), "updated: %s (id=%d)", ref, elementID)
@@ -460,10 +505,10 @@ func validateAndWarnTechnology(cmd *cobra.Command, technology string) {
 	for _, m := range missing {
 		suggestions := tech.SuggestSimilar(m, 5)
 		if len(suggestions) == 0 {
-			term.Warnf(cmd.OutOrStdout(), "Unknown technology %q", m)
+			term.Warnf(cmd.ErrOrStderr(), "Unknown technology %q", m)
 			continue
 		}
-		term.Warnf(cmd.OutOrStdout(), "Unknown technology %q. similar: %s?", m, joinQuoted(suggestions))
+		term.Warnf(cmd.ErrOrStderr(), "Unknown technology %q. similar: %s?", m, joinQuoted(suggestions))
 	}
 }
 

@@ -20,6 +20,25 @@ func NewViewCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "view",
 		Short: "Manage diagrams (views) owned by elements",
+		Long: `Manage the diagram owned by an element.
+
+An element is a reusable node; its owned view displays its children.
+'tld add --parent <element-ref>' creates the parent's view automatically.
+'tld view create <element-ref>' ensures it exists even before children are added.
+The synthetic root view holds top-level placements.
+Use 'view place <view> <element>' to reuse an element without repeating its name
+or metadata. Add --from <old-view> to move it; 'view unplace <view> <element>'
+removes just that placement. Remove connectors in the old view first.
+
+View names and level labels are separate from element names and refs. Use
+'view rename' for the view name and 'view set-level' for a label such as
+Container. Discover owner refs with 'tld list views --tree', then render a view
+with 'tld render <owner-ref>'.`,
+		Example: `  tld add "Platform"
+  tld view create platform --name "Platform details" --label Container
+  tld add "API" --parent platform
+  tld list views --tree
+  tld render platform`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -33,6 +52,8 @@ func NewViewCmd(wdir, format *string, compact *bool) *cobra.Command {
 		newRenameCmd(wdir, format, compact),
 		newSetLevelCmd(wdir, format, compact),
 		newDeleteCmd(wdir, format, compact),
+		newPlacementCmd(wdir, format, compact, false),
+		newPlacementCmd(wdir, format, compact, true),
 	)
 	return c
 }
@@ -51,7 +72,11 @@ func newCreateCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Long: `Create the diagram owned by an element and set has_view on it.
 
 The element must already exist (ref, name, or database ID); create it first with
-'tld add'. Use --name and --label to set the view display name and level label.`,
+'tld add'. Use --name and --label to set the view display name and level label.
+Adding a child with 'tld add --parent <element-ref>' also creates this view
+automatically. Use 'tld list views --tree' to inspect the resulting hierarchy.`,
+		Example: `  tld view create platform --name "Platform details" --label Container
+  tld view create api --dry-run`,
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -87,6 +112,9 @@ The element must already exist (ref, name, or database ID); create it first with
 			}
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, viewName)
+			}
+			if err := sess.RequireAppliedCache(); err != nil {
+				return failf(cmd, *format, *compact, "view create", err)
 			}
 			runner, err := sess.Runner()
 			if err != nil {
@@ -329,6 +357,9 @@ func ensureViewEmpty(ws *workspace.Workspace, ref string) error {
 // updateView sets the view name and/or level label on the server and in YAML.
 func updateView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, command, ref string, newName, newLabel *string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, command, err) }
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	el := ws.Elements[ref]
 	runner, err := sess.Runner()
 	if err != nil {
@@ -374,19 +405,29 @@ func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *st
 	}
 	if name != "" {
 		if err := workspace.UpdateElementField(wdir, ref, "view_name", name); err != nil {
-			return fmt.Errorf("update YAML cache: %w", err)
+			return sess.CacheError(err)
 		}
 	}
 	if newLabel != nil {
 		if err := workspace.UpdateElementField(wdir, ref, "view_label", *newLabel); err != nil {
-			return fmt.Errorf("update YAML cache: %w", err)
+			return sess.CacheError(err)
 		}
+	}
+	ws, err := workspace.Load(wdir)
+	if err != nil {
+		return sess.CacheError(err)
+	}
+	if err := exec.SaveCache(wdir, ws); err != nil {
+		return sess.CacheError(err)
 	}
 	return nil
 }
 
 func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, ref string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, "view delete", err) }
+	if err := sess.RequireAppliedCache(); err != nil {
+		return fail(err)
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
@@ -401,21 +442,34 @@ func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspa
 	}
 	if sess.HasWorkspace() {
 		if err := workspace.UpdateElementField(wdir, ref, "has_view", "false"); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+			return fail(sess.CacheError(err))
 		}
 		el := ws.Elements[ref]
 		if el != nil && el.ViewName != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_name", ""); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if el != nil && el.ViewLabel != "" {
 			if err := workspace.UpdateElementField(wdir, ref, "view_label", ""); err != nil {
-				return fail(fmt.Errorf("update YAML cache: %w", err))
+				return fail(sess.CacheError(err))
 			}
 		}
 		if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {
 			return fail(fmt.Errorf("drop view metadata: %w", err))
+		}
+		cached, err := workspace.Load(wdir)
+		if err != nil {
+			return fail(sess.CacheError(err))
+		}
+		// Removing the last current view empties that metadata bucket. The
+		// legacy loader can then fall back to the pre-delete sync baseline.
+		// Do not save the deleted view ID back into the refreshed cache.
+		if cached.Meta != nil {
+			delete(cached.Meta.Views, ref)
+		}
+		if err := exec.SaveCache(wdir, cached); err != nil {
+			return fail(sess.CacheError(err))
 		}
 	}
 	if cmdutil.WantsJSON(format) {

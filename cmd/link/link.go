@@ -225,7 +225,7 @@ func applyIgnore(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 
 func fail(cmd *cobra.Command, opts linkOptions, err error) error {
 	if cmdutil.WantsJSON(opts.format) {
-		_ = cmdutil.WriteCommandError(cmd.OutOrStdout(), opts.compact, "link", err)
+		return cmdutil.WriteCommandError(cmd.OutOrStdout(), opts.compact, "link", err)
 	}
 	return err
 }
@@ -612,6 +612,9 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 		}
 		return nil
 	}
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	ctx := sess.Context(cmd.Context())
 	runner, err := sess.Runner()
 	if err != nil {
@@ -646,11 +649,7 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 			return err
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, updated, 0, nil); err != nil {
-			return fmt.Errorf("update cache metadata: %w", err)
-		}
-
-		if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-			return fmt.Errorf("refresh cache metadata: %w", err)
+			return sess.CacheError(err)
 		}
 	}
 	return nil

@@ -46,16 +46,18 @@ type Options struct {
 }
 
 type Report struct {
-	Command   string           `json:"command"`
-	Status    string           `json:"status"`
-	Ref       string           `json:"ref"`
-	Type      string           `json:"type"`
-	Matches   []string         `json:"matches,omitempty"`
-	Element   *ElementReport   `json:"element,omitempty"`
-	Connector *ConnectorReport `json:"connector,omitempty"`
-	Sources   []SourceState    `json:"sources"`
-	Related   RelatedResources `json:"related"`
-	Warnings  []string         `json:"warnings,omitempty"`
+	ViewDiagnostics *workspace.ViewDiagnostics `json:"view_diagnostics,omitempty"`
+	Command         string                     `json:"command"`
+	Status          string                     `json:"status"`
+	DryRun          bool                       `json:"dry_run"`
+	Ref             string                     `json:"ref"`
+	Type            string                     `json:"type"`
+	Matches         []string                   `json:"matches,omitempty"`
+	Element         *ElementReport             `json:"element,omitempty"`
+	Connector       *ConnectorReport           `json:"connector,omitempty"`
+	Sources         []SourceState              `json:"sources"`
+	Related         RelatedResources           `json:"related"`
+	Warnings        []string                   `json:"warnings,omitempty"`
 }
 
 type ElementReport struct {
@@ -83,19 +85,20 @@ type ElementReport struct {
 }
 
 type ConnectorReport struct {
-	Ref          string        `json:"ref"`
-	View         string        `json:"view"`
-	Source       string        `json:"source"`
-	Target       string        `json:"target"`
-	Label        string        `json:"label,omitempty"`
-	Description  string        `json:"description,omitempty"`
-	Relationship string        `json:"relationship,omitempty"`
-	Direction    string        `json:"direction,omitempty"`
-	Style        string        `json:"style,omitempty"`
-	URL          string        `json:"url,omitempty"`
-	SourceHandle string        `json:"source_handle,omitempty"`
-	TargetHandle string        `json:"target_handle,omitempty"`
-	Metadata     *MetadataInfo `json:"metadata,omitempty"`
+	Visibility   workspace.ConnectorVisibility `json:"visibility"`
+	Ref          string                        `json:"ref"`
+	View         string                        `json:"view"`
+	Source       string                        `json:"source"`
+	Target       string                        `json:"target"`
+	Label        string                        `json:"label,omitempty"`
+	Description  string                        `json:"description,omitempty"`
+	Relationship string                        `json:"relationship,omitempty"`
+	Direction    string                        `json:"direction,omitempty"`
+	Style        string                        `json:"style,omitempty"`
+	URL          string                        `json:"url,omitempty"`
+	SourceHandle string                        `json:"source_handle,omitempty"`
+	TargetHandle string                        `json:"target_handle,omitempty"`
+	Metadata     *MetadataInfo                 `json:"metadata,omitempty"`
 }
 
 type PlacementInfo struct {
@@ -170,6 +173,10 @@ func Build(ctx context.Context, opts Options) (Report, error) {
 			return Report{}, fmt.Errorf("view %q not found", opts.Ref)
 		}
 		report.Element = buildElementReport(opts.Ref, element, index, elementMetadata(ws, opts.Ref))
+		if opts.Type == TypeView {
+			diagnostics := ws.DiagnoseView(opts.Ref)
+			report.ViewDiagnostics = &diagnostics
+		}
 		report.Related = relatedForElement(opts.Ref, index)
 		report.Sources = append(report.Sources, yamlElementState(opts.Type, elementMetadataForType(ws, opts.Type, opts.Ref)))
 	case TypeConnector:
@@ -178,6 +185,7 @@ func Build(ctx context.Context, opts Options) (Report, error) {
 			return Report{}, fmt.Errorf("connector %q not found", opts.Ref)
 		}
 		report.Connector = buildConnectorReport(opts.Ref, connector, connectorMetadata(ws, opts.Ref))
+		report.Connector.Visibility = ws.DiagnoseConnector(connector)
 		report.Sources = append(report.Sources, yamlElementState(TypeConnector, connectorMetadata(ws, opts.Ref)))
 	default:
 		return Report{}, fmt.Errorf("unsupported inspect type %q", opts.Type)

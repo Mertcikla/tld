@@ -20,9 +20,22 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 	)
 
 	c := &cobra.Command{
-		Use:   "render [view]",
-		Short: "Render a view (diagram) to text output formats",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "render <view>",
+		Short: "Export a view (diagram) as Mermaid",
+		Long: `Export a view as Mermaid, preserving connector labels and directions.
+
+A view is required: pass it as an argument or with --view. Use root for the
+top-level diagram, an owning element ref or name, or a numeric view ID.
+Find available views with 'tld list views --tree'. Output goes to stdout unless
+--output is supplied. Use --to mermaid for the diagram format and --format json
+for a structured response containing the rendered content and emitted/omitted
+connector counts. Off-view relationships remain stored and can appear in the UI
+as context/proxy connectors or badges; this Mermaid export draws only directly
+placed endpoints. Off-view details are reported on stderr in text mode.`,
+		Example: `  tld render root
+  tld render platform -o diagram.mmd
+  tld render --view root --output diagram.mmd`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := strings.TrimSpace(view)
 			if len(args) == 1 {
@@ -33,7 +46,7 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 			}
 			viewRef := normalizeViewRef(target)
 			if !strings.EqualFold(format, "mermaid") {
-				return fmt.Errorf("unsupported --format %q (supported: mermaid)", format)
+				return fmt.Errorf("unsupported --to %q (supported: mermaid)", format)
 			}
 			ws, err := loadWorkspace(cmd, *wdir)
 			if err != nil {
@@ -47,6 +60,7 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 				viewRef = resolved
 			}
 
+			diagnostics := ws.DiagnoseView(viewRef)
 			content, err := renderMermaid(ws, viewRef)
 			if err != nil {
 				return err
@@ -57,19 +71,36 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 					return fmt.Errorf("write output: %w", err)
 				}
 			}
-			// The local --format flag shadows the global one, so honor a global
-			// JSON request only when the local flag was not set explicitly.
-			if cmdutil.WantsJSONFromCmd(cmd) && !cmd.Flags().Changed("format") {
+			if cmdutil.WantsJSONFromCmd(cmd) {
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
 					Command: "render",
 					Status:  "ok",
+					Summary: map[string]int{"elements": diagnostics.Elements, "connectors": diagnostics.Connectors, "rendered_connectors": diagnostics.RenderedConnectors, "omitted_connectors": len(diagnostics.OmittedConnectors), "off_view_connectors": len(diagnostics.OffViewConnectors), "unresolved_connectors": len(diagnostics.UnresolvedConnectors)},
 					Extra: map[string]any{
-						"view":    viewRef,
-						"format":  "mermaid",
-						"content": content,
-						"output":  output,
+						"view":                  viewRef,
+						"omitted_connectors":    diagnostics.OmittedConnectors,
+						"off_view_connectors":   diagnostics.OffViewConnectors,
+						"unresolved_connectors": diagnostics.UnresolvedConnectors,
+						"connector_visibility":  diagnostics.ConnectorVisibility,
+						"off_view_hint":         workspace.OffViewHint,
+						"format":                "mermaid",
+						"content":               content,
+						"output":                output,
 					},
 				})
+			}
+			if len(diagnostics.OffViewConnectors) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%d off-view connector(s) in %q are omitted from Mermaid only:\n", len(diagnostics.OffViewConnectors), viewRef)
+				for _, key := range diagnostics.OffViewConnectors {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key+": "+diagnostics.ConnectorVisibility[key].Description())
+				}
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), workspace.OffViewHint)
+			}
+			if len(diagnostics.UnresolvedConnectors) > 0 {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: unresolved connectors have missing endpoint definitions; run 'tld validate' for details.")
+				for _, key := range diagnostics.UnresolvedConnectors {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key+": "+diagnostics.ConnectorVisibility[key].Description())
+				}
 			}
 			if output == "" {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), content)
@@ -80,9 +111,10 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 		},
 	}
 
-	c.Flags().StringVar(&format, "format", "mermaid", "render output format")
+	c.Flags().StringVar(&format, "to", "mermaid", "diagram format: mermaid")
 	c.Flags().StringVarP(&output, "output", "o", "", "write render output to file")
-	c.Flags().StringVar(&view, "view", "", "view ref to render (alternative to the positional argument)")
+	c.Flags().StringVar(&view, "view", "", "root, owner ref/name, or view ID (alternative to the argument)")
+	cmdutil.AddReadSourceFlag(c)
 	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return completion.ViewRefs(wdir)
 	})
@@ -143,11 +175,24 @@ func renderMermaid(ws *workspace.Workspace, view string) (string, error) {
 		if !elementSet[c.Source] || !elementSet[c.Target] {
 			continue
 		}
+		from, to := mermaidID(c.Source), mermaidID(c.Target)
+		arrow := "-->"
+		switch strings.ToLower(strings.TrimSpace(c.Direction)) {
+		case "", "forward":
+		case "backward":
+			from, to = to, from
+		case "both", "bidirectional":
+			arrow = "<-->"
+		case "none":
+			arrow = "---"
+		default:
+			return "", fmt.Errorf("connector %q has unsupported direction %q", key, c.Direction)
+		}
 		label := ""
 		if strings.TrimSpace(c.Label) != "" {
 			label = fmt.Sprintf("|%s|", escapeMermaid(c.Label))
 		}
-		_, _ = fmt.Fprintf(&b, "  %s -->%s %s\n", mermaidID(c.Source), label, mermaidID(c.Target))
+		_, _ = fmt.Fprintf(&b, "  %s %s%s %s\n", from, arrow, label, to)
 	}
 
 	return b.String(), nil
@@ -155,19 +200,9 @@ func renderMermaid(ws *workspace.Workspace, view string) (string, error) {
 
 func viewElements(ws *workspace.Workspace, view string) []string {
 	refs := make([]string, 0)
-	for ref, element := range ws.Elements {
-		if element == nil {
-			continue
-		}
-		if len(element.Placements) == 0 && view == workspace.RootRef {
+	for ref := range ws.Elements {
+		if ws.ElementPlacedInView(ref, view) {
 			refs = append(refs, ref)
-			continue
-		}
-		for _, placement := range element.Placements {
-			if normalizeViewRef(placement.ParentRef) == view {
-				refs = append(refs, ref)
-				break
-			}
 		}
 	}
 	return refs

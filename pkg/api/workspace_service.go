@@ -781,7 +781,9 @@ func (s *WorkspaceService) UpdateElement(
 			break
 		}
 	}
-	if !hasPrimary {
+	if !hasPrimary && techLinks != nil {
+		// Only an explicit technology-link change can remove its primary
+		// icon. Scalar patches may set or preserve a custom logo without links.
 		empty := ""
 		logoURL = &empty
 	}
@@ -1104,6 +1106,17 @@ func (s *WorkspaceService) UpdateConnector(
 		}
 	}
 
+	viewID := existing.ViewId
+	if m.GetViewId() != 0 && m.GetViewId() != viewID {
+		var err error
+		viewID, err = parseRequiredInt32("view_id", m.GetViewId())
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.Store.GetView(ctx, viewID, workspaceID); err != nil {
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("destination view not found"))
+		}
+	}
 	label := existing.Label
 	if m.Label != nil {
 		label = m.Label
@@ -1150,7 +1163,7 @@ func (s *WorkspaceService) UpdateConnector(
 	}
 
 	c, err := s.Store.UpdateConnector(ctx, connectorID, workspaceID, ConnectorInput{
-		ViewID: existing.ViewId, SourceID: sourceID, TargetID: targetID,
+		ViewID: viewID, SourceID: sourceID, TargetID: targetID,
 		Label: label, Description: description,
 		Relationship: relationship, Direction: direction, Style: style,
 		URL: url, SourceHandle: sourceHandle, TargetHandle: targetHandle,

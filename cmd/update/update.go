@@ -41,7 +41,26 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "element <ref> <field> <value>",
 		Short: "Update an element field",
-		Args:  cobra.ExactArgs(3),
+		Long: fmt.Sprintf(`Update an element field.
+
+Fields:
+  %s
+
+For ordinary fields, the element selector accepts a ref, display name, or numeric
+element ID. Find these with 'tld list elements'. Tags are comma-separated;
+--append and --remove modify the existing tags instead of replacing them.
+
+Use the name field to change a display name in either mode. The ref field changes
+a workspace-local alias and requires a YAML workspace (run 'tld init' first, or
+pass --yaml). Ref changes update placements, connectors, and workspace metadata;
+the database element ID and display name stay the same. For a ref change, use
+the current YAML ref as the selector. Other fields apply to the target immediately
+and refresh the YAML cache when present.`, strings.Join(completion.ElementFields(), ", ")),
+		Example: `  tld update element api name "Public API"
+  tld update element api tags "backend,critical" --append
+  tld update element api technology Go --dry-run
+  tld update element api ref service-api`,
+		Args: cobra.ExactArgs(3),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
@@ -67,8 +86,26 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
+			if field == "ref" {
+				if err := cmdutil.RenameWorkspaceElement(cmd, *wdir, ref, value, dryRun); err != nil {
+					return fail(err)
+				}
+				if cmdutil.WantsJSON(*format) {
+					action := "update"
+					if dryRun {
+						action = "dry-run"
+					}
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", action, value)
+				}
+				if dryRun {
+					term.Successf(cmd.OutOrStdout(), "dry-run: update %q: ref=%q", ref, value)
+				} else {
+					term.Successf(cmd.OutOrStdout(), "updated %q: ref=%q", ref, value)
+				}
+				return nil
+			}
 			if !serverSyncedElementFields(field) {
-				return fail(unsupportedElementFieldError(ref, field))
+				return fail(unsupportedElementFieldError(field))
 			}
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
 			if err != nil {
@@ -109,7 +146,11 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 				return fail(err)
 			}
 			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref)
+				var id int32
+				if ws.Meta != nil && ws.Meta.Elements[ref] != nil {
+					id = int32(ws.Meta.Elements[ref].ID)
+				}
+				return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref, "element", id)
 			}
 			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", ref, field, value)
 			return nil
@@ -129,7 +170,26 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "connector <ref> <field> <value>",
 		Short: "Update a connector field",
-		Args:  cobra.ExactArgs(3),
+		Long: fmt.Sprintf(`Update a connector field.
+
+Fields:
+  %s
+
+Use the connector key or numeric connector ID from 'tld list connectors'. Keys
+have the form view/source~target[/label], for example root/api~db/reads. Quote
+keys containing spaces. Changing view, source, target, or label changes the key;
+list connectors again to find its new key.
+
+Direction values: %s.
+Style values: bezier, straight, step, smoothstep.
+Tags are comma-separated; --append and --remove edit the existing tags.
+visibility_delta is workspace YAML metadata. Other changes apply to the target
+and refresh the YAML cache when present.`,
+			strings.Join(completion.ConnectorFields(), ", "), strings.Join(completion.ConnectorDirections(), ", ")),
+		Example: `  tld list connectors --view root
+  tld update connector 'root/api~db/reads' direction both
+  tld update connector 'root/api~db/reads' label "reads and writes"`,
+		Args: cobra.ExactArgs(3),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
@@ -173,6 +233,21 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
+			// Validate before touching server state; the desired spec is
+			// derived from the pre-update state so the key change is known.
+			if mode != "" {
+				connector := ws.Connectors[ref]
+				if connector == nil {
+					return fail(fmt.Errorf("connector %q not found", ref))
+				}
+				value = resolveTagValue(connector.Tags, value, mode)
+			}
+			if err := workspace.ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
+				if !slices.Contains(completion.ConnectorFields(), field) {
+					return fail(cmdutil.UnknownField("connector", field, completion.ConnectorFields()))
+				}
+				return fail(fmt.Errorf("update connector: %w", err))
+			}
 			if dryRun {
 				if sess.HasWorkspace() {
 					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
@@ -187,17 +262,8 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
 				return nil
 			}
-			// Validate before touching server state; the desired spec is
-			// derived from the pre-update state so the key change is known.
-			if mode != "" {
-				connector := ws.Connectors[ref]
-				if connector == nil {
-					return fail(fmt.Errorf("connector %q not found", ref))
-				}
-				value = resolveTagValue(connector.Tags, value, mode)
-			}
-			if err := workspace.ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
-				return fail(fmt.Errorf("update connector: %w", err))
+			if err := sess.RequireAppliedCache(); err != nil {
+				return fail(err)
 			}
 			preSpec := ws.Connectors[ref]
 			var preID int32
@@ -214,23 +280,18 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			if sess.HasWorkspace() {
 				if err := workspace.UpdateConnectorField(*wdir, ref, field, value); err != nil {
-					return fail(fmt.Errorf("update YAML cache: %w", err))
+					return fail(sess.CacheError(err))
 				}
 				if updated != nil {
 					if err := exec.RecordConnectorMeta(sess.Context(cmd.Context()), *wdir, newKey, updated); err != nil {
-						return fail(fmt.Errorf("update cache metadata: %w", err))
-					}
-					// Advance the local current watermark so pull can detect a
-					// concurrent server edit instead of silently overwriting it.
-					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
-						return fail(fmt.Errorf("refresh cache metadata: %w", err))
+						return fail(sess.CacheError(err))
 					}
 				}
 			}
 			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update connector", "update", ref)
+				return cmdutil.WriteResourceMutation(cmd.OutOrStdout(), *compact, "update connector", "update", newKey, "connector", updated.GetId())
 			}
-			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", ref, field, value)
+			term.Successf(cmd.OutOrStdout(), "updated %q: %s=%q", newKey, field, value)
 			return nil
 		},
 	}
@@ -274,27 +335,27 @@ func resolveTagValue(current []string, value, mode string) string {
 	}
 }
 
-// serverSyncedElementFields reports whether `update element` accepts the field.
-// Every accepted field mirrors to the target store.
+// serverSyncedElementFields excludes ref, which is handled as a YAML-only alias.
 func serverSyncedElementFields(field string) bool {
-	return slices.Contains(completion.ElementFields(), field)
+	return field != "ref" && slices.Contains(completion.ElementFields(), field)
 }
 
 // unsupportedElementFieldError explains why a field is not accepted. Fields
 // without a database column (owner, symbol, has_view, density_level) are only
-// editable directly in workspace YAML, and ref renames go through `tld rename`.
-func unsupportedElementFieldError(ref, field string) error {
+// editable directly in workspace YAML.
+func unsupportedElementFieldError(field string) error {
 	switch field {
-	case "ref":
-		return fmt.Errorf(`"ref" cannot be updated in place; use 'tld rename --from %s --to <new-ref>'`, ref)
 	case "owner", "symbol", "has_view", "density_level":
 		return fmt.Errorf("field %q is not supported by 'update element'; edit the workspace YAML directly", field)
 	default:
-		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(completion.ElementFields(), ", "))
+		return cmdutil.UnknownField("element", field, completion.ElementFields())
 	}
 }
 
 func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref, field, value string) error {
+	if err := sess.RequireAppliedCache(); err != nil {
+		return err
+	}
 	updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
 	if err != nil {
 		return err
@@ -302,21 +363,26 @@ func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *work
 	if !sess.HasWorkspace() || updated == nil {
 		return nil
 	}
-	if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
-		return fmt.Errorf("update YAML cache: %w", err)
-	}
-	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
-		return fmt.Errorf("update cache metadata: %w", err)
-	}
-
-	if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
-		return fmt.Errorf("refresh cache metadata: %w", err)
-	}
-	if viewID != 0 {
-		if err := workspace.TouchCurrentViewMetadata(sess.Wdir, ref); err != nil {
-			return fmt.Errorf("refresh view metadata: %w", err)
+	// Language is target metadata derived from technology links in YAML; it
+	// has no editable workspace field. Do not fail after committing its write.
+	if field != "language" {
+		if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
+			return sess.CacheError(err)
 		}
 	}
+	if el := ws.Elements[ref]; field == "name" && el != nil && el.HasView && el.ViewName == "" {
+		// An omitted view_name represents the old element name. Renaming the
+		// element must not also rename its separately persisted owned view.
+		if err := workspace.UpdateElementField(sess.Wdir, ref, "view_name", el.Name); err != nil {
+			return sess.CacheError(err)
+		}
+	}
+	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
+		return sess.CacheError(err)
+	}
+
+	// RecordElementMeta already recorded the committed target timestamp in
+	// both current metadata and the sync baseline. This is not a local edit.
 	return nil
 }
 

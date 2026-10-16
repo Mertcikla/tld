@@ -87,7 +87,15 @@ initial SCIP index and use them for supported function-body edits. Other changes
 and unavailable language servers fall back to SCIP. Configure index.tools.gopls,
 index.tools.typescript_language_server, index.tools.rust_analyzer and
 index.tools.pyright, or their CODEINDEX_* environment overrides, and check
-language server health with tld doctor.`,
+language server health with tld doctor.,
+Start with 'tld doctor' to check indexer prerequisites. After indexing, open the
+Repositories area in 'tld serve --open'. Use 'tld git compare' for a commit
+comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
+		Example: `  tld doctor
+  tld index . --map
+  tld index . --watch --map --detach
+  tld index status .
+  tld index stop .`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."

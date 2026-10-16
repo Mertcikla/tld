@@ -21,6 +21,15 @@ func NewListCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List resources",
+		Long: `Find the identifiers used by other commands.
+
+'list elements' shows element refs, names, and database IDs. 'list connectors'
+shows keys and IDs for 'inspect', 'update connector', and 'remove connector'. 'list views --tree'
+shows view owner refs and the hierarchy used by 'render' and 'view' commands.
+Use --format json for structured rows and --search to filter a resource list.`,
+		Example: `  tld list elements --search api
+  tld list connectors --view root --format json
+  tld list views --tree`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -48,14 +57,15 @@ type elementRow struct {
 }
 
 type connectorRow struct {
-	Key          string `json:"key"`
-	View         string `json:"view"`
-	Source       string `json:"source"`
-	Target       string `json:"target"`
-	Label        string `json:"label,omitempty"`
-	Relationship string `json:"relationship,omitempty"`
-	Direction    string `json:"direction,omitempty"`
-	ID           int32  `json:"id,omitempty"`
+	Visibility   workspace.ConnectorVisibility `json:"visibility"`
+	Key          string                        `json:"key"`
+	View         string                        `json:"view"`
+	Source       string                        `json:"source"`
+	Target       string                        `json:"target"`
+	Label        string                        `json:"label,omitempty"`
+	Relationship string                        `json:"relationship,omitempty"`
+	Direction    string                        `json:"direction,omitempty"`
+	ID           int32                         `json:"id,omitempty"`
 }
 
 type viewRow struct {
@@ -78,7 +88,10 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "elements",
 		Short: "List elements",
-		Args:  cobra.NoArgs,
+		Long:  "List element refs, display names, kinds, and database IDs. Use refs, names, or IDs with connect and ordinary element updates; inspect uses the ref.",
+		Example: `  tld list elements --search api
+  tld list elements --kind service --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {
@@ -103,7 +116,7 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "element", Action: "present", Name: row.Name})
+					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "element", Action: "present", Name: row.Name, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list elements",
@@ -128,6 +141,7 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, kind, technology, owner, and tags")
 	c.Flags().StringVar(&kind, "kind", "", "only show elements of this kind")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -137,7 +151,16 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "connectors",
 		Short: "List connectors",
-		Args:  cobra.NoArgs,
+		Long: `List connector keys, endpoints, labels, and database IDs.
+
+Keys have the form view/source~target[/label]. Copy the full key into 'inspect'
+or 'update connector'; quote it when it contains spaces. After changing a label,
+endpoint, or view, list connectors again to discover the new key.
+Visibility reports direct or off-view endpoints relative to each connector's
+owning view. Off-view relationships are retained for UI context/proxy rendering.`,
+		Example: `  tld list connectors --view root
+  tld list connectors --search reads --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {
@@ -162,7 +185,7 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Key, ResourceType: "connector", Action: "present", Name: row.Label})
+					items = append(items, cmdutil.JSONItem{Ref: row.Key, ResourceType: "connector", Action: "present", Name: row.Label, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list connectors",
@@ -174,18 +197,24 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "VIEW\tSOURCE\tTARGET\tLABEL\tRELATIONSHIP\tDIRECTION\tID")
+			_, _ = fmt.Fprintln(w, "VIEW\tSOURCE\tTARGET\tLABEL\tRELATIONSHIP\tDIRECTION\tID\tVISIBILITY")
+			hasOffView := false
 			for _, row := range filtered {
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					row.View, row.Source, row.Target, row.Label, row.Relationship, row.Direction, idString(row.ID))
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					row.View, row.Source, row.Target, row.Label, row.Relationship, row.Direction, idString(row.ID), row.Visibility.Description())
+				hasOffView = hasOffView || row.Visibility.Mode == "off-view"
 			}
 			_ = w.Flush()
+			if hasOffView {
+				term.Info(out, workspace.OffViewHint)
+			}
 			term.Infof(out, "%d of %d connector(s)", len(filtered), len(rows))
 			return nil
 		},
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across view, source, target, label, and relationship")
 	c.Flags().StringVar(&view, "view", "", "only show connectors bound to this view ref")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -196,7 +225,10 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "views",
 		Short: "List views (diagrams)",
-		Args:  cobra.NoArgs,
+		Long:  "List views with owner refs, display names, level labels, and database IDs. Use --tree to see the hierarchy; pass an owner ref or root to 'tld render'.",
+		Example: `  tld list views --tree
+  tld list views --parent platform --format json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
 			if err != nil {
@@ -224,7 +256,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
-					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "view", Action: "present", Name: row.Name})
+					items = append(items, cmdutil.JSONItem{Ref: row.Ref, ResourceType: "view", Action: "present", Name: row.Name, ID: row.ID})
 				}
 				return cmdutil.WriteJSON(cmd.OutOrStdout(), *compact, cmdutil.JSONOutput{
 					Command: "list views",
@@ -254,6 +286,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, label, and parent")
 	c.Flags().StringVar(&parent, "parent", "", "only show views placed under this parent ref")
 	c.Flags().BoolVar(&tree, "tree", false, "render the derived view hierarchy as a tree")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -285,6 +318,7 @@ func buildConnectorRows(ws *workspace.Workspace) []connectorRow {
 			continue
 		}
 		rows = append(rows, connectorRow{
+			Visibility:   ws.DiagnoseConnector(connector),
 			Key:          key,
 			View:         connector.View,
 			Source:       connector.Source,
@@ -322,10 +356,12 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 		}
 		placements := el.Placements
 		if len(placements) == 0 {
-			directElements["root"]++
-			if el.HasView {
-				childViews["root"]++
-				registerView("root", ref)
+			if ws.ElementPlacedInView(ref, workspace.RootRef) {
+				directElements["root"]++
+				if el.HasView {
+					childViews["root"]++
+					registerView("root", ref)
+				}
 			}
 			continue
 		}

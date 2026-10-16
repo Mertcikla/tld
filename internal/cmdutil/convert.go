@@ -11,10 +11,13 @@ import (
 
 func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrganizationResponse) *workspace.Workspace {
 	newWS := &workspace.Workspace{
-		Dir:        baseWS.Dir,
-		Config:     baseWS.Config,
-		Elements:   make(map[string]*workspace.Element),
-		Connectors: make(map[string]*workspace.Connector),
+		Dir:             baseWS.Dir,
+		Config:          baseWS.Config,
+		WorkspaceConfig: baseWS.WorkspaceConfig,
+		IgnoreRules:     baseWS.IgnoreRules,
+		ActiveRepo:      baseWS.ActiveRepo,
+		Elements:        make(map[string]*workspace.Element),
+		Connectors:      make(map[string]*workspace.Connector),
 		Meta: &workspace.Meta{
 			Elements:   make(map[string]*workspace.ResourceMetadata),
 			Views:      make(map[string]*workspace.ResourceMetadata),
@@ -33,24 +36,33 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 	for _, e := range msg.Elements {
 		ref := objectIDToRef[e.Id]
 		kind := e.GetKind()
-		if kind == "" {
-			kind = "element"
-		}
 		newWS.Elements[ref] = &workspace.Element{
-			Name:         e.Name,
-			Kind:         kind,
-			Description:  e.GetDescription(),
-			Technology:   e.GetTechnology(),
-			URL:          e.GetUrl(),
-			LogoURL:      e.GetLogoUrl(),
-			Repo:         e.GetRepo(),
-			RepositoryID: e.GetRepositoryId(),
-			Branch:       e.GetBranch(),
-			Language:     e.GetLanguage(),
-			FilePath:     e.GetFilePath(),
-			Tags:         cloneStrings(e.GetTags()),
-			HasView:      e.GetHasView(),
-			ViewLabel:    strings.TrimSpace(e.GetViewLabel()),
+			Name:            e.Name,
+			Kind:            kind,
+			Description:     e.GetDescription(),
+			Technology:      e.GetTechnology(),
+			URL:             e.GetUrl(),
+			LogoURL:         e.GetLogoUrl(),
+			Repo:            e.GetRepo(),
+			RepositoryID:    e.GetRepositoryId(),
+			Branch:          e.GetBranch(),
+			Language:        e.GetLanguage(),
+			FilePath:        e.GetFilePath(),
+			Tags:            cloneStrings(e.GetTags()),
+			HasView:         e.GetHasView(),
+			ViewLabel:       strings.TrimSpace(e.GetViewLabel()),
+			BypassNoiseGate: new(e.GetBypassNoiseGate()),
+		}
+		// These fields are workspace-only and cannot be reconstructed from the target.
+		if cached := baseWS.Elements[ref]; cached != nil {
+			el := newWS.Elements[ref]
+			el.Owner, el.Symbol = cached.Owner, cached.Symbol
+			// View labels can be staged before the element owns a canvas, and
+			// remote element APIs do not carry that staged value.
+			if el.ViewLabel == "" && !cached.HasView {
+				el.ViewLabel = cached.ViewLabel
+			}
+			el.DensityLevel, el.DensityLevelSet = cached.DensityLevel, cached.DensityLevelSet
 		}
 		newWS.Meta.Elements[ref] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
@@ -100,6 +112,18 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 		})
 	}
 
+	for ref, el := range newWS.Elements {
+		if cached := baseWS.Elements[ref]; cached != nil {
+			for i := range el.Placements {
+				for _, old := range cached.Placements {
+					if old.ParentRef == el.Placements[i].ParentRef {
+						el.Placements[i].VisibilityDelta = old.VisibilityDelta
+						el.Placements[i].VisibilityDeltaSet = old.VisibilityDeltaSet
+					}
+				}
+			}
+		}
+	}
 	for _, e := range msg.Connectors {
 		viewRef := diagramIDToViewRef[e.ViewId]
 		if viewRef == "" {
@@ -135,6 +159,10 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			SourceHandle: e.GetSourceHandle(),
 			TargetHandle: e.GetTargetHandle(),
 			Tags:         cloneStrings(e.GetTags()),
+		}
+		if cached := baseWS.Connectors[key]; cached != nil {
+			newWS.Connectors[key].VisibilityDelta = cached.VisibilityDelta
+			newWS.Connectors[key].VisibilityDeltaSet = cached.VisibilityDeltaSet
 		}
 		newWS.Meta.Connectors[key] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
@@ -333,4 +361,26 @@ func diagramMatchesOwnedElement(diagram *diagv1.View, element *workspace.Element
 		label,
 		strings.TrimSpace(element.ViewLabel),
 	)
+}
+
+// PreservePendingResources keeps hand-authored, unapplied YAML entries while
+// refreshing all persisted resources from the target. Cache-only fields are
+// already preserved by ConvertExportResponse.
+func PreservePendingResources(base, actual *workspace.Workspace) {
+	for ref, el := range base.Elements {
+		if actual.Elements[ref] != nil {
+			continue
+		}
+		if base.Meta == nil || base.Meta.Elements[ref] == nil || base.Meta.Elements[ref].ID == 0 {
+			actual.Elements[ref] = el
+		}
+	}
+	for key, c := range base.Connectors {
+		if actual.Connectors[key] != nil {
+			continue
+		}
+		if base.Meta == nil || base.Meta.Connectors[key] == nil || base.Meta.Connectors[key].ID == 0 {
+			actual.Connectors[key] = c
+		}
+	}
 }

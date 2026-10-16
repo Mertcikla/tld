@@ -508,7 +508,7 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		}
 		args := []string{target}
 		if a.Format != "" {
-			args = append(args, "--format", a.Format)
+			args = append(args, "--to", a.Format)
 		}
 		if a.Output != "" {
 			args = append(args, "--output", a.Output)

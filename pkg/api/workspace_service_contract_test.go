@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -291,6 +292,38 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	}
 	if update.LogoURL != nil {
 		t.Fatalf("logo patch = %v, want nil so store preserves existing logo", update.LogoURL)
+	}
+}
+
+func TestWorkspaceService_UpdateElementLogoWithoutTechnologyLinks(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			var update ElementInput
+			store := &contractStore{
+				getElement: func(context.Context, int32, uuid.UUID) (*diagv1.Element, error) {
+					return &diagv1.Element{Id: 42, Name: "API", LogoUrl: new("custom.svg")}, nil
+				},
+				updateElement: func(_ context.Context, id int32, _ uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+					update = input
+					return &diagv1.Element{Id: id, Name: input.Name}, nil
+				},
+			}
+			request := &diagv1.UpdateElementRequest{ElementId: 42, Name: "API", Description: new("changed")}
+			if explicit {
+				request.LogoUrl = new("replacement.svg")
+			}
+			service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+			if _, err := service.UpdateElement(context.Background(), connect.NewRequest(request)); err != nil {
+				t.Fatal(err)
+			}
+			if explicit {
+				if update.LogoURL == nil || *update.LogoURL != "replacement.svg" {
+					t.Fatalf("explicit logo patch = %v", update.LogoURL)
+				}
+			} else if update.LogoURL != nil {
+				t.Fatalf("omitted logo must preserve the stored value, got %v", update.LogoURL)
+			}
+		})
 	}
 }
 

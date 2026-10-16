@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/git"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -222,7 +223,29 @@ func NewInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
 		Short: "Initialize a new tld workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Create a YAML workspace in .tld under the current directory or supplied
+project directory. The positional directory selects where files are created;
+it is not a repository selector or a database destination. For example,
+'init ./repo' writes ./repo/.tld; 'init ./study' writes ./study/.tld.
+An existing workspace directory is used directly. Use --workspace <project-dir>
+on later commands when running outside that project. --data-dir selects the local
+database for later writes; init creates YAML/configuration files only.
+
+Creates elements.yaml, connectors.yaml, and .tld.yaml. Existing element and
+connector files are preserved. Use --wizard for interactive configuration.
+Initialization is optional for direct database use, and enables workspace-local
+refs and YAML-backed authoring.
+
+For batch authoring: init, import diagram.yaml --dry-run, import diagram.yaml,
+validate --source live, list views --tree, and render root --source live.
+Pin the same --workspace, --target and --data-dir on these commands.
+
+Next, add elements with 'tld add', connect them with 'tld connect', and export
+the top-level view with 'tld render root'.`,
+		Example: `  tld init
+  tld init ./my-project --wizard
+  tld add "API" --ref api --kind service`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := resolveInitDir(args)
 
@@ -276,11 +299,17 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			if existing, ok := workspace.ExistingGlobalConfigPath(); ok {
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "init", Status: "ok", Extra: map[string]any{"workspace": dir, "config": existing}})
+				}
 				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
 				term.Infof(cmd.OutOrStdout(), "Global config already exists at %s", term.Path(cmd.OutOrStdout(), existing))
 			} else {
 				if err := workspace.EnsureGlobalConfig(); err != nil {
 					return fmt.Errorf("ensure global config: %w", err)
+				}
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "init", Status: "ok", Extra: map[string]any{"workspace": dir, "config": cfgPath}})
 				}
 				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
 				term.Infof(cmd.OutOrStdout(), "Global config created at %s", term.Path(cmd.OutOrStdout(), cfgPath))

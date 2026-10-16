@@ -159,7 +159,7 @@ import {
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 import { overrideViewContentInSnapshot } from '../../crossBranch/graph'
 import { useCrossBranchContextSettings } from '../../crossBranch/settings'
-import { removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
+import { loadWorkspaceGraphSnapshot, removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
@@ -4027,9 +4027,14 @@ function ViewEditorInner({
         })
       }
 
-      await Promise.all(placementPlan.map((placement) =>
-        api.workspace.views.placements.add(targetViewId, placement.elementId, placement.x, placement.y)
-      ))
+      // Placement insertion copies related connectors. Serialize it so two
+      // endpoints cannot both copy the same relationship concurrently.
+      for (const placement of placementPlan) {
+        await api.workspace.views.placements.add(targetViewId, placement.elementId, placement.x, placement.y)
+      }
+      // View-scoped lists apply display filtering; compare stored relationships.
+      const existingConnectors = (await api.workspace.connectors.list(0)).filter((connector) => connector.view_id === targetViewId)
+      connectorPlan = planViewSelectionPasteConnectors({ ...payload, connectors: connectorPlan }, targetElementIdsBySourceId, existingConnectors)
       const createdConnectors = await Promise.all(connectorPlan.map((connector) =>
         api.workspace.connectors.create(targetViewId, {
           source_element_id: connector.sourceElementId,
@@ -4047,6 +4052,8 @@ function ViewEditorInner({
       ))
       createdConnectors.map(connectorToConnector).forEach(publishRealtimeConnectorUpsert)
 
+      await loadWorkspaceGraphSnapshot(true)
+      await refreshGrid()
       await refreshElements()
       pendingPasteSelectionRef.current = {
         viewId: targetViewId,
@@ -4064,11 +4071,11 @@ function ViewEditorInner({
       isPasteImportingRef.current = false
       setIsClipboardPasting(false)
     }
-  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, toast, autoLayoutMode, rfNodesRef])
+  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, refreshGrid, toast, autoLayoutMode, rfNodesRef])
 
   const handleCopyCutViewSelection = useCallback((event: ClipboardEvent) => {
     if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
-    if (event.type === 'cut' && !canEdit) return
+    if (isPasteImportingRef.current || (event.type === 'cut' && !canEdit)) return
 
     const currentViewId = viewIdRef.current
     if (!currentViewId || !event.clipboardData) return
@@ -4086,13 +4093,38 @@ function ViewEditorInner({
     event.clipboardData.setData(VIEW_SELECTION_CLIPBOARD_MIME, serializeViewSelectionClipboardPayload(payload))
 
     if (event.type === 'cut') {
-      void handleBulkRemoveFromView()
+      const selectedIds = new Set(payload.elements.map((element) => element.elementId))
+      // Cut only internal relationships. Connections crossing the selection
+      // boundary remain valid off-view relationships in the source view.
+      const internalConnectors = connectors.filter((connector) => connector.view_id === currentViewId &&
+        selectedIds.has(connector.source_element_id) && selectedIds.has(connector.target_element_id))
+      isPasteImportingRef.current = true
+      void (async () => {
+        for (const connector of internalConnectors) {
+          await api.workspace.connectors.delete('', connector.id)
+          pushConnectorDeleteAction(connector)
+          removeConnectorGraphSnapshot(currentViewId, connector.id)
+          removeStoreConnector(connector.id)
+          publishRealtimeConnectorDelete(connector.id)
+        }
+        await handleBulkRemoveFromView()
+        await loadWorkspaceGraphSnapshot(true)
+        toast({ status: 'success', title: 'Selection cut' })
+      })().catch(async (err) => {
+        await refreshElements()
+        toast({ status: 'error', title: 'Cut failed', description: err instanceof Error ? err.message : String(err) })
+      }).finally(() => { isPasteImportingRef.current = false })
     }
   }, [
     canEdit,
     connectors,
     drawingMode,
     handleBulkRemoveFromView,
+    pushConnectorDeleteAction,
+    removeStoreConnector,
+    publishRealtimeConnectorDelete,
+    refreshElements,
+    toast,
     pendingElement,
     selectedCanvasElementIds,
     textEditorState,
@@ -4110,8 +4142,12 @@ function ViewEditorInner({
   }, [handleCopyCutViewSelection])
 
   const handlePasteFromClipboard = useCallback(async (event: ClipboardEvent) => {
-    if (!canEdit || isPasteImportingRef.current || textEditorState || pendingElement) return
+    if (!canEdit || textEditorState || pendingElement) return
     if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target)) return
+    if (isPasteImportingRef.current) {
+      toast({ status: 'info', title: 'Clipboard operation is still finishing', description: 'Try pasting again when it completes.' })
+      return
+    }
 
     const clipboardData = event.clipboardData
     const customRaw = clipboardData?.getData(VIEW_SELECTION_CLIPBOARD_MIME) ?? ''

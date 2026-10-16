@@ -54,7 +54,7 @@ func TestValidateCmd_ValidWorkspace(t *testing.T) {
 	if !strings.Contains(stdout, "Workspace valid") {
 		t.Errorf("stdout %q does not contain 'Workspace valid'", stdout)
 	}
-	if !strings.Contains(stdout, "1 elements") || !strings.Contains(stdout, "0 views") {
+	if !strings.Contains(stdout, "1 elements") || !strings.Contains(stdout, "1 views") {
 		t.Errorf("stdout %q does not contain count summary", stdout)
 	}
 }
@@ -302,7 +302,7 @@ api:
 	dataDir := t.TempDir()
 	seedLinkCoverageIndex(t, dataDir, dir, []string{"A/B/C.go", "A/D/E.go"})
 
-	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC206", "--data-dir", dataDir)
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC206", "--source", "cache", "--data-dir", dataDir)
 	if err != nil {
 		t.Fatalf("validate ARC206: %v", err)
 	}
@@ -320,7 +320,7 @@ api:
 	if err := os.WriteFile(filepath.Join(dir, ".tld.yaml"), []byte("validation:\n  link_coverage_percent: 50\n"), 0600); err != nil {
 		t.Fatalf("write workspace config: %v", err)
 	}
-	stdout, _, err = cmd.RunCmd(t, dir, "validate", "ARC206", "--data-dir", dataDir)
+	stdout, _, err = cmd.RunCmd(t, dir, "validate", "ARC206", "--source", "cache", "--data-dir", dataDir)
 	if err != nil {
 		t.Fatalf("validate ARC206 with lowered threshold: %v", err)
 	}

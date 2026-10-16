@@ -251,7 +251,7 @@ func TestLinkCmd_IgnoreConflictsWithLinkTarget(t *testing.T) {
 	}
 }
 
-func TestLinkCmd_MarksLocalMetadataChanged(t *testing.T) {
+func TestLinkCmd_RecordsAppliedMetadata(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	if _, _, err := cmd.RunCmd(t, dir, "add", "System", "--ref", "sys", "--kind", "workspace"); err != nil {
@@ -273,8 +273,8 @@ func TestLinkCmd_MarksLocalMetadataChanged(t *testing.T) {
 	if current == nil || lastSync == nil {
 		t.Fatalf("missing metadata: current=%+v lastSync=%+v", current, lastSync)
 	}
-	if !current.UpdatedAt.After(lastSync.UpdatedAt) {
-		t.Fatalf("link did not mark a local change: current=%s lastSync=%s", current.UpdatedAt, lastSync.UpdatedAt)
+	if !current.UpdatedAt.Equal(lastSync.UpdatedAt) {
+		t.Fatalf("applied link was marked as a pending local edit: current=%s lastSync=%s", current.UpdatedAt, lastSync.UpdatedAt)
 	}
 	workspaceDir := workspace.ResolveDir(dir)
 	if !strings.Contains(readElements(t, workspaceDir), "file_path: internal/api.go#function:Handle") {

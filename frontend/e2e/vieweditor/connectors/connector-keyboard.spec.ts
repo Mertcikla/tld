@@ -1,12 +1,15 @@
 import { expect, test } from '../../fixtures'
 import {
   createAndLoadDiagramWithNodes,
-  dragNodeByName,
+  createApiView,
+  createPlacedElement,
   expectConnector,
+  gotoView,
   handleLocator,
   listConnectors,
   locatorCenter,
   nodeByName,
+  uniqueName,
 } from '../../helpers/vieweditor'
 
 
@@ -25,15 +28,18 @@ test('creates a connector with the E shortcut and target click flow', async ({ p
 })
 
 test('E shortcut persists the preview source handle on target click', async ({ page }) => {
-  const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Keyboard Connector Source Handle')
+  const prefix = uniqueName('Keyboard Connector Source Handle')
+  const diagram = await createApiView(page, `${prefix} Diagram`)
+  // A slow setup drag can trigger long-press connector creation on CI WebKit.
+  const elements = [
+    await createPlacedElement(page, diagram.id, { name: `${prefix} Source`, kind: 'service' }, 120, 280),
+    await createPlacedElement(page, diagram.id, { name: `${prefix} Target`, kind: 'database' }, 120, 80),
+  ]
+  await gotoView(page, diagram.id)
   const sourceNode = nodeByName(page, elements[0].name)
   const targetNode = nodeByName(page, elements[1].name)
-  const sourceCenter = await locatorCenter(sourceNode)
-  const targetCenter = await locatorCenter(targetNode)
-  const expectedSourceHandle = sourceCenter.y > 260 ? 'top' : 'bottom'
-  const targetY = sourceCenter.y + (expectedSourceHandle === 'top' ? -180 : 180)
-
-  await dragNodeByName(page, elements[1].name, sourceCenter.x - targetCenter.x, targetY - targetCenter.y)
+  await expect(targetNode).toBeVisible()
+  const expectedSourceHandle = 'top'
 
   await sourceNode.click()
   await page.keyboard.press('e')
