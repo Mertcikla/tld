@@ -35,6 +35,9 @@ export default function RepositoryHistory({
   onRange,
   footerContent,
   disabled = false,
+  onLoadMore,
+  loadingMore = false,
+  loadMoreError = '',
 }: {
   repositoryId: string
   history: RepositoryGitHistory | null
@@ -45,6 +48,9 @@ export default function RepositoryHistory({
   onRange: (base: RepositoryCommit, head: RepositoryCommit) => void
   footerContent?: ReactNode
   disabled?: boolean
+  onLoadMore?: () => void
+  loadingMore?: boolean
+  loadMoreError?: string
 }) {
   const [query, setQuery] = useState('')
   const [pendingCommit, setPendingCommit] = useState('')
@@ -73,7 +79,8 @@ export default function RepositoryHistory({
     () => layoutCommitGraph(history?.commits ?? []),
     [history],
   )
-  useEffect(() => { setPendingCommit('') }, [repositoryId, history])
+  const newestCommit = history?.commits[0]?.sha
+  useEffect(() => { setPendingCommit('') }, [repositoryId, newestCommit])
   const baseIndex = layout.rows.findIndex((row) => row.commit.sha === base)
   const headIndex = layout.rows.findIndex((row) => row.commit.sha === head)
   const inRange = (index: number) => baseIndex >= 0 && headIndex >= 0 && index >= headIndex && index <= baseIndex
@@ -161,7 +168,7 @@ export default function RepositoryHistory({
               <Input
                 ref={searchInputRef}
                 size="xs"
-                placeholder="Search commits…"
+                placeholder="Search loaded commits…"
                 aria-label="Filter commits"
                 value={query}
                 pr={query ? undefined : 8}
@@ -176,8 +183,14 @@ export default function RepositoryHistory({
             </InputGroup>
         </Box>
         <HStack spacing={2} minW={0} justifySelf="end" onClick={(event) => event.stopPropagation()}>
+          {onLoadMore && history?.nextPageToken && loadingMore && (
+            <HStack role="status" spacing={2} minW={0}>
+              <Spinner size="xs" flexShrink={0} />
+              <Text fontSize="xs" color="gray.400" isTruncated title="Loading older commits…">Loading older commits…</Text>
+            </HStack>
+          )}
           <Text fontSize="xs" color="gray.500" whiteSpace="nowrap">
-            {layout.rows.length} commits
+            {layout.rows.length}{history?.hasMore ? '+' : ''} commits
           </Text>
         </HStack>
       </Grid>}
@@ -197,8 +210,11 @@ export default function RepositoryHistory({
           <Flex
             maxH="240px"
             overflowY="auto"
+            data-testid="repositories-history-scroll"
             onScroll={(event) => {
-              if (graphScrollRef.current) graphScrollRef.current.scrollTop = event.currentTarget.scrollTop
+              const { scrollTop, scrollHeight, clientHeight } = event.currentTarget
+              if (graphScrollRef.current) graphScrollRef.current.scrollTop = scrollTop
+              if (history?.nextPageToken && !loadingMore && scrollHeight - scrollTop <= clientHeight + 1) onLoadMore?.()
             }}
           >
             <Box
@@ -361,6 +377,11 @@ export default function RepositoryHistory({
               ))}
             </VStack>
           </Flex>
+          {onLoadMore && history?.nextPageToken && loadMoreError && (
+            <Flex px={4} py={2} gap={3} align="center" justify="flex-end">
+              <Text flex={1} fontSize="xs" color="red.300" role="alert">{loadMoreError} · Scroll to the bottom to retry.</Text>
+            </Flex>
+          )}
           {inspected && (
             <Box p={4} bg="whiteAlpha.50">
               <Flex gap={3} align="center">

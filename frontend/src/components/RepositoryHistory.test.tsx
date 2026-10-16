@@ -24,6 +24,36 @@ function renderHistory(base: string, head: string, onRange = vi.fn(), disabled =
 }
 
 describe('RepositoryHistory selection', () => {
+  it('loads older commits at the bottom and keeps a pending range across appended pages', () => {
+    const onLoadMore = vi.fn(), onRange = vi.fn()
+    const firstPage = { ...history, commits: commits.slice(0, 2), hasMore: true, nextPageToken: 'next' }
+    let renderer!: ReturnType<typeof create>
+    const render = (nextHistory: RepositoryGitHistory, loadingMore = false, loadMoreError = '') => (
+      <RepositoryHistory repositoryId="repo" history={nextHistory} base="" head="" collapsed={false} onToggle={() => {}} onRange={onRange} onLoadMore={onLoadMore} loadingMore={loadingMore} loadMoreError={loadMoreError} />
+    )
+    act(() => { renderer = create(render(firstPage)) })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-history-load-more' })).toHaveLength(0)
+    const scroll = (scrollTop: number) => renderer.root.findByProps({ 'data-testid': 'repositories-history-scroll' }).props.onScroll({ currentTarget: { scrollTop, scrollHeight: 1000, clientHeight: 240 } })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-newer' }).props.onClick() })
+    act(() => { scroll(500) })
+    expect(onLoadMore).not.toHaveBeenCalled()
+    act(() => { scroll(760) })
+    expect(onLoadMore).toHaveBeenCalledOnce()
+    act(() => { renderer.update(render(firstPage, true)) })
+    act(() => { scroll(760) })
+    expect(onLoadMore).toHaveBeenCalledOnce()
+    expect(renderer.root.findAll((node) => node.props.children === 'Loading older commits…').length).toBeGreaterThan(0)
+    act(() => { renderer.update(render(firstPage, false, 'Try again')) })
+    expect(renderer.root.findAllByProps({ role: 'alert' }).length).toBeGreaterThan(0)
+    act(() => { scroll(500); scroll(760) })
+    expect(onLoadMore).toHaveBeenCalledTimes(2)
+    act(() => { renderer.update(render(history)) })
+    act(() => { scroll(760) })
+    expect(onLoadMore).toHaveBeenCalledTimes(2)
+    act(() => { renderer.root.findByProps({ 'data-testid': 'commit-row-older' }).props.onClick() })
+    expect(onRange).toHaveBeenLastCalledWith(commits[2], commits[0])
+    act(() => { renderer.unmount() })
+  })
   it('assigns the older selection to base regardless of click order', () => {
     for (const [first, second] of [['newer', 'older'], ['older', 'newer']]) {
       const { renderer, onRange } = renderHistory('', '')

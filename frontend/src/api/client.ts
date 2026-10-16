@@ -464,6 +464,7 @@ export interface RepositoryGitHistory {
   headSha: string
   currentBranch: string
   hasMore: boolean
+  nextPageToken?: string
   isGit: boolean
 }
 export interface RepositoryCommitDetails {
@@ -2270,8 +2271,8 @@ export const api = {
         throw e
       }
     },
-    history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
-      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
+    history: (repositoryId: string, branch = '', limit = 100, options: { pageToken?: string; signal?: AbortSignal } = {}): Promise<RepositoryGitHistory> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit, pageToken: options.pageToken }, { signal: options.signal })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
     }),
     rangeSummary: (repositoryId: string, options: { base?: string; head?: string; baseWorkingTree?: boolean; headWorkingTree?: boolean; signal?: AbortSignal }): Promise<RevisionRangeSummary> => rpc(async () => {

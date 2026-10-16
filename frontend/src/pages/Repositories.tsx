@@ -347,6 +347,9 @@ export default function Repositories() {
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
   const [history, setHistory] = useState<RepositoryGitHistory | null>(null)
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false)
+  const [historyPageError, setHistoryPageError] = useState('')
+  const historyPageRequest = useRef<AbortController | null>(null)
   const [rangeSummary, setRangeSummary] = useState<RevisionRangeSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [dataLoading, setDataLoading] = useState(false)
@@ -550,6 +553,10 @@ export default function Repositories() {
     let stale = false
     setDataError('')
     setHistoryError('')
+    historyPageRequest.current?.abort()
+    historyPageRequest.current = null
+    setLoadingMoreHistory(false)
+    setHistoryPageError('')
     if (!selectedId) {
       setSnapshots([])
       setMaps([])
@@ -560,7 +567,7 @@ export default function Repositories() {
     Promise.allSettled([
       api.repositories.snapshots(selectedId),
       api.repositories.maps(selectedId),
-      api.repositories.history(selectedId, mode === 'pr' && pullRequest ? pullRequest.headSha : branch, 0),
+      api.repositories.history(selectedId, mode === 'pr' && pullRequest ? pullRequest.headSha : branch, 100),
     ])
       .then(([snapshotResult, mapResult, historyResult]) => {
         if (stale) return
@@ -606,8 +613,38 @@ export default function Repositories() {
       })
     return () => {
       stale = true
+      historyPageRequest.current?.abort()
+      historyPageRequest.current = null
     }
   }, [selectedId, branch, nonce, mode, pullRequest])
+  const loadMoreHistory = async () => {
+    if (!selectedId || !history?.nextPageToken || historyPageRequest.current || dataLoading) return
+    const controller = new AbortController()
+    historyPageRequest.current = controller
+    setLoadingMoreHistory(true)
+    setHistoryPageError('')
+    try {
+      const next = await api.repositories.history(selectedId, mode === 'pr' && pullRequest ? pullRequest.headSha : branch, 100, {
+        pageToken: history.nextPageToken,
+        signal: controller.signal,
+      })
+      if (!controller.signal.aborted) {
+        setHistory((current) => current ? {
+          ...current,
+          commits: [...current.commits, ...next.commits],
+          hasMore: next.hasMore,
+          nextPageToken: next.nextPageToken,
+        } : current)
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) setHistoryPageError(err instanceof Error ? err.message : 'Could not load older commits')
+    } finally {
+      if (historyPageRequest.current === controller) {
+        historyPageRequest.current = null
+        setLoadingMoreHistory(false)
+      }
+    }
+  }
   // The footer previews the selected range with a quick local git diff. Snapshot
   // targets resolve to their captured commit; a working-tree side diffs the
   // checkout against the other target.
@@ -1447,7 +1484,6 @@ export default function Repositories() {
                     w="fit-content"
                     maxW="full"
                     minW={0}
-                    px={2.5}
                     py={1}
                     my={{ base: 2, md: 0 }}
                     title={selected.root}
@@ -1493,6 +1529,9 @@ export default function Repositories() {
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && <RepositoryHistory
                   repositoryId={selectedId}
                   history={history}
+                  onLoadMore={() => void loadMoreHistory()}
+                  loadingMore={loadingMoreHistory || dataLoading}
+                  loadMoreError={historyPageError}
                   base={baseRevision}
                   head={headRevision}
                   disabled={busy || mode === 'pr'}

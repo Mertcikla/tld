@@ -1,5 +1,5 @@
 import React from 'react'
-import type { LiveRepositoryImpact } from '../api/client'
+import type { LiveRepositoryImpact, RepositoryGitHistory } from '../api/client'
 import { create as createMessage } from '@bufbuild/protobuf'
 import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { act, create } from 'react-test-renderer'
@@ -60,7 +60,7 @@ vi.mock('../api/client', () => ({
       updateMapConfiguration: vi.fn(),
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),
-      history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      history: vi.fn(async (): Promise<RepositoryGitHistory> => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
       commitDetails: vi.fn(async (_id: string, revision: string) => ({ commit: { sha: revision, subject: 'Latest change', body: 'Latest change\n\nFull commit details.', author: 'Developer', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })),
       rangeSummary: vi.fn(async () => ({ commits: 3, additions: 10, deletions: 4, changed: 6, files: 2 })),
       openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
@@ -233,6 +233,56 @@ describe('Repositories map action', () => {
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
   })
 
+  it('requests 100 commits, appends older pages once, and allows retry after a page error', async () => {
+    const { api } = await import('../api/client')
+    const commit = (sha: string) => ({ sha, subject: sha, author: 'Test', authorEmail: '', createdUnix: 1, parents: [], refs: [], body: '' })
+    const firstPage: RepositoryGitHistory = { commits: [commit('new')], branches: [], headSha: 'new', currentBranch: 'main', isGit: true, hasMore: true, nextPageToken: 'older' }
+    vi.mocked(api.repositories.history).mockResolvedValueOnce(firstPage)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', '', 100)
+    const history = () => renderer.root.findByProps({ 'data-testid': 'mock-history' })
+    vi.mocked(api.repositories.history).mockRejectedValueOnce(new Error('Page unavailable'))
+    await act(async () => { history().props.onLoadMore() })
+    expect(history().props.history.commits).toEqual(firstPage.commits)
+    expect(history().props.loadMoreError).toBe('Page unavailable')
+    let finish!: (page: RepositoryGitHistory) => void
+    vi.mocked(api.repositories.history).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    act(() => { history().props.onLoadMore(); history().props.onLoadMore() })
+    expect(history().props.loadingMore).toBe(true)
+    expect(api.repositories.history).toHaveBeenCalledTimes(3)
+    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-1', '', 100, { pageToken: 'older', signal: expect.any(AbortSignal) })
+    await act(async () => { finish({ ...firstPage, commits: [commit('old')], hasMore: false, nextPageToken: '' }) })
+    expect(history().props.history.commits.map((item: { sha: string }) => item.sha)).toEqual(['new', 'old'])
+    expect(history().props.history.nextPageToken).toBe('')
+    expect(history().props.loadMoreError).toBe('')
+    expect(history().props.loadingMore).toBe(false)
+    act(() => { renderer.unmount() })
+  })
+
+  it('aborts older history pages when switching repositories and ignores their late results', async () => {
+    const { api } = await import('../api/client')
+    const [repository] = await api.repositories.list()
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([repository, { ...repository, id: 'repo-2', name: 'other', root: '/repo/other' }])
+    const firstPage: RepositoryGitHistory = { commits: [], branches: [], headSha: 'new', currentBranch: 'main', isGit: true, hasMore: true, nextPageToken: 'older' }
+    vi.mocked(api.repositories.history).mockResolvedValueOnce(firstPage)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    let finish!: (page: RepositoryGitHistory) => void
+    vi.mocked(api.repositories.history).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    act(() => { renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.onLoadMore() })
+    const signal = vi.mocked(api.repositories.history).mock.calls.at(-1)?.[3]?.signal
+    expect(signal?.aborted).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { finish({ ...firstPage, nextPageToken: 'stale' }) })
+    const history = renderer.root.findByProps({ 'data-testid': 'mock-history' }).props
+    expect(history.repositoryId).toBe('repo-2')
+    expect(history.history.nextPageToken).toBeUndefined()
+    expect(history.loadingMore).toBe(false)
+    act(() => { renderer.unmount() })
+  })
+
   it('starts with the repository list collapsed when repositories already exist', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
@@ -401,7 +451,7 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.value).toBe('')
-    expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 0)
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 100)
     expect(vi.mocked(api.repositories.history).mock.calls.filter(([id]) => id === 'repo-2').some(([, branch]) => branch === 'pr-head')).toBe(false)
     await act(async () => { renderer.unmount() })
   })
@@ -1148,7 +1198,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
     await act(async () => { finish(result) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
-    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 0)
+    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 100)
     renderer.unmount()
   })
 
