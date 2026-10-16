@@ -57,13 +57,20 @@ func newWatchManager(dataDir string, idx *cstore.Store) *watchManager {
 // resolveCLI finds a `tld` executable. The Wails desktop binary cannot run the
 // index command itself, so it falls back to an installed CLI on PATH.
 func (m *watchManager) resolveCLI() (string, error) {
-	if path, err := exec.LookPath(cliBinaryName()); err == nil {
+	if path, err := exec.LookPath(cliBinaryName()); err == nil && !isMacAppExecutable(path) {
 		return path, nil
 	}
-	if exe, err := m.executable(); err == nil && filepath.Base(exe) == cliBinaryName() {
+	if exe, err := m.executable(); err == nil && filepath.Base(exe) == cliBinaryName() && !isMacAppExecutable(exe) {
 		return exe, nil
 	}
 	return "", fmt.Errorf("the tld CLI is not installed; install it to run a watcher")
+}
+
+func isMacAppExecutable(path string) bool {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return strings.Contains(filepath.ToSlash(path), ".app/Contents/MacOS/")
 }
 
 func (m *watchManager) cliAvailable() bool {

@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +16,72 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
+
+func TestWatchManagerResolveCLI(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		onPath     string
+		executable string
+		want       string
+	}{
+		{name: "installed CLI", onPath: "bin", executable: "tld.app/Contents/MacOS", want: "bin"},
+		{name: "standalone CLI fallback", executable: "standalone", want: "standalone"},
+		{name: "Finder launched desktop", executable: "tld.app/Contents/MacOS"},
+		{name: "desktop on PATH", onPath: "tld.app/Contents/MacOS", executable: "tld.app/Contents/MacOS"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("PATH", "")
+			if tt.onPath != "" {
+				dir := filepath.Join(root, tt.onPath)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, cliBinaryName()), []byte("CLI"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", dir)
+			}
+			manager := newWatchManager("", nil)
+			manager.executable = func() (string, error) {
+				return filepath.Join(root, tt.executable, cliBinaryName()), nil
+			}
+			got, err := manager.resolveCLI()
+			if tt.want == "" {
+				if err == nil || manager.cliAvailable() {
+					t.Fatalf("desktop executable reported as an available CLI: %q", got)
+				}
+				return
+			}
+			want := filepath.Join(root, tt.want, cliBinaryName())
+			if err != nil || got != want {
+				t.Fatalf("resolveCLI = %q, %v; want %q", got, err, want)
+			}
+		})
+	}
+}
+
+func TestWatchManagerRejectsSymlinkToDesktop(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "tld.app", "Contents", "MacOS")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(appDir, cliBinaryName())
+	if err := os.WriteFile(app, []byte("desktop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, cliBinaryName())
+	if err := os.Symlink(app, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("PATH", root)
+	manager := newWatchManager("", nil)
+	manager.executable = func() (string, error) { return app, nil }
+	if got, err := manager.resolveCLI(); err == nil {
+		t.Fatalf("resolved desktop symlink as CLI: %q", got)
+	}
+}
 
 func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 	workspaceID := uuid.New()

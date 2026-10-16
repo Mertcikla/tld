@@ -34,6 +34,9 @@ func main() {
 	if err := configureDesktopRuntimePaths(); err != nil {
 		log.Fatalf("failed to configure desktop runtime paths: %v", err)
 	}
+	if err := configureDesktopEnvironment(); err != nil {
+		log.Printf("failed to load desktop shell PATH: %v", err)
+	}
 
 	_ = workspace.EnsureGlobalConfig()
 
