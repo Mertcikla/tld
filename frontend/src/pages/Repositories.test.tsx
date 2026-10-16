@@ -1031,6 +1031,46 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
+  it('shows truncated commit subjects in both range cards and their menu options', async () => {
+    const { api } = await import('../api/client')
+    const commit = (sha: string, subject: string) => ({ sha, subject, author: 'Developer', authorEmail: '', createdUnix: 1, parents: [], refs: [], body: '' })
+    const older = commit('older', 'fix: preserve selection while filtering commit history')
+    const newer = commit('newer', 'feat: browse repository folders and include branch metadata')
+    vi.mocked(api.repositories.history).mockResolvedValueOnce({ commits: [newer, older], branches: [], headSha: 'newer', currentBranch: 'main', isGit: true, hasMore: false })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    vi.mocked(api.repositories.commitDetails).mockClear()
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.onRange(older, newer) })
+    for (const [side, subject] of [['base', older.subject], ['head', newer.subject]]) {
+      const picker = renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` })
+      const summary = picker.props.triggerContent.props.children[1].props.children[0]
+      expect(summary.props.children).toBe(subject)
+      expect(summary.props.title).toBe(subject)
+      expect(summary.props.isTruncated).toBe(true)
+      expect(picker.props.groups[0].options.at(-1).label).toBe(subject)
+    }
+    expect(api.repositories.commitDetails).not.toHaveBeenCalled()
+    act(() => { renderer.unmount() })
+  })
+
+  it('loads subjects for commit links outside the current history page and ignores obsolete responses', async () => {
+    const { api } = await import('../api/client')
+    searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&base=commit:old-commit&head=commit:head-commit'))
+    let finish!: (value: Awaited<ReturnType<typeof api.repositories.commitDetails>>) => void
+    vi.mocked(api.repositories.commitDetails).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    vi.mocked(api.repositories.commitDetails).mockResolvedValueOnce({ commit: { sha: 'head-commit', subject: 'feat: selected head subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const summary = (side: string) => renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.triggerContent.props.children[1].props.children[0].props.children
+    expect(summary('head')).toBe('feat: selected head subject')
+    vi.mocked(api.repositories.commitDetails).mockResolvedValueOnce({ commit: { sha: 'replacement', subject: 'fix: replacement base subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.onChange('commit:replacement') })
+    expect(summary('base')).toBe('fix: replacement base subject')
+    await act(async () => { finish({ commit: { sha: 'old-commit', subject: 'Obsolete subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] }) })
+    expect(summary('base')).toBe('fix: replacement base subject')
+    act(() => { renderer.unmount() })
+  })
+
   it('shows per-file insertion and deletion counts in the compact tree', async () => {
     const { api } = await import('../api/client')
     const result = await api.repositories.compare('repo-1', { base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' } })

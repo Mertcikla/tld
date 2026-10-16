@@ -58,18 +58,9 @@ func readCommitPage(ctx context.Context, root, sha string, limit, offset int) ([
 	}
 	commits := []*pb.GitCommit{}
 	for _, record := range strings.Split(raw, "\x00\n") {
-		fields := strings.Split(strings.TrimPrefix(record, "\n"), "\x00")
-		if len(fields) < 8 {
-			continue
+		if commit := parseGitCommit(record); commit != nil {
+			commits = append(commits, commit)
 		}
-		stamp, _ := strconv.ParseInt(fields[4], 10, 64)
-		refs := []string{}
-		for _, ref := range strings.Split(fields[6], ", ") {
-			if ref != "" {
-				refs = append(refs, ref)
-			}
-		}
-		commits = append(commits, &pb.GitCommit{Sha: fields[0], Subject: fields[1], Author: fields[2], AuthorEmail: fields[3], CreatedUnix: stamp, Parents: strings.Fields(fields[5]), Refs: refs, Body: strings.TrimSpace(fields[7])})
 	}
 	return commits, nil
 }
@@ -83,6 +74,9 @@ type gitHistoryPageToken struct {
 	Branch       string `json:"branch"`
 	Revision     string `json:"revision"`
 	Offset       int    `json:"offset"`
+	Query        string `json:"query,omitempty"`
+	Author       string `json:"author,omitempty"`
+	Tag          string `json:"tag,omitempty"`
 }
 
 func (s *repositoryService) GetGitHistory(ctx context.Context, req *connect.Request[pb.GetGitHistoryRequest]) (*connect.Response[pb.GetGitHistoryResponse], error) {
@@ -128,14 +122,23 @@ func (s *repositoryService) GetGitHistory(ctx context.Context, req *connect.Requ
 	if requested := req.Msg.GetLimit(); requested > 0 && requested < gitHistoryPageSize {
 		limit = int(requested)
 	}
-	page := gitHistoryPageToken{RepositoryID: repo.Id, Branch: req.Msg.GetBranch(), Revision: target}
+	query := strings.ToLower(strings.TrimSpace(req.Msg.GetQuery()))
+	author := req.Msg.GetAuthor()
+	tag := req.Msg.GetTag()
+	page := gitHistoryPageToken{RepositoryID: repo.Id, Branch: req.Msg.GetBranch(), Revision: target, Query: query, Author: author, Tag: tag}
 	if token := req.Msg.GetPageToken(); token != "" {
+		var decoded gitHistoryPageToken
 		raw, decodeErr := base64.RawURLEncoding.DecodeString(token)
-		if decodeErr != nil || json.Unmarshal(raw, &page) != nil || page.RepositoryID != repo.Id || page.Branch != req.Msg.GetBranch() || page.Offset <= 0 || page.Offset > math.MaxInt32-gitHistoryPageSize || !gitHistoryRevisionPattern.MatchString(page.Revision) {
+		if decodeErr != nil || json.Unmarshal(raw, &decoded) != nil || decoded.RepositoryID != repo.Id || decoded.Branch != req.Msg.GetBranch() || decoded.Query != query || decoded.Author != author || decoded.Tag != tag || decoded.Offset <= 0 || decoded.Offset > math.MaxInt32-gitHistoryPageSize || !gitHistoryRevisionPattern.MatchString(decoded.Revision) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid Git history page token"))
 		}
+		page = decoded
 	}
-	result.Commits, err = readCommitPage(ctx, repo.Root, page.Revision, limit+1, page.Offset)
+	if query == "" && author == "" && tag == "" {
+		result.Commits, err = readCommitPage(ctx, repo.Root, page.Revision, limit+1, page.Offset)
+	} else {
+		result.Commits, err = searchCommitPage(ctx, repo.Root, page.Revision, query, author, tag, limit+1, page.Offset)
+	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

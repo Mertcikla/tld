@@ -2271,8 +2271,12 @@ export const api = {
         throw e
       }
     },
-    history: (repositoryId: string, branch = '', limit = 100, options: { pageToken?: string; signal?: AbortSignal } = {}): Promise<RepositoryGitHistory> => rpc(async () => {
-      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit, pageToken: options.pageToken }, { signal: options.signal })
+    historyFilters: (repositoryId: string, branch = '', signal?: AbortSignal): Promise<{ authors: string[]; tags: string[] }> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistoryFilters({ repositoryId, branch }, { signal })
+      return { authors: response.authors, tags: response.tags }
+    }),
+    history: (repositoryId: string, branch = '', limit = 100, options: { pageToken?: string; query?: string; author?: string; tag?: string; signal?: AbortSignal } = {}): Promise<RepositoryGitHistory> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit, pageToken: options.pageToken, query: options.query, author: options.author, tag: options.tag }, { signal: options.signal })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
     }),
     rangeSummary: (repositoryId: string, options: { base?: string; head?: string; baseWorkingTree?: boolean; headWorkingTree?: boolean; signal?: AbortSignal }): Promise<RevisionRangeSummary> => rpc(async () => {

@@ -117,6 +117,19 @@ function targetSummary(value: string, snapshots: CodeSnapshot[]) {
   if (snapshot) return snapshot.gitBranch || short(snapshot.gitRevision)
   return value.startsWith('snapshot:') ? short(value.slice(9)) : value
 }
+function useRepositoryCommitSubject(repositoryId: string, revision: string, knownSubject: string) {
+  const [resolved, setResolved] = useState<{ repositoryId: string; revision: string; subject: string } | null>(null)
+  const subject = knownSubject || (resolved?.repositoryId === repositoryId && resolved.revision === revision ? resolved.subject : '')
+  useEffect(() => {
+    if (!repositoryId || !revision || subject) return
+    let stale = false
+    void api.repositories.commitDetails(repositoryId, revision).then(({ commit }) => {
+      if (!stale && commit?.sha === revision) setResolved({ repositoryId, revision, subject: commit.subject })
+    }).catch(() => { /* Keep the revision as a fallback when Git metadata is unavailable. */ })
+    return () => { stale = true }
+  }, [repositoryId, revision, subject])
+  return subject
+}
 function targetStatus(value: string, snapshots: CodeSnapshot[], maps: CompletedRepositoryMap[]) {
   const snapshot = snapshotForTarget(value, snapshots)
   if (snapshot && snapshot.compatible !== true) return { label: 'Incompatible', colorScheme: 'red' }
@@ -652,6 +665,8 @@ export default function Repositories() {
   const headWorkingTree = head === 'working_tree'
   const baseRevision = baseWorkingTree ? '' : base.startsWith('commit:') ? base.slice(7) : snapshotForTarget(base, snapshots)?.gitRevision || ''
   const headRevision = headWorkingTree ? '' : head.startsWith('commit:') ? head.slice(7) : snapshotForTarget(head, snapshots)?.gitRevision || ''
+  const baseCommitSubject = useRepositoryCommitSubject(selectedId, (mode === 'compare' || mode === 'pr') && base.startsWith('commit:') ? baseRevision : '', history?.commits.find((commit) => commit.sha === baseRevision)?.subject || '')
+  const headCommitSubject = useRepositoryCommitSubject(selectedId, (mode === 'compare' || mode === 'pr') && head.startsWith('commit:') ? headRevision : '', history?.commits.find((commit) => commit.sha === headRevision)?.subject || '')
   useEffect(() => {
     const baseReady = baseWorkingTree || !!baseRevision
     const headReady = headWorkingTree || !!headRevision
@@ -742,14 +757,14 @@ export default function Repositories() {
     setBusy(false); setCapturing(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setHistoryCollapsed(false); setMode(next)
   }
   const chooseTarget = (side: 'base' | 'head', value: string) => {
-    if (mode === 'pr') return
+    if (mode === 'pr') return false
     const revision = (target: string) => target.startsWith('commit:') ? target.slice(7)
       : target === 'working_tree' ? history?.headSha : snapshotForTarget(target, snapshots)?.gitRevision
     const baseRevision = revision(side === 'base' ? value : base)
     const headRevision = revision(side === 'head' ? value : head)
     const baseIndex = history?.commits.findIndex((commit) => commit.sha === baseRevision) ?? -1
     const headIndex = history?.commits.findIndex((commit) => commit.sha === headRevision) ?? -1
-    if (baseIndex >= 0 && headIndex >= 0 && baseIndex < headIndex) return
+    if (baseIndex >= 0 && headIndex >= 0 && baseIndex < headIndex) return false
     const context = value.startsWith('commit:') ? branch || history?.currentBranch || '' : ''
     if (side === 'base') {
       setBase(value)
@@ -758,6 +773,7 @@ export default function Repositories() {
       setHead(value)
       setHeadBranch(context)
     }
+    return true
   }
   useEffect(() => {
     return () => { prListOperation.current?.abort(); prListOperation.current = null }
@@ -1529,19 +1545,21 @@ export default function Repositories() {
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && <RepositoryHistory
                   repositoryId={selectedId}
                   history={history}
+                  branch={mode === 'pr' && pullRequest ? pullRequest.headSha : branch}
+                  onBranchChange={mode === 'pr' ? undefined : setBranch}
                   onLoadMore={() => void loadMoreHistory()}
                   loadingMore={loadingMoreHistory || dataLoading}
                   loadMoreError={historyPageError}
                   base={baseRevision}
                   head={headRevision}
-                  disabled={busy || mode === 'pr'}
-                  onRange={(older, newer) => {
+                  disabled={busy || dataLoading || mode === 'pr'}
+                  onRange={(older, newer, branches) => {
                     if (busy || mode === 'pr') return
                     const context = branch || history?.currentBranch || ''
                     setBase(`commit:${older.sha}`)
                     setHead(`commit:${newer.sha}`)
-                    setBaseBranch(context)
-                    setHeadBranch(context)
+                    setBaseBranch(branches?.base ?? context)
+                    setHeadBranch(branches?.head ?? context)
                   }}
                   footerContent={(
                     <Flex gap={3} align="center" wrap="wrap" w="full" aria-label="Comparison range">
@@ -1551,7 +1569,7 @@ export default function Repositories() {
                           const status = targetStatus(value, snapshots, maps)
                           const snapshot = snapshotForTarget(value, snapshots)
                           const branchName = (side === 'base' ? baseBranch : headBranch) || snapshot?.gitBranch
-                          const displaySummary = snapshot?.commitMessage || targetSummary(value, snapshots)
+                          const displaySummary = snapshot?.commitMessage || (side === 'base' ? baseCommitSubject : headCommitSubject) || targetSummary(value, snapshots)
                           return (
                             <Flex key={side} flex="1 1 180px" minW={0} gap={2} align="center" wrap="wrap">
                               {side === 'head' && (
@@ -1574,6 +1592,7 @@ export default function Repositories() {
                               <Box flex={1} minW={0}>
                                 <RepositoryTargetPicker
                                   card
+                                  repositoryId={selectedId}
                                   aria-label={side === 'base' ? 'Base target' : 'Head target'}
                                   data-testid={`repositories-${side}-target`}
                                   value={value}
@@ -1586,7 +1605,7 @@ export default function Repositories() {
                                         <Badge colorScheme={status.colorScheme} fontSize="9px" borderRadius="sm" px={1.5} textTransform="none">{status.label}</Badge>
                                       </HStack>
                                       <HStack spacing={2} minW={0}>
-                                        <Text fontSize="sm" fontWeight="semibold" color="gray.100" isTruncated title={displaySummary}>{displaySummary}</Text>
+                                        <Text fontSize="sm" fontWeight="semibold" color="gray.100" flex={1} minW={0} isTruncated title={displaySummary}>{displaySummary}</Text>
                                         {branchName && value !== 'working_tree' && <Text fontSize="xs" color="gray.500" isTruncated title={branchName}>{branchName}</Text>}
                                       </HStack>
                                     </VStack>
@@ -1594,7 +1613,7 @@ export default function Repositories() {
                                   groups={[
                                     { options: [
                                       { value: 'working_tree', label: 'Working tree · local contents' },
-                                      ...(!value || !value.startsWith('commit:') ? [] : [{ value, label: targetSummary(value, snapshots) }]),
+                                      ...(!value || !value.startsWith('commit:') ? [] : [{ value, label: displaySummary }]),
                                     ] },
                                     { label: 'Saved snapshots', options: [...snapshots].reverse().filter((snapshot) => snapshot.compatible === true).map((snapshot) => ({
                                       value: `snapshot:${snapshot.id}`,
