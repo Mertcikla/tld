@@ -2,6 +2,8 @@ package materialize
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -148,7 +150,6 @@ type mapMaterializer struct {
 	mappingBuffers   []cstore.ResourceMapping
 	pendingPlaces    []pendingPlacement
 	placed           map[int64]map[int64]bool
-	desiredPlaces    map[int64]map[int64]bool
 	position         map[int64]int
 	fileElementIDs   map[string]int64
 	fileChains       map[string][]int64
@@ -252,13 +253,6 @@ func crossViewMaxConnectorsPerElement(opts MapOptions) int {
 // view can be laid out as a graph instead of a grid. Elements that already have
 // a placement keep it.
 func (m *mapMaterializer) queuePlacement(viewID, elementID int64) error {
-	if m.desiredPlaces == nil {
-		m.desiredPlaces = map[int64]map[int64]bool{}
-	}
-	if m.desiredPlaces[viewID] == nil {
-		m.desiredPlaces[viewID] = map[int64]bool{}
-	}
-	m.desiredPlaces[viewID][elementID] = true
 	existing, err := m.placementsFor(viewID)
 	if err != nil {
 		return err
@@ -804,56 +798,32 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	return nil
 }
 
-// connectorPatch merges generated relationship into an existing connector
-// without clobbering user presentation: a non-empty user label or relationship
-// wins, tags are unioned, and the user's route style is preserved. Code-derived
-// endpoints, view, and direction still update.
-func (m *mapMaterializer) connectorPatch(id int64, input core.Connector) (core.Connector, error) {
-	patch := connectorSourceOnly(input)
-	if input.Label == nil && input.Relationship == nil && len(input.Tags) == 0 {
-		return patch, nil
-	}
-	existing, err := m.ws.ConnectorByID(m.ctx, id)
-	if err != nil {
-		return patch, err
-	}
-	if existing.Label != nil && strings.TrimSpace(*existing.Label) != "" {
-		patch.Label = nil
-	}
-	if existing.Relationship != nil && strings.TrimSpace(*existing.Relationship) != "" {
-		patch.Relationship = nil
-	}
-	patch.Tags = unionTags(existing.Tags, input.Tags)
-	return patch, nil
-}
-
 func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
 	m.kept[logicalKey] = true
-	id := int64(0)
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
-		if patch, err := m.connectorPatch(mapping.ResourceID, input); err == nil {
-			if updated, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, patch); err == nil {
-				id = updated.ID
-				m.recordMapping(logicalKey, cstore.MappingConnector, id)
-			}
+		if _, err := m.ws.ConnectorByID(m.ctx, mapping.ResourceID); err == nil {
+			// Existing connectors may have authored endpoints, direction and routes.
+			m.recordMapping(logicalKey, cstore.MappingConnector, mapping.ResourceID)
+			m.result.Connectors++
+			m.advance("connector")
+			return nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
 	}
-	if id == 0 {
-		created, err := m.ws.CreateConnector(m.ctx, input)
-		if err != nil {
-			return fmt.Errorf("create map connector %q: %w", logicalKey, err)
-		}
-		id = created.ID
-		m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
-			LogicalKey:   logicalKey,
-			Kind:         cstore.MappingConnector,
-			ResourceID:   created.ID,
-			RepositoryID: m.input.RepositoryID,
-			SnapshotID:   m.input.SnapshotID,
-		})
+	created, err := m.ws.CreateConnector(m.ctx, input)
+	if err != nil {
+		return fmt.Errorf("create map connector %q: %w", logicalKey, err)
 	}
+	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
+		LogicalKey:   logicalKey,
+		Kind:         cstore.MappingConnector,
+		ResourceID:   created.ID,
+		RepositoryID: m.input.RepositoryID,
+		SnapshotID:   m.input.SnapshotID,
+	})
 	m.placedConnectors = append(m.placedConnectors, placedConnector{
-		id:     id,
+		id:     created.ID,
 		viewID: input.ViewID,
 		source: input.SourceElementID,
 		target: input.TargetElementID,
@@ -863,7 +833,7 @@ func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connecto
 	return nil
 }
 
-// adjustConnectorHandles re-attaches each generated connector to the source and
+// adjustConnectorHandles attaches only newly created connectors to the source and
 // target handle that yields the shortest anchor distance for the final layout,
 // mirroring the view editor's "Adjust Connectors" pass so map connectors do not
 // cross node bodies.
@@ -920,14 +890,11 @@ func (m *mapMaterializer) adjustConnectorHandles() error {
 // elementPatch merges generated tags and technology into an existing element
 // without clobbering user presentation: tags are unioned and technology is only
 // filled when the user has not set it.
-func (m *mapMaterializer) elementPatch(id int64, input core.LibraryElement) core.LibraryElement {
+func (m *mapMaterializer) elementPatch(id int64, input core.LibraryElement) (core.LibraryElement, error) {
 	patch := sourceOnly(input)
-	if len(input.Tags) == 0 && input.Technology == nil && len(input.TechnologyConnectors) == 0 {
-		return patch
-	}
 	existing, err := m.ws.ElementByID(m.ctx, id)
 	if err != nil {
-		return patch
+		return patch, err
 	}
 	if len(input.Tags) > 0 {
 		patch.Tags = unionTags(existing.Tags, input.Tags)
@@ -938,17 +905,25 @@ func (m *mapMaterializer) elementPatch(id int64, input core.LibraryElement) core
 	if len(existing.TechnologyConnectors) == 0 && len(input.TechnologyConnectors) > 0 {
 		patch.TechnologyConnectors = input.TechnologyConnectors
 	}
-	return patch
+	return patch, nil
 }
 
 func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryElement) (int64, error) {
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingElement {
-		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, m.elementPatch(mapping.ResourceID, input)); err == nil {
+		patch, err := m.elementPatch(mapping.ResourceID, input)
+		if err == nil {
+			updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, patch)
+			if err != nil {
+				return 0, err
+			}
 			m.recordMapping(logicalKey, cstore.MappingElement, updated.ID)
 			m.result.Elements++
 			m.advance("element")
 			return updated.ID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
 		}
 	}
 	created, err := m.ws.CreateElement(m.ctx, input)
@@ -970,25 +945,14 @@ func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryEle
 func (m *mapMaterializer) upsertView(logicalKey, name, label string, ownerElementID *int64) (int64, error) {
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingView {
-		if node, err := m.ws.ViewByID(m.ctx, mapping.ResourceID); err == nil {
-			if ownerMatches(node.OwnerElementID, ownerElementID) {
-				// Preserve a user-renamed view: pass nil name/tags so the store
-				// keeps them, while refreshing the generated level label.
-				if _, err := m.ws.UpdateView(m.ctx, mapping.ResourceID, nil, nil, &label, nil); err == nil {
-					m.recordMapping(logicalKey, cstore.MappingView, mapping.ResourceID)
-					m.result.Views++
-					m.advance("view")
-					return mapping.ResourceID, nil
-				}
-			} else {
-				// The view's owner changed (e.g. a map view created before it
-				// was nested under the workspace root). Keep the user's name,
-				// then recreate it so the hierarchy is correct.
-				if strings.TrimSpace(node.Name) != "" {
-					name = node.Name
-				}
-				_ = m.ws.DeleteView(m.ctx, mapping.ResourceID)
-			}
+		if _, err := m.ws.ViewByID(m.ctx, mapping.ResourceID); err == nil {
+			// Even an ownership mismatch must not destroy an authored subtree.
+			m.recordMapping(logicalKey, cstore.MappingView, mapping.ResourceID)
+			m.result.Views++
+			m.advance("view")
+			return mapping.ResourceID, nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
 		}
 	}
 	view, err := m.ws.CreateView(m.ctx, name, &label, ownerElementID)
@@ -1143,16 +1107,6 @@ func mapTopElement(input MapInput) core.LibraryElement {
 		RepositoryID: optionalStr(input.RepositoryID),
 		Branch:       optionalStr(input.RepositoryBranch),
 	}
-}
-
-// ownerMatches reports whether an existing view's owner satisfies the desired
-// owner. A nil desired owner accepts any existing owner; a non-nil desired owner
-// requires an exact match.
-func ownerMatches(current, desired *int64) bool {
-	if desired == nil {
-		return true
-	}
-	return current != nil && *current == *desired
 }
 
 // workspaceRootViewID resolves the view new top-level elements should be placed

@@ -1590,6 +1590,31 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
+  it('separates opening the shared map from applying a historical snapshot', async () => {
+    const { api } = await import('../api/client')
+    const result = { snapshotId: 'snap-0', runId: 'run-old', viewId: 5, facts: 4, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }
+    vi.mocked(api.repositories.maps).mockResolvedValue([
+      { result: { ...result, snapshotId: 'snap-1', runId: 'run-new' }, completedUnix: 200, configHash: 'cfg' },
+      { result, completedUnix: 100, configHash: 'cfg' },
+    ])
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-0' }).props.onClick() })
+    const row = renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-snap-0' })
+    expect(row.findAll((node) => node.props.children === 'Previously mapped').length).toBeGreaterThan(0)
+    const open = row.findByProps({ 'data-testid': 'repositories-snapshot-open-map-snap-0' })
+    expect(open.props.children).toBe('Open workspace map')
+    await act(async () => { open.props.onClick() })
+    expect(navigateMock).toHaveBeenCalledWith('/views/5')
+    expect(api.repositories.map).not.toHaveBeenCalled()
+    const apply = row.findByProps({ 'data-testid': 'repositories-snapshot-map-snap-0' })
+    expect(apply.props.children).toBe('Apply snapshot again')
+    await act(async () => { await apply.props.onClick() })
+    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-0' }))
+    await act(async () => { renderer.unmount() })
+  })
+
   it.each([false, undefined])('makes incompatible snapshots deletion-only (compatible=%s)', async (compatible) => {
     const { api } = await import('../api/client')
     const snapshots = await api.repositories.snapshots('repo-1')

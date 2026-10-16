@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -13,6 +15,7 @@ import (
 	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
+	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	wsstore "github.com/mertcikla/tld/v2/internal/store"
 )
@@ -134,8 +137,21 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		if err := ws.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, "only-"+other+".go").Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		if count != 0 {
-			t.Fatalf("map %s still displays %s", id, other)
+		if count > 0 {
+			var tags string
+			if err := ws.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = ?`, "only-"+other+".go").Scan(&tags); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(tags, materialize.StaleTag) {
+				t.Fatalf("map %s did not mark %s stale", id, other)
+			}
+		}
+		var tags string
+		if err := ws.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = ?`, "only-"+id+".go").Scan(&tags); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(tags, materialize.StaleTag) {
+			t.Fatalf("active file still stale: %s", id)
 		}
 		return result
 	}
@@ -151,8 +167,14 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mapping := range mappings {
-		if mapping.SnapshotID != "a" {
-			t.Fatalf("reused mapping has stale provenance: %+v", mapping)
+		if mapping.Kind == cstore.MappingElement {
+			item, err := ws.ElementByID(ctx, mapping.ResourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mapping.SnapshotID != "a" && !slices.Contains(item.Tags, materialize.StaleTag) {
+				t.Fatalf("reused mapping has stale provenance: %+v", mapping)
+			}
 		}
 	}
 	run("b", false)
@@ -161,8 +183,14 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mapping := range mappings {
-		if mapping.SnapshotID != "b" {
-			t.Fatalf("stale mapping provenance: %+v", mapping)
+		if mapping.Kind == cstore.MappingElement {
+			item, err := ws.ElementByID(ctx, mapping.ResourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mapping.SnapshotID != "b" && !slices.Contains(item.Tags, materialize.StaleTag) {
+				t.Fatalf("stale mapping provenance: %+v", mapping)
+			}
 		}
 	}
 	if err := idx.DeleteSnapshot(ctx, "a"); err != nil {

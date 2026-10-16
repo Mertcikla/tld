@@ -62,3 +62,23 @@ Sources and extraction artifacts keep their existing whole-payload sharing.
 Memberships and inventories are still stored per snapshot, and changes to
 positions require new fact rows. Storage growth therefore
 includes these costs rather than being strictly proportional to edited bytes.
+
+## Conservative map upsert
+
+Mapping updates source links and adds generated content, but never deletes
+existing elements, views, connectors, layers or placements. Existing element
+presentation, connector endpoints/routes, view ownership and layer membership
+are preserved. Stable ownership keys let a later snapshot reuse retained resources.
+
+`codeindex:stale` is a reserved status tag on retained elements, views and
+connectors absent from the last applied map. It is cleared when they reappear.
+It means absent from that map, which can also result from grouping or budget
+changes; it is not proof that source was deleted. Retained placements and layers
+have no independent status, and a current group can contain older placements.
+Snapshots and completed-map records are history, not isolated copies of views.
+An interrupted run can leave additive changes; retry reuses committed resources.
+
+This release has one policy: conservative upsert. Reconciliation is centralized
+in `materialize/upsert.go`; manual/sync policies and workspace/view preference
+persistence are deferred. There are no new RPCs or schema changes. Cleanup is an
+explicit user action, and map size can grow across snapshots.

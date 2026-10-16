@@ -135,7 +135,7 @@ function targetStatus(value: string, snapshots: CodeSnapshot[], maps: CompletedR
   if (snapshot && snapshot.compatible !== true) return { label: 'Incompatible', colorScheme: 'red' }
   const mapped = !!snapshot && maps.some((map) => map.result.snapshotId === snapshot.id)
   return mapped
-    ? { label: 'Mapped', colorScheme: 'green' }
+    ? { label: 'Previously mapped', colorScheme: 'green' }
     : snapshot
       ? { label: 'Indexed', colorScheme: 'blue' }
       : { label: 'Not captured', colorScheme: 'gray' }
