@@ -14,7 +14,7 @@ export function snapshotForTarget(
     return [...snapshots]
       .reverse()
       .find(
-        (s) => s.provenance === 'commit' && s.gitRevision === target.slice(7),
+        (s) => s.compatible === true && s.provenance === 'commit' && s.gitRevision === target.slice(7),
       )
   return undefined
 }
@@ -22,6 +22,7 @@ export function defaultRepositoryTargets(
   snapshots: CodeSnapshot[],
   history: RepositoryGitHistory | null,
 ): [string, string] {
+  snapshots = snapshots.filter((snapshot) => snapshot.compatible === true)
   if (snapshots.length >= 2)
     return [
       `snapshot:${snapshots[snapshots.length - 2].id}`,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,59 @@ import (
 	"github.com/uptrace/bun/migrate"
 	_ "modernc.org/sqlite"
 )
+
+func TestSQLiteReplacementConnectionPreservesPragmasAndDeleteCascades(t *testing.T) {
+	for _, uri := range []bool{false, true} {
+		t.Run(fmt.Sprintf("uri=%v", uri), func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "workspace with spaces.db")
+			if uri {
+				path = (&url.URL{Scheme: "file", Path: path, RawQuery: "cache=shared"}).String()
+			}
+			handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{SQLitePath: path, Migrations: assets.FS})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = handle.Close() }()
+			for _, query := range []string{
+				`INSERT INTO elements(id, name, created_at, updated_at) VALUES (1, 'Placed', '', ''), (2, 'Unplaced', '', '')`,
+				`INSERT INTO views(id, name, created_at, updated_at) VALUES (1, 'Root', '', '')`,
+				`INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at) VALUES (1, 1, 0, 0, '', '')`,
+				`INSERT INTO connectors(view_id, source_element_id, target_element_id, created_at, updated_at) VALUES (1, 1, 2, '', '')`,
+			} {
+				if _, err := handle.DB.ExecContext(ctx, query); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A canceled request can discard the pooled connection. Force the
+			// same replacement without relying on cancellation timing.
+			handle.DB.SetMaxIdleConns(0)
+			handle.DB.SetMaxIdleConns(1)
+			for pragma, want := range map[string]int{"foreign_keys": 1, "busy_timeout": 5000, "synchronous": 1} {
+				var got int
+				if err := handle.DB.QueryRowContext(ctx, "PRAGMA "+pragma).Scan(&got); err != nil {
+					t.Fatal(err)
+				}
+				if got != want {
+					t.Errorf("replacement connection %s = %d, want %d", pragma, got, want)
+				}
+			}
+			if _, err := handle.DB.ExecContext(ctx, `DELETE FROM elements WHERE id = 2`); err != nil {
+				t.Fatal(err)
+			}
+			var connectors, placements int
+			if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
+				t.Fatal(err)
+			}
+			if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM placements`).Scan(&placements); err != nil {
+				t.Fatal(err)
+			}
+			if connectors != 0 || placements != 1 {
+				t.Fatalf("after deleting unplaced element: connectors=%d placements=%d, want 0 and 1", connectors, placements)
+			}
+		})
+	}
+}
 
 func TestOpenSQLiteSkipsLegacyVectorTable(t *testing.T) {
 	ctx := context.Background()

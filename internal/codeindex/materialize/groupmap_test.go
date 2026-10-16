@@ -461,7 +461,7 @@ func TestApplyGroupMapCrossViewConnectorsRespectViewBudget(t *testing.T) {
 	}
 }
 
-func TestApplyGroupMapCrossViewConnectorsPruneOnDisable(t *testing.T) {
+func TestApplyGroupMapCrossViewConnectorsRetainedOnDisable(t *testing.T) {
 	ctx := context.Background()
 	appStore, idx := openGroupMapStore(t)
 	input := GroupMapInput{
@@ -483,15 +483,15 @@ func TestApplyGroupMapCrossViewConnectorsPruneOnDisable(t *testing.T) {
 	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if count := crossViewMappingCount(t, idx, "repo-1"); count != 0 {
-		t.Fatalf("xconn mappings after disable = %d, want 0", count)
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 1 {
+		t.Fatalf("xconn mappings after disable = %d, want 1", count)
 	}
 	var rows int
 	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 1 {
-		t.Fatalf("stored connectors = %d, want only the parent-level roll-up", rows)
+	if rows != 2 {
+		t.Fatalf("stored connectors = %d, want retained cross-view connector and roll-up", rows)
 	}
 }
 
@@ -527,7 +527,7 @@ func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 	}
 }
 
-func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
+func TestApplyGroupMapRetainsStaleGroups(t *testing.T) {
 	ctx := context.Background()
 	appStore, idx := openGroupMapStore(t)
 	files := groupMapFiles()
@@ -550,11 +550,11 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
-	if result.Pruned == 0 {
-		t.Fatal("expected the removed group to be pruned")
+	if result.Pruned != 0 {
+		t.Fatal("upsert must not prune")
 	}
-	if _, ok, err := idx.MappingByLogicalKey(ctx, groupElementKey("repo-1", "one")); err != nil || ok {
-		t.Fatalf("stale group mapping not pruned (ok=%v err=%v)", ok, err)
+	if _, ok, err := idx.MappingByLogicalKey(ctx, groupElementKey("repo-1", "one")); err != nil || !ok {
+		t.Fatalf("stale group mapping lost (ok=%v err=%v)", ok, err)
 	}
 }
 
@@ -981,7 +981,7 @@ func TestApplyGroupMapAdjustsConnectorHandles(t *testing.T) {
 	}
 }
 
-func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
+func TestGroupSplitRetainsExistingPlacements(t *testing.T) {
 	ctx := context.Background()
 	ws, idx := openGroupMapStore(t)
 	input := GroupMapInput{RepositoryID: "repo-split", SnapshotID: "a", Files: groupMapFiles(), Groups: []*community.Group{{Key: "parent", Name: "parent", Files: 4, Members: []int{0, 1, 2, 3}}}}
@@ -1011,8 +1011,8 @@ func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(placements) != 3 {
-		t.Fatalf("parent retains obsolete file placements: %+v", placements)
+	if len(placements) != 7 {
+		t.Fatalf("parent lost existing placements: %+v", placements)
 	}
 	userRetained := false
 	for _, placement := range placements {
@@ -1032,7 +1032,7 @@ func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
 			t.Fatalf("child %s placements = %d", name, len(placements))
 		}
 	}
-	// Merging the same parent back removes obsolete child placements as well.
+	// Merging the parent back also retains the old child placements.
 	input.Groups = []*community.Group{{Key: "parent", Name: "parent", Files: 4, Members: []int{0, 1, 2, 3}}}
 	if _, err := ApplyGroupMap(ctx, ws, idx, input, MapOptions{}); err != nil {
 		t.Fatal(err)
@@ -1041,7 +1041,7 @@ func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(placements) != 5 {
+	if len(placements) != 7 {
 		t.Fatalf("merged placements = %d", len(placements))
 	}
 }

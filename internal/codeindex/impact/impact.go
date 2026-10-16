@@ -15,28 +15,55 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// analysisInputs supplies captured watch state in place of repeated SQL reads.
+type analysisInputs struct {
+	diff               *pb.SnapshotDiff
+	before, after      *pb.Snapshot
+	oldEdges, newEdges map[[2]string]float64
+	oldKinds, newKinds map[[2]string][]pb.EdgeKind
+}
+
 // buildAnalysis resolves file changes and dependency witnesses from immutable
 // snapshots. Workspace selection and placement belong exclusively to assemble.
-func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32) (*model.Diagram, error) {
-	diff, err := idx.ImpactDiff(ctx, fromID, toID)
-	if err != nil {
-		return nil, err
+func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fromID, toID string, blastRadius uint32, prepared ...*analysisInputs) (*model.Diagram, error) {
+	var inputs *analysisInputs
+	if len(prepared) > 0 {
+		inputs = prepared[0]
 	}
-	oldEdges, oldKinds, err := idx.FilePairStats(ctx, fromID)
-	if err != nil {
-		return nil, err
+	if inputs == nil {
+		inputs = &analysisInputs{}
+		var err error
+		if inputs.diff, err = idx.ImpactDiff(ctx, fromID, toID); err != nil {
+			return nil, err
+		}
+		if inputs.oldEdges, inputs.oldKinds, err = idx.FilePairStats(ctx, fromID); err != nil {
+			return nil, err
+		}
+		if inputs.newEdges, inputs.newKinds, err = idx.FilePairStats(ctx, toID); err != nil {
+			return nil, err
+		}
 	}
-	newEdges, newKinds, err := idx.FilePairStats(ctx, toID)
-	if err != nil {
-		return nil, err
-	}
+	diff, oldEdges, oldKinds, newEdges, newKinds := inputs.diff, inputs.oldEdges, inputs.oldKinds, inputs.newEdges, inputs.newKinds
 	diagram := &model.Diagram{RepositoryId: repositoryID, ComparisonKey: key, Diff: diff, Version: uuid.NewString(), RequestedRadius: proto.Uint32(blastRadius)}
 	snapshotPaths := map[string]map[string]bool{}
 	diagram.ManifestComplete = true
 	for _, id := range []string{fromID, toID} {
-		snapshot, loadErr := idx.Snapshot(ctx, id)
-		if loadErr != nil {
-			return nil, loadErr
+		snapshot := inputs.before
+		if id == toID {
+			snapshot = inputs.after
+		}
+		if snapshot == nil {
+			var err error
+			snapshot, err = idx.Snapshot(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if id == fromID {
+			inputs.before = snapshot
+		}
+		if id == toID {
+			inputs.after = snapshot
 		}
 		snapshotPaths[id] = map[string]bool{}
 		for _, source := range snapshot.Sources {
@@ -155,7 +182,7 @@ func buildAnalysis(ctx context.Context, idx *cstore.Store, repositoryID, key, fr
 			}
 		}
 	}
-	if err := captureComparison(ctx, idx, diagram); err != nil {
+	if err := captureComparison(ctx, idx, diagram, inputs.before, inputs.after); err != nil {
 		return nil, err
 	}
 	return diagram, nil

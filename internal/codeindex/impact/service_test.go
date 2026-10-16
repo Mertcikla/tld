@@ -68,7 +68,7 @@ func TestCompareServesStoredComparison(t *testing.T) {
 		src := &graph.Source{Path: "a.go", Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
 		g.Sources[src.Path] = src
 		g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(text)), text, "", nil)
-		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", IngestionStatus: "complete",
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(),
 			Sources: []*pb.SourceFile{{Path: "a.go", Hash: src.Hash, Size: uint64(len(text))}}}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)

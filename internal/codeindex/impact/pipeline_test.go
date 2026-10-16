@@ -12,6 +12,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/graph"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
@@ -46,7 +47,7 @@ func publishPipeline(t *testing.T, ctx context.Context, idx *cstore.Store, id st
 		facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "First", "go", source.Anchor(0, len(text)), text, "", nil)
 	}
 	for _, edge := range edges {
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 	}
 	if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 		t.Fatal(err)
@@ -373,5 +374,42 @@ func TestPipelineDoesNotClaimAmbiguousRepositoryAnchors(t *testing.T) {
 	}
 	if p := grounded.Scene.Provenance[key]; p == nil || p.Grounding != pb.ImpactGrounding_IMPACT_GROUNDING_RESOLVED {
 		t.Fatalf("remote anchor not resolved: %+v", p)
+	}
+}
+
+func TestLiveSceneFileIdentitySurvivesInsertedChanges(t *testing.T) {
+	ctx, ws, idx := pipelineStore(t)
+	publishPipeline(t, ctx, idx, "base", map[string]string{"z.go": "old"}, nil)
+	publishPipeline(t, ctx, idx, "head1", map[string]string{"z.go": "one"}, nil)
+	publishPipeline(t, ctx, idx, "head2", map[string]string{"a.go": "new", "z.go": "two"}, nil)
+	service := Service{Workspace: ws, Index: idx}
+	first, err := service.CompareSnapshots(ctx, "repo", "base", "head1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CompareSnapshots(ctx, "repo", "base", "head2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID, secondID := int32(0), int32(0)
+	for _, scene := range []struct {
+		assembly *model.Assembly
+		id       *int32
+	}{{first.Scene, &firstID}, {second.Scene, &secondID}} {
+		for _, content := range scene.assembly.Views {
+			for _, placement := range content.Placements {
+				if placement.Element.GetFilePath() == "z.go" {
+					*scene.id = placement.Element.ElementId
+				}
+			}
+		}
+	}
+	if firstID == 0 || firstID != secondID {
+		t.Fatalf("z.go changed identity: %d -> %d", firstID, secondID)
+	}
+	for _, file := range second.Scene.Files {
+		if file.Path == "z.go" && (file.BaseHash != graph.Hash([]byte("old")) || file.HeadHash != graph.Hash([]byte("two"))) {
+			t.Fatalf("missing live content identity: %+v", file)
+		}
 	}
 }

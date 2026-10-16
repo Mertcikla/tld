@@ -123,7 +123,7 @@ function hitTestNodes(
 
   for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
     const node = nodes[nodeIndex]
-    if (!candidates.has(node)) continue
+    if (!candidates.has(node) || node.transitionLeaving) continue
     if (isHiddenByTags(node, hiddenTags)) continue
     if (
       worldX < node.worldX ||

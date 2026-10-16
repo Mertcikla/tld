@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeLayout } from './layout'
-import { viewportForNodeRevealTarget, findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
+import { viewportForElements, viewportForNodeRevealTarget, findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
 import { calculateMaxZoom, constrainViewState } from './useZUIInteraction'
 import { getCameraRebase, getExpandThresholds, rawCameraView, updateScene, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { buildSceneGraph } from './sceneGraph'
@@ -600,5 +600,26 @@ describe('clicking an element to reveal its contents', () => {
       expect(centerX).toBeCloseTo(w / 2, 1)
       expect(centerY).toBeCloseTo(h / 2, 1)
     }
+  })
+})
+
+
+describe('explicit multi-resource history focus', () => {
+  it('frames every requested endpoint across nested views and rejects empty targets', () => {
+    const data = nestedExploreData()
+    const groups = computeLayout(data).groups
+    const refs = placementsIn(data)
+    const viewport = viewportForElements(groups, refs, 1000, 700, 20)!
+    expect(viewport).not.toBeNull()
+    for (const ref of refs) {
+      const target = findElementFocusTarget(groups, ref.viewId, ref.elementId)!
+      const rect = screenRect(target, viewport)
+      expect(rect.left).toBeGreaterThanOrEqual(0)
+      expect(rect.top).toBeGreaterThanOrEqual(0)
+      expect(rect.right).toBeLessThanOrEqual(1000)
+      expect(rect.bottom).toBeLessThanOrEqual(700)
+    }
+    expect(viewportForElements(groups, [], 1000, 700, 20)).toBeNull()
+    expect(viewportForElements(groups, refs, 0, 700, 20)).toBeNull()
   })
 })

@@ -108,6 +108,9 @@ func TestStoreTagsAreScopedPerOrg(t *testing.T) {
 	ctxA := WithTenantOrgID(ctx, orgA)
 	ctxB := WithTenantOrgID(ctx, orgB)
 
+	if err := store.UpdateTag(ctx, "shared", "#333333", nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.UpdateTag(ctxA, "shared", "#111111", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -140,9 +143,13 @@ func TestStoreTagsAreScopedPerOrg(t *testing.T) {
 	if _, ok := tagsB["shared"]; !ok {
 		t.Fatal("tenant B lost its shared tag after tenant A deleted theirs")
 	}
+	var localColor string
+	if err := store.DB().QueryRowContext(ctx, `SELECT color FROM tags WHERE org_id = '' AND name = 'shared'`).Scan(&localColor); err != nil || localColor != "#333333" {
+		t.Fatalf("local tag was changed by a tenant: color = %q, err = %v", localColor, err)
+	}
 }
 
-func TestStoreSelfHostedTagsUseNilOrgSentinel(t *testing.T) {
+func TestStoreSelfHostedTagsUseEmptyOrgSentinel(t *testing.T) {
 	store := openAppStore(t)
 	ctx := context.Background()
 
@@ -150,15 +157,18 @@ func TestStoreSelfHostedTagsUseNilOrgSentinel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Self-hosted mode omits org_id, so the column default has to supply the nil
+	// Self-hosted mode omits org_id, so the column default has to supply the empty
 	// organisation. A NULL would make the (org_id, name) primary key treat every
 	// row as distinct and silently allow duplicate tag names.
 	var orgID string
 	if err := store.DB().QueryRowContext(ctx, `SELECT org_id FROM tags WHERE name = ?`, "local").Scan(&orgID); err != nil {
 		t.Fatal(err)
 	}
-	if orgID != uuid.Nil.String() {
-		t.Fatalf("self-hosted tag org_id = %q, want %q", orgID, uuid.Nil)
+	if orgID != "" {
+		t.Fatalf("self-hosted tag org_id = %q, want empty string", orgID)
+	}
+	if tags, err := store.Tags(ctx); err != nil || tags["local"].Color != "#333333" {
+		t.Fatalf("self-hosted tag read = %v, err = %v", tags, err)
 	}
 
 	if err := store.UpdateTag(ctx, "local", "#444444", nil); err != nil {

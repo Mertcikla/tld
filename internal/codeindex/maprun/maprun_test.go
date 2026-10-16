@@ -2,15 +2,20 @@ package maprun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/community"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
+	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	wsstore "github.com/mertcikla/tld/v2/internal/store"
 )
@@ -35,6 +40,36 @@ func TestBuildFileInputsUsesStableKeys(t *testing.T) {
 	}
 	if len(mapImports) != 1 || mapImports[0].FileFactID != keyA {
 		t.Fatalf("imports = %+v, want logical keys", mapImports)
+	}
+}
+
+func TestRunRejectsIncompatibleSnapshotBeforeCachedMap(t *testing.T) {
+	ctx := context.Background()
+	ws, err := wsstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	snap := &codeindexv1.Snapshot{Id: "snapshot", RepositoryId: "repo", IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions()}
+	g := cgraph.NewGraph("repo", snap.Id)
+	g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, "a.go", "go", &codeindexv1.SourceAnchor{Path: "a.go"}, "", "", nil)
+	if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{Workspace: ws, Codeindex: idx, Options: mapconfig.FromGlobal(nil)}
+	req := Request{RepositoryID: "repo", SnapshotID: snap.Id}
+	if _, _, err := Run(ctx, deps, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an upgrade making the producer stamps obsolete while the map
+	// remains cached. Validation must precede the active-map cache lookup.
+	if _, err := ws.DB().ExecContext(ctx, `UPDATE codeindex_snapshots SET tool_versions_json = '{}' WHERE id = ?`, snap.Id); err != nil {
+		t.Fatal(err)
+	}
+	result, cached, err := Run(ctx, deps, req, nil)
+	if !errors.Is(err, indexer.ErrIncompatibleSnapshot) || cached || result != nil {
+		t.Fatalf("incompatible cached map accepted: cached=%v result=%v err=%v", cached, result, err)
 	}
 }
 
@@ -64,9 +99,13 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		for _, path := range []string{"shared.go", "only-" + name + ".go"} {
 			g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, path, "go", &codeindexv1.SourceAnchor{Path: path}, "", "", nil)
 		}
-		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{Id: name, RepositoryId: "repo"}, g); err != nil {
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: name, RepositoryId: "repo", GitBranch: "branch-" + name}, g); err != nil {
 			t.Fatal(err)
 		}
+	}
+	const remote = "https://github.com/acme/repo.git"
+	if err := idx.SetRepositoryOrigin(ctx, "repo", remote, false); err != nil {
+		t.Fatal(err)
 	}
 	deps := Deps{Workspace: ws, Codeindex: idx, Options: mapconfig.FromGlobal(nil)}
 	run := func(id string, wantCached bool) *codeindexv1.MapResult {
@@ -74,6 +113,15 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		result, cached, err := Run(ctx, deps, Request{RepositoryID: "repo", SnapshotID: id}, nil)
 		if err != nil || cached != wantCached {
 			t.Fatalf("map %s: cached=%v err=%v", id, cached, err)
+		}
+		var repo, repositoryID, branch, description string
+		if err := ws.DB().QueryRowContext(ctx,
+			`SELECT e.repo, e.repository_id, e.branch, e.description FROM elements e JOIN views v ON v.owner_element_id = e.id WHERE v.id = ?`,
+			result.ViewId).Scan(&repo, &repositoryID, &branch, &description); err != nil {
+			t.Fatal(err)
+		}
+		if repo != remote || repositoryID != "repo" || branch != "branch-"+id || description != "Generated map for code grounding" {
+			t.Fatalf("map %s repository metadata: repo=%q repository_id=%q branch=%q description=%q", id, repo, repositoryID, branch, description)
 		}
 		var count int
 		if err := ws.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, "only-"+id+".go").Scan(&count); err != nil {
@@ -89,8 +137,21 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		if err := ws.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, "only-"+other+".go").Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		if count != 0 {
-			t.Fatalf("map %s still displays %s", id, other)
+		if count > 0 {
+			var tags string
+			if err := ws.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = ?`, "only-"+other+".go").Scan(&tags); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(tags, materialize.StaleTag) {
+				t.Fatalf("map %s did not mark %s stale", id, other)
+			}
+		}
+		var tags string
+		if err := ws.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = ?`, "only-"+id+".go").Scan(&tags); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(tags, materialize.StaleTag) {
+			t.Fatalf("active file still stale: %s", id)
 		}
 		return result
 	}
@@ -106,8 +167,14 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mapping := range mappings {
-		if mapping.SnapshotID != "a" {
-			t.Fatalf("reused mapping has stale provenance: %+v", mapping)
+		if mapping.Kind == cstore.MappingElement {
+			item, err := ws.ElementByID(ctx, mapping.ResourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mapping.SnapshotID != "a" && !slices.Contains(item.Tags, materialize.StaleTag) {
+				t.Fatalf("reused mapping has stale provenance: %+v", mapping)
+			}
 		}
 	}
 	run("b", false)
@@ -116,8 +183,14 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mapping := range mappings {
-		if mapping.SnapshotID != "b" {
-			t.Fatalf("stale mapping provenance: %+v", mapping)
+		if mapping.Kind == cstore.MappingElement {
+			item, err := ws.ElementByID(ctx, mapping.ResourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mapping.SnapshotID != "b" && !slices.Contains(item.Tags, materialize.StaleTag) {
+				t.Fatalf("stale mapping provenance: %+v", mapping)
+			}
 		}
 	}
 	if err := idx.DeleteSnapshot(ctx, "a"); err != nil {
@@ -225,11 +298,11 @@ func TestColdSnapshotsKeepCommunityResources(t *testing.T) {
 		for i := range 40 {
 			for j := i + 1; j < 40; j++ {
 				if i/10 == j/10 || j == i+1 {
-					g.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, ids[i], ids[j], "", &codeindexv1.SourceAnchor{Path: fmt.Sprint(i), StartByte: uint32(j)}, nil)
+					g.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, ids[i], ids[j], "", &codeindexv1.SourceAnchor{Path: fmt.Sprint(i), StartByte: uint32(j)})
 				}
 			}
 		}
-		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{Id: snapshot, RepositoryId: "repo"}, g); err != nil {
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: snapshot, RepositoryId: "repo"}, g); err != nil {
 			t.Fatal(err)
 		}
 		res, cached, err := Run(ctx, deps, Request{RepositoryID: "repo", SnapshotID: snapshot}, nil)

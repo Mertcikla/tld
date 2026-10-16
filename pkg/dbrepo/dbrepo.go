@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -76,15 +78,23 @@ func OpenSQLite(ctx context.Context, opts DBOptions) (*Handle, error) {
 	if opts.SQLitePath == "" {
 		return nil, fmt.Errorf("sqlite path is required")
 	}
-	db, err := sql.Open("sqlite", opts.SQLitePath)
+	// These settings belong to each connection, including replacements opened
+	// after a canceled request discards the original pooled connection.
+	separator := "?"
+	if strings.Contains(opts.SQLitePath, "?") {
+		separator = "&"
+	}
+	pragmas := url.Values{"_pragma": {
+		"busy_timeout(5000)",
+		"journal_mode(WAL)",
+		"synchronous(NORMAL)",
+		"foreign_keys(ON)",
+	}}
+	db, err := sql.Open("sqlite", opts.SQLitePath+separator+pragmas.Encode())
 	if err != nil {
 		return nil, err
 	}
 	configureSQLitePool(db)
-	if err := configureSQLite(ctx, db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	bunDB := bun.NewDB(db, sqlitedialect.New())
 	if err := ApplyEmbeddedMigrations(ctx, bunDB, opts.Migrations, "migrations"); err != nil {
 		_ = db.Close()
@@ -216,21 +226,6 @@ func (s shallowMigrationFS) ReadDir(name string) ([]fs.DirEntry, error) {
 func configureSQLitePool(db *sql.DB) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-}
-
-func configureSQLite(ctx context.Context, db *sql.DB) error {
-	pragmas := []string{
-		`PRAGMA busy_timeout = 5000;`,
-		`PRAGMA journal_mode = WAL;`,
-		`PRAGMA synchronous = NORMAL;`,
-		`PRAGMA foreign_keys = ON;`,
-	}
-	for _, pragma := range pragmas {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			return fmt.Errorf("configure sqlite %s: %w", pragma, err)
-		}
-	}
-	return nil
 }
 
 func configurePostgresPool(db *sql.DB) {

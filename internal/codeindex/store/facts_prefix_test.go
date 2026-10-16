@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -20,6 +20,11 @@ func TestFactsLiteralPathPrefix(t *testing.T) {
 func testFactsLiteralPathPrefix(t *testing.T, st *Store) {
 	t.Helper()
 	ctx := context.Background()
+	repoFirst, err := st.AllocateIDs(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID := strconv.FormatInt(repoFirst, 10)
 	for _, tc := range []struct {
 		name, prefix, path, otherPath string
 	}{
@@ -32,12 +37,17 @@ func testFactsLiteralPathPrefix(t *testing.T, st *Store) {
 		{"file prefix", "src/a_b/file", "src/a_b/file.go", "src/a_b/other.go"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			snap := &pb.Snapshot{Id: "prefix-" + tc.name, RepositoryId: "prefix-repo", IngestionStatus: "complete"}
+			first, err := st.AllocateIDs(ctx, 7)
+			if err != nil {
+				t.Fatal(err)
+			}
+			idAt := func(i, j int) string { return strconv.FormatInt(first+1+int64(i*3+j), 10) }
+			snap := &pb.Snapshot{Id: strconv.FormatInt(first, 10), RepositoryId: repoID, IngestionStatus: "complete"}
 			g := graph.NewGraph(snap.RepositoryId, snap.Id)
 			for i, path := range []string{tc.path, tc.otherPath} {
 				for j, kind := range []pb.FactKind{pb.FactKind_FACT_KIND_FUNCTION, pb.FactKind_FACT_KIND_TYPE, pb.FactKind_FACT_KIND_FUNCTION} {
-					id := fmt.Sprintf("%s-%d-%d", snap.Id, i, j)
-					g.Facts[id] = &pb.CodeFact{Id: id, RepositoryId: snap.RepositoryId, SnapshotId: snap.Id, Kind: kind, Anchor: &pb.SourceAnchor{Path: path}}
+					id := idAt(i, j)
+					g.Facts[id] = &pb.CodeFact{Id: id, RepositoryId: snap.RepositoryId, SnapshotId: snap.Id, Kind: kind, Name: tc.name + id, Anchor: &pb.SourceAnchor{Path: path}}
 				}
 			}
 			if err := st.Publish(ctx, "/prefix-repo", snap, g); err != nil {
@@ -55,7 +65,9 @@ func testFactsLiteralPathPrefix(t *testing.T, st *Store) {
 					if len(facts) == 0 {
 						break
 					}
-					if len(facts) != 1 || facts[0].Id <= after || facts[0].SnapshotId != snap.Id {
+					cursor, _ := strconv.Atoi(facts[0].Id)
+					previous, _ := strconv.Atoi(after)
+					if len(facts) != 1 || cursor <= previous || facts[0].SnapshotId != snap.Id {
 						t.Fatalf("invalid page after %q: %v", after, facts)
 					}
 					after = facts[0].Id
@@ -65,11 +77,11 @@ func testFactsLiteralPathPrefix(t *testing.T, st *Store) {
 					t.Fatalf("prefix %q kind %v: IDs = %v, want %v", prefix, kind, got, want)
 				}
 			}
-			ids := []string{snap.Id + "-0-0", snap.Id + "-0-1", snap.Id + "-0-2"}
+			ids := []string{idAt(0, 0), idAt(0, 1), idAt(0, 2)}
 			assertIDs(tc.prefix, pb.FactKind_FACT_KIND_UNSPECIFIED, ids)
 			assertIDs(tc.prefix, pb.FactKind_FACT_KIND_FUNCTION, []string{ids[0], ids[2]})
 			assertIDs(tc.prefix+"missing", pb.FactKind_FACT_KIND_UNSPECIFIED, nil)
-			assertIDs("", pb.FactKind_FACT_KIND_UNSPECIFIED, append(ids, snap.Id+"-1-0", snap.Id+"-1-1", snap.Id+"-1-2"))
+			assertIDs("", pb.FactKind_FACT_KIND_UNSPECIFIED, append(ids, idAt(1, 0), idAt(1, 1), idAt(1, 2)))
 		})
 	}
 }

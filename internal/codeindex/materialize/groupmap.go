@@ -17,11 +17,14 @@ import (
 
 // GroupMapInput is a dependency-graph grouping to materialize into a workspace.
 type GroupMapInput struct {
-	RepositoryID   string
-	RepositoryName string
-	RepositoryRoot string
+	RepositoryID string
+	// MappingNamespace preserves ownership keys and tags across ID-format upgrades.
+	MappingNamespace string
+	RepositoryName   string
+	RepositoryRoot   string
 	// RepositoryRemoteURL is the canonical remote of the repository, when known.
 	RepositoryRemoteURL string
+	RepositoryBranch    string
 	SnapshotID          string
 	// Files are the repository's file facts, indexed by group member.
 	Files []community.File
@@ -51,9 +54,11 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	}
 	base := MapInput{
 		RepositoryID:        input.RepositoryID,
+		MappingNamespace:    input.MappingNamespace,
 		RepositoryName:      input.RepositoryName,
 		RepositoryRoot:      input.RepositoryRoot,
 		RepositoryRemoteURL: input.RepositoryRemoteURL,
+		RepositoryBranch:    input.RepositoryBranch,
 		SnapshotID:          input.SnapshotID,
 		Files:               input.Files,
 		Edges:               input.Edges,
@@ -91,8 +96,8 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 			retErr = errors.Join(retErr, fmt.Errorf("save map resource mappings: %w", err))
 		}
 	}()
-	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
-	topKey := mapKeyPrefix + "top|" + input.RepositoryID
+	rootKey := mapKeyPrefix + "view|" + m.repositoryKey()
+	topKey := mapKeyPrefix + "top|" + m.repositoryKey()
 	legacyMapViewID := int64(0)
 	if mapping, ok := byKey[rootKey]; ok && mapping.Kind == cstore.MappingView {
 		legacyMapViewID = mapping.ResourceID
@@ -132,16 +137,13 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 			return m.result, err
 		}
 	}
-	if err := m.pruneMapPlacements(); err != nil {
-		return m.result, err
-	}
 	if err := m.applyLayout(); err != nil {
 		return m.result, err
 	}
 	if err := m.adjustConnectorHandles(); err != nil {
 		return m.result, err
 	}
-	if err := m.pruneMapResources(); err != nil {
+	if err := m.reconcileMapStatus(); err != nil {
 		return m.result, err
 	}
 	return m.result, nil
@@ -157,11 +159,11 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 // at least one nested subgroup. The tag is applied to those loose files only,
 // leaving the subgroup nodes outside the background.
 func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64, chain, elementPath []int64) error {
-	elementID, err := m.upsertElement(groupElementKey(m.input.RepositoryID, group.Key), m.groupElement(group))
+	elementID, err := m.upsertElement(groupElementKey(m.repositoryKey(), group.Key), m.groupElement(group))
 	if err != nil {
 		return err
 	}
-	groupViewID, err := m.upsertView(groupViewKey(m.input.RepositoryID, group.Key), group.Name, "Map", &elementID)
+	groupViewID, err := m.upsertView(groupViewKey(m.repositoryKey(), group.Key), group.Name, "Map", &elementID)
 	if err != nil {
 		return err
 	}
@@ -171,10 +173,10 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 	}
 	// Tag loose files only when nested subgroups share the view, so the group
 	// background encloses a proper subset of the view instead of everything.
-	groupTagValue := groupTag(m.input.RepositoryID, group.Key)
+	groupTagValue := groupTag(m.repositoryKey(), group.Key)
 	hasLayer := m.opts.GroupLayers && len(group.Members) >= 2 && len(group.Children) >= 1
 	if hasLayer {
-		if err := m.upsertLayer(groupLayerKey(m.input.RepositoryID, group.Key), groupViewID, group.Name, []string{groupTagValue}); err != nil {
+		if err := m.upsertLayer(groupLayerKey(m.repositoryKey(), group.Key), groupViewID, group.Name, []string{groupTagValue}); err != nil {
 			return err
 		}
 	}
@@ -203,7 +205,7 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 			if hasLayer {
 				input.Tags = unionTags(input.Tags, []string{groupTagValue})
 			}
-			key := fileKey(m.input.RepositoryID, fact.ID)
+			key := fileKey(m.repositoryKey(), fact.ID)
 			_, exists := m.byKey[key]
 			if canBatch && !exists {
 				inputs = append(inputs, input)
@@ -421,31 +423,6 @@ func countGroupResources(groups []*community.Group) int {
 	return total
 }
 
-// pruneMapResources deletes map resources that are no longer part of the
-// current run. Ownership mappings are persisted when the run exits.
-func (m *mapMaterializer) pruneMapResources() error {
-	for key, mapping := range m.byKey {
-		if !strings.HasPrefix(key, mapKeyPrefix) || m.kept[key] {
-			continue
-		}
-		switch mapping.Kind {
-		case cstore.MappingView:
-			_ = m.ws.DeleteView(m.ctx, mapping.ResourceID)
-		case cstore.MappingElement:
-			_ = m.ws.DeleteElement(m.ctx, mapping.ResourceID)
-		case cstore.MappingConnector:
-			_ = m.ws.DeleteConnector(m.ctx, mapping.ResourceID)
-		case cstore.MappingLayer:
-			_ = m.ws.DeleteLayer(m.ctx, mapping.ResourceID)
-		}
-		if err := m.idx.DeleteMapping(m.ctx, key); err != nil {
-			return err
-		}
-		m.result.Pruned++
-	}
-	return nil
-}
-
 // SortGroups orders a group hierarchy for stable placement: largest first, then
 // by key. It is used before materialization so grid positions are deterministic.
 func SortGroups(groups []*community.Group) {
@@ -458,33 +435,4 @@ func SortGroups(groups []*community.Group) {
 	for _, group := range groups {
 		SortGroups(group.Children)
 	}
-}
-
-// pruneMapPlacements reconciles generated placements in surviving map views.
-// User-owned elements and views are outside this ownership boundary.
-func (m *mapMaterializer) pruneMapPlacements() error {
-	owned := map[int64]bool{}
-	for key, mapping := range m.byKey {
-		if strings.HasPrefix(key, mapKeyPrefix) && mapping.Kind == cstore.MappingElement {
-			owned[mapping.ResourceID] = true
-		}
-	}
-	for _, mapping := range m.mappingBuffers {
-		if !strings.HasPrefix(mapping.LogicalKey, mapKeyPrefix) || mapping.Kind != cstore.MappingView {
-			continue
-		}
-		placements, err := m.ws.ElementPlacements(m.ctx, mapping.ResourceID)
-		if err != nil {
-			return err
-		}
-		for _, placement := range placements {
-			if owned[placement.ElementID] && !m.desiredPlaces[mapping.ResourceID][placement.ElementID] {
-				if err := m.ws.DeletePlacement(m.ctx, mapping.ResourceID, placement.ElementID); err != nil {
-					return err
-				}
-				delete(m.placed[mapping.ResourceID], placement.ElementID)
-			}
-		}
-	}
-	return nil
 }

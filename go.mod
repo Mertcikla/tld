@@ -3,13 +3,13 @@ module github.com/mertcikla/tld/v2
 go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261012095416-f5a9ce65b701.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261012095416-f5a9ce65b701.2
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261016113927-83ea74aa8e63.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261016113927-83ea74aa8e63.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/mertcikla/codeindex v0.0.2
+	github.com/mertcikla/codeindex v0.0.6
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/sammcj/mermaid-check v0.5.1
@@ -29,7 +29,7 @@ require (
 	modernc.org/sqlite v1.50.0
 )
 
-// Development-only dependency for the opt-in cliworkflow tests.
+// Test-only dependency for mapping properties and the tagged CLI workflow suite.
 require pgregory.net/rapid v1.3.0
 
 require (

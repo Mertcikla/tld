@@ -408,9 +408,8 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   const [isCreating, setIsCreating] = useState(false)
   const exploreRef = useRef<InfiniteZoomHandle>(null)
   const initialTreeLoadRef = useRef<Promise<ViewTreeNode[] | null> | null>(null)
-  const previousViewRef = useRef(view)
   // The page, jump search, and canvas share this workspace response.
-  const exploreDataState = useExploreData(undefined, false)
+  const exploreDataState = useExploreData(undefined, view === 'explore')
   const { data: exploreData, reload: reloadExploreData } = exploreDataState
 
   const flatTree = useMemo(() => flattenTree(treeData), [treeData])
@@ -418,19 +417,14 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   useEffect(() => {
     if (!exploreData) return
     setExploreSearchData(exploreData)
-  }, [exploreData])
+    // Lazy hierarchy search must not replace the tree and reload grid counts.
+    if (view === 'explore') setTreeData(exploreData.tree)
+  }, [exploreData, view])
 
   const loadExploreData = useCallback(() => reloadExploreData().then((data) => {
     if (data) setTreeData(data.tree)
     return data
   }), [reloadExploreData])
-
-  useEffect(() => {
-    const previousView = previousViewRef.current
-    previousViewRef.current = view
-    // Pick up edits made in hierarchy mode when the canvas mounts again.
-    if (view === 'explore' && previousView !== 'explore') void loadExploreData()
-  }, [loadExploreData, view])
 
   const ensureExploreSearchData = useCallback(() => {
     if (!exploreSearchData) void reloadExploreData()

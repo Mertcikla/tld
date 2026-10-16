@@ -22,7 +22,7 @@ func publishEdgesFixture(t *testing.T, idx *Store, id string, build func(*graph.
 		return g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, name, "go", src.Anchor(0, len(text)), text, "", nil)
 	}
 	edge := func(path string, from, to *pb.CodeFact, off uint32) {
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, from.Id, to.Id, "", &pb.SourceAnchor{Path: path, StartByte: off, EndByte: off + 1}, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, from.Id, to.Id, "", &pb.SourceAnchor{Path: path, StartByte: off, EndByte: off + 1})
 	}
 	build(g, snap, fact, edge)
 	if err := idx.Publish(context.Background(), "/repo", snap, g); err != nil {

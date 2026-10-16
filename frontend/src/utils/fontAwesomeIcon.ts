@@ -1,3 +1,4 @@
+import { fab } from '@fortawesome/free-brands-svg-icons'
 import { fas } from '@fortawesome/free-solid-svg-icons'
 
 type FontAwesomeSvgPath = string | string[]
@@ -31,7 +32,7 @@ const FONT_AWESOME_STYLE_CLASSES = new Set([
   'fa',
 ])
 
-const solidIcons = fas as Record<string, FontAwesomeIconDefinition | undefined>
+const fontAwesomeIcons = { ...fab, ...fas } as Record<string, FontAwesomeIconDefinition | undefined>
 const iconUrlCache = new Map<string, string | null>()
 
 function exportKeyForIconName(iconName: string): string {
@@ -97,7 +98,7 @@ function findFontAwesomeIconNameByPrefix(candidates: string[]): string | null {
 
   for (const candidate of searchableCandidates) {
     let bestMatch: string | null = null
-    for (const exportKey of Object.keys(solidIcons)) {
+    for (const exportKey of Object.keys(fontAwesomeIcons)) {
       const iconName = iconNameForExportKey(exportKey)
       if (!iconName.startsWith(candidate)) continue
       if (!bestMatch || iconName.length < bestMatch.length || (iconName.length === bestMatch.length && iconName < bestMatch)) {
@@ -149,7 +150,7 @@ export function fontAwesomeIconUrlForName(iconName: string | null | undefined): 
     return iconUrlCache.get(cleanName) ?? null
   }
 
-  const definition = solidIcons[exportKeyForIconName(cleanName)]
+  const definition = fontAwesomeIcons[exportKeyForIconName(cleanName)]
   if (!definition) {
     iconUrlCache.set(cleanName, null)
     return null

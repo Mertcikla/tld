@@ -1,9 +1,20 @@
 import React from 'react'
+import type { LiveRepositoryImpact, RepositoryGitHistory } from '../api/client'
 import { create as createMessage } from '@bufbuild/protobuf'
 import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Repositories from './Repositories'
+import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
+import type { RepositoryIndexerCheck } from '../api/client'
+
+const missingIndexerCheck: RepositoryIndexerCheck = {
+  ready: false,
+  indexers: [
+    { family: 'go', tool: 'scip-go', languages: ['go'], installed: true, version: '0.2.7', minVersion: '0.1.26', belowMinimum: false, installHint: '', downloadUrl: '', path: '/usr/local/bin/scip-go' },
+    { family: 'dotnet', tool: 'scip-dotnet', languages: ['csharp'], installed: false, version: '', minVersion: '0.2.14', belowMinimum: false, installHint: 'dotnet tool install --global scip-dotnet', downloadUrl: 'https://github.com/sourcegraph/scip-dotnet/releases', path: '' },
+  ],
+}
 
 const { navigateMock, searchParamsMock, setParamsMock } = vi.hoisted(() => ({ navigateMock: vi.fn(), searchParamsMock: vi.fn(), setParamsMock: vi.fn() }))
 
@@ -37,18 +48,20 @@ vi.mock('../api/client', () => ({
         managed: false,
       }]),
       checkIndexers: vi.fn(async () => ({ ready: true, indexers: [] })),
+      browseFolders: vi.fn(async (path: string) => ({ path: path || '/home/dev', parentPath: '/', folders: ['project'] })),
       snapshots: vi.fn(async () => [
-        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
-        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', projects: [], warnings: [] },
+        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
+        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [] },
       ]),
       captureSnapshot: vi.fn(async (_repositoryId: string, _handlers?: { workingTree?: boolean; onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => ({
-        id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', projects: [], warnings: [],
+        id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', compatible: true, projects: [], warnings: [],
       })),
       settings: vi.fn(async () => ({ mapDefaults: { resolution: 1, minGroupSize: 2, minRootGroups: 3, maxRootGroups: 20, maxChildren: 8, maxDepth: 4, maxLeafFiles: 40, maxConnectorsPerView: 40, maxLeafConnectorsPerView: 12, crossViewConnectors: true, crossViewMaxViews: 8, crossViewMaxElementsPerView: 2, crossViewMaxConnectorsPerView: 8, crossViewMaxConnectorsPerElement: 8 }, mapOverrides: {}, effectiveMap: {}, remotes: [], isGit: false, currentBranch: '', headSha: '' })),
       updateMapConfiguration: vi.fn(),
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),
-      history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      history: vi.fn(async (): Promise<RepositoryGitHistory> => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      commitDetails: vi.fn(async (_id: string, revision: string) => ({ commit: { sha: revision, subject: 'Latest change', body: 'Latest change\n\nFull commit details.', author: 'Developer', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })),
       rangeSummary: vi.fn(async () => ({ commits: 3, additions: 10, deletions: 4, changed: 6, files: 2 })),
       openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
       pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
@@ -58,6 +71,12 @@ vi.mock('../api/client', () => ({
         repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', maxRadius: 2,
         nodes: [], edges: [], diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', fromGitRevision: 'old', toGitRevision: 'abc', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
       })),
+      watchLiveImpact: vi.fn(async (_id: string, options: { signal: AbortSignal; onUpdate: (update: LiveRepositoryImpact) => void }) => {
+        const { api } = await import('../api/client')
+        const watchStatus = await api.repositories.watchStatus(_id)
+        if (!options.signal.aborted) options.onUpdate({ diagram: null, watching: watchStatus.running, error: '', gitBranch: 'main', gitRevision: 'abc', watchStatus })
+        await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }))
+      }),
       liveImpact: vi.fn(async () => ({ diagram: null, watching: false, error: '', gitBranch: 'main', gitRevision: 'abc' })),
       watchStatus: vi.fn(async () => ({
         repositoryId: 'repo-1', running: false, managed: false, state: 'stopped', stage: '',
@@ -96,6 +115,7 @@ vi.mock('@chakra-ui/icons', () => ({
   ExternalLinkIcon: () => null,
   DeleteIcon: () => null,
   RepeatIcon: () => null,
+  TimeIcon: () => null,
   SettingsIcon: () => null,
   ChevronLeftIcon: () => null,
   ChevronRightIcon: () => null,
@@ -141,6 +161,7 @@ vi.mock('@chakra-ui/react', async () => {
     FormControl: BoxLike,
     Grid: BoxLike,
     HStack: BoxLike,
+    Icon: BoxLike,
     IconButton: ButtonLike,
     Input: (props: Record<string, unknown>) => ReactModule.createElement('input', props),
     Modal: ModalLike,
@@ -171,7 +192,7 @@ vi.mock('@chakra-ui/react', async () => {
     Portal: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
     Progress: BoxLike,
     Select: BoxLike,
-    Spinner: BoxLike,
+    Spinner: (props: Record<string, unknown>) => ReactModule.createElement('span', { ...props, 'data-testid': 'mock-spinner' }),
     Switch: SwitchLike,
     Text: BoxLike,
     Tooltip: BoxLike,
@@ -210,6 +231,56 @@ describe('Repositories map action', () => {
     vi.clearAllMocks()
     searchParamsMock.mockReturnValue(new URLSearchParams())
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
+  })
+
+  it('requests 100 commits, appends older pages once, and allows retry after a page error', async () => {
+    const { api } = await import('../api/client')
+    const commit = (sha: string) => ({ sha, subject: sha, author: 'Test', authorEmail: '', createdUnix: 1, parents: [], refs: [], body: '' })
+    const firstPage: RepositoryGitHistory = { commits: [commit('new')], branches: [], headSha: 'new', currentBranch: 'main', isGit: true, hasMore: true, nextPageToken: 'older' }
+    vi.mocked(api.repositories.history).mockResolvedValueOnce(firstPage)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', '', 100)
+    const history = () => renderer.root.findByProps({ 'data-testid': 'mock-history' })
+    vi.mocked(api.repositories.history).mockRejectedValueOnce(new Error('Page unavailable'))
+    await act(async () => { history().props.onLoadMore() })
+    expect(history().props.history.commits).toEqual(firstPage.commits)
+    expect(history().props.loadMoreError).toBe('Page unavailable')
+    let finish!: (page: RepositoryGitHistory) => void
+    vi.mocked(api.repositories.history).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    act(() => { history().props.onLoadMore(); history().props.onLoadMore() })
+    expect(history().props.loadingMore).toBe(true)
+    expect(api.repositories.history).toHaveBeenCalledTimes(3)
+    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-1', '', 100, { pageToken: 'older', signal: expect.any(AbortSignal) })
+    await act(async () => { finish({ ...firstPage, commits: [commit('old')], hasMore: false, nextPageToken: '' }) })
+    expect(history().props.history.commits.map((item: { sha: string }) => item.sha)).toEqual(['new', 'old'])
+    expect(history().props.history.nextPageToken).toBe('')
+    expect(history().props.loadMoreError).toBe('')
+    expect(history().props.loadingMore).toBe(false)
+    act(() => { renderer.unmount() })
+  })
+
+  it('aborts older history pages when switching repositories and ignores their late results', async () => {
+    const { api } = await import('../api/client')
+    const [repository] = await api.repositories.list()
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([repository, { ...repository, id: 'repo-2', name: 'other', root: '/repo/other' }])
+    const firstPage: RepositoryGitHistory = { commits: [], branches: [], headSha: 'new', currentBranch: 'main', isGit: true, hasMore: true, nextPageToken: 'older' }
+    vi.mocked(api.repositories.history).mockResolvedValueOnce(firstPage)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    let finish!: (page: RepositoryGitHistory) => void
+    vi.mocked(api.repositories.history).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    act(() => { renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.onLoadMore() })
+    const signal = vi.mocked(api.repositories.history).mock.calls.at(-1)?.[3]?.signal
+    expect(signal?.aborted).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { finish({ ...firstPage, nextPageToken: 'stale' }) })
+    const history = renderer.root.findByProps({ 'data-testid': 'mock-history' }).props
+    expect(history.repositoryId).toBe('repo-2')
+    expect(history.history.nextPageToken).toBeUndefined()
+    expect(history.loadingMore).toBe(false)
+    act(() => { renderer.unmount() })
   })
 
   it('starts with the repository list collapsed when repositories already exist', async () => {
@@ -380,7 +451,7 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.value).toBe('')
-    expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 0)
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 100)
     expect(vi.mocked(api.repositories.history).mock.calls.filter(([id]) => id === 'repo-2').some(([, branch]) => branch === 'pr-head')).toBe(false)
     await act(async () => { renderer.unmount() })
   })
@@ -425,7 +496,9 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith(
+      { path: '/repo/new' }, { signal: expect.any(AbortSignal) },
+    )
     expect(api.repositories.add).toHaveBeenCalledWith(
       { path: '/repo/new' },
       expect.objectContaining({
@@ -460,11 +533,131 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith(
+      { remoteUrl: 'facebook/react' }, { signal: expect.any(AbortSignal) },
+    )
     expect(api.repositories.add).toHaveBeenCalledWith(
       { remoteUrl: 'facebook/react' },
       expect.objectContaining({ materialize: false, onProgress: expect.any(Function) }),
     )
+    renderer.unmount()
+  })
+  it('browses folders and checks the selected absolute path before adding', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-browse' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenCalledWith('', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Open folder project' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenLastCalledWith('/home/dev/project', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-folder-up' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenLastCalledWith('/', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Open folder project' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-folder-select' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/project')
+    expect(hostNodes(renderer, 'repositories-folder-picker')).toHaveLength(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({ path: '/project' }, { signal: expect.any(AbortSignal) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.add).toHaveBeenCalledWith({ path: '/project' }, expect.any(Object))
+    renderer.unmount()
+  })
+  it('preserves the repository input when folder selection is cancelled or fails', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.browseFolders).mockRejectedValueOnce(new Error('Cannot browse folder'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/existing' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-browse' }).props.onClick() })
+    expect(api.repositories.browseFolders).toHaveBeenCalledWith('/repo/existing', expect.any(AbortSignal))
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-folder-select' }).props.isDisabled).toBe(true)
+    expect(renderer.root.findAll((node) => node.props.children === 'Cannot browse folder').length).toBeGreaterThan(0)
+    act(() => { renderer.root.findAll((node) => node.type === 'button' && node.props.children === 'Cancel selection')[0].props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/repo/existing')
+    renderer.unmount()
+  })
+  it('shows Git and indexer warnings without blocking Add or Enter', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    const warnings = ['No Git repository was found at this folder\'s root.', 'No required indexers were detected.']
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({ ready: true, indexers: [], warnings } as RepositoryIndexerCheck)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    for (const warning of warnings) {
+      expect(renderer.root.findAll((node) => node.props.children === warning).length).toBeGreaterThan(0)
+    }
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onKeyDown({ key: 'Enter' }) })
+    expect(api.repositories.add).toHaveBeenCalledTimes(1)
+    renderer.unmount()
+  })
+  it('automatically checks indexers in the add dialog and waits for missing tools to be installed', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce(missingIndexerCheck)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(1)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-go')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'dotnet tool install --global scip-dotnet').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-indexer-download-scip-dotnet' }).props.href).toBe('https://github.com/sourcegraph/scip-dotnet/releases')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(true)
+    // Enter must respect the same requirement as the disabled submit button.
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onKeyDown({ key: 'Enter' }) })
+    expect(api.repositories.add).not.toHaveBeenCalled()
+
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({ ready: true, indexers: [] })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-indexers-recheck' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(2)
+    expect(api.repositories.add).toHaveBeenCalledTimes(1)
+    renderer.unmount()
+  })
+  it('ignores stale indexer checks after changing the repository input', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    let finish!: (check: RepositoryIndexerCheck) => void
+    vi.mocked(api.repositories.checkIndexers).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/old' } }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    const signal = vi.mocked(api.repositories.checkIndexers).mock.calls[0][1]?.signal
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    await act(async () => { finish(missingIndexerCheck) })
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.isDisabled).toBe(false)
+    expect(api.repositories.checkIndexers).toHaveBeenLastCalledWith({ path: '/repo/new' }, { signal: expect.any(AbortSignal) })
+    renderer.unmount()
+  })
+  it('shows check failures in the dialog and allows a re-check', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockRejectedValueOnce(new Error('Repository is unavailable'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(api.repositories.add).not.toHaveBeenCalled()
+    expect(renderer.root.findAll((node) => node.props.children === 'Repository is unavailable').length).toBeGreaterThan(0)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.props.children === 'Repository is unavailable')).toHaveLength(0)
+    expect(api.repositories.checkIndexers).toHaveBeenCalledTimes(2)
     renderer.unmount()
   })
   it('checks required indexers from the Snapshots tab and re-checks on demand', async () => {
@@ -550,6 +743,87 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-go')).toHaveLength(0)
     renderer.unmount()
   })
+  it('shows the commit subject with its full message on hover and worktree totals', async () => {
+    const message = 'Improve watcher controls and materialization history\n\nPreserve status and focus while indexing.'
+    const props = { status: null, repositoryRoot: '/repo/demo', branch: 'main', revision: 'abc123456', commitMessage: message, busy: false, onStart: vi.fn(), onStop: vi.fn(), onRestart: vi.fn() }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryWatcherPanel {...props} worktreeStats={{ additions: 3400, deletions: 1234 }} />) })
+    const commit = renderer.root.findByProps({ 'data-testid': 'watch-commit-message' })
+    expect(commit.props.children).toBe(message.split('\n')[0])
+    expect(commit.props.title).toBe(message)
+    const lineText = (testId: string) => hostNodes(renderer, testId)[0].children.join('')
+    expect(lineText('watch-lines-added')).toBe('+3,400')
+    expect(lineText('watch-lines-removed')).toBe('−1,234')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} worktreeStats={{ additions: 0, deletions: 0 }} />))
+    expect(lineText('watch-lines-added')).toBe('+0')
+    expect(lineText('watch-lines-removed')).toBe('−0')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} />))
+    expect(lineText('watch-lines-added')).toBe('+—')
+    expect(lineText('watch-lines-removed')).toBe('−—')
+    await act(async () => renderer.unmount())
+  })
+
+  it('loads the exact watched commit message when Git history does not contain it', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.commitDetails).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    expect(api.repositories.commitDetails).toHaveBeenCalledWith('repo-1', 'abc')
+    expect(api.repositories.rangeSummary).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: 'HEAD', headWorkingTree: true, signal: expect.any(AbortSignal) }))
+    expect(hostNodes(renderer, 'watch-lines-added')[0].children.join('')).toBe('+10')
+    expect(hostNodes(renderer, 'watch-lines-removed')[0].children.join('')).toBe('−4')
+    expect(renderer.root.findByProps({ 'data-testid': 'watch-commit-message' }).props.title).toBe('Latest change\n\nFull commit details.')
+    await act(async () => renderer.unmount())
+  })
+
+  it('keeps the latest Git identity through empty startup updates without leaking it to another checkout', async () => {
+    const props = {
+      status: null, repositoryRoot: '/repo/demo', branch: 'main', revision: 'abc123456', commitMessage: 'Initial commit', busy: false,
+      onStart: vi.fn(), onStop: vi.fn(), onRestart: vi.fn(), onRefresh: vi.fn(),
+    }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<RepositoryWatcherPanel {...props} />) })
+    const badgeText = () => renderer.root.findByProps({ 'aria-label': 'Watched Git revision' }).findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child): child is string => typeof child === 'string'))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['main', 'abc1234']))
+    expect(renderer.root.findByProps({ 'data-testid': 'watch-commit-message' }).props.children).toBe('Initial commit')
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="feature" revision="def123456" />))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['feature', 'def1234']))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} branch="" revision="fed123456" />))
+    expect(badgeText()).toEqual(expect.arrayContaining(['Detached HEAD', 'fed1234']))
+    await act(async () => renderer.update(<RepositoryWatcherPanel {...props} repositoryRoot="/repo/other" branch="" revision="" />))
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Watched Git revision' })).toHaveLength(0)
+    await act(async () => renderer.unmount())
+  })
+
+  it.each([
+    { family: 'go', tool: 'gopls', languages: ['go'], installHint: 'go install golang.org/x/tools/gopls@latest', downloadUrl: 'https://go.dev/gopls/' },
+    { family: 'web', tool: 'typescript-language-server', languages: ['typescript'], installHint: 'npm install -g typescript-language-server typescript', downloadUrl: 'https://github.com/typescript-language-server/typescript-language-server' },
+    { family: 'rust', tool: 'rust-analyzer', languages: ['rust'], installHint: 'rustup component add rust-analyzer rust-src', downloadUrl: 'https://rust-analyzer.github.io/' },
+    { family: 'python', tool: 'pyright-langserver', languages: ['python'], installHint: 'npm install -g pyright', downloadUrl: 'https://github.com/microsoft/pyright' },
+  ])('shows $tool health failures and their install action', async ({ family, tool, languages, installHint, downloadUrl }) => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
+      ready: false,
+      indexers: [{
+        family, tool, languages, installed: false,
+        installHint,
+        version: '', minVersion: '', belowMinimum: false,
+        downloadUrl, path: `/usr/local/bin/${tool}`,
+        checkError: 'LSP health check: language server disconnected',
+      }],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+    expect(hostNodes(renderer, `repositories-indexer-${tool}`)).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'LSP health check: language server disconnected').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === `repositories-indexer-download-${tool}`)).toHaveLength(1)
+    renderer.unmount()
+  })
   it('collapses the indexer checklist when every indexer is ready', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
@@ -626,6 +900,45 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: false, deleteClone: true })
+    renderer.unmount()
+  })
+  it('keeps progress visible in the dialog while adding the first repository, then opens Snapshots', async () => {
+    const { api } = await import('../api/client')
+    const added = { ...(await api.repositories.list())[0], id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' }
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([]).mockResolvedValueOnce([added])
+    let finish!: (value: typeof added) => void
+    vi.mocked(api.repositories.add).mockImplementationOnce((_path, handlers) => new Promise((resolve) => {
+      handlers?.onProgress?.({ stage: 'clone', current: 0, total: 0, detail: 'Fetching repository' })
+      finish = resolve
+    }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'Cloning repository · Fetching repository').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.isDisabled).toBe(true)
+    await act(async () => { finish(added) })
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-add-path' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
+    renderer.unmount()
+  })
+  it('keeps the dialog open with an error when adding the first repository fails', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([])
+    vi.mocked(api.repositories.add).mockRejectedValueOnce(new Error('Indexing failed'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.props.children === 'Indexing failed').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.value).toBe('/repo/new')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.isDisabled).toBe(false)
+    expect(hostNodes(renderer, 'repositories-add-progress')).toHaveLength(0)
     renderer.unmount()
   })
   it('shows indexing progress on the Snapshots tab while adding a repository', async () => {
@@ -716,6 +1029,46 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
     expect(api.repositories.rangeSummary).toHaveBeenLastCalledWith('repo-1', expect.objectContaining({ base: 'old', head: '', headWorkingTree: true }))
     await act(async () => { renderer.unmount() })
+  })
+
+  it('shows truncated commit subjects in both range cards and their menu options', async () => {
+    const { api } = await import('../api/client')
+    const commit = (sha: string, subject: string) => ({ sha, subject, author: 'Developer', authorEmail: '', createdUnix: 1, parents: [], refs: [], body: '' })
+    const older = commit('older', 'fix: preserve selection while filtering commit history')
+    const newer = commit('newer', 'feat: browse repository folders and include branch metadata')
+    vi.mocked(api.repositories.history).mockResolvedValueOnce({ commits: [newer, older], branches: [], headSha: 'newer', currentBranch: 'main', isGit: true, hasMore: false })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    vi.mocked(api.repositories.commitDetails).mockClear()
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.onRange(older, newer) })
+    for (const [side, subject] of [['base', older.subject], ['head', newer.subject]]) {
+      const picker = renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` })
+      const summary = picker.props.triggerContent.props.children[1].props.children[0]
+      expect(summary.props.children).toBe(subject)
+      expect(summary.props.title).toBe(subject)
+      expect(summary.props.isTruncated).toBe(true)
+      expect(picker.props.groups[0].options.at(-1).label).toBe(subject)
+    }
+    expect(api.repositories.commitDetails).not.toHaveBeenCalled()
+    act(() => { renderer.unmount() })
+  })
+
+  it('loads subjects for commit links outside the current history page and ignores obsolete responses', async () => {
+    const { api } = await import('../api/client')
+    searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&base=commit:old-commit&head=commit:head-commit'))
+    let finish!: (value: Awaited<ReturnType<typeof api.repositories.commitDetails>>) => void
+    vi.mocked(api.repositories.commitDetails).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    vi.mocked(api.repositories.commitDetails).mockResolvedValueOnce({ commit: { sha: 'head-commit', subject: 'feat: selected head subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const summary = (side: string) => renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.triggerContent.props.children[1].props.children[0].props.children
+    expect(summary('head')).toBe('feat: selected head subject')
+    vi.mocked(api.repositories.commitDetails).mockResolvedValueOnce({ commit: { sha: 'replacement', subject: 'fix: replacement base subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.onChange('commit:replacement') })
+    expect(summary('base')).toBe('fix: replacement base subject')
+    await act(async () => { finish({ commit: { sha: 'old-commit', subject: 'Obsolete subject', body: '', author: '', authorEmail: '', createdUnix: 1, parents: [], refs: [] }, files: [] }) })
+    expect(summary('base')).toBe('fix: replacement base subject')
+    act(() => { renderer.unmount() })
   })
 
   it('shows per-file insertion and deletion counts in the compact tree', async () => {
@@ -885,7 +1238,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
     await act(async () => { finish(result) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
-    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 0)
+    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 100)
     renderer.unmount()
   })
 
@@ -894,15 +1247,58 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
     vi.mocked(api.repositories.compare).mockClear()
-    vi.mocked(api.repositories.liveImpact).mockResolvedValue({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+    vi.mocked(api.repositories.watchLiveImpact).mockImplementationOnce(async (_id, options) => {
+      options.onUpdate({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+      await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
-    expect(api.repositories.liveImpact).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
+    expect(api.repositories.watchLiveImpact).toHaveBeenCalledWith('repo-1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.repositories.liveImpact).not.toHaveBeenCalled()
     expect(api.repositories.compare).not.toHaveBeenCalled()
     expect(api.repositories.map).not.toHaveBeenCalled()
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.comparisonKey).toBe('live')
     await act(async () => { renderer.unmount() })
+    vi.useRealTimers()
+  })
+
+  it('applies successive pushed scenes without remounting and aborts on leaving live mode', async () => {
+    const { api } = await import('../api/client')
+    const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    let update!: (event: LiveRepositoryImpact) => void
+    let signal!: AbortSignal
+    vi.mocked(api.repositories.watchLiveImpact).mockImplementationOnce(async (_id, options) => {
+      update = options.onUpdate; signal = options.signal
+      options.onUpdate({ diagram, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const canvas = renderer.root.findByProps({ 'data-testid': 'mock-impact' })
+    const next = { ...diagram, version: 'v2', comparisonKey: 'next' }
+    await act(async () => update({ diagram: next, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' }))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' })).toBe(canvas)
+    expect(canvas.props.diagram).toBe(next)
+    await act(async () => update({ diagram: { ...next }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' }))
+    expect(canvas.props.diagram).toBe(next)
+    await act(async () => renderer.unmount())
+    expect(signal.aborted).toBe(true)
+    expect(api.repositories.liveImpact).not.toHaveBeenCalled()
+  })
+
+  it('reconnects a failed live subscription', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.watchLiveImpact).mockRejectedValueOnce(new Error('Disconnected'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const attempts = vi.mocked(api.repositories.watchLiveImpact).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(api.repositories.watchLiveImpact).toHaveBeenCalledTimes(attempts + 1)
+    await act(async () => renderer.unmount())
     vi.useRealTimers()
   })
 
@@ -928,7 +1324,51 @@ describe('Repositories map action', () => {
     vi.useRealTimers()
   })
 
-  it('restarts the watcher through UI controls and keeps the CLI fallback collapsed', async () => {
+  it.each([
+    { state: 'stopping', running: true, label: 'Stopping…' },
+    { state: 'stopped', running: false, label: 'Stopped' },
+  ])('announces $state once and keeps watcher actions named for their action', async ({ state, running, label }) => {
+    const { api } = await import('../api/client')
+    const current = await api.repositories.watchStatus('repo-1')
+    vi.mocked(api.repositories.watchStatus).mockResolvedValueOnce({ ...current, state, running, stopRequested: running, error: '' })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
+    const text = panel.findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child): child is string => typeof child === 'string'))
+    expect(text.filter((value) => value.startsWith(state === 'stopping' ? 'Stopping' : 'Stopped'))).toEqual([label])
+    if (running) {
+      expect(panel.findByProps({ 'data-testid': 'watch-stop' }).props.children).toBe('Stop watcher')
+      expect(panel.findByProps({ 'data-testid': 'watch-stop' }).props.isDisabled).toBe(true)
+      expect(panel.findAllByProps({ 'data-testid': 'mock-spinner' })).toHaveLength(1)
+    } else {
+      expect(panel.findByProps({ 'data-testid': 'watch-start' }).props.children).toBe('Start watcher')
+    }
+    await act(async () => renderer.unmount())
+  })
+
+  it('shares the follow toggle and pause state with the canvas', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick())
+    const follow = () => renderer.root.findByProps({ 'aria-label': 'Follow' })
+    expect(follow().props.isChecked).toBe(false)
+    const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
+    expect(panel.findByProps({ 'aria-label': 'Follow' })).toBeTruthy()
+    await act(async () => follow().props.onChange({ target: { checked: true } }))
+    const canvas = () => renderer.root.findByProps({ 'data-testid': 'mock-impact' })
+    expect(canvas().props.followMode).toBe('following')
+    await act(async () => canvas().props.onFollowModeChange('paused'))
+    expect(follow().props.isChecked).toBe(false)
+    expect(renderer.root.findAllByType('button').some((button) => button.children.includes('Resume follow'))).toBe(false)
+    await act(async () => follow().props.onChange({ target: { checked: true } }))
+    expect(canvas().props.followMode).toBe('following')
+    await act(async () => follow().props.onChange({ target: { checked: false } }))
+    expect(canvas().props.followMode).toBe('off')
+    await act(async () => renderer.unmount())
+  })
+
+  it('hosts restart and diagnostics in the options popover', async () => {
     const { api } = await import('../api/client')
     const current = await api.repositories.watchStatus('repo-1')
     vi.mocked(api.repositories.watchStatus).mockResolvedValueOnce({ ...current, running: true, state: 'idle' })
@@ -936,16 +1376,17 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
     const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
-    expect(panel.findAll((node) => node.props.as === 'details' && !node.props.open).length).toBeGreaterThan(0)
+    expect(panel.findAll((node) => node.props.as === 'details')).toHaveLength(0)
+    expect(panel.findByProps({ 'aria-label': 'Watcher options' })).toBeTruthy()
+    const options = panel.findByProps({ 'data-testid': 'watch-options-panel' })
+    expect(options.findAll((node) => node.children.includes('Poll interval'))).toHaveLength(0)
+    expect(options.findAll((node) => node.children.includes('Debounce')).length).toBeGreaterThan(0)
     vi.mocked(api.repositories.stopWatch).mockClear()
     vi.mocked(api.repositories.startWatch).mockClear()
-    await act(async () => { panel.findByProps({ 'data-testid': 'watch-restart' }).props.onClick() })
+    await act(async () => { options.findByProps({ 'data-testid': 'watch-restart' }).props.onClick() })
     expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
     expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', { materialize: false })
     expect(vi.mocked(api.repositories.stopWatch).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.repositories.startWatch).mock.invocationCallOrder[0])
-    vi.mocked(api.repositories.watchStatus).mockClear()
-    await act(async () => { panel.findByProps({ 'data-testid': 'watch-refresh' }).props.onClick() })
-    expect(api.repositories.watchStatus).toHaveBeenCalledWith('repo-1')
     await act(async () => { renderer.unmount() })
   })
 
@@ -1038,7 +1479,7 @@ describe('Repositories map action', () => {
       createdUnix: 100 + index,
       gitRevision: `rev-${index}`,
       gitBranch: 'main',
-      ingestionStatus: 'complete',
+      ingestionStatus: 'complete', compatible: true,
       projects: [],
       warnings: [],
       provenance: 'commit',
@@ -1146,6 +1587,60 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-map-snap-1' }).props.onClick() })
     expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-1', signal: expect.any(AbortSignal) }))
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('separates opening the shared map from applying a historical snapshot', async () => {
+    const { api } = await import('../api/client')
+    const result = { snapshotId: 'snap-0', runId: 'run-old', viewId: 5, facts: 4, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }
+    vi.mocked(api.repositories.maps).mockResolvedValue([
+      { result: { ...result, snapshotId: 'snap-1', runId: 'run-new' }, completedUnix: 200, configHash: 'cfg' },
+      { result, completedUnix: 100, configHash: 'cfg' },
+    ])
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-0' }).props.onClick() })
+    const row = renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-snap-0' })
+    expect(row.findAll((node) => node.props.children === 'Previously mapped').length).toBeGreaterThan(0)
+    const open = row.findByProps({ 'data-testid': 'repositories-snapshot-open-map-snap-0' })
+    expect(open.props.children).toBe('Open workspace map')
+    await act(async () => { open.props.onClick() })
+    expect(navigateMock).toHaveBeenCalledWith('/views/5')
+    expect(api.repositories.map).not.toHaveBeenCalled()
+    const apply = row.findByProps({ 'data-testid': 'repositories-snapshot-map-snap-0' })
+    expect(apply.props.children).toBe('Apply snapshot again')
+    await act(async () => { await apply.props.onClick() })
+    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-0' }))
+    await act(async () => { renderer.unmount() })
+  })
+
+  it.each([false, undefined])('makes incompatible snapshots deletion-only (compatible=%s)', async (compatible) => {
+    const { api } = await import('../api/client')
+    const snapshots = await api.repositories.snapshots('repo-1')
+    const versionedSnapshots = [
+      { ...snapshots[0], compatible, incompatibilityReason: 'Snapshot versions are incompatible. Capture a new snapshot.' },
+      snapshots[1],
+    ]
+    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(versionedSnapshots).mockResolvedValueOnce(versionedSnapshots)
+    searchParamsMock.mockReturnValue(new URLSearchParams('base=snapshot:snap-0&head=snapshot:snap-1'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const basePicker = renderer.root.findByProps({ 'data-testid': 'repositories-base-target' })
+    const snapshotChoices = basePicker.props.groups.flatMap((group: { options: { value: string }[] }) => group.options)
+    expect(snapshotChoices.some((option: { value: string }) => option.value === 'snapshot:snap-0')).toBe(false)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.isDisabled).toBe(true)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(api.repositories.compare).not.toHaveBeenCalled()
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    const row = renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-snap-0' })
+    expect(row.findAll((node) => node.props.children === 'Incompatible').length).toBeGreaterThan(0)
+    for (const action of ['view', 'map', 'open-map']) {
+      expect(row.findAllByProps({ 'data-testid': `repositories-snapshot-${action}-snap-0` })).toHaveLength(0)
+    }
+    await act(async () => { row.findByProps({ 'data-testid': 'repositories-snapshot-delete-snap-0' }).props.onClick({ stopPropagation: () => {} }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick() })
+    expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-0')
     await act(async () => { renderer.unmount() })
   })
 

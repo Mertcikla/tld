@@ -182,6 +182,7 @@ function updateNodeStateRecursive(
   parentChildOffsetY: number,
 ): void {
   const { layout } = node
+  inheritedAlpha *= layout.transitionOpacity ?? 1
 
   const absX = parentAbsX + (layout.worldX - parentChildOffsetX) * parentAbsScale
   const absY = parentAbsY + (layout.worldY - parentChildOffsetY) * parentAbsScale

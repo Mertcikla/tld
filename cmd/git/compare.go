@@ -14,7 +14,6 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"github.com/mertcikla/codeindex/identity"
 	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/remote"
 	assets "github.com/mertcikla/tld/v2"
@@ -614,7 +613,7 @@ func resolveRepository(ctx context.Context, store *cstore.Store, dataDir, target
 		if err := remote.Clone(ctx, spec, root); err != nil {
 			return "", err
 		}
-		resolved, err := identity.Apply(ctx, store, root, "", spec.WebURL, true, app.TenantOrgIDFromCtx(ctx))
+		resolved, err := store.ResolveRepository(ctx, root, spec.WebURL, true, app.TenantOrgIDFromCtx(ctx))
 		if err != nil {
 			return "", err
 		}
@@ -628,7 +627,7 @@ func resolveRepository(ctx context.Context, store *cstore.Store, dataDir, target
 		if root, err = filepath.EvalSymlinks(root); err != nil {
 			return "", err
 		}
-		resolved, err := identity.Apply(ctx, store, root, "", "", false, app.TenantOrgIDFromCtx(ctx))
+		resolved, err := store.ResolveRepository(ctx, root, "", false, app.TenantOrgIDFromCtx(ctx))
 		if err != nil {
 			return "", err
 		}

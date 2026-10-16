@@ -14,13 +14,19 @@ import (
 
 // captureComparison runs once, against pinned commit objects. Export and cache
 // reads never consult the checkout to fill historical evidence.
-func captureComparison(ctx context.Context, idx *cstore.Store, diagram *model.Diagram) error {
+func captureComparison(ctx context.Context, idx *cstore.Store, diagram *model.Diagram, captured ...*pb.Snapshot) error {
 	diff := diagram.GetDiff()
-	before, err := idx.Snapshot(ctx, diff.GetFromSnapshotId())
+	load := func(id string, position int) (*pb.Snapshot, error) {
+		if len(captured) > position && captured[position] != nil && captured[position].Id == id {
+			return captured[position], nil
+		}
+		return idx.Snapshot(ctx, id)
+	}
+	before, err := load(diff.GetFromSnapshotId(), 0)
 	if err != nil {
 		return err
 	}
-	after, err := idx.Snapshot(ctx, diff.GetToSnapshotId())
+	after, err := load(diff.GetToSnapshotId(), 1)
 	if err != nil {
 		return err
 	}
@@ -51,7 +57,7 @@ func captureComparison(ctx context.Context, idx *cstore.Store, diagram *model.Di
 	for _, change := range diff.GetSources() {
 		file := &pb.ImpactFile{Path: change.Path, Change: change.Change,
 			LinesAdded: change.LinesAdded, LinesRemoved: change.LinesRemoved, LineCountsBasis: "captured_source",
-			BaseAnalysis: availability(before, change.Path), HeadAnalysis: availability(after, change.Path), MetadataOnly: change.MetadataOnly}
+			BaseAnalysis: availability(before, change.Path), HeadAnalysis: availability(after, change.Path), MetadataOnly: change.MetadataOnly, BaseHash: change.FromHash, HeadHash: change.ToHash}
 		if change.FactsUnavailable {
 			file.AnalysisUnavailableReason = "Source contents were not captured; extraction/dependency evidence is unavailable"
 		}

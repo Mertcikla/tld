@@ -107,6 +107,24 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*model.Diagra
 // CompareSnapshots shares cached comparisons with callers that already prepared
 // their snapshots, including the live watcher. The caller owns the index lease.
 func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID string, radius uint32, viewFilters ...string) (*model.Diagram, error) {
+	return s.compareSnapshots(ctx, repoID, beforeID, afterID, radius, nil, viewFilters...)
+}
+
+// CompareGraphs accepts the watch loop's retained immutable baseline and newly
+// published graph. The persisted comparison and canonical scene are identical
+// to CompareSnapshots; only the source-analysis reads are avoided.
+func (s Service) CompareGraphs(ctx context.Context, before, after *pb.Snapshot, from, to *graph.Graph, radius uint32) (*model.Diagram, error) {
+	diff, err := s.Index.ImpactDiffGraphs(ctx, before, after, from, to)
+	if err != nil {
+		return nil, err
+	}
+	oldEdges, oldKinds := cstore.GraphFilePairStats(from)
+	newEdges, newKinds := cstore.GraphFilePairStats(to)
+	inputs := &analysisInputs{diff: diff, before: before, after: after, oldEdges: oldEdges, oldKinds: oldKinds, newEdges: newEdges, newKinds: newKinds}
+	return s.compareSnapshots(ctx, before.RepositoryId, before.Id, after.Id, radius, inputs)
+}
+
+func (s Service) compareSnapshots(ctx context.Context, repoID, beforeID, afterID string, radius uint32, inputs *analysisInputs, viewFilters ...string) (*model.Diagram, error) {
 	if err := ValidateBlastRadius(radius); err != nil {
 		return nil, err
 	}
@@ -151,7 +169,7 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	analysisKey := ComparisonKey(beforeID, afterID, radius, "source-analysis")
 	analysis, err := s.Index.Impact(ctx, repoID, analysisKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		analysis, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius)
+		analysis, err = buildAnalysis(ctx, s.Index, repoID, analysisKey, beforeID, afterID, radius, inputs)
 		if err == nil {
 			err = s.Index.SaveImpact(ctx, analysis)
 		}
@@ -166,7 +184,12 @@ func (s Service) CompareSnapshots(ctx context.Context, repoID, beforeID, afterID
 	if err != nil {
 		return nil, err
 	}
-	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, repositories)
+	capturedSnapshots := map[string]*pb.Snapshot{}
+	if inputs != nil {
+		capturedSnapshots[beforeID] = inputs.before
+		capturedSnapshots[afterID] = inputs.after
+	}
+	diagram.Scene, err = assemble(ctx, s, diagram, workspace, mappings, repo.Root, repositories, capturedSnapshots)
 	if err != nil {
 		return nil, err
 	}

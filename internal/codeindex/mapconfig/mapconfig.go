@@ -148,7 +148,7 @@ func (o Options) Fingerprint() string {
 // change whenever a setting that affects map output changes so cached maps are
 // not reused across configurations.
 func (o Options) ConfigHash() string {
-	return cgraph.ID("group-v10", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
+	return cgraph.ID("group-v11-upsert", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
 }
 
 // MaterializeOptions builds the materialization options for these settings.

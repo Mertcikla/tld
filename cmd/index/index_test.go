@@ -14,8 +14,10 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/config"
+	"github.com/mertcikla/codeindex/digest"
 	"github.com/mertcikla/codeindex/gitstate"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -110,7 +112,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if len(stages) < 3 || stages[0] != "waiting-indexer" || stages[len(stages)-1] != "live-map" {
 		t.Fatalf("watch stages: %v", stages)
 	}
-	_, release, err := idx.AcquireLease(ctx, graph.RepositoryID(dir))
+	_, release, err := idx.AcquireLease(ctx, eng.repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +135,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if _, _, _, _, err = eng.scanWatched(ctx, dir, state, initial); err != nil {
 		t.Fatal(err)
 	}
-	live, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")
+	live, err := idx.Impact(ctx, eng.repoID, "live")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 		t.Fatalf("impact: %+v", live)
 	}
 	comparison, err := (impact.Service{Workspace: sq, Index: idx}).Compare(ctx, impact.CompareRequest{
-		RepositoryID: graph.RepositoryID(dir),
+		RepositoryID: eng.repoID,
 		Base:         &pb.Revision{SnapshotId: live.Diff.FromSnapshotId},
 		Head:         &pb.Revision{SnapshotId: live.Diff.ToSnapshotId},
 	})
@@ -176,12 +178,148 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if _, _, _, _, err = eng.scanWatched(ctx, dir, clean, state.Revision); err != nil {
 		t.Fatal(err)
 	}
-	empty, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")
+	empty, err := idx.Impact(ctx, eng.repoID, "live")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(empty.Nodes) != 0 {
 		t.Fatal("revert did not clear live comparison")
+	}
+}
+
+func TestWatchedLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_LSP=1 for watch Go LSP persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "go")
+}
+
+func TestWatchedTypeScriptLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_TS_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_TS_LSP=1 for watch TypeScript LSP persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "typescript")
+}
+
+func TestWatchedRustLSPSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_RUST_LSP") == "" {
+		t.Skip("set CODEINDEX_TEST_RUST_LSP=1 for watch Rust LSP persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "rust")
+}
+
+func TestWatchedPyrightSnapshotCommit(t *testing.T) {
+	if os.Getenv("CODEINDEX_TEST_PYRIGHT") == "" {
+		t.Skip("set CODEINDEX_TEST_PYRIGHT=1 for Python watch persistence parity")
+	}
+	testWatchedSemanticSnapshotCommit(t, "python")
+}
+
+func testWatchedSemanticSnapshotCommit(t *testing.T, language string) {
+	t.Helper()
+	t.Setenv("GOWORK", "off")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "config", "user.name", "Test")
+	testGit(t, dir, "config", "user.email", "test@example.com")
+	filename := "a.go"
+	initialSource := "package fixture\nfunc A() { B() }\nfunc B() {}\nfunc C() {}\n"
+	switch language {
+	case "python":
+		filename = "a.py"
+		initialSource = "def A() -> None:\n    B()\n\ndef B() -> None:\n    pass\n\ndef C() -> None:\n    pass\n"
+		writeSource(t, dir, "pyproject.toml", "[project]\nname=\"watch-pyright\"\nversion=\"1.0.0\"\n")
+		writeSource(t, dir, "pyrightconfig.json", `{"include":["*.py"],"typeCheckingMode":"basic"}`)
+	case "rust":
+		filename = "src/lib.rs"
+		if err := os.MkdirAll(filepath.Join(dir, "src"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		initialSource = "pub fn a() { B() }\n#[allow(non_snake_case)] fn B() {}\n#[allow(non_snake_case)] fn C() {}\n"
+		writeSource(t, dir, "Cargo.toml", "[package]\nname=\"watch-rust-lsp\"\nversion=\"0.1.0\"\nedition=\"2021\"\n")
+		writeSource(t, dir, ".gitignore", "target/\n")
+		writeSource(t, dir, "Cargo.lock", "version = 4\n\n[[package]]\nname = \"watch-rust-lsp\"\nversion = \"0.1.0\"\n")
+	case "typescript":
+		filename = "a.ts"
+		initialSource = "export function A():void { B() }\nexport function B():void {}\nexport function C():void {}\n"
+		writeSource(t, dir, "package.json", `{"name":"watch-typescript-lsp","version":"1.0.0"}`)
+		writeSource(t, dir, "tsconfig.json", `{"compilerOptions":{"strict":true,"target":"ES2022"},"include":["*.ts"]}`)
+	default:
+		writeSource(t, dir, "go.mod", "module example.com/watchlsp\n\ngo 1.26\n")
+	}
+	writeSource(t, dir, filename, initialSource)
+	testGit(t, dir, "add", ".")
+	testGit(t, dir, "commit", "-m", "initial")
+	initial := testGit(t, dir, "rev-parse", "HEAD")
+	sq, err := localstore.OpenLocal(ctx, &workspace.Config{}, t.TempDir(), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sq.Close() }()
+	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+	cfg := config.Default()
+	semantic := indexer.NewWatchSession(ctx, cfg, dir)
+	defer semantic.Close()
+	eng := &engine{store: idx, ws: sq, cfg: cfg, out: io.Discard, semantics: semantic}
+	scan := func(previous string) *pb.Snapshot {
+		t.Helper()
+		state, err := gitstate.CaptureQuick(ctx, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, _, _, _, err := eng.scanWatched(ctx, dir, state, previous)
+		if err != nil || len(snap.GetWarnings()) != 0 {
+			t.Fatalf("scan: %v %v", err, snap.GetWarnings())
+		}
+		return snap
+	}
+	scan("")
+	changedSource := strings.Replace(initialSource, "{ B() }", "{ C() }", 1)
+	if language == "python" {
+		changedSource = strings.Replace(initialSource, "    B()", "    C()", 1)
+	}
+	writeSource(t, dir, filename, changedSource)
+	dirty := scan(initial)
+	if dirty.Provenance != "working_tree" || dirty.GitRevision != initial {
+		t.Fatalf("dirty metadata: %+v", dirty)
+	}
+	saved, err := idx.LoadGraph(ctx, dirty.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshSnap, fresh, err := (indexer.Pipeline{Config: cfg, RepositoryID: eng.repoID}).Build(ctx, &pb.IndexRequest{Directory: dir}, nil)
+	if err != nil || len(freshSnap.GetWarnings()) != 0 {
+		t.Fatalf("fresh: %v %v", err, freshSnap.GetWarnings())
+	}
+	fingerprint := func(snap *pb.Snapshot, g *graph.Graph) string {
+		facts := make([]*pb.CodeFact, 0, len(g.Facts))
+		for _, fact := range g.Facts {
+			facts = append(facts, fact)
+		}
+		edges := make([]*pb.EdgeFact, 0, len(g.EdgeFacts))
+		for _, edge := range g.EdgeFacts {
+			edges = append(edges, edge)
+		}
+		return digest.Snapshot(snap, facts, edges)
+	}
+	if fingerprint(dirty, saved) != fingerprint(freshSnap, fresh) {
+		t.Fatal("persisted LSP snapshot differs from SCIP")
+	}
+	testGit(t, dir, "add", filename)
+	testGit(t, dir, "commit", "-m", "commit live edit")
+	committed := scan(initial)
+	if committed.Id == dirty.Id || committed.Provenance != "commit" || committed.GitRevision == initial || committed.CommitMessage != "commit live edit" {
+		t.Fatalf("commit metadata: %+v", committed)
+	}
+	old, err := idx.Snapshot(ctx, dirty.Id)
+	if err != nil || old.Provenance != "working_tree" || old.GitRevision != initial {
+		t.Fatalf("dirty snapshot was mutated: %+v %v", old, err)
+	}
+	live, err := idx.Impact(ctx, eng.repoID, "live")
+	if err != nil || len(live.Nodes) != 0 {
+		t.Fatalf("commit did not clear live changes: %+v %v", live, err)
 	}
 }
 
@@ -299,7 +437,8 @@ func TestWatchConvergesUnderContinuousEdits(t *testing.T) {
 	deadline := time.Now().Add(60 * time.Second)
 	converged := false
 	for time.Now().Before(deadline) {
-		latest, latestErr := idx.Latest(context.Background(), repoID)
+		repositoryID, _, _ := idx.RepositoryByRoot(context.Background(), dir)
+		latest, latestErr := idx.Latest(context.Background(), repositoryID)
 		if latestErr == nil && latest != "" {
 			if snap, snapErr := idx.Snapshot(context.Background(), latest); snapErr == nil {
 				for _, src := range snap.Sources {

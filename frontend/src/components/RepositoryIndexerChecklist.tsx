@@ -33,11 +33,11 @@ export interface RepositoryIndexerChecklistProps {
   check: RepositoryIndexerCheck | null
   loading: boolean
   open: boolean
-  onToggle: () => void
+  onToggle?: () => void
   onCheck: () => void
 }
 
-// RepositoryIndexerChecklist reports the external SCIP indexers a repository
+// RepositoryIndexerChecklist reports the indexers and language servers a repository
 // requires, their detected and minimum versions, and a download link for any
 // that are missing or outdated. The section collapses once everything is green.
 export default function RepositoryIndexerChecklist({ check, loading, open, onToggle, onCheck }: RepositoryIndexerChecklistProps) {
@@ -45,7 +45,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
     return (
       <Flex align="center" gap={2} mb={3} data-testid="repositories-indexers">
         <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.06em">
-          Indexers
+          Indexing tools
         </Text>
         <Box flex={1} />
         <Button
@@ -55,7 +55,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
           isLoading={loading}
           onClick={onCheck}
         >
-          Check indexers
+          Check tools
         </Button>
       </Flex>
     )
@@ -64,7 +64,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
     return (
       <HStack spacing={1.5} color="green.300" mb={3} data-testid="repositories-indexers">
         <FaIcon icon={faCircleCheck} />
-        <Text fontSize="xs">No external indexers required.</Text>
+        <Text fontSize="xs">No external indexing tools required.</Text>
       </HStack>
     )
   }
@@ -73,7 +73,7 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
   return (
     <Box mb={3} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" data-testid="repositories-indexers">
       <Flex px={2} py={1.5} align="center" gap={2}>
-        <IconButton
+        {onToggle && <IconButton
           size="xs"
           variant="ghost"
           aria-label={open ? 'Collapse indexer checks' : 'Expand indexer checks'}
@@ -81,8 +81,8 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
           data-testid="repositories-indexers-toggle"
           icon={<FaIcon icon={open ? faChevronUp : faChevronDown} size={11} />}
           onClick={onToggle}
-        />
-        <Text fontSize="xs" fontWeight="semibold">Indexers</Text>
+        />}
+        <Text fontSize="xs" fontWeight="semibold">Indexing tools</Text>
         <Badge
           colorScheme={missing.length ? 'red' : outdated.length ? 'orange' : 'green'}
           fontSize="2xs"
@@ -140,10 +140,15 @@ export default function RepositoryIndexerChecklist({ check, loading, open, onTog
                     )}
                   </HStack>
                   <Text fontSize="2xs" color="gray.500">
-                    {indexer.languages.join(', ')}
-                    {indexer.installed ? '' : ' · not installed'}
+                    {[...new Set(indexer.languages)].join(', ')}
+                    {indexer.installed ? '' : ' · unavailable'}
                     {indexer.belowMinimum ? ' · update recommended' : ''}
                   </Text>
+                  {indexer.checkError && (
+                    <Text fontSize="2xs" color="red.300" mt={1} wordBreak="break-word">
+                      {indexer.checkError}
+                    </Text>
+                  )}
                   {!green && indexer.installHint && (
                     <Text
                       as="code"

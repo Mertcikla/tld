@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -549,19 +550,21 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 	sq := openPostgresLocalStore(t, dsn)
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	ctx := context.Background()
+	root := t.TempDir()
+	repository, err := idx.ResolveRepository(ctx, root, "", false, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	src := &graph.Source{Path: "a.go", Hash: "hash", Text: []byte("func A() {}")}
-	first := graph.NewGraph("repo-membership", "snapshot-first")
+	first := graph.NewGraph(repository.ID, graph.ID("snapshot-first"))
 	first.Sources[src.Path] = src
 	fact := first.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), string(src.Text), "func A()", nil)
-	edge := first.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, fact.Id, "", "external", fact.Anchor, nil)
-	second := graph.NewGraph(first.RepositoryID, "snapshot-second")
-	second.Sources[src.Path] = src
-	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.BodyHash, fact.Signature)
-	second.AdoptEdgeFact(edge, adopted.Id, "", "external")
-	for _, g := range []*graph.Graph{first, second} {
+	edge := first.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, fact.Id, "", "external", fact.Anchor)
+	publish := func(g *graph.Graph) {
+		t.Helper()
 		snap := &pb.Snapshot{Id: g.SnapshotID, RepositoryId: g.RepositoryID, Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(src.Text))}}}
 		for range 2 {
-			if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			if err := idx.Publish(ctx, root, snap, g); err != nil {
 				t.Fatal(err)
 			}
 			stored, err := idx.LoadGraph(ctx, snap.Id)
@@ -573,11 +576,22 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 			}
 		}
 	}
-	if err := idx.SaveCompletedMap(ctx, first.RepositoryID, &pb.CompletedMap{Result: &pb.MapResult{RunId: "membership-map", SnapshotId: first.SnapshotID}, ConfigHash: "cfg"}); err != nil {
+	publish(first)
+	second := graph.NewGraph(first.RepositoryID, graph.ID("snapshot-second"))
+	second.Sources[src.Path] = src
+	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.BodyHash, fact.Signature)
+	second.AdoptEdgeFact(edge, adopted.Id, "", "external")
+	publish(second)
+	mapID, err := idx.AllocateIDs(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := strconv.FormatInt(mapID, 10)
+	if err := idx.SaveCompletedMap(ctx, first.RepositoryID, &pb.CompletedMap{Result: &pb.MapResult{RunId: runID, SnapshotId: first.SnapshotID}, ConfigHash: "cfg"}); err != nil {
 		t.Fatal(err)
 	}
 	active, err := idx.ActiveMap(ctx, first.RepositoryID)
-	if err != nil || active == nil || active.Result.RunId != "membership-map" {
+	if err != nil || active == nil || active.Result.RunId != runID {
 		t.Fatalf("active map: %+v %v", active, err)
 	}
 	if err := idx.DeleteSnapshot(ctx, first.SnapshotID); err != nil {
@@ -587,7 +601,7 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Facts[fact.Id] == nil {
+	if stored.Facts[fact.Id] == nil || stored.EdgeFacts[edge.Id] == nil {
 		t.Fatal("shared entities were lost")
 	}
 }

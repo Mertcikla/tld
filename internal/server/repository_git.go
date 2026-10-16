@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -39,9 +40,16 @@ func resolveRevision(ctx context.Context, root, revision string) (string, error)
 const commitFormat = "--format=%H%x00%s%x00%an%x00%ae%x00%at%x00%P%x00%D%x00%B%x00"
 
 func readCommits(ctx context.Context, root, sha string, limit int) ([]*pb.GitCommit, error) {
+	return readCommitPage(ctx, root, sha, limit, 0)
+}
+
+func readCommitPage(ctx context.Context, root, sha string, limit, offset int) ([]*pb.GitCommit, error) {
 	args := []string{"log", "--topo-order"}
 	if limit > 0 {
 		args = append(args, "-n", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		args = append(args, "--skip="+strconv.Itoa(offset))
 	}
 	args = append(args, commitFormat, sha, "--")
 	raw, err := repositoryGit(ctx, root, args...)
@@ -50,20 +58,25 @@ func readCommits(ctx context.Context, root, sha string, limit int) ([]*pb.GitCom
 	}
 	commits := []*pb.GitCommit{}
 	for _, record := range strings.Split(raw, "\x00\n") {
-		fields := strings.Split(strings.TrimPrefix(record, "\n"), "\x00")
-		if len(fields) < 8 {
-			continue
+		if commit := parseGitCommit(record); commit != nil {
+			commits = append(commits, commit)
 		}
-		stamp, _ := strconv.ParseInt(fields[4], 10, 64)
-		refs := []string{}
-		for _, ref := range strings.Split(fields[6], ", ") {
-			if ref != "" {
-				refs = append(refs, ref)
-			}
-		}
-		commits = append(commits, &pb.GitCommit{Sha: fields[0], Subject: fields[1], Author: fields[2], AuthorEmail: fields[3], CreatedUnix: stamp, Parents: strings.Fields(fields[5]), Refs: refs, Body: strings.TrimSpace(fields[7])})
 	}
 	return commits, nil
+}
+
+const gitHistoryPageSize = 100
+
+var gitHistoryRevisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+type gitHistoryPageToken struct {
+	RepositoryID string `json:"repository_id"`
+	Branch       string `json:"branch"`
+	Revision     string `json:"revision"`
+	Offset       int    `json:"offset"`
+	Query        string `json:"query,omitempty"`
+	Author       string `json:"author,omitempty"`
+	Tag          string `json:"tag,omitempty"`
 }
 
 func (s *repositoryService) GetGitHistory(ctx context.Context, req *connect.Request[pb.GetGitHistoryRequest]) (*connect.Response[pb.GetGitHistoryResponse], error) {
@@ -105,21 +118,39 @@ func (s *repositoryService) GetGitHistory(ctx context.Context, req *connect.Requ
 			return nil, err
 		}
 	}
-	limit := int(req.Msg.GetLimit())
-	if limit > 1000 {
-		limit = 1000
+	limit := gitHistoryPageSize
+	if requested := req.Msg.GetLimit(); requested > 0 && requested < gitHistoryPageSize {
+		limit = int(requested)
 	}
-	readLimit := 0
-	if limit > 0 {
-		readLimit = limit + 1
+	query := strings.ToLower(strings.TrimSpace(req.Msg.GetQuery()))
+	author := req.Msg.GetAuthor()
+	tag := req.Msg.GetTag()
+	page := gitHistoryPageToken{RepositoryID: repo.Id, Branch: req.Msg.GetBranch(), Revision: target, Query: query, Author: author, Tag: tag}
+	if token := req.Msg.GetPageToken(); token != "" {
+		var decoded gitHistoryPageToken
+		raw, decodeErr := base64.RawURLEncoding.DecodeString(token)
+		if decodeErr != nil || json.Unmarshal(raw, &decoded) != nil || decoded.RepositoryID != repo.Id || decoded.Branch != req.Msg.GetBranch() || decoded.Query != query || decoded.Author != author || decoded.Tag != tag || decoded.Offset <= 0 || decoded.Offset > math.MaxInt32-gitHistoryPageSize || !gitHistoryRevisionPattern.MatchString(decoded.Revision) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid Git history page token"))
+		}
+		page = decoded
 	}
-	result.Commits, err = readCommits(ctx, repo.Root, target, readLimit)
+	if query == "" && author == "" && tag == "" {
+		result.Commits, err = readCommitPage(ctx, repo.Root, page.Revision, limit+1, page.Offset)
+	} else {
+		result.Commits, err = searchCommitPage(ctx, repo.Root, page.Revision, query, author, tag, limit+1, page.Offset)
+	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	result.HasMore = limit > 0 && len(result.Commits) > limit
+	result.HasMore = len(result.Commits) > limit
 	if result.HasMore {
 		result.Commits = result.Commits[:limit]
+		page.Offset += limit
+		raw, err := json.Marshal(page)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		result.NextPageToken = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return connect.NewResponse(result), nil
 }

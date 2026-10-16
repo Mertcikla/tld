@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -25,7 +26,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 
 	root := "/repo/demo"
 	repoID := cgraph.RepositoryID(root)
-	snap := &codeindexv1.Snapshot{Id: "snap-1", RepositoryId: repoID, CreatedUnix: 100}
+	snap := &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: "snap-1", RepositoryId: repoID, CreatedUnix: 100}
 	graph := cgraph.NewGraph(repoID, snap.Id)
 	paths := []string{"src/a.go", "src/b.go", "src/deep/c.go", "src/deep/d.go"}
 	for i, path := range paths {
@@ -37,7 +38,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 	graph.Facts["sym-a"] = &codeindexv1.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["sym-c"] = &codeindexv1.CodeFact{Id: "sym-c", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/deep/c.go"}}
-	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-c", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-c", "", &codeindexv1.SourceAnchor{Path: "src/a.go"})
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -151,13 +152,13 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 
 	root := "/repo/config"
 	repoID := cgraph.RepositoryID(root)
-	snap := &codeindexv1.Snapshot{Id: "snap-config", RepositoryId: repoID, CreatedUnix: 100}
+	snap := &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: "snap-config", RepositoryId: repoID, CreatedUnix: 100}
 	graph := cgraph.NewGraph(repoID, snap.Id)
 	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["f2"] = &codeindexv1.CodeFact{Id: "f2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
 	graph.Facts["s1"] = &codeindexv1.CodeFact{Id: "s1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["s2"] = &codeindexv1.CodeFact{Id: "s2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
-	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "s1", "s2", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "s1", "s2", "", &codeindexv1.SourceAnchor{Path: "src/a.go"})
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 
 	root := "/repo/demo"
 	repoID := cgraph.RepositoryID(root)
-	snap := &codeindexv1.Snapshot{Id: "snap-imports", RepositoryId: repoID, CreatedUnix: 100}
+	snap := &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: "snap-imports", RepositoryId: repoID, CreatedUnix: 100}
 	graph := cgraph.NewGraph(repoID, snap.Id)
 	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Name: "a.go", Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
 	graph.Facts["f2"] = &codeindexv1.CodeFact{Id: "f2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Name: "b.go", Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
@@ -292,7 +293,7 @@ func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 
 	root := "/repo/empty"
 	repoID := cgraph.RepositoryID(root)
-	snap := &codeindexv1.Snapshot{Id: "snap-empty", RepositoryId: repoID, CreatedUnix: 100}
+	snap := &codeindexv1.Snapshot{IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Id: "snap-empty", RepositoryId: repoID, CreatedUnix: 100}
 	graph := cgraph.NewGraph(repoID, snap.Id)
 	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "a.go"}}
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {

@@ -11,6 +11,13 @@ function decodeIconUrl(iconUrl: string | null): string {
 }
 
 describe('fontAwesomeIconUrlForTechnologyLabel', () => {
+  it('renders a stored brand technology icon', () => {
+    const svg = decodeIconUrl(fontAwesomeIconUrlForTechnologyLabel('fa:react'))
+
+    expect(svg).toContain('<svg')
+    expect(svg).toContain('<path')
+  })
+
   it('pads generated SVGs so tall glyphs like fa:person are not clipped by the viewBox', () => {
     const svg = decodeIconUrl(fontAwesomeIconUrlForTechnologyLabel('fa:fa-person'))
 
@@ -26,6 +33,15 @@ describe('parseFontAwesomeTechnologyIconName', () => {
 })
 
 describe('matchFontAwesomeTechnologyIconQuery', () => {
+  it.each(['react', 'fa:react', 'fa-brands fa-react'])(
+    'matches brand icon query %s', (query) => {
+      const match = matchFontAwesomeTechnologyIconQuery(query)
+
+      expect(match?.label).toBe('fa:react')
+      expect(match?.iconUrl).toMatch(/^data:image\/svg\+xml;charset=utf-8,/)
+    },
+  )
+
   it('matches exact Font Awesome icon names without requiring a prefix', () => {
     const match = matchFontAwesomeTechnologyIconQuery('car')
 

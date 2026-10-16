@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -38,6 +39,25 @@ type AnalysisRun struct {
 
 // SaveAnalysis upserts a run and replaces its groups and members atomically.
 func (s *Store) SaveAnalysis(ctx context.Context, run AnalysisRun) error {
+	count := 0
+	for _, group := range run.Groups {
+		if numericID(run.ID) && !numericID(group.ID) {
+			count++
+		}
+	}
+	if count > 0 {
+		first, err := s.AllocateIDs(ctx, count)
+		if err != nil {
+			return err
+		}
+		for i := range run.Groups {
+			if !numericID(run.Groups[i].ID) {
+				run.Groups[i].ID = strconv.FormatInt(first, 10)
+				first++
+			}
+		}
+	}
+
 	params, err := json.Marshal(run.Params)
 	if err != nil || run.Params == nil {
 		params = []byte("{}")

@@ -35,7 +35,7 @@ func TestPostgresContentOrgIDUpgrade(t *testing.T) {
 			text := []byte("package upgrade\nfunc A() {}\n")
 			artifact := []byte("scip-index-bytes")
 			src := &graph.Source{Path: "a.go", Text: text, Hash: graph.Hash(text), Language: "go"}
-			g := graph.NewGraph("repo", "snapshot")
+			g := graph.NewGraph("1", "2")
 			g.Sources[src.Path] = src
 			g.ProjectArtifacts["go|."] = graph.ProjectArtifact{Fingerprint: "fp", Data: artifact}
 			snap := &pb.Snapshot{Id: g.SnapshotID, RepositoryId: g.RepositoryID, Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash}}}

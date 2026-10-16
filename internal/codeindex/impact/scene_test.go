@@ -73,7 +73,7 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		if len(facts) > 2 {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
@@ -331,7 +331,7 @@ func TestSceneTagsConnectorsSpanningChangedFilePairs(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		for _, edge := range edges {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
@@ -452,7 +452,7 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		for _, edge := range edges {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
@@ -553,7 +553,7 @@ func TestSceneAttachesRemovedEdgeCounterparts(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		for _, edge := range edges {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
@@ -896,7 +896,7 @@ func TestSceneReusesBackwardConnectorAndPreservesSemanticConnectors(t *testing.T
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", source.Anchor(0, len(source.Text)), text, "", nil)
 		}
 		for _, edge := range edges {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[edge[0]].Id, facts[edge[1]].Id, "", facts[edge[0]].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snapshot, g); err != nil {
 			t.Fatal(err)

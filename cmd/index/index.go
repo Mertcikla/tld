@@ -20,7 +20,6 @@ import (
 	ci "github.com/mertcikla/codeindex/config"
 	"github.com/mertcikla/codeindex/gitstate"
 	cgraph "github.com/mertcikla/codeindex/graph"
-	"github.com/mertcikla/codeindex/identity"
 	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/ingest"
 	"github.com/mertcikla/codeindex/parity"
@@ -83,6 +82,12 @@ change overlay, available in Repositories > Live changes. Compare maps can
 compare commits or saved snapshots, always showing the full computed
 neighbourhood of unchanged elements by dependency hops.
 
+Go, TypeScript, Rust and Python watches warm language servers alongside the
+initial SCIP index and use them for supported function-body edits. Other changes
+and unavailable language servers fall back to SCIP. Configure index.tools.gopls,
+index.tools.typescript_language_server, index.tools.rust_analyzer and
+index.tools.pyright, or their CODEINDEX_* environment overrides, and check
+language server health with tld doctor.,
 Start with 'tld doctor' to check indexer prerequisites. After indexing, open the
 Repositories area in 'tld serve --open'. Use 'tld git compare' for a commit
 comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
@@ -111,7 +116,7 @@ comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
 	c.Flags().BoolVar(&opts.mapGraph, "map", false, "group the dependency graph and materialize the map view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
-	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
+	c.Flags().DurationVar(&opts.debounce, "debounce", watch.DefaultDebounce, "delay used to batch file changes")
 	c.Flags().StringArrayVar(&opts.exclude, "exclude", nil, "repository-relative path to exclude (repeatable)")
 	c.AddCommand(newStatusCmd(), newStopCmd())
 	return c
@@ -133,6 +138,9 @@ type engine struct {
 	// manifests persists working-tree file hashes across watch scans so repeat
 	// scans only rehash files that moved.
 	manifests gitstate.ManifestCache
+	semantics *indexer.WatchSession
+	cache     ingest.WatchCache
+	baseline  *indexer.IncrementalBase
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -220,7 +228,7 @@ func run(cmd *cobra.Command, opts options) error {
 		errOut:  cmd.ErrOrStderr(),
 	}
 	_ = eng.store.BackfillRemoteKeys(ctx)
-	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
+	resolved, err := eng.store.ResolveRepository(ctx, root, remoteSpec.WebURL, remoteSpec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return err
 	}
@@ -440,6 +448,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	if ownerKind == "" {
 		ownerKind = "cli"
 	}
+	debounce := newWatchDebounce(e.opts.debounce)
 	status := cstore.WatchState{
 		RepositoryID:   watchKey,
 		OwnerKind:      ownerKind,
@@ -449,7 +458,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		RepoRoot:       root,
 		StartedUnix:    time.Now().Unix(),
 		PollIntervalMS: e.opts.pollInterval.Milliseconds(),
-		DebounceMS:     e.opts.debounce.Milliseconds(),
+		DebounceMS:     debounce.delay.Milliseconds(),
 	}
 	if err := e.store.ClaimWatch(ctx, status); err != nil {
 		if errors.Is(err, cstore.ErrWatchActive) {
@@ -464,11 +473,15 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		_ = e.store.ReleaseWatch(cleanup, watchKey, ownerID)
+		e.notifyLive(cleanup)
 		_ = localserver.RemoveProcess(os.Getpid())
 	}()
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	// Warm the language server while the initial committed SCIP baseline builds.
+	e.semantics = indexer.NewWatchSession(runCtx, e.cfg, root)
+	defer e.semantics.Close()
 
 	var mu sync.Mutex
 	persist := func(mutate func(*cstore.WatchState)) {
@@ -483,7 +496,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		mu.Unlock()
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		if err := e.store.WatchHeartbeat(writeCtx, snapshot); errors.Is(err, cstore.ErrWatchOwnershipLost) {
+		if err := e.store.WatchHeartbeat(writeCtx, snapshot); err == nil {
+			e.notifyLive(writeCtx)
+		} else if errors.Is(err, cstore.ErrWatchOwnershipLost) {
 			// Another watcher took over this repository. Exit so two watchers
 			// never index concurrently.
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "another watcher took over %s; exiting\n", root)
@@ -491,28 +506,20 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		}
 	}
 
-	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(runCtx)
 	defer stopHeartbeat()
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		stoppingSince := time.Time{}
 		for {
 			if requested, err := e.store.WatchStopRequested(heartbeatCtx, watchKey); err == nil && requested {
-				if stoppingSince.IsZero() {
-					stoppingSince = time.Now()
-					persist(func(s *cstore.WatchState) { s.State = "stopping" })
-				}
-				// Escalate if the scan loop does not stop promptly, so a stop can
-				// never leave the watcher stuck.
-				if time.Since(stoppingSince) > cstore.WatchStopDeadline {
-					cancelRun()
-					return
-				}
-			} else {
-				stoppingSince = time.Time{}
+				// Interrupt the detector, indexing work, and semantic subprocesses
+				// now. The controller's deadline is only for failed shutdowns.
+				cancelRun()
+				persist(func(s *cstore.WatchState) { s.State = "stopping" })
+				return
 			}
 			persist(nil)
 			select {
@@ -529,28 +536,40 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 
 	detector := watch.NewDetector(watch.Options{
 		Root:    root,
-		Exclude: e.opts.exclude,
+		Exclude: watchExcludes(root, e.dataDir, e.opts.exclude),
 		OnState: func(state string) {
-			persist(func(s *cstore.WatchState) { s.State = state; s.Stage = "" })
+			persist(func(s *cstore.WatchState) {
+				s.State = state
+				s.Stage = ""
+				s.DebounceMS = debounce.delay.Milliseconds()
+			})
+			if state == "debouncing" {
+				debounce.begin(time.Now())
+			}
 		},
-		Debounce:     e.opts.debounce,
-		MaxWait:      2*e.opts.debounce + time.Second,
+		Debounce:     debounce.base,
+		MaxWait:      min(2*debounce.base+time.Second, maxWatchDebounce),
 		PollInterval: e.opts.pollInterval,
 	})
 	defer func() { _ = detector.Close() }()
 	// captured carries the QuickState of the capture that woke the detector, so
 	// each scan snapshots Git once instead of twice.
 	var captured gitstate.QuickState
+	lastSignature, lastRevision := "", ""
 	capture := func(captureCtx context.Context) (string, error) {
-		qs, err := gitstate.CaptureQuick(captureCtx, root)
-		if err != nil {
+		if err := debounce.wait(captureCtx); err != nil {
 			return "", err
 		}
+		qs, err := gitstate.CaptureQuick(captureCtx, root)
+		if err != nil {
+			debounce.deadline = time.Time{}
+			return "", err
+		}
+		debounce.finish(qs.Signature() != lastSignature)
 		captured = qs
 		return qs.Signature(), nil
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s, poll %s)\n", root, e.opts.debounce, e.opts.pollInterval)
-	lastSignature, lastRevision := "", ""
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s–%s, poll %s)\n", root, debounce.base, maxWatchDebounce, e.opts.pollInterval)
 	var prev *pb.Snapshot
 	for {
 		if runCtx.Err() != nil {
@@ -575,6 +594,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			// A detector transition without a fresh capture should not happen;
 			// capture directly rather than scanning a zero state.
 			if qs, err = gitstate.CaptureQuick(runCtx, root); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
 				persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 				continue
 			}
@@ -582,6 +604,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		persist(func(s *cstore.WatchState) {
 			s.State = "scanning"
 			s.Stage = "discover"
+			s.DebounceMS = debounce.delay.Milliseconds()
 			s.ChangedFiles = len(qs.Paths)
 			s.PendingFiles = len(qs.Paths)
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
@@ -596,6 +619,9 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			}
 			persist(func(s *cstore.WatchState) { s.Stage = stage; s.State = "scanning" })
 		})
+		if runCtx.Err() != nil {
+			return nil
+		}
 		if err != nil {
 			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
@@ -639,6 +665,13 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 			report(stage)
 		}
 	}
+	if e.repoID == "" {
+		resolved, err := e.store.ResolveRepository(ctx, root, "", false, app.TenantOrgIDFromCtx(ctx))
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
+		e.repoID = resolved.ID
+	}
 	repoID := e.resolveRepoID(root)
 	reportStage("waiting-indexer")
 	var release func()
@@ -667,7 +700,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
 	defer tracker.Finish()
-	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Progress: func(p indexer.Progress) {
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Manifests: &e.manifests, Semantics: e.semantics, Cache: &e.cache, State: &state, Progress: func(p indexer.Progress) {
 		reportStage(p.Stage)
 		tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail)
 	}}
@@ -711,7 +744,13 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
 	service := impact.Service{Workspace: e.ws, Index: e.store}
-	diagram, err := service.CompareSnapshots(ctx, repoID, base.Id, snap.Id, impact.DefaultBlastRadius)
+	if e.baseline == nil || e.baseline.Snapshot.Id != base.Id {
+		e.baseline, err = engine.Base(ctx, base.Id)
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
+	}
+	diagram, err := service.CompareGraphs(ctx, e.baseline.Snapshot, snap, e.baseline.Graph, graph, impact.DefaultBlastRadius)
 	if err != nil {
 		return nil, parity.Report{}, nil, nil, err
 	}

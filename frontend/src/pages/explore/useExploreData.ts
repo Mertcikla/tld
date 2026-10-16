@@ -53,6 +53,24 @@ export function useExploreData(sharedToken?: string, enabled = true): ExploreDat
     if (enabled) void loadExploreData()
   }, [enabled, loadExploreData])
 
+  useEffect(() => {
+    if (!enabled || sharedToken || typeof window === 'undefined' || typeof document === 'undefined') return
+    const refresh = () => {
+      if (document.visibilityState !== 'hidden') void loadExploreData()
+    }
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted) refresh()
+    }
+    window.addEventListener('focus', refresh)
+    window.addEventListener('pageshow', restore)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('pageshow', restore)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [enabled, loadExploreData, sharedToken])
+
   const hasPlacements = useMemo(() => {
     if (!data || !data.views) return false
     return Object.values(withUnplacedElements(data).views).some((view) => (view?.placements ?? []).length > 0)

@@ -48,7 +48,7 @@ func TestAnalysisRadiusAndSymbolChanges(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, name, "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		for _, link := range [][2]string{{"a.go", "b.go"}, {"b.go", "c.go"}} {
-			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[link[0]].Id, facts[link[1]].Id, "", facts[link[0]].Anchor, nil)
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[link[0]].Id, facts[link[1]].Id, "", facts[link[0]].Anchor)
 		}
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)

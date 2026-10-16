@@ -164,10 +164,8 @@ func (m *watchManager) reap() {
 	}
 }
 
-// stop terminates a managed child and cooperatively stops any external watcher.
-// When an external process owns the record, it is signalled directly once it
-// has had a chance to honor the cooperative stop, so a non-cooperative or
-// legacy watcher can never stay stuck.
+// stop signals graceful context cancellation, then escalates to killing a
+// managed or external watcher only if it fails to exit before the deadline.
 func (m *watchManager) stop(ctx context.Context, repositoryID string) {
 	m.reap()
 	m.mu.Lock()
@@ -178,6 +176,9 @@ func (m *watchManager) stop(ctx context.Context, repositoryID string) {
 	m.mu.Unlock()
 
 	if managed {
+		// The CLI translates Interrupt into its run context cancellation. Send
+		// it before waiting so idle detectors and active indexers can unwind.
+		interruptWatch(child.pid)
 		// Allow the cooperative stop to release the indexing lease before
 		// escalating to process termination.
 		if child.cancel != nil {
@@ -195,6 +196,7 @@ func (m *watchManager) stop(ctx context.Context, repositoryID string) {
 		return
 	}
 	if st.Live(time.Now()) && st.OwnerPID > 0 {
+		interruptWatch(st.OwnerPID)
 		deadline := time.Now().Add(cstore.WatchStopDeadline)
 		for time.Now().Before(deadline) {
 			if current, ok, err := m.idx.WatchState(ctx, repositoryID); err != nil || !ok || !current.Live(time.Now()) {
@@ -209,6 +211,18 @@ func (m *watchManager) stop(ctx context.Context, repositoryID string) {
 		}
 	}
 	_ = m.idx.ForceClearWatchState(ctx, repositoryID)
+}
+
+// Interrupt is handled by the CLI's signal.NotifyContext. On platforms where
+// sending it is unsupported, the shared stop flag remains the cooperative path.
+func interruptWatch(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if proc, err := os.FindProcess(pid); err == nil {
+		return proc.Signal(os.Interrupt) == nil
+	}
+	return false
 }
 
 func (m *watchManager) waitChild(child *watchChild, timeout time.Duration) bool {
@@ -250,12 +264,17 @@ func (m *watchManager) Close() error {
 	m.children = map[string]*watchChild{}
 	m.mu.Unlock()
 	for _, child := range children {
-		if child.cancel != nil {
+		if !interruptWatch(child.pid) && child.cancel != nil {
+			// Platforms without process interrupts retain the existing shutdown
+			// fallback rather than waiting for a signal that cannot arrive.
 			child.cancel()
 		}
 	}
 	for _, child := range children {
 		m.waitChild(child, 5*time.Second)
+		if child.cancel != nil {
+			child.cancel()
+		}
 	}
 	return nil
 }

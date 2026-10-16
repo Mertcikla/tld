@@ -2,6 +2,8 @@ package impact
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"strconv"
@@ -19,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "11"
+const PipelineVersion = "12"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -38,32 +40,56 @@ type anchorMatch struct {
 }
 
 type sceneAssembly struct {
-	fileNames                  map[string]string
-	helper                     *sceneEvidence
-	scene                      *model.Assembly
-	views                      map[int64]core.ViewTreeNode
-	mapped                     map[int64]cstore.ResourceMapping
-	mapViews                   map[int64]bool
-	mapConnectors              map[int64]cstore.ResourceMapping
-	matches                    map[int64]anchorMatch
-	sources                    map[string]bool
-	sortedSources              []string
-	repositoryRemote           string
-	ambiguousPaths             map[string]bool
-	ambiguousSorted            []string
-	nodePaths                  map[string]string
-	edgeScores                 map[string]map[string]int
-	authoredKeys               []string
-	authoredPaths              map[string]map[string]bool
-	viewIdx                    *viewIndex
-	full                       map[string][]string
-	all                        map[string][]string
-	nextElement, nextConnector int32
+	fileNames        map[string]string
+	helper           *sceneEvidence
+	scene            *model.Assembly
+	views            map[int64]core.ViewTreeNode
+	mapped           map[int64]cstore.ResourceMapping
+	mapViews         map[int64]bool
+	mapConnectors    map[int64]cstore.ResourceMapping
+	matches          map[int64]anchorMatch
+	sources          map[string]bool
+	sortedSources    []string
+	repositoryRemote string
+	ambiguousPaths   map[string]bool
+	ambiguousSorted  []string
+	nodePaths        map[string]string
+	edgeScores       map[string]map[string]int
+	authoredKeys     []string
+	authoredPaths    map[string]map[string]bool
+	viewIdx          *viewIndex
+	full             map[string][]string
+	all              map[string][]string
+	transientIDs     map[int32]string
+}
+
+// Transient identities must survive a live scene gaining or losing other
+// files. Sequential negative IDs would morph one file into another on updates.
+func (a *sceneAssembly) transientID(key string) int32 {
+	if a.transientIDs == nil {
+		a.transientIDs = map[int32]string{}
+	}
+	sum := sha256.Sum256([]byte(a.scene.RepositoryId + "\x00" + key))
+	id := -int32(binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff)
+	if id == 0 {
+		id = -1
+	}
+	for {
+		if old, exists := a.transientIDs[id]; !exists || old == key {
+			a.transientIDs[id] = key
+			return id
+		}
+		if id == -2147483647 {
+			id = -1
+		} else {
+			id--
+		}
+	}
 }
 
 // assemble is the only semantic scene construction pipeline for new comparisons.
 // Analysis is immutable; only audit-relevant decisions are retained.
-func assemble(ctx context.Context, service Service, diagram *model.Diagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, capturedRepositories ...[]*pb.Repository) (*model.Assembly, error) {
+func assemble(ctx context.Context, service Service, diagram *model.Diagram, workspace core.ExploreData, mappings []cstore.ResourceMapping, root string, repositories []*pb.Repository, capturedSnapshots map[string]*pb.Snapshot) (*model.Assembly, error) {
 	helper := &sceneEvidence{diagram: diagram, workspace: workspace, mappings: mappings, root: root, store: service.Index, ctx: ctx}
 	helper.nodes = map[string]*model.Node{}
 	helper.sources = map[string]*pb.SourceChange{}
@@ -115,15 +141,6 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 	}
 	a.repositoryRemote = repo.RemoteUrl
 	a.ambiguousPaths = map[string]bool{}
-	var repositories []*pb.Repository
-	if len(capturedRepositories) > 0 {
-		repositories = capturedRepositories[0]
-	} else {
-		repositories, err = service.Index.ListRepositories(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
 	for _, candidate := range repositories {
 		if candidate.Id == diagram.RepositoryId {
 			a.repositoryRemote = candidate.RemoteUrl
@@ -148,9 +165,12 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 		if snapshotID == "" {
 			continue
 		}
-		snapshot, err := service.Index.Snapshot(ctx, snapshotID)
-		if err != nil {
-			return nil, err
+		snapshot := capturedSnapshots[snapshotID]
+		if snapshot == nil {
+			snapshot, err = service.Index.Snapshot(ctx, snapshotID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		paths := make([]string, 0, len(snapshot.Sources))
 		for _, source := range snapshot.Sources {
@@ -669,8 +689,7 @@ func (a *sceneAssembly) fillRaw(contextOnly bool) {
 			continue
 		}
 		id, reason := a.destination(node)
-		a.nextElement--
-		elementID := a.nextElement
+		elementID := a.transientID("file:" + node.Path)
 		if id == -1 {
 			a.scene.FallbackViewId = -1
 		}
@@ -777,8 +796,7 @@ func (a *sceneAssembly) projectRelationships() {
 					}
 				}
 				if connector == nil {
-					a.nextConnector--
-					connector = &diagv1.Connector{Id: a.nextConnector, ViewId: int32(from.ViewId), SourceElementId: int32(from.ResourceId), TargetElementId: int32(to.ResourceId), Direction: "forward", Style: "bezier"}
+					connector = &diagv1.Connector{Id: a.transientID("edge:" + fromKey + ":" + toKey), ViewId: int32(from.ViewId), SourceElementId: int32(from.ResourceId), TargetElementId: int32(to.ResourceId), Direction: "forward", Style: "bezier"}
 					content.Connectors = append(content.Connectors, connector)
 					key := ConnectorKey(from.ViewId, int64(connector.Id))
 					a.scene.Provenance[key] = &model.Metadata{Key: key, ObjectKind: "connector", ViewId: from.ViewId, ResourceId: int64(connector.Id), Origin: pb.ImpactOrigin_IMPACT_ORIGIN_RAW}

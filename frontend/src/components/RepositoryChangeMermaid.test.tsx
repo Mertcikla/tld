@@ -8,9 +8,14 @@ import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 vi.mock('../api/client', () => ({ api: { repositories: { impactMermaid: vi.fn() } } }))
 vi.mock('../utils/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => {}) }))
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
-vi.mock('./ViewMarkdownPanel/MarkdownPreview', () => ({
-  MarkdownPreview: ({ markdown }: { markdown: string }) => React.createElement('pre', { 'data-testid': 'mock-markdown' }, markdown),
-}))
+vi.mock('./ViewMarkdownPanel/MarkdownPreview', async () => {
+  const { MermaidHeaderActionsContext } = await import('./ViewMarkdownPanel/mermaidContext')
+  return {
+    MarkdownPreview: ({ markdown }: { markdown: string }) => React.createElement('div', null,
+      React.useContext(MermaidHeaderActionsContext),
+      React.createElement('pre', { 'data-testid': 'mock-markdown' }, markdown)),
+  }
+})
 vi.mock('./ViewMarkdownPanel/styles', () => ({ markdownPanelBodySx: {} }))
 vi.mock('@chakra-ui/icons', () => ({ CheckIcon: () => null, ChevronRightIcon: () => null, CopyIcon: () => null }))
 
@@ -91,6 +96,28 @@ describe('RepositoryChangeMermaid', () => {
     })
 
     expect(copyTextToClipboard).toHaveBeenCalledWith(markdown)
+  })
+
+  it('offers bounded zoom controls and resets when the comparison changes', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = renderPane({ embeddedMarkdown: markdown }) })
+    const zoomIn = () => renderer.root.findByProps({ 'aria-label': 'Zoom in diagram' })
+    const zoomOut = () => renderer.root.findByProps({ 'aria-label': 'Zoom out diagram' })
+    const reset = () => renderer.root.findByProps({ 'aria-label': 'Reset diagram zoom' })
+
+    act(() => { zoomIn().props.onClick() })
+    expect(reset().props.children).toEqual([125, '%'])
+    act(() => { reset().props.onClick() })
+    expect(reset().props.children).toEqual([100, '%'])
+    act(() => { for (let i = 0; i < 20; i++) zoomIn().props.onClick() })
+    expect(zoomIn().props.isDisabled).toBe(true)
+    expect(reset().props.children).toEqual([400, '%'])
+    act(() => { for (let i = 0; i < 20; i++) zoomOut().props.onClick() })
+    expect(zoomOut().props.isDisabled).toBe(true)
+    expect(reset().props.children).toEqual([50, '%'])
+    await act(async () => { renderer.update(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-2" plain={false} open embeddedMarkdown={`${markdown}\nUpdated comparison`} />) })
+    expect(reset().props.children).toEqual([100, '%'])
+    renderer.unmount()
   })
 
   it('does not fetch while closed', async () => {

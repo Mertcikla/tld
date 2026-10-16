@@ -39,9 +39,12 @@ func TestConsolidateRawDestinationUsesSiblingSourceIdentity(t *testing.T) {
 		full:       map[string][]string{"middleware/wrap_writer.go": {PlacementKey(7, 63)}},
 		all:        map[string][]string{},
 	}
+	rawID := a.transientID("file:middleware/wrap_writer_test.go")
+	scene.Views["7"].Connectors[0].TargetElementId = rawID
+	scene.Provenance[ConnectorKey(7, 8)].EndpointKeys[1] = PlacementKey(7, int64(rawID))
 	a.fillRaw(false)
 	content := scene.Views["7"]
-	if len(content.Placements) != 2 || content.Placements[1].Element.GetViewId() != 7 || content.Placements[1].Element.GetElementId() != -1 {
+	if len(content.Placements) != 2 || content.Placements[1].Element.GetViewId() != 7 || content.Placements[1].Element.GetElementId() != rawID {
 		t.Fatalf("raw fallback was not added to the compatible selected container: %+v", content.Placements)
 	}
 	if scene.Provenance[PlacementKey(7, 63)] == nil {
@@ -54,7 +57,7 @@ func TestConsolidateRawDestinationUsesSiblingSourceIdentity(t *testing.T) {
 		t.Fatalf("consolidated scene coverage invalid: %v", err)
 	}
 	connector := content.Connectors[0]
-	if connector.SourceElementId != 63 || connector.TargetElementId != -1 || scene.Provenance[ConnectorKey(7, 8)].EndpointKeys[1] != PlacementKey(7, -1) {
+	if connector.SourceElementId != 63 || connector.TargetElementId != rawID || scene.Provenance[ConnectorKey(7, 8)].EndpointKeys[1] != PlacementKey(7, int64(rawID)) {
 		t.Fatalf("consolidation changed connector endpoints: connector=%+v provenance=%+v", connector, scene.Provenance[ConnectorKey(7, 8)])
 	}
 }

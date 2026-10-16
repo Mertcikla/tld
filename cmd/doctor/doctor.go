@@ -15,13 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewDoctorCmd reports external SCIP indexer availability for the codeindex
+// NewDoctorCmd reports SCIP indexer and language server health for the codeindex
 // pipeline.
 func NewDoctorCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check codeindex prerequisites (external SCIP indexers)",
+		Short: "Check codeindex prerequisites (SCIP indexers and language servers)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			global, err := workspace.LoadGlobalConfig()
@@ -66,13 +66,16 @@ func buildReport(ctx context.Context, cfg config.Config) report {
 
 func printReport(cmd *cobra.Command, r report) {
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintln(out, "SCIP indexers:")
+	_, _ = fmt.Fprintln(out, "SCIP indexers and language servers:")
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "TOOL\tSTATUS\tDETAIL")
 	for _, s := range r.Tools {
 		status := "OK"
 		detail := s.Path
 		switch {
+		case strings.HasPrefix(s.Error, "LSP health check:"):
+			status = "UNHEALTHY"
+			detail = s.Error
 		case !s.Found:
 			status = "MISSING"
 			detail = s.Error
@@ -90,7 +93,7 @@ func printReport(cmd *cobra.Command, r report) {
 	case !r.OK:
 		_, _ = fmt.Fprintln(out, "\nSome prerequisites are missing; indexing projects that need them will fail.")
 	case r.Outdated > 0:
-		_, _ = fmt.Fprintf(out, "\n%d indexer(s) are older than the tested minimum; extraction may miss some relationships.\n", r.Outdated)
+		_, _ = fmt.Fprintf(out, "\n%d tool(s) are older than the tested minimum; extraction may miss some relationships.\n", r.Outdated)
 	default:
 		_, _ = fmt.Fprintln(out, "\nAll prerequisites satisfied.")
 	}
@@ -105,7 +108,7 @@ func Summary(statuses []tools.Status) string {
 		}
 	}
 	if missing == 0 {
-		return fmt.Sprintf("%d indexers available", len(statuses))
+		return fmt.Sprintf("%d indexing tools available", len(statuses))
 	}
 	names := make([]string, 0, missing)
 	for _, s := range statuses {
@@ -113,5 +116,5 @@ func Summary(statuses []tools.Status) string {
 			names = append(names, s.Name)
 		}
 	}
-	return fmt.Sprintf("%d/%d indexers available; missing: %s", len(statuses)-missing, len(statuses), strings.Join(names, ", "))
+	return fmt.Sprintf("%d/%d indexing tools available; missing: %s", len(statuses)-missing, len(statuses), strings.Join(names, ", "))
 }

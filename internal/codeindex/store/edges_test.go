@@ -21,9 +21,9 @@ func TestFileEdgesResolveSymbolsToFiles(t *testing.T) {
 	g.Facts["file-b"] = &pb.CodeFact{Id: "file-b", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FILE, Anchor: &pb.SourceAnchor{Path: "b.go"}}
 	g.Facts["sym-a"] = &pb.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "a.go"}}
 	g.Facts["sym-b"] = &pb.CodeFact{Id: "sym-b", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "b.go"}}
-	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "a.go"}, nil)
+	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "a.go"})
 	// Intra-file edge must be dropped.
-	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-a", "", &pb.SourceAnchor{Path: "a.go"}, nil)
+	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-a", "", &pb.SourceAnchor{Path: "a.go"})
 	if err := st.Publish(ctx, root, snap, g); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -56,9 +56,9 @@ func TestAggregatedFileEdges(t *testing.T) {
 	g.Facts["sym-a2"] = &pb.CodeFact{Id: "sym-a2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "file-a.go", StartByte: 2}}
 	g.Facts["sym-b1"] = &pb.CodeFact{Id: "sym-b1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "file-b.go", StartByte: 3}}
 	g.Facts["sym-b2"] = &pb.CodeFact{Id: "sym-b2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "file-b.go", StartByte: 4}}
-	a1 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a1", "sym-b1", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 1}, nil)
-	a2 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a2", "sym-b2", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 2}, nil)
-	b1 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-b1", "sym-a1", "", &pb.SourceAnchor{Path: "file-b.go", StartByte: 3}, nil)
+	a1 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a1", "sym-b1", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 1})
+	a2 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a2", "sym-b2", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 2})
+	b1 := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-b1", "sym-a1", "", &pb.SourceAnchor{Path: "file-b.go", StartByte: 3})
 	a1.Weight, a2.Weight, b1.Weight = 1.5, 2.5, 4
 	if err := st.Publish(ctx, root, snap, g); err != nil {
 		t.Fatalf("publish: %v", err)
@@ -96,8 +96,8 @@ func TestAggregatedFileEdgesDominantKind(t *testing.T) {
 	}
 	g.Facts["sym-a"] = &pb.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "file-a.go", StartByte: 1}}
 	g.Facts["sym-b"] = &pb.CodeFact{Id: "sym-b", RepositoryId: repoID, SnapshotId: snap.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "file-b.go", StartByte: 2}}
-	ref := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_REFERENCES, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 1}, nil)
-	call := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 3}, nil)
+	ref := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_REFERENCES, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 1})
+	call := g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "file-a.go", StartByte: 3})
 	ref.Weight, call.Weight = 1, 5
 	if err := st.Publish(ctx, root, snap, g); err != nil {
 		t.Fatalf("publish: %v", err)
@@ -135,7 +135,7 @@ func TestFileEdgesResolveReusedFactsThroughMembership(t *testing.T) {
 	g.Facts["file-b"] = &pb.CodeFact{Id: "file-b", RepositoryId: repoID, SnapshotId: base.Id, Kind: pb.FactKind_FACT_KIND_FILE, Anchor: &pb.SourceAnchor{Path: "b.go"}}
 	g.Facts["sym-a"] = &pb.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: base.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "a.go"}, Imports: []string{"flask"}}
 	g.Facts["sym-b"] = &pb.CodeFact{Id: "sym-b", RepositoryId: repoID, SnapshotId: base.Id, Kind: pb.FactKind_FACT_KIND_FUNCTION, Anchor: &pb.SourceAnchor{Path: "b.go"}}
-	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "a.go"}, nil)
+	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-b", "", &pb.SourceAnchor{Path: "a.go"})
 	if err := st.Publish(ctx, root, base, g); err != nil {
 		t.Fatalf("publish base: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestFileEdgesResolveReusedFactsThroughMembership(t *testing.T) {
 		}
 		g2.Reused[id] = true
 	}
-	newEdge := g2.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-b", "sym-a", "", &pb.SourceAnchor{Path: "b.go", StartByte: 7}, nil)
+	newEdge := g2.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, "sym-b", "sym-a", "", &pb.SourceAnchor{Path: "b.go", StartByte: 7})
 	newEdge.Weight = 3
 	if err := st.Publish(ctx, root, inc, g2); err != nil {
 		t.Fatalf("publish incremental: %v", err)
@@ -252,7 +252,7 @@ func TestFileEdgesReusedAcrossSnapshots(t *testing.T) {
 			}
 		}
 	}
-	e := g1.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, from, to, "", &pb.SourceAnchor{Path: "a.go", StartByte: 2, EndByte: 3}, nil)
+	e := g1.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, from, to, "", &pb.SourceAnchor{Path: "a.go", StartByte: 2, EndByte: 3})
 	e.Weight = 2.5
 	if err := st.Publish(ctx, "/repo", &pb.Snapshot{Id: g1.SnapshotID, RepositoryId: repo}, g1); err != nil {
 		t.Fatal(err)

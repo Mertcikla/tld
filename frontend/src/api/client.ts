@@ -208,6 +208,8 @@ export interface CodeSnapshot {
   gitRevision: string
   gitBranch: string
   ingestionStatus: string
+  compatible?: boolean
+  incompatibilityReason?: string
   projects: CodeSnapshotProject[]
   warnings: string[]
   provenance?: string
@@ -334,6 +336,7 @@ export interface RepositoryImpactProvenance {
   grounding: string; role: string; paths: string[]; distance: number
 }
 export interface LiveRepositoryImpact {
+  watchStatus?: RepositoryWatchStatus
   diagram: RepositoryImpact | null
   watching: boolean
   error: string
@@ -385,7 +388,7 @@ export interface RepositoryIndexProgress {
   detail: string
 }
 
-// RepositoryIndexerRequirement is one external SCIP indexer a repository needs
+// RepositoryIndexerRequirement is one external indexing tool a repository needs
 // based on the project families discovered in it.
 export interface RepositoryIndexerRequirement {
   family: string
@@ -398,6 +401,7 @@ export interface RepositoryIndexerRequirement {
   belowMinimum: boolean
   downloadUrl: string
   path: string
+  checkError?: string
 }
 
 // RepositoryIndexerCheck is the result of inspecting a repository's required
@@ -405,6 +409,13 @@ export interface RepositoryIndexerRequirement {
 export interface RepositoryIndexerCheck {
   indexers: RepositoryIndexerRequirement[]
   ready: boolean
+  warnings?: string[]
+}
+
+export interface RepositoryFolders {
+  path: string
+  parentPath: string
+  folders: string[]
 }
 
 // RepositoryMapResult summarizes a completed mapper run.
@@ -453,6 +464,7 @@ export interface RepositoryGitHistory {
   headSha: string
   currentBranch: string
   hasMore: boolean
+  nextPageToken?: string
   isGit: boolean
 }
 export interface RepositoryCommitDetails {
@@ -610,6 +622,8 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
     gitRevision: snapshot.gitRevision,
     gitBranch: snapshot.gitBranch,
     ingestionStatus: snapshot.ingestionStatus,
+    compatible: snapshot.compatible,
+    incompatibilityReason: snapshot.incompatibilityReason,
     projects: snapshot.projects.map((project) => ({
       root: project.root,
       language: project.language,
@@ -2192,6 +2206,10 @@ export const api = {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
+    browseFolders: (path = '', signal?: AbortSignal): Promise<RepositoryFolders> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.browseRepositoryFolders({ path }, { signal })
+      return { path: response.path, parentPath: response.parentPath, folders: response.folders }
+    }),
     checkIndexers: async (
       input: string | { path?: string; remoteUrl?: string },
       options: { signal?: AbortSignal } = {},
@@ -2203,6 +2221,7 @@ export const api = {
         const response = await codeIndexRepositoryClient.checkRepositoryIndexers(request, { signal: options.signal })
         return {
           ready: response.ready,
+          warnings: response.warnings,
           indexers: response.indexers.map((item) => ({
             family: item.family,
             tool: item.tool,
@@ -2214,6 +2233,7 @@ export const api = {
             belowMinimum: item.belowMinimum,
             downloadUrl: item.downloadUrl,
             path: item.path,
+            checkError: item.checkError,
           })),
         }
       } catch (e) {
@@ -2251,8 +2271,12 @@ export const api = {
         throw e
       }
     },
-    history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
-      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
+    historyFilters: (repositoryId: string, branch = '', signal?: AbortSignal): Promise<{ authors: string[]; tags: string[] }> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistoryFilters({ repositoryId, branch }, { signal })
+      return { authors: response.authors, tags: response.tags }
+    }),
+    history: (repositoryId: string, branch = '', limit = 100, options: { pageToken?: string; query?: string; author?: string; tag?: string; signal?: AbortSignal } = {}): Promise<RepositoryGitHistory> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit, pageToken: options.pageToken, query: options.query, author: options.author, tag: options.tag }, { signal: options.signal })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
     }),
     rangeSummary: (repositoryId: string, options: { base?: string; head?: string; baseWorkingTree?: boolean; headWorkingTree?: boolean; signal?: AbortSignal }): Promise<RevisionRangeSummary> => rpc(async () => {
@@ -2394,8 +2418,21 @@ export const api = {
     },
     liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
       const result = await codeIndexClient.getLiveImpact({ id: repositoryId }, { signal })
-      return { ...result, diagram: result.scene ? mapImpact(result.scene) : null }
+      return { ...result, diagram: result.scene ? mapImpact(result.scene) : null, watchStatus: result.watchStatus ? mapWatchStatus(result.watchStatus) : undefined }
     }),
+    watchLiveImpact: async (repositoryId: string, options: { signal: AbortSignal; onUpdate: (update: LiveRepositoryImpact) => void }): Promise<void> => {
+      const stream = codeIndexClient.watchLiveImpact({ repositoryId }, { signal: options.signal })
+      let diagram: RepositoryImpact | null = null
+      for await (const result of stream) {
+        if (options.signal.aborted) return
+        if (result.scene) diagram = mapImpact(result.scene)
+        options.onUpdate({
+          watching: result.watching, error: result.error, gitBranch: result.gitBranch, gitRevision: result.gitRevision,
+          diagram,
+          watchStatus: result.watchStatus ? mapWatchStatus(result.watchStatus) : undefined,
+        })
+      }
+    },
     watchStatus: (repositoryId: string, signal?: AbortSignal): Promise<RepositoryWatchStatus> => rpc(async () => {
       const result = await codeIndexRepositoryClient.getWatchStatus({ id: repositoryId }, { signal })
       return mapWatchStatus(result)

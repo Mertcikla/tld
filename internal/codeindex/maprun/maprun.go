@@ -17,6 +17,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/codeindex/community"
 	cgraph "github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/codeindex/metrics"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
@@ -59,6 +60,16 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		}
 	}
 	repositoryID, snapshotID := req.RepositoryID, req.SnapshotID
+	snapshot, err := deps.Codeindex.Snapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, false, err
+	}
+	if snapshot.RepositoryId != repositoryID {
+		return nil, false, fmt.Errorf("snapshot belongs to another repository")
+	}
+	if err := indexer.CheckSnapshot(snapshot); err != nil {
+		return nil, false, err
+	}
 	overrides, err := deps.Codeindex.RepositoryMapOverrides(ctx, repositoryID)
 	if err != nil {
 		return nil, false, err
@@ -158,7 +169,28 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		repositoryName = base
 	}
 
-	runID := cgraph.ID(repositoryID, snapshotID, "community", configHash)
+	runID := ""
+	completed, err := deps.Codeindex.CompletedMaps(ctx, repositoryID)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, previous := range completed {
+		if previous.Result.SnapshotId == snapshotID && previous.ConfigHash == configHash {
+			runID = previous.Result.RunId
+			break
+		}
+	}
+	if runID == "" {
+		first, err := deps.Codeindex.AllocateIDs(ctx, 1)
+		if err != nil {
+			return nil, false, err
+		}
+		runID = strconv.FormatInt(first, 10)
+	}
+	namespace, err := deps.Codeindex.MappingNamespace(ctx, repositoryID)
+	if err != nil {
+		return nil, false, err
+	}
 	report("materializing", 0, 0, "")
 	doneMaterialize := deps.Metrics.Measure("materializing")
 	if err := deps.Codeindex.InvalidateActiveMap(ctx, repositoryID); err != nil {
@@ -166,9 +198,11 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 	mapResult, err := materialize.ApplyGroupMap(ctx, deps.Workspace, deps.Codeindex, materialize.GroupMapInput{
 		RepositoryID:        repositoryID,
+		MappingNamespace:    namespace,
 		RepositoryName:      repositoryName,
 		RepositoryRoot:      repositoryRoot,
 		RepositoryRemoteURL: repositoryRemote,
+		RepositoryBranch:    snapshot.GetGitBranch(),
 		SnapshotID:          snapshotID,
 		Files:               files,
 		Groups:              grouping.Groups,
@@ -206,13 +240,23 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	params["max_connectors_per_view"] = strconv.Itoa(deps.Options.MaxConnectorsPerView)
 	params["max_leaf_connectors_per_view"] = strconv.Itoa(deps.Options.MaxLeafConnectorsPerView)
 	params["cross_view_connectors"] = strconv.FormatBool(deps.Options.CrossViewConnectors)
+	groups := analysisGroups(runID, grouping.Groups, files)
+	factIDs := make(map[string]string, len(facts))
+	for _, fact := range facts {
+		factIDs[stableFactKey(fact)] = fact.Id
+	}
+	for i := range groups {
+		for j, key := range groups[i].Members {
+			groups[i].Members[j] = factIDs[key]
+		}
+	}
 	if err := deps.Codeindex.SaveAnalysis(ctx, cstore.AnalysisRun{
 		ID:           runID,
 		RepositoryID: repositoryID,
 		SnapshotID:   snapshotID,
 		Algorithm:    "louvain",
 		Params:       params,
-		Groups:       analysisGroups(runID, grouping.Groups, files),
+		Groups:       groups,
 	}); err != nil {
 		return nil, false, err
 	}

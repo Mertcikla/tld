@@ -147,20 +147,20 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 	}
 	write := func(ctx context.Context, label string, resourceID int64) {
 		t.Helper()
-		g := graph.NewGraph("repo", "snap")
-		g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "snap", Name: label, LogicalKey: "file:main.go"}
-		g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "snap", LogicalKey: label}
-		snap := &pb.Snapshot{Id: "snap", RepositoryId: "repo", GitBranch: label, Sources: []*pb.SourceFile{{Path: "main.go", Hash: label}}}
+		g := graph.NewGraph("1", "2")
+		g.Facts["3"] = &pb.CodeFact{Id: "3", RepositoryId: "1", SnapshotId: "2", Name: label, LogicalKey: "file:main.go"}
+		g.EdgeFacts["4"] = &pb.EdgeFact{Id: "4", RepositoryId: "1", SnapshotId: "2", LogicalKey: graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target"), TargetSymbolKey: label}
+		snap := &pb.Snapshot{Id: "2", RepositoryId: "1", GitBranch: label, Sources: []*pb.SourceFile{{Path: "main.go", Hash: label}}}
 		g.Sources["main.go"] = &graph.Source{Text: []byte(label)}
 		for _, err := range []error{
-			st.EnsureRepositoryIdentity(ctx, "repo", "/"+label, "", "", false),
+			st.EnsureRepositoryIdentity(ctx, "1", "/"+label, "", "", false),
 			st.Publish(ctx, "/"+label, snap, g),
-			st.SaveMappings(ctx, []ResourceMapping{{LogicalKey: "file:main.go", ResourceID: resourceID, RepositoryID: "repo", SnapshotID: "snap"}}),
-			st.SaveImpact(ctx, &model.Diagram{RepositoryId: "repo", ComparisonKey: "live", Version: label}),
-			st.UpsertWatchState(ctx, WatchState{RepositoryID: "repo", State: label, OwnerID: label}),
-			st.SaveCompletedMap(ctx, "repo", &pb.CompletedMap{Result: &pb.MapResult{RunId: "run", SnapshotId: "snap", ViewId: resourceID}, ConfigHash: label}),
-			st.SaveRepositoryMapOverrides(ctx, "repo", &pb.RepositoryMapConfiguration{MaxLeafFiles: proto.Uint32(uint32(resourceID))}),
-			st.SaveAnalysis(ctx, AnalysisRun{ID: "analysis", RepositoryID: "repo", SnapshotID: "snap", Groups: []AnalysisGroup{{ID: "group", Label: label, Members: []string{"fact"}}}}),
+			st.SaveMappings(ctx, []ResourceMapping{{LogicalKey: "file:main.go", ResourceID: resourceID, RepositoryID: "1", SnapshotID: "2"}}),
+			st.SaveImpact(ctx, &model.Diagram{RepositoryId: "1", ComparisonKey: "live", Version: label}),
+			st.UpsertWatchState(ctx, WatchState{RepositoryID: "1", State: label, OwnerID: label}),
+			st.SaveCompletedMap(ctx, "1", &pb.CompletedMap{Result: &pb.MapResult{RunId: "5", SnapshotId: "2", ViewId: resourceID}, ConfigHash: label}),
+			st.SaveRepositoryMapOverrides(ctx, "1", &pb.RepositoryMapConfiguration{MaxLeafFiles: proto.Uint32(uint32(resourceID))}),
+			st.SaveAnalysis(ctx, AnalysisRun{ID: "6", RepositoryID: "1", SnapshotID: "2", Groups: []AnalysisGroup{{ID: "7", Label: label, Members: []string{"3"}}}}),
 		} {
 			if err != nil {
 				t.Fatal(err)
@@ -173,19 +173,19 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 		if err != nil || !ok || m.ResourceID != resourceID {
 			t.Fatalf("%s mapping = %+v, ok=%v err=%v", label, m, ok, err)
 		}
-		impact, err := st.Impact(ctx, "repo", "live")
+		impact, err := st.Impact(ctx, "1", "live")
 		if err != nil || impact.Version != label {
 			t.Fatalf("%s impact = %+v err=%v", label, impact, err)
 		}
-		watch, ok, err := st.WatchState(ctx, "repo")
+		watch, ok, err := st.WatchState(ctx, "1")
 		if err != nil || !ok || watch.State != label {
 			t.Fatalf("%s watch = %+v err=%v", label, watch, err)
 		}
-		active, err := st.ActiveMap(ctx, "repo")
+		active, err := st.ActiveMap(ctx, "1")
 		if err != nil || active == nil || active.Result.ViewId != resourceID {
 			t.Fatalf("%s active map = %+v err=%v", label, active, err)
 		}
-		overrides, err := st.RepositoryMapOverrides(ctx, "repo")
+		overrides, err := st.RepositoryMapOverrides(ctx, "1")
 		if err != nil || overrides.GetMaxLeafFiles() != uint32(resourceID) {
 			t.Fatalf("%s overrides = %+v err=%v", label, overrides, err)
 		}
@@ -193,20 +193,29 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 		if err != nil || len(repos) != 1 || repos[0].Root != "/"+label || repos[0].GitBranch != label || repos[0].Facts != 1 || repos[0].Edges != 1 || repos[0].Sources != 1 {
 			t.Fatalf("%s repositories = %+v err=%v", label, repos, err)
 		}
-		snaps, err := st.Snapshots(ctx, "repo")
+		snaps, err := st.Snapshots(ctx, "1")
 		if err != nil || len(snaps) != 1 || snaps[0].GitBranch != label || snaps[0].Statistics.Facts != 1 {
 			t.Fatalf("%s snapshots = %+v err=%v", label, snaps, err)
 		}
-		facts, err := st.Facts(ctx, "snap", pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", 10)
+		facts, err := st.Facts(ctx, "2", pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", 10)
 		if err != nil || len(facts) != 1 || facts[0].Name != label {
 			t.Fatalf("%s facts = %+v err=%v", label, facts, err)
 		}
-		edges, err := st.EdgeFacts(ctx, "snap", pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 10)
-		if err != nil || len(edges) != 1 || edges[0].LogicalKey != label {
+		edges, err := st.EdgeFacts(ctx, "2", pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 10)
+		if err != nil || len(edges) != 1 || edges[0].LogicalKey != graph.EdgeLogicalKey(pb.EdgeKind_EDGE_KIND_REFERENCES, "same-source", "target") || edges[0].TargetSymbolKey != label {
 			t.Fatalf("%s edges = %+v err=%v", label, edges, err)
 		}
+		for _, read := range []func() ([]*pb.EdgeFact, error){
+			func() ([]*pb.EdgeFact, error) { return st.EdgeVersions(ctx, edges[0].LogicalKey) },
+			func() ([]*pb.EdgeFact, error) { return st.EdgeFacts(ctx, "2", 0, edges[0].LogicalKey, "", 10) },
+		} {
+			filtered, err := read()
+			if err != nil || len(filtered) != 1 || filtered[0].TargetSymbolKey != label {
+				t.Fatalf("%s edge key lookup escaped tenant: %v %v", label, filtered, err)
+			}
+		}
 		var groupLabel string
-		if err := st.bun.NewRaw(`SELECT label FROM codeindex_groups WHERE id = ? AND org_id = ?`, "group", scope(ctx).value()).Scan(ctx, &groupLabel); err != nil || groupLabel != label {
+		if err := st.bun.NewRaw(`SELECT label FROM codeindex_groups WHERE id = ? AND org_id = ?`, "7", scope(ctx).value()).Scan(ctx, &groupLabel); err != nil || groupLabel != label {
 			t.Fatalf("%s group = %s err=%v", label, groupLabel, err)
 		}
 	}
@@ -218,19 +227,19 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 	write(contexts[1], "b", 1000)
 	verify(contexts[0], "a", 111)
 	verify(contexts[1], "b", 1000)
-	if err := st.DeleteSnapshot(contexts[1], "snap"); err != nil {
+	if err := st.DeleteSnapshot(contexts[1], "2"); err != nil {
 		t.Fatal(err)
 	}
 	verify(contexts[0], "a", 111)
-	if _, err := st.Fact(contexts[1], "fact"); err == nil {
+	if _, err := st.Fact(contexts[1], "3"); err == nil {
 		t.Fatal("unreferenced B fact survived snapshot deletion")
 	}
 	write(contexts[1], "b", 1000)
-	if err := st.DeleteRepository(contexts[1], "repo"); err != nil {
+	if err := st.DeleteRepository(contexts[1], "1"); err != nil {
 		t.Fatal(err)
 	}
 	verify(contexts[0], "a", 111)
-	if _, err := st.Repository(contexts[1], "repo"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := st.Repository(contexts[1], "1"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("deleted repository err=%v", err)
 	}
 }
@@ -246,15 +255,15 @@ func testTenantScopeLeaseAndWatchClaims(t *testing.T, st *Store) {
 		app.WithTenantOrgID(context.Background(), uuid.New()),
 		app.WithTenantOrgID(context.Background(), uuid.New()),
 	} {
-		_, release, err := st.AcquireLease(ctx, "repo")
+		_, release, err := st.AcquireLease(ctx, "1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer release()
-		if _, _, err := st.AcquireLease(ctx, "repo"); !errors.Is(err, ErrBusy) {
+		if _, _, err := st.AcquireLease(ctx, "1"); !errors.Is(err, ErrBusy) {
 			t.Fatalf("same-tenant lease err=%v", err)
 		}
-		claim := WatchState{RepositoryID: "repo", OwnerKind: "server", OwnerPID: os.Getpid(), OwnerID: "owner", State: "watching"}
+		claim := WatchState{RepositoryID: "1", OwnerKind: "server", OwnerPID: os.Getpid(), OwnerID: "owner", State: "watching"}
 		if err := st.ClaimWatch(ctx, claim); err != nil {
 			t.Fatal(err)
 		}
@@ -279,19 +288,19 @@ func TestRepositoryWritesPreserveForeignOwnership(t *testing.T) {
 					owner = app.WithTenantOrgID(owner, uuid.New())
 				}
 				other := app.WithTenantOrgID(context.Background(), uuid.New())
-				original := &pb.Snapshot{Id: "original", RepositoryId: "repo"}
-				if err := st.Publish(owner, "/original", original, graph.NewGraph("repo", original.Id)); err != nil {
+				original := &pb.Snapshot{Id: "original", RepositoryId: "1"}
+				if err := st.Publish(owner, "/original", original, graph.NewGraph("1", original.Id)); err != nil {
 					t.Fatal(err)
 				}
-				attempt := &pb.Snapshot{Id: "foreign", RepositoryId: "repo"}
+				attempt := &pb.Snapshot{Id: "foreign", RepositoryId: "1"}
 				var err error
 				switch operation {
 				case "identity":
-					err = st.EnsureRepositoryIdentity(other, "repo", "/foreign", "https://github.com/foreign/repo", "github.com/foreign/repo", true)
+					err = st.EnsureRepositoryIdentity(other, "1", "/foreign", "https://github.com/foreign/repo", "github.com/foreign/repo", true)
 				case "publish":
-					err = st.Publish(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+					err = st.Publish(other, "/foreign", attempt, graph.NewGraph("1", attempt.Id))
 				case "historical":
-					err = st.PublishHistorical(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+					err = st.PublishHistorical(other, "/foreign", attempt, graph.NewGraph("1", attempt.Id))
 				}
 				if err != nil {
 					t.Fatalf("independent tenant write: %v", err)
@@ -301,17 +310,17 @@ func TestRepositoryWritesPreserveForeignOwnership(t *testing.T) {
 					Root             string
 					LatestSnapshotId string `bun:"latest_snapshot_id"`
 				}
-				err = st.bun.NewRaw(`SELECT root, latest_snapshot_id FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "repo", scope(owner).value()).Scan(owner, &repo)
+				err = st.bun.NewRaw(`SELECT root, latest_snapshot_id FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "1", scope(owner).value()).Scan(owner, &repo)
 				if err != nil || repo.Root != "/original" || repo.LatestSnapshotId != original.Id {
 					t.Fatalf("owner repository changed: %+v, err = %v", repo, err)
 				}
 				var remote string
 				var managed bool
-				err = st.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "repo", scope(owner).value()).Scan(owner, &remote, &managed)
+				err = st.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "1", scope(owner).value()).Scan(owner, &remote, &managed)
 				if err != nil || remote != "" || managed {
 					t.Fatalf("owner origin changed: remote=%q managed=%v err=%v", remote, managed, err)
 				}
-				otherRepo, err := st.Repository(other, "repo")
+				otherRepo, err := st.Repository(other, "1")
 				if err != nil || otherRepo.Root != "/foreign" {
 					t.Fatalf("other repository = %+v, err = %v", otherRepo, err)
 				}

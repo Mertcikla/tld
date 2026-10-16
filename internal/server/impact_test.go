@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/codeindex/graph"
+	"github.com/mertcikla/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
@@ -33,7 +34,7 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 		src := &graph.Source{Path: "a.go", Text: []byte(text), Hash: graph.Hash([]byte(text)), Language: "go"}
 		g.Sources[src.Path] = src
 		g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(text)), text, "", nil)
-		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete", Sources: []*pb.SourceFile{{Path: "a.go", Hash: src.Hash, Size: uint64(len(text))}}}
+		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions(), Sources: []*pb.SourceFile{{Path: "a.go", Hash: src.Hash, Size: uint64(len(text))}}}
 		if err := idx.Publish(ctx, root, snap, g); err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +135,7 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 	publish := func(id, aText string) {
 		g := graph.NewGraph(repoID, id)
 		files := map[string]string{"a.go": aText, "b.go": "func B() {}", "c.go": "func C() {}"}
-		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete"}
+		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions()}
 		facts := map[string]*pb.CodeFact{}
 		for path, text := range files {
 			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
@@ -143,8 +144,8 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Fn", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
 		// Chain a.go -> b.go -> c.go: c.go sits two hops out.
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor, nil)
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["b.go"].Id, facts["c.go"].Id, "", facts["b.go"].Anchor, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["b.go"].Id, facts["c.go"].Id, "", facts["b.go"].Anchor)
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +268,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 	publish := func(id, aText string) {
 		g := graph.NewGraph(repoID, id)
 		files := map[string]string{"a.go": aText, "b.go": "func B() {}", "c.go": "func C() {}"}
-		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete"}
+		snap := &pb.Snapshot{Id: id, RepositoryId: repoID, IngestionStatus: "complete", ToolVersions: indexer.SnapshotVersions()}
 		facts := map[string]*pb.CodeFact{}
 		for path, text := range files {
 			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
@@ -275,7 +276,7 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
 			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), text, "", nil)
 		}
-		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor, nil)
+		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["a.go"].Id, facts["b.go"].Id, "", facts["a.go"].Anchor)
 		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
 			t.Fatal(err)
 		}

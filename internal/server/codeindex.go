@@ -100,7 +100,7 @@ func (s *repositoryService) AddRepository(ctx context.Context, req *connect.Requ
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
-	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
+	resolved, err := s.store.ResolveRepository(ctx, root, spec.WebURL, spec.WebURL != "", app.TenantOrgIDFromCtx(ctx))
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
@@ -210,6 +210,7 @@ func (s *repositoryService) CheckRepositoryIndexers(ctx context.Context, req *co
 	return connect.NewResponse(&codeindexv1.CheckRepositoryIndexersResponse{
 		Indexers: requirements,
 		Ready:    len(missingTools(requirements)) == 0,
+		Warnings: repositoryAddWarnings(ctx, root, requirements),
 	}), nil
 }
 
@@ -245,6 +246,7 @@ func (s *repositoryService) requiredIndexers(ctx context.Context, root string) (
 			BelowMinimum: status.BelowMinimum,
 			DownloadUrl:  status.DownloadURL,
 			Path:         status.Path,
+			CheckError:   status.Error,
 		})
 	}
 	return requirements, nil
@@ -436,8 +438,10 @@ type codeIndexService struct {
 	ws     *app.Store
 	config *workspace.Config
 
-	mu      sync.Mutex
-	running map[string]string
+	mu              sync.Mutex
+	running         map[string]string
+	liveSubscribers map[string]map[chan struct{}]struct{}
+	repositories    *repositoryService
 }
 
 func (s *codeIndexService) ListFacts(ctx context.Context, req *connect.Request[codeindexv1.CodeFactFilter]) (*connect.Response[codeindexv1.CodeFactPage], error) {
@@ -535,6 +539,7 @@ func (s *codeIndexService) CaptureSnapshot(ctx context.Context, req *connect.Req
 	if err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	snapshot.Compatible = indexer.CheckSnapshot(snapshot) == nil
 	return stream.Send(&codeindexv1.CaptureSnapshotEvent{Event: &codeindexv1.CaptureSnapshotEvent_Snapshot{Snapshot: snapshot}})
 }
 
@@ -542,6 +547,15 @@ func (s *codeIndexService) DiffSnapshots(ctx context.Context, req *connect.Reque
 	msg := req.Msg
 	if msg.GetFromSnapshotId() == "" || msg.GetToSnapshotId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("from_snapshot_id and to_snapshot_id are required"))
+	}
+	for _, id := range []string{msg.GetFromSnapshotId(), msg.GetToSnapshotId()} {
+		snapshot, err := s.store.Snapshot(ctx, id)
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		if err := indexer.CheckSnapshot(snapshot); err != nil {
+			return nil, impactError(err)
+		}
 	}
 	diff, err := s.store.Diff(ctx, msg.GetFromSnapshotId(), msg.GetToSnapshotId(), msg.GetSourcesOnly())
 	if err != nil {
@@ -574,7 +588,7 @@ func registerCodeIndexHandlers(mux *http.ServeMux, appStore *app.Store, dataDir 
 	manager := newWatchManager(dataDir, idx)
 
 	repoSvc := &repositoryService{store: idx, ws: appStore, dataDir: dataDir, watches: manager, selfHosted: selfHosted}
-	factSvc := &codeIndexService{store: idx, ws: appStore, running: map[string]string{}}
+	factSvc := &codeIndexService{store: idx, ws: appStore, running: map[string]string{}, repositories: repoSvc}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 		factSvc.config = configs[0]
