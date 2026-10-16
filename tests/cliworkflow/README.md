@@ -1,7 +1,8 @@
 # CLI workspace lifecycle tests
 
-This is a manual, local development suite behind the `cliworkflow` build tag.
-Ordinary `go test ./...` and CI exclude the entire suite. Rapid is a test-only
+This suite runs behind the `cliworkflow` build tag, locally and in the CI
+**CLI Workflow Tests** job for pull requests to `main`, manual runs, and nightly
+runs. Ordinary `go test ./...` excludes the suite. Rapid is a test-only
 development dependency; it is not imported by production code. Go has no separate
 development-dependency manifest, so its pinned version remains in `go.mod`.
 
@@ -23,7 +24,8 @@ TLD_TEST_POSTGRES_URL='postgres://tld:tld@localhost:55432/tld?sslmode=disable' g
 ```
 
 Each PostgreSQL attempt creates and drops a uniquely named database. It never
-resets the supplied database's schema. These tests are not invoked by CI or
+resets the supplied database's schema. CI supplies an isolated PostgreSQL service
+and runs all three backends. These tests run separately from
 `scripts/test-postgres-e2e.sh`. Remote mode uses the production
 WorkspaceService/ImportService over loopback HTTP, a real SQLite store, a dummy
 bearer credential, and the production workspace context helper.
@@ -89,6 +91,10 @@ TLD_WORKFLOW_ARTIFACT_DIR=/tmp/tld-workflow-failures go test -tags cliworkflow .
 Retained failures include YAML, SQLite data, and command traces. Shrinking can
 retain several attempts. PostgreSQL test databases are always dropped; SQL/model
 differences and CLI output remain in the test log.
+
+CI explicitly runs 10 histories with an average of 20 actions per backend and a
+20-minute test timeout. The `cli-workflow-results` artifact contains JUnit
+results, any Rapid replay files, and retained failure workspaces and traces.
 
 This is lifecycle coverage, not exhaustive statement/flag coverage. Interactive
 login, server lifecycle, indexing/Git analysis, MCP, shell completion, and every

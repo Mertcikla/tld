@@ -29,7 +29,7 @@ require (
 	modernc.org/sqlite v1.50.0
 )
 
-// Development-only dependency for the opt-in cliworkflow tests.
+// Test-only dependency for the tagged cliworkflow suite, run locally and in CI.
 require pgregory.net/rapid v1.3.0
 
 require (

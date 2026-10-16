@@ -417,8 +417,9 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   useEffect(() => {
     if (!exploreData) return
     setExploreSearchData(exploreData)
-    setTreeData(exploreData.tree)
-  }, [exploreData])
+    // Lazy hierarchy search must not replace the tree and reload grid counts.
+    if (view === 'explore') setTreeData(exploreData.tree)
+  }, [exploreData, view])
 
   const loadExploreData = useCallback(() => reloadExploreData().then((data) => {
     if (data) setTreeData(data.tree)

@@ -112,6 +112,79 @@ jobs:
       - name: Run PostgreSQL integration tests
         run: scripts/test-postgres-e2e.sh
 
+  cli-workflow-tests:
+    name: CLI Workflow Tests
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tld
+          POSTGRES_PASSWORD: tld
+          POSTGRES_DB: tld
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tld -d tld"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build:app
+
+      - name: Install test dependencies
+        run: |
+          go mod download pgregory.net/rapid
+          go install gotest.tools/gotestsum@latest
+
+      - name: Run CLI workflow tests
+        env:
+          TLD_TEST_POSTGRES_URL: postgres://tld:tld@localhost:5432/tld?sslmode=disable
+          TLD_WORKFLOW_ARTIFACT_DIR: ${{ runner.temp }}/cli-workflow-failures
+        run: |
+          gotestsum \
+            --junitfile cli-workflow-results.xml \
+            --format testdox \
+            -- -tags cliworkflow ./tests/cliworkflow -count=1 -timeout=20m \
+            -rapid.checks=10 -rapid.steps=20
+
+      - name: Upload CLI workflow results and failure artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: cli-workflow-results
+          path: |
+            cli-workflow-results.xml
+            tests/cliworkflow/testdata/rapid/
+            ${{ runner.temp }}/cli-workflow-failures/
+          include-hidden-files: true
+          retention-days: 30
+
   e2e-tests:
     name: Playwright E2E Tests
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
