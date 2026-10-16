@@ -20,9 +20,11 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localapi "github.com/mertcikla/tld/v2/internal/server"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -59,8 +61,7 @@ func RunCmdWithStdin(t *testing.T, dir string, stdin io.Reader, args ...string) 
 	root.SetOut(outBuf)
 	root.SetErr(errBuf)
 	root.SetIn(stdin)
-	root.SetArgs(append([]string{"--workspace", dir}, args...))
-	err = root.Execute()
+	err = cmdutil.Execute(root, append([]string{"--workspace", dir}, args...))
 	return outBuf.String(), errBuf.String(), err
 }
 
@@ -154,7 +155,23 @@ func (m *MockDiagramService) ExportWorkspace(_ context.Context, req *connect.Req
 		}
 		return connect.NewResponse(resp), nil
 	}
-	return connect.NewResponse(&diagv1.ExportOrganizationResponse{}), nil
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	snapshot := &diagv1.ExportOrganizationResponse{}
+	for _, el := range m.elements {
+		snapshot.Elements = append(snapshot.Elements, el)
+	}
+	for _, v := range m.views {
+		snapshot.Views = append(snapshot.Views, v)
+	}
+	for _, c := range m.connectors {
+		snapshot.Connectors = append(snapshot.Connectors, c)
+	}
+	for _, p := range m.placements {
+		snapshot.Placements = append(snapshot.Placements, &diagv1.ElementPlacement{Id: p.Id, ViewId: p.ViewId, ElementId: p.ElementId, PositionX: p.PositionX, PositionY: p.PositionY})
+	}
+	return connect.NewResponse(proto.Clone(snapshot).(*diagv1.ExportOrganizationResponse)), nil
 }
 
 func (m *MockDiagramService) CreateElement(_ context.Context, req *connect.Request[diagv1.CreateElementRequest]) (*connect.Response[diagv1.CreateElementResponse], error) {

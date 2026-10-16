@@ -50,26 +50,36 @@ type Repository struct {
 // ViewPlacement is an element placement within another element's internal view.
 // Parent "root" means the synthetic workspace root.
 type ViewPlacement struct {
-	ParentRef       string  `yaml:"parent"`
-	PositionX       float64 `yaml:"position_x,omitempty"`
-	PositionY       float64 `yaml:"position_y,omitempty"`
-	PositionXSet    bool    `yaml:"-"`
-	PositionYSet    bool    `yaml:"-"`
-	VisibilityDelta int     `yaml:"visibility_delta,omitempty"`
+	ParentRef          string  `yaml:"parent"`
+	PositionX          float64 `yaml:"position_x,omitempty"`
+	PositionY          float64 `yaml:"position_y,omitempty"`
+	PositionXSet       bool    `yaml:"-"`
+	PositionYSet       bool    `yaml:"-"`
+	VisibilityDelta    int     `yaml:"visibility_delta,omitempty"`
+	VisibilityDeltaSet bool    `yaml:"-"`
 }
 
 func (p *ViewPlacement) UnmarshalYAML(node *yaml.Node) error {
+	for i := 0; node.Kind == yaml.MappingNode && i+1 < len(node.Content); i += 2 {
+		switch key := node.Content[i].Value; key {
+		case "parent", "position_x", "position_y", "visibility_delta":
+		default:
+			return fmt.Errorf("unknown placement field %q; use parent, position_x, position_y, or visibility_delta", key)
+		}
+	}
 	var raw struct {
 		ParentRef       string   `yaml:"parent"`
 		PositionX       *float64 `yaml:"position_x"`
 		PositionY       *float64 `yaml:"position_y"`
-		VisibilityDelta int      `yaml:"visibility_delta"`
+		VisibilityDelta *int     `yaml:"visibility_delta"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
 	}
 	p.ParentRef = raw.ParentRef
-	p.VisibilityDelta = raw.VisibilityDelta
+	if raw.VisibilityDelta != nil {
+		p.VisibilityDelta, p.VisibilityDeltaSet = *raw.VisibilityDelta, true
+	}
 	if raw.PositionX != nil {
 		p.PositionX = *raw.PositionX
 		p.PositionXSet = true
@@ -122,27 +132,29 @@ type Element struct {
 	ViewName        string          `yaml:"view_name,omitempty"`
 	ViewLabel       string          `yaml:"view_label,omitempty"`
 	DensityLevel    int             `yaml:"density_level,omitempty"`
+	DensityLevelSet bool            `yaml:"-"`
 	BypassNoiseGate *bool           `yaml:"bypass_noise_gate,omitempty"`
 	Placements      []ViewPlacement `yaml:"placements,omitempty"`
 }
 
 // Connector is one entry in connectors.yaml.
 type Connector struct {
-	View            string     `yaml:"view"`
-	Source          string     `yaml:"source"`
-	Target          string     `yaml:"target"`
-	Label           string     `yaml:"label,omitempty"`
-	Description     string     `yaml:"description,omitempty"`
-	Relationship    string     `yaml:"relationship,omitempty"`
-	Direction       string     `yaml:"direction,omitempty"`
-	Style           string     `yaml:"style,omitempty"`
-	URL             string     `yaml:"url,omitempty"`
-	SourceHandle    string     `yaml:"source_handle,omitempty"`
-	TargetHandle    string     `yaml:"target_handle,omitempty"`
-	Tags            []string   `yaml:"tags,omitempty"`
-	VisibilityDelta int        `yaml:"visibility_delta,omitempty"`
-	ID              ResourceID `yaml:"id,omitempty"`
-	UpdatedAt       time.Time  `yaml:"updated_at,omitempty"`
+	View               string     `yaml:"view"`
+	Source             string     `yaml:"source"`
+	Target             string     `yaml:"target"`
+	Label              string     `yaml:"label,omitempty"`
+	Description        string     `yaml:"description,omitempty"`
+	Relationship       string     `yaml:"relationship,omitempty"`
+	Direction          string     `yaml:"direction,omitempty"`
+	Style              string     `yaml:"style,omitempty"`
+	URL                string     `yaml:"url,omitempty"`
+	SourceHandle       string     `yaml:"source_handle,omitempty"`
+	TargetHandle       string     `yaml:"target_handle,omitempty"`
+	Tags               []string   `yaml:"tags,omitempty"`
+	VisibilityDelta    int        `yaml:"visibility_delta,omitempty"`
+	VisibilityDeltaSet bool       `yaml:"-"`
+	ID                 ResourceID `yaml:"id,omitempty"`
+	UpdatedAt          time.Time  `yaml:"updated_at,omitempty"`
 }
 
 // ResourceID is an int32 that serializes to Hashids in YAML

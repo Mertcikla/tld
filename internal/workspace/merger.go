@@ -120,6 +120,7 @@ type mergeFileResult struct {
 
 func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta map[string]*ResourceMetadata, lastSyncMeta map[string]*ResourceMetadata, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection, dryRun bool) (mergeFileResult, error) {
 	var result mergeFileResult
+	lastSyncMeta = metadataForCurrentRefs(lastSyncMeta, currentMeta)
 
 	// Load existing file into a Node
 	var root yaml.Node
@@ -167,6 +168,31 @@ func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta m
 		}
 		return result, WriteFullYAMLMapSections(path, serverItems, sections)
 	}
+}
+
+// Ref renames preserve IDs but leave historical sync metadata under its old
+// aliases. Resolve that baseline by identity for this merge without rewriting
+// the lockfile history or confusing a reused alias with the previous resource.
+func metadataForCurrentRefs(baseline, current map[string]*ResourceMetadata) map[string]*ResourceMetadata {
+	byID := make(map[ResourceID]*ResourceMetadata, len(baseline))
+	resolved := make(map[string]*ResourceMetadata, len(baseline))
+	for ref, meta := range baseline {
+		resolved[ref] = meta
+		if meta != nil && meta.ID != 0 {
+			byID[meta.ID] = meta
+		}
+	}
+	for ref, meta := range current {
+		if meta == nil || meta.ID == 0 {
+			continue
+		}
+		if previous := byID[meta.ID]; previous != nil {
+			resolved[ref] = previous
+		} else {
+			delete(resolved, ref)
+		}
+	}
+	return resolved
 }
 
 // mergeYAMLMappingNode merges a mapping-rooted workspace document, where each
@@ -345,8 +371,9 @@ func mergeLocalYAMLValue(path, key string, localNode *yaml.Node, serverItem any,
 			return mergedYAMLEntry{}, fmt.Errorf("merge %s[%s]: %w", filepath.Base(path), key, err)
 		}
 		return mergedYAMLEntry{node: mergedNode, keep: true, bothChanged: true, conflict: hasConflict}, nil
-	case serverChanged:
-		// Server changed, local did not: update local with server content.
+	case serverChanged || (!localChanged && lastSyncMeta != nil):
+		// An unchanged local resource follows the target even if its write
+		// timestamp has only second precision and matches the last snapshot.
 		var newValNode yaml.Node
 		_ = newValNode.Encode(serverItem)
 		return mergedYAMLEntry{node: &newValNode, keep: true}, nil

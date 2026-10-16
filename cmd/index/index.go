@@ -81,7 +81,16 @@ incremental indexing after a debounce. Each new commit gets an immutable
 snapshot from its committed contents. Watch always saves an affected-file
 change overlay, available in Repositories > Live changes. Compare maps can
 compare commits or saved snapshots, always showing the full computed
-neighbourhood of unchanged elements by dependency hops.`,
+neighbourhood of unchanged elements by dependency hops.
+
+Start with 'tld doctor' to check indexer prerequisites. After indexing, open the
+Repositories area in 'tld serve --open'. Use 'tld git compare' for a commit
+comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
+		Example: `  tld doctor
+  tld index . --map
+  tld index . --watch --map --detach
+  tld index status .
+  tld index stop .`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."

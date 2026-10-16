@@ -54,7 +54,7 @@
     },
     "element": {
       "type": "object",
-      "description": "A single element (node) in the workspace. `name` and `kind` are required by the CLI validator.",
+      "description": "A single element (node) in the workspace. `name` is required; `kind` is optional metadata.",
       "properties": {
         "name": {
           "type": "string",
@@ -149,7 +149,7 @@
           }
         }
       },
-      "required": ["name", "kind"],
+      "required": ["name"],
       "additionalProperties": false,
       "examples": [
         {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -19,6 +20,9 @@ import (
 // are matched to their server IDs (from the lockfile cache first, then by
 // name/endpoints) and updated instead of duplicated.
 type ImportPlan struct {
+	Views               []workspace.ViewDiagnostics
+	PreservedPlacements map[string][]string
+
 	Request *diagv1.ApplyPlanRequest
 
 	// ElementSpecs are the specs to persist to the local YAML cache, keyed by
@@ -35,6 +39,12 @@ type ImportPlan struct {
 	ConnectorsCreated int
 	ConnectorsUpdated int
 }
+
+type ImportFieldError struct{ Field, Hint string }
+
+func (e *ImportFieldError) Error() string        { return "batch import cannot apply connector " + e.Field }
+func (e *ImportFieldError) RecoveryCode() string { return "unsupported_field" }
+func (e *ImportFieldError) RecoveryHint() string { return e.Hint }
 
 // BuildImportPlan validates the import document and resolves existing server
 // IDs so the resulting plan is idempotent. It performs read-only server calls
@@ -85,11 +95,51 @@ func BuildImportPlan(
 		}
 		elementIDs[ref] = id
 	}
+	// Different YAML refs must never silently alias one persisted element.
+	// Otherwise a later remove of an apparently redundant ref deletes both.
+	idsToRef := map[int32]string{}
+	if ws.Meta != nil && workspace.IsWorkspaceDir(ws.Dir) {
+		for ref, meta := range ws.Meta.Elements {
+			if meta != nil && meta.ID != 0 && ws.Elements[ref] != nil {
+				if old := idsToRef[int32(meta.ID)]; old == "" || ref < old {
+					idsToRef[int32(meta.ID)] = ref
+				}
+			}
+		}
+	}
+	refsByID := map[int32]string{}
+	aliasRefs := make([]string, 0, len(elementIDs))
+	for ref := range elementIDs {
+		aliasRefs = append(aliasRefs, ref)
+	}
+	sort.Strings(aliasRefs)
+	for _, ref := range aliasRefs {
+		id := elementIDs[ref]
+		if id == 0 {
+			continue
+		}
+		if previous, ok := idsToRef[id]; ok && previous != ref {
+			return nil, fmt.Errorf("element ref %q resolves to the same target ID %d as workspace ref %q; reuse the existing ref or rename it with 'tld update element %s ref %s'", ref, id, previous, previous, ref)
+		}
+		if previous, ok := refsByID[id]; ok && previous != ref {
+			return nil, fmt.Errorf("element refs %q and %q resolve to the same target ID %d; use one ref for this element across all views", previous, ref, id)
+		}
+		refsByID[id] = ref
+	}
+	// Read current coordinates from the target, rather than replaying a stale
+	// cache or treating an omitted coordinate as zero.
+	exported, err := runner.ExportWorkspace(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read target placements: %w", err)
+	}
 
 	// Recompute which refs need an owned view: every placement parent and every
 	// connector view, plus elements that explicitly request a view.
 	requiredViews := map[string]bool{}
 	for ref, el := range planElements {
+		if viewByOwner[elementIDs[ref]] != nil {
+			requiredViews[ref] = true
+		}
 		for _, placement := range el.Placements {
 			parent := placement.ParentRef
 			if parent == "" {
@@ -148,11 +198,26 @@ func BuildImportPlan(
 			BypassNoiseGate: el.BypassNoiseGate,
 		}
 		id := elementIDs[ref]
+		_, declared := elements[ref]
+		if !declared && id != 0 {
+			// Dependencies included only to resolve refs are not metadata patches.
+			pe = &diagv1.PlanElement{Ref: ref, Name: el.Name}
+			if current := byID[id]; current != nil {
+				pe.Name = current.GetName()
+			}
+		}
 		if id != 0 {
 			pe.Id = &id
 			if pe.BypassNoiseGate == nil && byID[id] != nil {
 				bypass := byID[id].GetBypassNoiseGate()
 				pe.BypassNoiseGate = &bypass
+			}
+			if current := byID[id]; current != nil {
+				pe.HasView = current.GetHasView()
+				if pe.Tags == nil {
+					pe.Tags = current.GetTags()
+				}
+				pe.TechnologyLinks = current.GetTechnologyLinks()
 			}
 			plan.ElementsUpdated++
 		} else {
@@ -167,17 +232,40 @@ func BuildImportPlan(
 				plan.ViewsCreated++
 			}
 			pe.ViewLabel = strOrNil(el.ViewLabel)
-			if el.DensityLevel != 0 {
+			if !declared {
+				pe.ViewLabel = nil
+			}
+			if el.DensityLevelSet || el.DensityLevel != 0 {
 				density := int32(el.DensityLevel)
 				pe.ViewDensityLevel = &density
 			}
 		}
 		for _, placement := range el.Placements {
+			if !declared && id != 0 {
+				continue
+			}
 			parent := placement.ParentRef
 			if parent == "" {
 				parent = workspace.RootRef
 			}
 			pp := &diagv1.PlanViewPlacement{ParentRef: parent}
+			parentID := viewIDs[parent]
+			if parent == workspace.RootRef {
+				parentID = rootViewID(serverViews)
+			}
+			for _, existing := range exported.GetPlacements() {
+				if existing.GetElementId() == id && existing.GetViewId() == parentID {
+					if !placement.PositionXSet && placement.PositionX == 0 {
+						x := existing.GetPositionX()
+						pp.PositionX = &x
+					}
+					if !placement.PositionYSet && placement.PositionY == 0 {
+						y := existing.GetPositionY()
+						pp.PositionY = &y
+					}
+					break
+				}
+			}
 			if placement.PositionXSet || placement.PositionX != 0 {
 				x := placement.PositionX
 				pp.PositionX = &x
@@ -186,7 +274,7 @@ func BuildImportPlan(
 				y := placement.PositionY
 				pp.PositionY = &y
 			}
-			if placement.VisibilityDelta != 0 {
+			if placement.VisibilityDeltaSet || placement.VisibilityDelta != 0 {
 				delta := int32(placement.VisibilityDelta)
 				pp.VisibilityDelta = &delta
 			}
@@ -215,6 +303,18 @@ func BuildImportPlan(
 			viewID = rootID
 		}
 		id := resolveImportConnectorID(ws, c, viewID, elementIDs[c.Source], elementIDs[c.Target], serverConnectors)
+		if c.Tags != nil {
+			var currentTags []string
+			for _, current := range serverConnectors {
+				if current.GetId() == id {
+					currentTags = current.GetTags()
+					break
+				}
+			}
+			if !slices.Equal(c.Tags, currentTags) {
+				return nil, &ImportFieldError{Field: "tags", Hint: fmt.Sprintf("Set tags with 'tld update connector %q tags <comma-separated-tags>', then retry sync.", workspace.ConnectorKey(c))}
+			}
+		}
 		pc := &diagv1.PlanConnector{
 			Ref:              workspace.ConnectorKey(c),
 			ViewRef:          viewRef,
@@ -229,8 +329,24 @@ func BuildImportPlan(
 			SourceHandle:     strOrNil(c.SourceHandle),
 			TargetHandle:     strOrNil(c.TargetHandle),
 		}
+		if c.VisibilityDeltaSet || c.VisibilityDelta != 0 {
+			delta := int32(c.VisibilityDelta)
+			pc.VisibilityDelta = &delta
+		}
 		if id != 0 {
 			pc.Id = &id
+			for _, current := range serverConnectors {
+				if current.GetId() != id {
+					continue
+				}
+				if pc.Direction == nil {
+					pc.Direction = strOrNil(current.GetDirection())
+				}
+				if pc.Style == nil {
+					pc.Style = strOrNil(current.GetStyle())
+				}
+				break
+			}
 			plan.ConnectorsUpdated++
 		} else {
 			plan.ConnectorsCreated++
@@ -274,6 +390,9 @@ func collectImportElements(
 			if parent == "" {
 				parent = workspace.RootRef
 			}
+			if parent == ref {
+				return nil, fmt.Errorf("element %q cannot be placed in its own view; choose another placement parent", ref)
+			}
 			if err := workspace.ValidateParentRef(parent); err != nil {
 				return nil, fmt.Errorf("element %q: invalid placement parent %q: %w", ref, parent, err)
 			}
@@ -287,6 +406,9 @@ func collectImportElements(
 	for _, c := range connectors {
 		if c == nil {
 			return nil, errors.New("connectors: entry is empty")
+		}
+		if err := workspace.ValidateConnectorValues(c); err != nil {
+			return nil, err
 		}
 		if err := workspace.ValidateElementRef(c.Source); err != nil {
 			return nil, fmt.Errorf("connector %s -> %s: invalid source element ref: %w", c.Source, c.Target, err)

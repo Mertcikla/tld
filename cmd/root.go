@@ -29,7 +29,9 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/validate"
 	"github.com/mertcikla/tld/v2/cmd/version"
 	viewcmd "github.com/mertcikla/tld/v2/cmd/view"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
+	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -54,8 +56,10 @@ func WithServeCommand(runE func(*cobra.Command, []string) error) RootOption {
 
 // Execute runs the root command and exits on error.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
+	if err := cmdutil.Execute(rootCmd, os.Args[1:]); err != nil {
+		if !cmdutil.ErrorReported(err) {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
@@ -68,10 +72,37 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		Short: "tld -- tlDiagram CLI",
 		Long: `tld CLI for managing and visualizing system architecture diagrams.
 
-Commands work on the database directly: the local database by default, or the
-configured cloud workspace when credentials are present. Pass --yaml (or run in
-a directory that holds workspace YAML files) to read and write
-elements.yaml/connectors.yaml instead.`,
+Commands use the local database by default, or the configured cloud workspace
+when an API key and workspace ID select the remote target. In a YAML workspace
+(created with 'tld init', detected automatically, or selected with --yaml),
+commands read workspace refs and refresh elements.yaml/connectors.yaml after
+target writes. Ordinary add, connect, update, and remove operations apply to
+their target immediately; use --dry-run to preview a supported operation.
+
+Elements are reusable nodes. Each element can own a view (diagram); placing a
+child with 'add --parent <ref>' creates that view automatically. Use 'view create'
+to create it explicitly. 'root' is the top-level view. Find refs and connector
+keys with 'list', inspect details with 'inspect', and export Mermaid with 'render'.
+
+Database IDs identify persisted elements. YAML refs are workspace-local aliases;
+database-mode refs are derived from names and can change when names change.
+Custom 'add --ref' values and 'update element <ref> ref <new-ref>' require a YAML
+workspace. To change a display name in either mode, use
+'tld update element <ref-or-id> name <new-name>'. Ref changes only affect YAML.`,
+		Example: `  # Build and export a local diagram with workspace refs
+  tld init
+  tld add "API" --ref api --kind service --target local
+  tld add "Database" --ref db --kind database --target local
+  tld connect --from api --to db --label reads --target local
+  tld list connectors
+  tld render root -o diagram.mmd
+
+  # Generate a map from the current repository
+  tld doctor
+  tld index . --map
+
+  # Visualize the last commit
+  tld git compare HEAD~1 HEAD --mermaid`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -85,14 +116,24 @@ elements.yaml/connectors.yaml instead.`,
 		defaultWdir = "tld"
 	}
 	root.PersistentFlags().StringVarP(&wdir, "workspace", "w", defaultWdir, "workspace directory")
-	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "read and write workspace YAML files instead of working on the database directly")
+	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "use workspace YAML refs and cache alongside the configured target")
 	root.PersistentFlags().StringVar(&outputFormat, "format", "text", "output format: text or json")
 	root.PersistentFlags().BoolVar(&compactJSON, "compact", false, "compact JSON output (no whitespace)")
+	root.PersistentFlags().String("target", "", "target: auto, local, remote, or cloud")
+	root.PersistentFlags().String("data-dir", "", "data directory for local target state")
 
 	// Accept either a content root or a workspace directory for --workspace by
 	// resolving to the nested ".tld" directory when the root itself does not
 	// hold workspace files.
-	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	root.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
+		if target, _ := cmdutil.TargetOverrides(c, "", ""); target != "" {
+			if _, err := exec.ResolveTarget(workspace.Config{}, target); err != nil {
+				return cmdutil.WithCode(err, "invalid_value", "Use --target auto, local, remote, or cloud.")
+			}
+		}
+		if outputFormat != "text" && outputFormat != "json" && (c.Name() != "render" || outputFormat != "mermaid") {
+			return fmt.Errorf("unsupported --format %q; use text or json", outputFormat)
+		}
 		wdir = workspace.ResolveDir(wdir)
 		return nil
 	}
@@ -209,6 +250,7 @@ elements.yaml/connectors.yaml instead.`,
 	doctorCmd.GroupID = systemGroup.ID
 
 	root.AddCommand(
+		newContextCmd(&wdir),
 		addCmd,
 		connectCmd,
 		importCmd,
@@ -259,6 +301,37 @@ elements.yaml/connectors.yaml instead.`,
 	for _, option := range options {
 		option(root)
 	}
+
+	// Keep the ordinary authoring help short without removing advanced commands.
+	var helpAll bool
+	root.Flags().BoolVar(&helpAll, "help-all", false, "show the full command catalog and root options")
+	root.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	root.Args = cobra.NoArgs
+	fullHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if c != root || helpAll {
+			fullHelp(c, args)
+			return
+		}
+		out := c.OutOrStdout()
+		_, _ = fmt.Fprintln(out, "tld - create and update architecture diagrams\n\nUsage: tld <command> [flags]\n\nAuthoring:")
+		for _, name := range []string{"init", "context", "list", "inspect", "add", "connect", "update", "remove", "view", "import", "validate", "render"} {
+			command, _, _ := root.Find([]string{name})
+			_, _ = fmt.Fprintf(out, "  %-10s %s\n", name, command.Short)
+		}
+		_, _ = fmt.Fprintln(out, `
+Start: tld init; tld add "API" --ref api; tld render root
+Bulk:  tld import diagram.yaml --dry-run; tld import diagram.yaml
+
+Mutations apply immediately to the configured target (local by default).
+Use --target local to pin writes, --dry-run to preview, and --format json
+for machine-readable results. YAML workspaces preserve custom refs.
+Use --workspace <dir> to select a workspace and --compact for compact JSON.
+Reads accept --target/--data-dir too; --source live verifies current target state.
+Use 'tld context' to check the destination; 'tld import --schema' for batch fields.
+
+Use 'tld <command> --help' for fields and examples; 'tld --help-all' for all options.`)
+	})
 
 	return root
 }

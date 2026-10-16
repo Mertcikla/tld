@@ -10,7 +10,7 @@ import (
 )
 
 func WithHint(err error, hint string) error {
-	return fmt.Errorf("%w\n  Hint: %s", err, hint)
+	return &CommandError{Cause: err, Code: "command_failed", Hint: hint}
 }
 
 func LoadWorkspace(dir string) (*workspace.Workspace, error) {
@@ -23,19 +23,19 @@ func LoadWorkspace(dir string) (*workspace.Workspace, error) {
 
 func EnsureAPIKey(apiKey string) error {
 	if strings.TrimSpace(apiKey) == "" {
-		return WithHint(errors.New("api_key is empty"), "Run 'tld login' or set the TLD_API_KEY environment variable.")
+		return WithCode(errors.New("api_key is empty"), "unauthenticated", "Run 'tld login' or set the TLD_API_KEY environment variable.")
 	}
 	return nil
 }
 
 func WorkspaceIDRequired(message string) error {
-	return WithHint(errors.New(message), "Run 'tld login' to set your org-id automatically.")
+	return WithCode(errors.New(message), "workspace_required", "Run 'tld login' to set your org-id automatically.")
 }
 
 func WithUnauthorizedHint(prefix string, err error) error {
 	var connectErr *connect.Error
 	if errors.As(err, &connectErr) && connectErr.Code() == connect.CodeUnauthenticated {
-		return WithHint(fmt.Errorf("%s: %w", prefix, err), "Your API key may have expired. Run 'tld login' to refresh it.")
+		return WithCode(fmt.Errorf("%s: %w", prefix, err), "unauthenticated", "Run 'tld login' to refresh your credentials.")
 	}
 	return fmt.Errorf("%s: %w", prefix, err)
 }

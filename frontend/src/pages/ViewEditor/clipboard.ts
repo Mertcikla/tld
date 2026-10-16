@@ -204,12 +204,34 @@ export function planViewSelectionPastePlacements(
 export function planViewSelectionPasteConnectors(
   payload: ViewSelectionClipboardPayload,
   targetElementIdsBySourceId: ReadonlyMap<number, number>,
+  existingConnectors: Connector[] = [],
 ): ViewSelectionPasteConnector[] {
+  const existingCounts = new Map<string, number>()
+  for (const connector of existingConnectors) {
+    const key = selectionConnectorKey(connector)
+    existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1)
+  }
   return payload.connectors.map((connector) => ({
     ...connector,
     sourceElementId: targetElementIdsBySourceId.get(connector.source_element_id) ?? connector.source_element_id,
     targetElementId: targetElementIdsBySourceId.get(connector.target_element_id) ?? connector.target_element_id,
-  }))
+  })).filter((connector) => {
+    const key = selectionConnectorKey({ ...connector, source_element_id: connector.sourceElementId, target_element_id: connector.targetElementId })
+    const count = existingCounts.get(key) ?? 0
+    if (count === 0) return true
+    existingCounts.set(key, count - 1)
+    return false
+  })
+}
+
+function selectionConnectorKey(connector: Omit<ViewSelectionClipboardConnector, 'tags'> & { tags?: string[] }): string {
+  // Handle positions describe routing, not another relationship. Count matches
+  // individually so intentional parallel connectors retain their multiplicity.
+  return JSON.stringify([
+    connector.source_element_id, connector.target_element_id,
+    connector.label ?? '', connector.description ?? '', connector.relationship ?? '',
+    connector.direction, connector.style, connector.url ?? '', [...(connector.tags ?? [])].sort(),
+  ])
 }
 
 function sourceSelectionCenter(elements: ViewSelectionClipboardElement[]) {

@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -33,6 +34,14 @@ func CompactFromCmd(cmd *cobra.Command) bool {
 }
 
 func WriteJSON(w io.Writer, compact bool, payload JSONOutput) error {
+	if payload.Status == "dry-run" {
+		payload.Status, payload.DryRun = "ok", true
+	}
+	for _, item := range payload.Items {
+		if item.Action == "dry-run" {
+			payload.DryRun = true
+		}
+	}
 	enc := json.NewEncoder(w)
 	if !compact {
 		enc.SetIndent("", "  ")
@@ -40,22 +49,49 @@ func WriteJSON(w io.Writer, compact bool, payload JSONOutput) error {
 	return enc.Encode(payload)
 }
 
+// WriteCommandError writes a JSON error response and returns the operation's
+// failure so a successfully written response cannot make the command succeed.
 func WriteCommandError(w io.Writer, compact bool, command string, err error) error {
-	return WriteJSON(w, compact, JSONOutput{
-		Command: command,
-		Status:  "error",
-		Errors:  []string{err.Error()},
-	})
+	return WriteResult(w, compact, JSONOutput{Command: command}, err)
+}
+
+// WriteResult emits exactly one response, retaining diagnostics on failure.
+func WriteResult(w io.Writer, compact bool, payload JSONOutput, err error) error {
+	if err != nil {
+		detail := recoveryError("tld "+strings.TrimPrefix(payload.Command, "tld "), err)
+		payload.Status, payload.Error, payload.Errors = "error", detail, []string{detail.Error()}
+		err = detail
+	}
+	if writeErr := WriteJSON(w, compact, payload); writeErr != nil {
+		return errors.Join(err, writeErr)
+	}
+	if err != nil {
+		return &reportedError{err}
+	}
+	return nil
 }
 
 func WriteMutation(w io.Writer, compact bool, command, action, ref string) error {
+	resourceType := "element"
+	if strings.Contains(command, "connector") || command == "connect" {
+		resourceType = "connector"
+	}
+	if strings.HasPrefix(command, "view") {
+		resourceType = "view"
+	}
+	return WriteResourceMutation(w, compact, command, action, ref, resourceType, 0)
+}
+
+func WriteResourceMutation(w io.Writer, compact bool, command, action, ref, resourceType string, id int32) error {
 	return WriteJSON(w, compact, JSONOutput{
 		Command: command,
 		Status:  "ok",
 		Items: []JSONItem{
 			{
-				Action: action,
-				Ref:    ref,
+				Action:       action,
+				Ref:          ref,
+				ResourceType: resourceType,
+				ID:           id,
 			},
 		},
 	})

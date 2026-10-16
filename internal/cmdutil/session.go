@@ -40,8 +40,9 @@ type Session struct {
 	dataDir string
 	ctx     context.Context
 
-	ws     *workspace.Workspace
-	runner exec.Runner
+	ws       *workspace.Workspace
+	runner   exec.Runner
+	readLive bool
 }
 
 // OpenSession decides between DB mode and workspace mode for a command.
@@ -49,6 +50,7 @@ type Session struct {
 // marker files; otherwise the target store (local DB, or cloud when configured)
 // is the only data source.
 func OpenSession(cmd *cobra.Command, wdir, target, dataDir string) (*Session, error) {
+	target, dataDir = TargetOverrides(cmd, target, dataDir)
 	ctx := context.Background()
 	if cmd != nil {
 		ctx = cmd.Context()
@@ -68,6 +70,11 @@ func OpenSession(cmd *cobra.Command, wdir, target, dataDir string) (*Session, er
 		s.ws = ws
 		s.Config = ws.Config
 		s.Mode = ModeWorkspace
+		source, err := ReadSource(cmd, true)
+		if err != nil {
+			return nil, err
+		}
+		s.readLive = source == "live"
 		return s, nil
 	}
 	cfg, err := workspace.LoadGlobalConfig()
@@ -76,6 +83,9 @@ func OpenSession(cmd *cobra.Command, wdir, target, dataDir string) (*Session, er
 	}
 	s.Config = *cfg
 	s.Mode = ModeDB
+	if _, err := ReadSource(cmd, false); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -138,10 +148,39 @@ func (s *Session) Close() error {
 	return nil
 }
 
+// CacheError pins recovery to the same destination as the committed write.
+func (s *Session) CacheError(err error) error {
+	detail := CacheError(err).(*CommandError)
+	target, targetErr := exec.ResolveTarget(s.Config, s.target)
+	if targetErr != nil {
+		return detail
+	}
+	hint := fmt.Sprintf("Run 'tld pull --target %s", target)
+	if target == exec.TargetLocal && s.dataDir != "" {
+		hint += fmt.Sprintf(" --data-dir %q", s.dataDir)
+	}
+	if s.Wdir != "" {
+		hint += fmt.Sprintf(" --workspace %q", s.Wdir)
+	}
+	detail.Hint = hint + "' to refresh the workspace before continuing."
+	return detail
+}
+
 // LoadWorkspace returns the workspace state for this session. In workspace
 // mode it is the YAML files; in DB mode it is a snapshot materialized from the
 // target export (refs are synthesized from names).
 func (s *Session) LoadWorkspace() (*workspace.Workspace, error) {
+	if s.readLive {
+		runner, err := s.Runner()
+		if err != nil {
+			return nil, err
+		}
+		exported, err := runner.ExportWorkspace(s.ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read target workspace: %w", err)
+		}
+		return ConvertExportResponse(s.ws, exported), nil
+	}
 	if s.ws != nil {
 		return s.ws, nil
 	}
@@ -163,6 +202,58 @@ func (s *Session) LoadWorkspace() (*workspace.Workspace, error) {
 	}
 	s.ws = ConvertExportResponse(emptyWorkspace(s.Wdir, s.Config), export)
 	return s.ws, nil
+}
+
+// TargetOverrides supports inherited root flags as well as legacy command flags.
+func TargetOverrides(cmd *cobra.Command, target, dataDir string) (string, string) {
+	value := func(name, supplied string) string {
+		if supplied != "" || cmd == nil {
+			return supplied
+		}
+		if f := cmd.Flags().Lookup(name); f != nil && f.Value.String() != "" {
+			return f.Value.String()
+		}
+		if f := cmd.Root().PersistentFlags().Lookup(name); f != nil {
+			return f.Value.String()
+		}
+		return ""
+	}
+	return value("target", target), value("data-dir", dataDir)
+}
+
+func AddReadSourceFlag(cmd *cobra.Command) {
+	cmd.Flags().String("source", "auto", "read auto, cache, or live; auto uses live with an explicit target/data-dir, otherwise workspace cache")
+}
+
+func ReadSource(cmd *cobra.Command, hasWorkspace bool) (string, error) {
+	if cmd == nil || cmd.Flags().Lookup("source") == nil {
+		if hasWorkspace {
+			return "cache", nil
+		}
+		return "live", nil
+	}
+	source, _ := cmd.Flags().GetString("source")
+	switch source {
+	case "live":
+		return source, nil
+	case "cache":
+		if !hasWorkspace {
+			return "", WithCode(errors.New("no workspace cache to read"), "workspace_required", "Run 'tld init' or use --source live.")
+		}
+		return source, nil
+	case "auto":
+		if !hasWorkspace {
+			return "live", nil
+		}
+		for _, name := range []string{"target", "data-dir"} {
+			if cmd.Flags().Changed(name) || cmd.Root().PersistentFlags().Changed(name) {
+				return "live", nil
+			}
+		}
+		return "cache", nil
+	default:
+		return "", WithCode(fmt.Errorf("invalid --source %q", source), "invalid_value", "Use --source auto, cache, or live.")
+	}
 }
 
 // Reload drops any cached materialized workspace so the next LoadWorkspace
@@ -231,22 +322,23 @@ func ResolveElementArg(ws *workspace.Workspace, arg string) (string, error) {
 			return ref, nil
 		}
 	}
-	exact := ""
-	var folded []string
+	var exact, folded []string
 	for ref, el := range ws.Elements {
 		if el == nil {
 			continue
 		}
 		if el.Name == arg {
-			exact = ref
-			break
+			exact = append(exact, ref)
 		}
 		if strings.EqualFold(strings.TrimSpace(el.Name), arg) {
 			folded = append(folded, ref)
 		}
 	}
-	if exact != "" {
-		return exact, nil
+	if len(exact) == 1 {
+		return exact[0], nil
+	}
+	if len(exact) > 1 {
+		folded = exact
 	}
 	if len(folded) == 1 {
 		return folded[0], nil
@@ -328,4 +420,55 @@ func refForMetadataID(metadata map[string]*workspace.ResourceMetadata, id int) s
 		}
 	}
 	return ""
+}
+
+// RefreshCache includes server-created relationships (for example those copied
+// when a shared element is placed) so listed selectors work on the next write.
+func (s *Session) RefreshCache(base *workspace.Workspace) error {
+	if !s.HasWorkspace() {
+		return nil
+	}
+	runner, err := s.Runner()
+	if err != nil {
+		return err
+	}
+	exported, err := runner.ExportWorkspace(s.ctx)
+	if err != nil {
+		return err
+	}
+	actual := ConvertExportResponse(base, exported)
+	PreservePendingResources(base, actual)
+	if err := exec.SaveCache(s.Wdir, actual); err != nil {
+		return err
+	}
+	s.ws = actual
+	return nil
+}
+
+// RequireAppliedCache protects unapplied YAML edits before a mutation replaces
+// the persisted cache with a fresh target snapshot. Sync intentionally bypasses
+// this check because it is the operation that applies those edits.
+func (s *Session) RequireAppliedCache() error {
+	if !s.HasWorkspace() {
+		return nil
+	}
+	return EnsureCacheInSync(s.Wdir)
+}
+
+func EnsureCacheInSync(dir string) error {
+	lock, err := workspace.LoadLockFile(dir)
+	if err != nil {
+		return fmt.Errorf("load lock file: %w", err)
+	}
+	if lock == nil || strings.TrimSpace(lock.WorkspaceHash) == "" {
+		return nil
+	}
+	hash, err := workspace.CalculateWorkspaceHash(dir)
+	if err != nil {
+		return fmt.Errorf("calculate workspace hash: %w", err)
+	}
+	if hash != lock.WorkspaceHash {
+		return WithCode(errors.New("workspace YAML is out of sync with the last applied state"), "cache_out_of_sync", "Run 'tld sync' to apply local YAML edits, or review 'tld pull --dry-run' before refreshing from the target. Use the same workspace, target, and data directory.")
+	}
+	return nil
 }

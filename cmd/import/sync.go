@@ -49,6 +49,7 @@ Use --target to choose the destination:
 }
 
 func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir string, dryRun bool) error {
+	target, dataDir = cmdutil.TargetOverrides(cmd, target, dataDir)
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "sync", err)
@@ -61,11 +62,15 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return fail(err)
 	}
 
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	sess, err := cmdutil.OpenSession(cmd, wdir, target, dataDir)
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { _ = runner.Close() }()
+	defer func() { _ = sess.Close() }()
+	runner, err := sess.Runner()
+	if err != nil {
+		return fail(err)
+	}
 	if runner.Name() == exec.TargetRemote {
 		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
 			return fail(err)
@@ -78,6 +83,7 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return fail(fmt.Errorf("sync aborted before any changes were made: %w", err))
 	}
 
+	setImportDiagnostics(plan, ws, ws.Elements)
 	if dryRun {
 		return reportImport(cmd, format, compact, "sync", "dry-run", plan)
 	}
@@ -87,14 +93,16 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return fail(explainApplyError(err))
 	}
 
-	if err := persistImportCache(wdir, ws, plan, resp); err != nil {
-		return fail(fmt.Errorf(
-			"the sync was applied to the target, but updating the local cache failed: %w\n"+
-				"The target state is correct; run `tld pull` to refresh the local files",
-			err))
+	actual, err := runner.ExportWorkspace(ctx)
+	if err != nil {
+		return fail(sess.CacheError(err))
+	}
+	if err := persistImportCache(wdir, ws, plan, resp, actual); err != nil {
+		return fail(sess.CacheError(err))
 	}
 
-	return reportImport(cmd, format, compact, "sync", "ok", plan)
+	plan.Views = ws.ViewDiagnostics()
+	return reportImport(cmd, format, compact, "sync", "ok", plan, resp)
 }
 
 // sortedConnectors returns the workspace connectors in a deterministic order so

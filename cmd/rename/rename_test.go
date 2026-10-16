@@ -1,6 +1,7 @@
 package rename_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,5 +74,29 @@ func TestRenameCmdRequiresBothRefs(t *testing.T) {
 	_, _, err := cmd.RunCmd(t, t.TempDir(), "rename", "--from", "api")
 	if err == nil || !strings.Contains(err.Error(), `required flag(s) "to" not set`) {
 		t.Fatalf("err = %v, want cobra required flag validation", err)
+	}
+}
+
+func TestRenameDeprecatedAliasKeepsJSONStdoutParseable(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.SeedElementWorkspace(t, dir)
+	stdout, stderr, err := cmd.RunCmd(t, dir, "rename", "--from", "api", "--to", "service-api", "--format", "json")
+	if err != nil {
+		t.Fatalf("rename alias: %v\n%s\n%s", err, stdout, stderr)
+	}
+	var payload struct {
+		Command string `json:"command"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Command != "rename" || payload.Status != "ok" {
+		t.Fatalf("invalid legacy JSON result: %s (%v)", stdout, err)
+	}
+	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "tld update element <ref> ref <new-ref>") {
+		t.Fatalf("missing actionable deprecation notice: %q", stderr)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil || ws.Elements["service-api"] == nil || ws.Connectors["platform/service-api~db/reads"] == nil {
+		t.Fatalf("deprecated alias did not cascade: %+v (%v)", ws, err)
 	}
 }

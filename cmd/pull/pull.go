@@ -37,6 +37,7 @@ the local YAML cache. Use this after making changes in the frontend UI.
 If you have local hand-edits, tld pull will warn you before overwriting
 them. Use --force to skip the prompt.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			target, dataDir = cmdutil.TargetOverrides(cmd, target, dataDir)
 			if !cmdutil.WorkspaceConfigured(cmd, *wdir) && !cmd.Flags().Changed("workspace") {
 				return cmdutil.WithHint(
 					errors.New("no workspace to write"),
@@ -75,7 +76,10 @@ them. Use --force to skip the prompt.`,
 				if err != nil {
 					return fmt.Errorf("calculate hash: %w", err)
 				}
-				if currentHash != lockFile.WorkspaceHash {
+				if currentHash != lockFile.WorkspaceHash && !dryRun {
+					if cmdutil.WantsJSONFromCmd(cmd) {
+						return cmdutil.WithCode(errors.New("local workspace has unapplied edits"), "local_changes", "Run 'tld sync' to apply them, or review 'tld pull --dry-run' and use --force to discard them.")
+					}
 					term.Warn(cmd.OutOrStdout(), "Local workspace has uncommitted changes. Pull will overwrite them.")
 					_, _ = fmt.Fprint(cmd.OutOrStdout(), "  Continue? [yes/no]: ")
 					scanner := bufio.NewScanner(cmd.InOrStdin())
@@ -131,6 +135,13 @@ them. Use --force to skip the prompt.`,
 			}
 
 			if dryRun {
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					plan, err := workspace.PlanMergeWorkspace(*wdir, newWS, lastSyncMeta, ws.Meta)
+					if err != nil {
+						return err
+					}
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "pull", Status: "ok", DryRun: true, Summary: map[string]int{"elements": len(newWS.Elements), "views": cmdutil.CountViews(newWS), "connectors": len(newWS.Connectors)}, Extra: map[string]any{"merge": plan}})
+				}
 				term.Infof(cmd.OutOrStdout(), "Would pull: %d elements, %d diagrams, %d connectors",
 					len(newWS.Elements), cmdutil.CountViews(newWS), len(newWS.Connectors))
 				if !force {
@@ -180,6 +191,9 @@ them. Use --force to skip the prompt.`,
 				return fmt.Errorf("write lock file: %w", err)
 			}
 
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{Command: "pull", Status: "ok", Summary: map[string]int{"elements": len(newWS.Elements), "views": cmdutil.CountViews(newWS), "connectors": len(newWS.Connectors)}})
+			}
 			term.Successf(cmd.OutOrStdout(), "Pulled %d elements, %d diagrams, %d connectors",
 				len(newWS.Elements), cmdutil.CountViews(newWS), len(newWS.Connectors))
 

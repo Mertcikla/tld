@@ -196,8 +196,7 @@ func ParentRefs(wdir *string) (out []string, dir cobra.ShellCompDirective) {
 }
 
 // ElementFields is the static set of fields accepted by `update element`.
-// Fields without a database column (ref, owner, symbol, has_view,
-// density_level) are intentionally excluded; ref renames go through `tld rename`.
+// Ref is a YAML-only alias; other fields without a database column are excluded.
 func ElementFields() []string {
 	return []string{
 		"branch",
@@ -207,6 +206,7 @@ func ElementFields() []string {
 		"language",
 		"logo_url",
 		"name",
+		"ref",
 		"repo",
 		"repository_id",
 		"tags",
@@ -224,5 +224,5 @@ func ConnectorFields() []string {
 
 // ConnectorDirections are the valid values for --direction.
 func ConnectorDirections() []string {
-	return []string{"forward", "backward", "both", "none"}
+	return workspace.ConnectorDirections()
 }

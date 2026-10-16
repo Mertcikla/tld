@@ -11,6 +11,7 @@ func TestSeedElementWorkspaceIgnoresAmbientDataDir(t *testing.T) {
 	ambientDataDir := t.TempDir()
 	t.Setenv("TLD_DATA_DIR", ambientDataDir)
 
+	MustInitWorkspace(t, dir)
 	SeedElementWorkspace(t, dir)
 
 	if _, err := os.Stat(filepath.Join(ambientDataDir, "tld.db")); !os.IsNotExist(err) {

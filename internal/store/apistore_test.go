@@ -305,6 +305,57 @@ func TestApplyPlanCreatesMissingConnectorWithPlannedID(t *testing.T) {
 	}
 }
 
+func TestApplyPlanPreservesOmittedCoordinatesAndRouting(t *testing.T) {
+	adapter := NewAPIAdapter(openAdapterTestStore(t))
+	x, y, dbX, dbY := 200.0, 100.0, 400.0, 100.0
+	direction, style := "both", "straight"
+	request := &diagv1.ApplyPlanRequest{
+		Elements: []*diagv1.PlanElement{
+			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &x, PositionY: &y}}},
+			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &dbX, PositionY: &dbY}}},
+		},
+		Connectors: []*diagv1.PlanConnector{{Ref: "reads", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Direction: &direction, Style: &style}},
+	}
+	first, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, el := range request.Elements {
+		id := first.GetElementMetadata()[el.GetRef()].GetId()
+		el.Id = &id
+		for _, placement := range el.Placements {
+			placement.PositionX, placement.PositionY = nil, nil
+		}
+	}
+	connectorID := first.GetConnectorMetadata()["reads"].GetId()
+	request.Connectors[0].Id, request.Connectors[0].Direction, request.Connectors[0].Style = &connectorID, nil, nil
+	second, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiID := first.GetElementMetadata()["api"].GetId()
+	for _, p := range second.GetCreatedPlacements() {
+		if p.GetElementId() == apiID && (p.GetPositionX() != x || p.GetPositionY() != y) {
+			t.Fatalf("omitted coordinates reset placement: %v", p)
+		}
+	}
+	connector, err := adapter.GetConnector(context.Background(), connectorID, uuid.Nil)
+	if err != nil || connector.GetDirection() != direction || connector.GetStyle() != style {
+		t.Fatalf("omitted routing reset connector: %v, %v", connector, err)
+	}
+	zero := 0.0
+	request.Elements[0].Placements[0].PositionX = &zero
+	third, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range third.GetCreatedPlacements() {
+		if p.GetElementId() == apiID && (p.GetPositionX() != 0 || p.GetPositionY() != y) {
+			t.Fatalf("explicit zero or omitted axis was lost: %v", p)
+		}
+	}
+}
+
 func TestApplyPlanPreservesExplicitPlacementCoordinates(t *testing.T) {
 	appStore := openAdapterTestStore(t)
 	x, y := 42.0, 84.0

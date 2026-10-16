@@ -283,3 +283,111 @@ func TestMergeWorkspace_LocalLinkConflictsWithConcurrentServerEdit(t *testing.T)
 		t.Fatalf("concurrent server edit did not raise a conflict:\n%s", text)
 	}
 }
+
+func TestMergeWorkspace_TargetUpdateWithUnchangedTimestamp(t *testing.T) {
+	for _, localChanged := range []bool{false, true} {
+		name := "clean-cache"
+		if localChanged {
+			name = "pending-local-edit"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			stamp := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte("api:\n  name: API\n  description: cached\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			baseline := &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: stamp}}}
+			currentStamp := stamp
+			if localChanged {
+				currentStamp = stamp.Add(time.Second)
+			}
+			current := &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: currentStamp}}}
+			target := &workspace.Workspace{
+				Dir: dir, Elements: map[string]*workspace.Element{"api": {Name: "API", Description: "committed"}},
+				Meta: baseline,
+			}
+			if _, err := workspace.MergeWorkspace(dir, target, baseline, current); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]workspace.Element
+			if err := yaml.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			want := "committed"
+			if localChanged {
+				want = "cached"
+			}
+			if got["api"].Description != want {
+				t.Fatalf("description = %q, want %q", got["api"].Description, want)
+			}
+		})
+	}
+}
+
+func TestMergeWorkspace_RefRenameUsesStableIdentity(t *testing.T) {
+	for _, scenario := range []string{"target-update", "target-delete", "local-conflict", "reused-alias"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			baselineTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			oldRef, ref := "api", "backend"
+			currentID := workspace.ResourceID(1)
+			currentTime := baselineTime
+			if scenario == "local-conflict" {
+				currentTime = baselineTime.Add(time.Minute)
+			}
+			if scenario == "reused-alias" {
+				ref, currentID = oldRef, 2
+			}
+			if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(ref+":\n  name: API\n  description: local description\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			baseline := &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{oldRef: {ID: 1, UpdatedAt: baselineTime}}}
+			current := &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{ref: {ID: currentID, UpdatedAt: currentTime}}}
+			target := &workspace.Workspace{
+				Dir: dir, Elements: map[string]*workspace.Element{},
+				Meta: &workspace.Meta{Elements: map[string]*workspace.ResourceMetadata{}},
+			}
+			if scenario == "target-update" || scenario == "local-conflict" {
+				target.Elements[ref] = &workspace.Element{Name: "API", Description: "target description"}
+				target.Meta.Elements[ref] = &workspace.ResourceMetadata{ID: 1, UpdatedAt: baselineTime.Add(2 * time.Minute)}
+			}
+			result, err := workspace.MergeWorkspace(dir, target, baseline, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]workspace.Element
+			if err := yaml.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "target-update":
+				if got[ref].Description != "target description" {
+					t.Fatalf("renamed ref kept stale content: %s", data)
+				}
+			case "target-delete":
+				if _, exists := got[ref]; exists || len(result.DeletedElements) != 1 {
+					t.Fatalf("deleted target was retained after rename: %s", data)
+				}
+			case "local-conflict":
+				if !strings.Contains(string(data), "CONFLICT") {
+					t.Fatalf("genuine local change lost its conflict after rename: %s", data)
+				}
+			case "reused-alias":
+				if got[ref].Description != "local description" || len(result.DeletedElements) != 0 {
+					t.Fatalf("new resource inherited old alias history: %s", data)
+				}
+			}
+			if len(baseline.Elements) != 1 || baseline.Elements[oldRef].ID != 1 || !baseline.Elements[oldRef].UpdatedAt.Equal(baselineTime) {
+				t.Fatal("merge rewrote historical sync metadata")
+			}
+		})
+	}
+}

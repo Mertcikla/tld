@@ -42,6 +42,14 @@ func CheckElementRemoval(ws *Workspace, ref string) error {
 	if _, ok := ws.Elements[ref]; !ok {
 		return fmt.Errorf("element %q not found", ref)
 	}
+	if ws.Meta != nil && ws.Meta.Elements[ref] != nil && ws.Meta.Elements[ref].ID != 0 {
+		id := ws.Meta.Elements[ref].ID
+		for other, meta := range ws.Meta.Elements {
+			if other != ref && meta != nil && meta.ID == id && ws.Elements[other] != nil {
+				return fmt.Errorf("element %q shares target ID %d with ref %q; removal would delete the shared resource. Run 'tld pull' to refresh aliases before removing an element", ref, id, other)
+			}
+		}
+	}
 	if blockers := elementRemovalBlockers(ws, ref); len(blockers) > 0 {
 		return fmt.Errorf("element %q is still referenced:\n  - %s\nRemove or update these references first", ref, strings.Join(blockers, "\n  - "))
 	}

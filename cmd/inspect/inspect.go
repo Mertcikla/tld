@@ -24,36 +24,82 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "inspect <ref>",
 		Short: "Inspect a resource across YAML, local DB, and optional cloud state",
-		Args:  cobra.ExactArgs(1),
+		Long: `Inspect an element, owned view, or connector using its ref or ID.
+
+Find element/view refs and canonical connector keys with 'tld list'. For a
+connector, pass its full view/source~target[/label] key or numeric ID. Use --type to distinguish
+an element from its owned view when they share a ref.
+
+In a YAML workspace, reports YAML and local database state; --cloud also checks
+the configured remote workspace. In database mode, reports the selected target.
+This command reads state without changing the diagram.`,
+		Example: `  tld inspect api --type element
+  tld inspect platform --type view
+  tld inspect 'root/api~db/reads' --type connector
+  tld inspect api --type element --cloud --format json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			resourceType = strings.ToLower(strings.TrimSpace(resourceType))
 			sess, err := cmdutil.OpenSession(cmd, *wdir, "", dataDirFlag)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return err
+			}
+			ref := args[0]
+			switch resourceType {
+			case "connector":
+				ref, err = cmdutil.ResolveConnectorArg(ws, ref)
+			case "element":
+				ref, err = cmdutil.ResolveElementArg(ws, ref)
+			case "view":
+				ref, err = cmdutil.ResolveViewArg(ws, ref)
+			default:
+				// Preserve element/owned-view ambiguity; only resolve aliases when
+				// the supplied value is not already a canonical workspace key.
+				if ws.Elements[ref] == nil && ws.Connectors[ref] == nil && ref != workspace.RootRef {
+					element, elementErr := cmdutil.ResolveElementArg(ws, ref)
+					connector, connectorErr := cmdutil.ResolveConnectorArg(ws, ref)
+					if elementErr == nil && connectorErr == nil {
+						return fmt.Errorf("selector %q is ambiguous; specify --type element or --type connector", ref)
+					}
+					if elementErr == nil {
+						ref = element
+					} else if connectorErr == nil {
+						ref = connector
+					}
+				}
+			}
+			if err != nil {
+				return err
+			}
 
 			cfg, err := workspace.LoadGlobalConfig()
 			if err != nil {
 				return err
 			}
-			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
+			_, effectiveDir := cmdutil.TargetOverrides(cmd, "", dataDirFlag)
+			dataDir, err := workspace.ResolveDataDir(cfg, effectiveDir)
 			if err != nil {
 				return err
 			}
 			opts := inspection.Options{
 				WorkspaceDir: *wdir,
-				Ref:          args[0],
+				Ref:          ref,
 				Type:         strings.ToLower(strings.TrimSpace(resourceType)),
 				DataDir:      dataDir,
 				Database:     cfg.Database,
 				IncludeLocal: true,
 				IncludeCloud: includeCloud || includeAll,
 			}
-			if !sess.HasWorkspace() {
-				ws, err := sess.LoadWorkspace()
-				if err != nil {
-					return err
-				}
+			readSource, err := cmdutil.ReadSource(cmd, sess.HasWorkspace())
+			if err != nil {
+				return err
+			}
+			if readSource == "live" {
 				opts.Workspace = ws
 				opts.TargetOnly = true
 				opts.IncludeLocal = false
@@ -62,11 +108,7 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 			report, err := inspection.Build(cmd.Context(), opts)
 			if err != nil {
 				if wantsJSON(*format) {
-					return writeJSON(cmd.OutOrStdout(), *compact, map[string]any{
-						"command": "inspect",
-						"status":  "error",
-						"errors":  []string{err.Error()},
-					})
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "inspect", err)
 				}
 				return err
 			}
@@ -81,6 +123,7 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().BoolVar(&includeCloud, "cloud", false, "include cloud state")
 	c.Flags().BoolVar(&includeAll, "all", false, "include all state sources")
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "data directory for local DB state")
+	cmdutil.AddReadSourceFlag(c)
 	return c
 }
 
@@ -111,6 +154,15 @@ func printText(out io.Writer, report inspection.Report) error {
 	}
 	if report.Connector != nil {
 		printConnector(out, report.Connector)
+	}
+	if d := report.ViewDiagnostics; d != nil {
+		term.Label(out, 18, "Connectors", fmt.Sprintf("%d direct, %d off-view, %d unresolved", d.RenderedConnectors, len(d.OffViewConnectors), len(d.UnresolvedConnectors)))
+		for _, key := range d.OffViewConnectors {
+			term.Infof(out, "%s: %s", key, d.ConnectorVisibility[key].Description())
+		}
+		if len(d.OffViewConnectors) > 0 {
+			term.Info(out, workspace.OffViewHint)
+		}
 	}
 	printSources(out, report.Sources)
 	for _, warning := range report.Warnings {
@@ -149,6 +201,10 @@ func printElement(out io.Writer, element *inspection.ElementReport) {
 }
 
 func printConnector(out io.Writer, connector *inspection.ConnectorReport) {
+	term.Label(out, 18, "Visibility", connector.Visibility.Description())
+	if connector.Visibility.Mode == "off-view" {
+		term.Info(out, workspace.OffViewHint)
+	}
 	term.Label(out, 18, "View", connector.View)
 	term.Label(out, 18, "Source", connector.Source)
 	term.Label(out, 18, "Target", connector.Target)

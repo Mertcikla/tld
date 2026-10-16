@@ -42,9 +42,6 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 		if element.Name == "" {
 			errs = append(errs, ValidationError{loc, "name is required"})
 		}
-		if element.Kind == "" {
-			errs = append(errs, ValidationError{loc, "kind is required"})
-		}
 		if element.Owner != "" && ws.WorkspaceConfig != nil {
 			if _, ok := ws.WorkspaceConfig.Repositories[element.Owner]; !ok && !ws.ownerMatchesIndexedRepository(element.Owner) {
 				errs = append(errs, ValidationError{loc, fmt.Sprintf("owner %q is not a registered repository", element.Owner)})
@@ -55,6 +52,9 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 			if placement.ParentRef == "" {
 				errs = append(errs, ValidationError{ploc, "parent is required"})
 				continue
+			}
+			if placement.ParentRef == ref {
+				errs = append(errs, ValidationError{ploc, "an element cannot be placed in its own view"})
 			}
 			if placement.ParentRef != "root" {
 				if _, ok := ws.Elements[placement.ParentRef]; !ok {
@@ -67,6 +67,9 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 	// Connectors: required fields + ref integrity
 	for ref, connector := range ws.Connectors {
 		loc := fmt.Sprintf("connectors.yaml[%s]", ref)
+		if err := ValidateConnectorValues(connector); err != nil {
+			errs = append(errs, ValidationError{loc, err.Error()})
+		}
 		if connector.View == "" {
 			errs = append(errs, ValidationError{loc, "view is required"})
 		} else if connector.View != "root" {
@@ -93,6 +96,40 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 	}
 
 	return errs
+}
+
+// ConnectorDirections is shared by mutation validation and command discovery.
+func ConnectorDirections() []string { return []string{"forward", "backward", "both", "none"} }
+
+// ValidateConnectorValues validates optional enums before any target mutation.
+func ValidateConnectorValues(c *Connector) error {
+	for _, field := range []struct {
+		name, value string
+		allowed     []string
+	}{
+		{"direction", c.Direction, ConnectorDirections()},
+		{"style", c.Style, []string{"bezier", "straight", "step", "smoothstep"}},
+		{"source_handle", c.SourceHandle, []string{"top", "right", "bottom", "left"}},
+		{"target_handle", c.TargetHandle, []string{"top", "right", "bottom", "left"}},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if field.name == "direction" && field.value == "bidirectional" {
+			continue
+		} // legacy spelling of both
+		valid := false
+		for _, value := range field.allowed {
+			if field.value == value {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid %s %q; use %s", field.name, field.value, strings.Join(field.allowed, ", "))
+		}
+	}
+	return nil
 }
 
 func (ws *Workspace) validateConflictMarkers() []ValidationError {
