@@ -653,7 +653,7 @@ export function useCanvasInteractions({
   multiConnectionSourceIdsRef,
   hoveredZoomRef,
   hoverPanLockedUntilRef,
-  setViewElements: _setViewElements,
+  setViewElements,
   setConnectors: _setConnectors,
   setRfNodes,
   setRfEdges,
@@ -1402,25 +1402,6 @@ export function useCanvasInteractions({
   }, [clearPendingConnectionRefs, connectClickModeToElement, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, stableOnConnectTo])
 
   // ── Node/connector changes ─────────────────────────────────────────────────────
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setPendingElement((current) => applyPendingElementNodeChanges(current, changes))
-    const mainNodeChanges = changes.filter((change) => !('id' in change) || change.id !== PENDING_ELEMENT_NODE_ID)
-    if (mainNodeChanges.length === 0) return
-
-    const elementOnlySelectionChanges = mainNodeChanges.map((change) => {
-      if (change.type !== 'select') return change
-      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
-      return node?.type === 'elementNode' ? change : { ...change, selected: false }
-    })
-    if (!canEdit) {
-      const nonMutating = elementOnlySelectionChanges.filter((c) => c.type !== 'position')
-      if (nonMutating.length === 0) return
-      setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
-      return
-    }
-    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(elementOnlySelectionChanges, nds))
-  }, [canEdit, rfNodesRef, setRfNodes])
-
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     setRfEdges((eds) => applyEdgeChanges(changes, eds))
   }, [setRfEdges])
@@ -1468,10 +1449,17 @@ export function useCanvasInteractions({
 
       beforePlacements.push({ ...currentObj, position_x: startPos.x, position_y: startPos.y })
       afterPlacements.push({ ...currentObj, position_x: targetPosition.x, position_y: targetPosition.y })
-      updateElementPosition(elementId, targetPosition.x, targetPosition.y)
     })
 
     if (afterPlacements.length === 0) return
+
+    // Publish the whole selection together so derived RF nodes never see
+    // a mix of old and new positions during a keyboard move.
+    const positions = new Map(afterPlacements.map((placement) => [placement.element_id, placement]))
+    setViewElements((elements) => elements.map((element) => {
+      const placement = positions.get(element.element_id)
+      return placement ? { ...element, position_x: placement.position_x, position_y: placement.position_y } : element
+    }))
 
     const timerKeys = getPlacementPositionTimerKeys(timerKey, afterPlacements.map((placement) => placement.element_id))
     timerKeys.forEach((key) => {
@@ -1499,7 +1487,39 @@ export function useCanvasInteractions({
     timerKeys.forEach((key) => {
       positionTimers.current[key] = timer
     })
-  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved, autoLayoutEnabled])
+  }, [canEdit, setViewElements, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved, autoLayoutEnabled])
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setPendingElement((current) => applyPendingElementNodeChanges(current, changes))
+    const mainNodeChanges = changes.filter((change) => !('id' in change) || change.id !== PENDING_ELEMENT_NODE_ID)
+    if (mainNodeChanges.length === 0) return
+
+    const elementOnlySelectionChanges = mainNodeChanges.map((change) => {
+      if (change.type !== 'select') return change
+      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
+      return node?.type === 'elementNode' ? change : { ...change, selected: false }
+    })
+    if (!canEdit) {
+      const nonMutating = elementOnlySelectionChanges.filter((c) => c.type !== 'position')
+      if (nonMutating.length === 0) return
+      setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
+      return
+    }
+    // Keyboard nudges include a position with dragging=false and never fire
+    // onNodeDragStop. Pointer drag stops only clear dragging, without a position.
+    const movedNodes: RFNode[] = []
+    for (const change of mainNodeChanges) {
+      if (change.type !== 'position' || change.dragging !== false || !change.position) continue
+      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
+      if (node?.type !== 'elementNode') continue
+      movedNodes.push({ ...node, position: change.position })
+    }
+    if (movedNodes.length > 0) {
+      previewDraggedElementPositions(movedNodes)
+      commitDraggedElementPositions(movedNodes[0].id, movedNodes)
+    }
+    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(elementOnlySelectionChanges, nds))
+  }, [canEdit, commitDraggedElementPositions, previewDraggedElementPositions, rfNodesRef, setRfNodes])
 
   const onNodeDragStart: NodeDragHandler = useCallback((_e, node, nodes) => {
     recordDragStartPositions(getDraggedElementNodes(node, nodes, rfNodesRef.current))
