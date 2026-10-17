@@ -703,7 +703,7 @@ func writeYAMLNode(path string, root *yaml.Node) error {
 }
 
 // ensureSchemaHeader guarantees that an existing node carries the
-// yaml-language-server schema directive as its head comment. Older files that
+// yaml-language-server schema directive as a leading head comment. Older files that
 // predate the schema, and files produced by readers that drop comments, get the
 // directive added on the next write. It returns true when a comment was set.
 func ensureSchemaHeader(node *yaml.Node, filename string) bool {
@@ -711,8 +711,17 @@ func ensureSchemaHeader(node *yaml.Node, filename string) bool {
 	if comment == "" || node == nil {
 		return false
 	}
-	if strings.Contains(node.HeadComment, "yaml-language-server") {
-		return false
+	// yaml.v3 can attach a leading comment to the document, its collection,
+	// or the first mapping key/list item, depending on the document shape and
+	// blank lines. Check that leading path before adding another directive.
+	for head := node; head != nil; {
+		if strings.Contains(head.HeadComment, "yaml-language-server") {
+			return false
+		}
+		if len(head.Content) == 0 {
+			break
+		}
+		head = head.Content[0]
 	}
 	if node.HeadComment != "" {
 		node.HeadComment = comment + "\n" + node.HeadComment

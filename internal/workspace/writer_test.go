@@ -1,6 +1,7 @@
 package workspace_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -463,5 +464,55 @@ func TestMergeWorkspaceAddsSchemaDirective(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "elements.yaml"))
 	if got := strings.Count(string(data), "yaml-language-server"); got != 1 {
 		t.Fatalf("elements.yaml schema directive count = %d, want 1:\n%s", got, data)
+	}
+}
+
+func TestMergeWorkspacePreservesExistingSchemaDirective(t *testing.T) {
+	for _, separator := range []string{"", "\n"} {
+		t.Run(fmt.Sprintf("blank_line=%t", separator != ""), func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{
+				"elements.yaml":   "api:\n  name: API\n  kind: service\n",
+				"connectors.yaml": "- view: root\n  source: api\n  target: db\n  label: reads\n",
+			}
+			for filename, content := range files {
+				data := workspace.SchemaComment(filename) + "\n" + separator + "# Workspace notes\n" + content
+				if err := os.WriteFile(filepath.Join(dir, filename), []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			emptyMeta := &workspace.Meta{
+				Elements:   map[string]*workspace.ResourceMetadata{},
+				Views:      map[string]*workspace.ResourceMetadata{},
+				Connectors: map[string]*workspace.ResourceMetadata{},
+			}
+			ws := &workspace.Workspace{
+				Dir:        dir,
+				Elements:   map[string]*workspace.Element{"api": {Name: "API", Kind: "service"}},
+				Connectors: map[string]*workspace.Connector{"root/api~db/reads": {View: "root", Source: "api", Target: "db", Label: "reads"}},
+				Meta:       emptyMeta,
+			}
+			for i := 0; i < 2; i++ {
+				if _, err := workspace.MergeWorkspace(dir, ws, emptyMeta, emptyMeta); err != nil {
+					t.Fatalf("MergeWorkspace: %v", err)
+				}
+				for filename := range files {
+					path := filepath.Join(dir, filename)
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if firstLine(t, path) != workspace.SchemaComment(filename) {
+						t.Fatalf("%s lost its schema header:\n%s", filename, data)
+					}
+					if got := strings.Count(string(data), "yaml-language-server"); got != 1 {
+						t.Fatalf("%s schema directive count = %d, want 1:\n%s", filename, got, data)
+					}
+					if !strings.Contains(string(data), "# Workspace notes") {
+						t.Fatalf("%s lost its user comment:\n%s", filename, data)
+					}
+				}
+			}
+		})
 	}
 }
