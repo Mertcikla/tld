@@ -1358,6 +1358,7 @@ function ViewEditorInner({
   const [loadedViewMarkdownContent, setLoadedViewMarkdownContent] = useState('')
   const [viewMarkdownSyncToken, setViewMarkdownSyncToken] = useState(0)
   const [isMarkdownOpen, setIsMarkdownOpen] = useState(false)
+  const markdownDeepLinkViewRef = useRef<number | null>(null)
   const [markdownNavigation, setMarkdownNavigation] = useState<{
     sourceViewId: number
     sourceViewName: string | null
@@ -1492,6 +1493,17 @@ function ViewEditorInner({
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
+
+  // Open linked notes only after they load; closing the panel remains under user control.
+  useEffect(() => {
+    if (searchParams.get('panel') !== 'markdown' || viewId === null ||
+      isMarkdownLoading || !viewMarkdown || viewMarkdown.path !== loadedViewMarkdownPath ||
+      markdownDeepLinkViewRef.current === viewId) return
+    markdownDeepLinkViewRef.current = viewId
+    setIsMarkdownOpen(true)
+    setLibraryOpen(false)
+    setIsExplorerOpen(false)
+  }, [isMarkdownLoading, loadedViewMarkdownPath, searchParams, viewId, viewMarkdown])
 
   const openMarkdownPathInEditor = useCallback((path?: string | null, content = viewMarkdownContent) => {
     if (!path || markdownViewId === null) return
