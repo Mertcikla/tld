@@ -1,9 +1,11 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
 import { Z_CONNECTOR_LABEL } from '../utils/zOrder'
+import { useViewEditorContext } from '../pages/ViewEditor/context'
+import { useTagDragGhost } from './ViewExplorer/TagManager/tagDragGhostState'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -78,6 +80,27 @@ function ViewBezierConnector({
   selected,
   data,
 }: EdgeProps) {
+  const { canEdit } = useViewEditorContext()
+  const tagDrag = useTagDragGhost()
+  const [isTagDraggedOver, setTagDraggedOver] = useState(false)
+  const canDropTag = canEdit && Number.isSafeInteger(Number(id)) && Number(id) > 0 && style?.pointerEvents !== 'none' && tagDrag?.kind !== 'group'
+  useEffect(() => {
+    if (!tagDrag) setTagDraggedOver(false)
+  }, [tagDrag])
+  const handleTagDragOver = (event: React.DragEvent) => {
+    if (!canDropTag || (!event.dataTransfer.types.includes('application/diag-tag') && !event.dataTransfer.types.includes('application/diag-layer'))) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+    setTagDraggedOver(true)
+  }
+  const clearTagDragOver = () => setTagDraggedOver(false)
+  const tagDropProps = {
+    'data-tag-drop-connector-id': canDropTag ? id : undefined,
+    onDragOver: handleTagDragOver,
+    onDragLeave: clearTagDragOver,
+    onDrop: clearTagDragOver,
+  }
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
@@ -160,6 +183,7 @@ function ViewBezierConnector({
   })
 
   const labelZIndex = (data as { labelZIndex?: number } | undefined)?.labelZIndex ?? Z_CONNECTOR_LABEL
+  const direction = data?.direction === 'bidirectional' ? 'both' : (data?.direction ?? 'forward')
   const labelCenterY = labelLayout.y - (proxyBadgeText ? (stackHeight - labelHeight) / 2 : 0)
   const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
@@ -172,12 +196,12 @@ function ViewBezierConnector({
   }, [edge?.data, proxyBadgeDetails])
 
   return (
-    <>
+    <g {...tagDropProps} className="vieweditor-connector" data-connector-direction={direction}>
       <BaseEdge
         path={path}
         markerStart={markerStart}
         markerEnd={markerEnd}
-        style={style}
+        style={isTagDraggedOver && canDropTag ? { ...style, stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : style}
         interactionWidth={0}
       />
       <BaseEdge
@@ -189,10 +213,11 @@ function ViewBezierConnector({
       {(fullText || proxyBadgeText) && (
         <EdgeLabelRenderer>
           <div
+            {...tagDropProps}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelLayout.x}px, ${labelLayout.y}px)`,
-              pointerEvents: 'none',
+              pointerEvents: canDropTag && tagDrag ? 'auto' : 'none',
               opacity: Number(labelStyle?.opacity ?? 1),
               zIndex: labelZIndex,
               display: 'flex',
@@ -253,7 +278,7 @@ function ViewBezierConnector({
           </div>
         </EdgeLabelRenderer>
       )}
-    </>
+    </g>
   )
 }
 

@@ -30,6 +30,7 @@ import { parseNumericId } from '../../../utils/ids'
 import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { routeStyleFromValue } from '../../../utils/connectorRoute'
 import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
+import { connectorTagsFromDrop, resolveTagDropConnector, saveConnectorTagDrop } from '../connectorTagDrop'
 import { isElementShapedMarqueeRect, marqueeHitsElementRect } from '../selection'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
 import {
@@ -653,7 +654,7 @@ export function useCanvasInteractions({
   multiConnectionSourceIdsRef,
   hoveredZoomRef,
   hoverPanLockedUntilRef,
-  setViewElements: _setViewElements,
+  setViewElements,
   setConnectors: _setConnectors,
   setRfNodes,
   setRfEdges,
@@ -1402,25 +1403,6 @@ export function useCanvasInteractions({
   }, [clearPendingConnectionRefs, connectClickModeToElement, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, stableOnConnectTo])
 
   // ── Node/connector changes ─────────────────────────────────────────────────────
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setPendingElement((current) => applyPendingElementNodeChanges(current, changes))
-    const mainNodeChanges = changes.filter((change) => !('id' in change) || change.id !== PENDING_ELEMENT_NODE_ID)
-    if (mainNodeChanges.length === 0) return
-
-    const elementOnlySelectionChanges = mainNodeChanges.map((change) => {
-      if (change.type !== 'select') return change
-      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
-      return node?.type === 'elementNode' ? change : { ...change, selected: false }
-    })
-    if (!canEdit) {
-      const nonMutating = elementOnlySelectionChanges.filter((c) => c.type !== 'position')
-      if (nonMutating.length === 0) return
-      setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
-      return
-    }
-    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(elementOnlySelectionChanges, nds))
-  }, [canEdit, rfNodesRef, setRfNodes])
-
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     setRfEdges((eds) => applyEdgeChanges(changes, eds))
   }, [setRfEdges])
@@ -1468,10 +1450,17 @@ export function useCanvasInteractions({
 
       beforePlacements.push({ ...currentObj, position_x: startPos.x, position_y: startPos.y })
       afterPlacements.push({ ...currentObj, position_x: targetPosition.x, position_y: targetPosition.y })
-      updateElementPosition(elementId, targetPosition.x, targetPosition.y)
     })
 
     if (afterPlacements.length === 0) return
+
+    // Publish the whole selection together so derived RF nodes never see
+    // a mix of old and new positions during a keyboard move.
+    const positions = new Map(afterPlacements.map((placement) => [placement.element_id, placement]))
+    setViewElements((elements) => elements.map((element) => {
+      const placement = positions.get(element.element_id)
+      return placement ? { ...element, position_x: placement.position_x, position_y: placement.position_y } : element
+    }))
 
     const timerKeys = getPlacementPositionTimerKeys(timerKey, afterPlacements.map((placement) => placement.element_id))
     timerKeys.forEach((key) => {
@@ -1499,7 +1488,39 @@ export function useCanvasInteractions({
     timerKeys.forEach((key) => {
       positionTimers.current[key] = timer
     })
-  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved, autoLayoutEnabled])
+  }, [canEdit, setViewElements, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved, autoLayoutEnabled])
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setPendingElement((current) => applyPendingElementNodeChanges(current, changes))
+    const mainNodeChanges = changes.filter((change) => !('id' in change) || change.id !== PENDING_ELEMENT_NODE_ID)
+    if (mainNodeChanges.length === 0) return
+
+    const elementOnlySelectionChanges = mainNodeChanges.map((change) => {
+      if (change.type !== 'select') return change
+      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
+      return node?.type === 'elementNode' ? change : { ...change, selected: false }
+    })
+    if (!canEdit) {
+      const nonMutating = elementOnlySelectionChanges.filter((c) => c.type !== 'position')
+      if (nonMutating.length === 0) return
+      setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
+      return
+    }
+    // Keyboard nudges include a position with dragging=false and never fire
+    // onNodeDragStop. Pointer drag stops only clear dragging, without a position.
+    const movedNodes: RFNode[] = []
+    for (const change of mainNodeChanges) {
+      if (change.type !== 'position' || change.dragging !== false || !change.position) continue
+      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
+      if (node?.type !== 'elementNode') continue
+      movedNodes.push({ ...node, position: change.position })
+    }
+    if (movedNodes.length > 0) {
+      previewDraggedElementPositions(movedNodes)
+      commitDraggedElementPositions(movedNodes[0].id, movedNodes)
+    }
+    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(elementOnlySelectionChanges, nds))
+  }, [canEdit, commitDraggedElementPositions, previewDraggedElementPositions, rfNodesRef, setRfNodes])
 
   const onNodeDragStart: NodeDragHandler = useCallback((_e, node, nodes) => {
     recordDragStartPositions(getDraggedElementNodes(node, nodes, rfNodesRef.current))
@@ -2736,6 +2757,26 @@ export function useCanvasInteractions({
     const layerIdStr = e.dataTransfer.getData('application/diag-layer')
 
     if (tagName || layerIdStr) {
+      const connector = resolveTagDropConnector(e.target, useStore.getState().connectors)
+      if (connector) {
+        const edge = _rfEdgesRef.current.find((edge) => edge.id === String(connector.id))
+        if (!edge || edge.style?.pointerEvents === 'none') return
+        const tags = connectorTagsFromDrop(e.dataTransfer, layers)
+        if (tags.length === 0) return
+        try {
+          const updated = await saveConnectorTagDrop(connector, tags)
+          if (!updated) return
+          const saved = connectorToConnector(updated)
+          upsertConnectorGraphSnapshot(saved)
+          replaceConnector(saved)
+          if (selectedConnector?.id === saved.id) setSelectedEdge(saved)
+          onConnectorSaved?.(saved)
+          onConnectorUpdated?.(connector, saved)
+        } catch (error) {
+          console.error('Failed to add connector tags:', error)
+        }
+        return
+      }
       const flowPos = screenToFlowPositionRef.current({ x: e.clientX, y: e.clientY })
       // Find node under drop position
       const nodeUnderDrop = rfNodesRef.current.find((node) => {
@@ -2775,7 +2816,7 @@ export function useCanvasInteractions({
         }
       }
     }
-  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition])
+  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition, _rfEdgesRef, replaceConnector, selectedConnector, setSelectedEdge, onConnectorSaved, onConnectorUpdated])
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return

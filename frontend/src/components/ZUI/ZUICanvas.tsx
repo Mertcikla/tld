@@ -1,3 +1,4 @@
+import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useBreakpointValue } from '@chakra-ui/react'
 import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
@@ -104,10 +105,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   }, [data, changeOverlays])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
-  const visibleTargetLayout = useMemo(() => filterLayoutByTags(targetLayout, selectedTags, hiddenTags), [targetLayout, selectedTags, hiddenTags])
-  const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags), [layout, selectedTags, hiddenTags])
-  const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
+  const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])
+  const connectorContext = useMemo(() => ({
+    selected: deriveSnapshotTagState(workspaceSnapshot, selectedTags, hiddenTags).contextNodeIds,
+    highlighted: deriveSnapshotTagState(workspaceSnapshot, highlightedTags, hiddenTags).contextNodeIds,
+  }), [workspaceSnapshot, selectedTags, highlightedTags, hiddenTags])
+  const visibleTargetLayout = useMemo(() => filterLayoutByTags(targetLayout, selectedTags, hiddenTags, [], connectorContext), [targetLayout, selectedTags, hiddenTags, connectorContext])
+  const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags, highlightedTags, connectorContext), [layout, selectedTags, hiddenTags, highlightedTags, connectorContext])
+  const fittedLayoutRef = useRef(layout)
 
   const proxyResolverRef = useRef<((worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => HoveredItem | null) | null>(null)
   const resolveHoveredProxyItem = useCallback((worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => {
@@ -166,7 +172,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
   const proxyState = useZUIProxyConnectors(
     visibleLayout.groups,
-    workspaceSnapshot,
+    filteredWorkspaceSnapshot,
     viewState,
     containerSize.w,
     viewportBounds,

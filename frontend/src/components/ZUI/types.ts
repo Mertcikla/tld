@@ -59,6 +59,10 @@ export interface LayoutNode {
   /** Fixed: always NODE_H. */
   worldH: number
 
+  /** Presentation only; authored tags and layout geometry stay unchanged. */
+  tagContext?: boolean
+  tagHoverState?: 'match' | 'context' | 'inactive'
+
   // ── Appearance ───────────────────────────────────────────────────
   label: string
   /** One of: person | system | container | component | database | queue | api | service | external */
@@ -102,6 +106,9 @@ export interface LayoutNode {
     sourceHandle: string | null
     targetHandle: string | null
     type: string
+    tags?: string[]
+    tagHighlighted?: boolean
+    tagMuted?: boolean
     /** New/removed/modified in the compared revisions, when known. */
     change?: ZUIEdgeChange
   }>
@@ -156,6 +163,9 @@ export interface DiagramGroupLayout {
     sourceHandle: string | null
     targetHandle: string | null
     type: string
+    tags?: string[]
+    tagHighlighted?: boolean
+    tagMuted?: boolean
     /** New/removed/modified in the compared revisions, when known. */
     change?: ZUIEdgeChange
   }>

@@ -87,7 +87,7 @@ body {
     r: 10px;
 }
 
-/* Flowing dashes on hover indicate the edge is interactive / grabbable */
+/* Paths run from source to target, so decreasing dash offset flows forward. */
 @keyframes edge-flow {
     from {
         stroke-dashoffset: 24;
@@ -98,10 +98,41 @@ body {
     }
 }
 
-.react-flow__edge:hover:not(.selected) .react-flow__edge-path {
+@keyframes edge-pulse {
+    0%, 100% {
+        stroke-opacity: 0.45;
+    }
+
+    50% {
+        stroke-opacity: 1;
+    }
+}
+
+/* Animate only the visible editor stroke, keeping hit paths and labels still. */
+.react-flow__edge:hover:not(.selected) .vieweditor-connector > .react-flow__edge-path:first-child {
     stroke-dasharray: 8 4;
     animation: edge-flow 0.4s linear infinite;
     opacity: 1;
+}
+
+.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="backward"] > .react-flow__edge-path:first-child {
+    animation-direction: reverse;
+}
+
+.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="both"] > .react-flow__edge-path:first-child {
+    stroke-dasharray: 4 4;
+    animation: edge-flow 0.8s ease-in-out infinite alternate;
+}
+
+.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="none"] > .react-flow__edge-path:first-child {
+    stroke-dasharray: none;
+    animation: edge-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction] > .react-flow__edge-path:first-child {
+        animation: none;
+    }
 }
 
 .react-flow__edge-marker {

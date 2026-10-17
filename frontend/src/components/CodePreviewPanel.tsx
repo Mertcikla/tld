@@ -18,9 +18,9 @@ import { githubCache } from '../utils/githubCache'
 import { getGithubRepoVisibility } from '../utils/githubApi'
 import { parseRepoSlug } from '../utils/url'
 import OpenInEditorButton from './OpenInEditorButton'
-import { listIndexedRepositories, resolveElementRepository } from '../utils/repositoryResolver'
+import { listIndexedRepositories, normalizeRemoteKey, resolveElementRepository } from '../utils/repositoryResolver'
 import type { IndexedRepository } from '../api/client'
-import { parseSourceLink } from '../utils/sourceLinks'
+import { githubBranchName, parseSourceLink, sourceLinkKind } from '../utils/sourceLinks'
 import { openExternalUrl } from '../lib/desktop'
 import type { PlacedElement } from '../types'
 
@@ -86,6 +86,9 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   const filePath = element?.file_path || ''
   const { basePath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
+  const linkKind = sourceLinkKind(filePath)
+  const isFileLink = linkKind === 'file'
+  const privatePreview = isFileLink && isPrivateRepo
   const localRepo = isLocalRepoPath(element?.repo)
   const repoSlug = !localRepo && element?.repo ? parseRepoSlug(element.repo) : ''
   const anchorStartLine = anchor.kind === 'line' ? anchor.startLine : null
@@ -113,7 +116,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   }, [element?.repository_id, element?.repo, element?.file_path])
 
   useEffect(() => {
-    if (!isOpen || !element || !basePath) return
+    if (!isOpen || !element || !isFileLink) return
     if (indexedRepo === undefined) return
     const useIndexed = Boolean(indexedRepo)
     if (!useIndexed && !localRepo && !repoSlug) return
@@ -166,7 +169,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
       return () => { cancelled = true }
     }
 
-    const branch = element.branch || 'main'
+    const branch = githubBranchName(element.branch) || 'main'
     const rawUrl = `https://raw.githubusercontent.com/${repoSlug}/refs/heads/${branch}/${basePath}`
 
     // Check repo visibility (cached)
@@ -216,7 +219,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
     checkAndFetch()
     return () => { cancelled = true }
-  }, [isOpen, element, repoSlug, basePath, anchor, localRepo, indexedRepo])
+  }, [isOpen, element, repoSlug, basePath, anchor, localRepo, indexedRepo, isFileLink])
 
   useEffect(() => {
     if (!code || !resolvedStartLine || !editorRef.current?.view) return
@@ -244,11 +247,22 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
     return () => window.removeEventListener('keydown', handler)
   }, [isOpen, onClose])
 
-  const githubUrl = !localRepo && element?.repo && basePath
-    ? `https://github.com/${repoSlug}/blob/${element.branch || 'main'}/${basePath}`
-    + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
+  const remoteKey = normalizeRemoteKey(indexedRepo?.remoteUrl || element?.repo)
+  const githubSlug = remoteKey.startsWith('github.com/') ? remoteKey.slice('github.com/'.length) : ''
+  const githubRoot = githubSlug ? `https://github.com/${githubSlug}` : null
+  const branch = githubBranchName(element?.branch || indexedRepo?.gitBranch) || 'main'
+  const encodedPath = basePath.replace(/\/$/, '').split('/').map(encodeURIComponent).join('/')
+  const githubUrl = githubRoot
+    ? linkKind === 'repository'
+      ? element?.branch ? `${githubRoot}/tree/${encodeURIComponent(branch)}` : githubRoot
+      : `${githubRoot}/${isFileLink ? 'blob' : 'tree'}/${encodeURIComponent(branch)}/${encodedPath}`
+        + (isFileLink && editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
     : null
-
+  const repositoryLabel = indexedRepo?.name || element?.repo || 'Repository'
+  const editorPath = basePath || indexedRepo?.root || (localRepo ? element?.repo : '')
+  const title = linkKind === 'repository'
+    ? repositoryLabel
+    : basePath.split(/[\\/]/).filter(Boolean).pop() || basePath
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
@@ -285,17 +299,17 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
         borderBottom="1px solid" borderColor="whiteAlpha.100">
         <VStack align="start" spacing={0} minW={0} flex={1}>
           <Text fontSize="10px" color="gray.600" letterSpacing="widest" textTransform="uppercase" fontWeight="600">
-            Source
+            {isFileLink ? 'Source' : linkKind === 'folder' ? 'Folder source' : 'Repository source'}
           </Text>
           <Text fontSize="sm" fontWeight="700" color="white" isTruncated maxW={{ base: '180px', md: '360px' }} letterSpacing="0.01em">
-            {basePath.split('/').pop() || 'Code'}
+            {title}
           </Text>
-          {resolvedStartLine && (
+          {isFileLink && resolvedStartLine && (
             <Text fontSize="10px" color="blue.400" fontFamily="mono">
               L{resolvedStartLine}–L{resolvedEndLine ?? resolvedStartLine}
             </Text>
           )}
-          {isPrivateRepo && (
+          {privatePreview && (
             <Text fontSize="10px" color="orange.400" fontFamily="mono">
               Private repository
             </Text>
@@ -339,22 +353,22 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
             <Tooltip label="Open in GitHub" placement="bottom">
               <Button
                 onClick={() => {
-                  if (!isPrivateRepo && githubUrl) openExternalUrl(githubUrl)
+                  if (!privatePreview && githubUrl) openExternalUrl(githubUrl)
                 }}
                 aria-label="Open in GitHub"
                 leftIcon={<Icon as={GithubIcon} boxSize="13px" />}
                 size="xs"
                 variant="outline"
-                color={isPrivateRepo ? 'whiteAlpha.300' : 'whiteAlpha.700'}
-                borderColor={isPrivateRepo ? 'whiteAlpha.100' : 'whiteAlpha.200'}
+                color={privatePreview ? 'whiteAlpha.300' : 'whiteAlpha.700'}
+                borderColor={privatePreview ? 'whiteAlpha.100' : 'whiteAlpha.200'}
                 h="24px"
                 px={2.5}
                 fontSize="11px"
                 fontWeight="600"
-                bg={isPrivateRepo ? 'transparent' : 'whiteAlpha.50'}
-                pointerEvents={isPrivateRepo ? 'none' : undefined}
-                opacity={isPrivateRepo ? 0.4 : undefined}
-                _hover={isPrivateRepo ? {} : {
+                bg={privatePreview ? 'transparent' : 'whiteAlpha.50'}
+                pointerEvents={privatePreview ? 'none' : undefined}
+                opacity={privatePreview ? 0.4 : undefined}
+                _hover={privatePreview ? {} : {
                   color: 'white',
                   bg: 'whiteAlpha.100',
                   borderColor: 'whiteAlpha.400',
@@ -372,8 +386,14 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
               </Button>
             </Tooltip>
           )}
-          {basePath && (
-            <OpenInEditorButton repo={element?.repo ?? ''} repositoryId={element?.repository_id} filePath={basePath} line={editorStartLine} branch={element?.branch} />
+          {editorPath && (
+            <OpenInEditorButton
+              repo={linkKind === 'repository' ? indexedRepo?.root ?? element?.repo ?? '' : element?.repo ?? ''}
+              repositoryId={indexedRepo?.id ?? element?.repository_id}
+              filePath={editorPath}
+              line={isFileLink ? editorStartLine : null}
+              branch={element?.branch}
+            />
           )}
           <CloseButton
             data-testid="code-preview-close"
@@ -388,46 +408,76 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
         </HStack>
       </HStack>
 
-      {/* Code area */}
-      <Box flex={1} overflow="hidden" position="relative" bg="var(--bg-main)">
-        {loading && (
-          <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.600" zIndex={10}>
-            <Spinner color="blue.400" />
-            <Text color="white" fontSize="sm">Loading source...</Text>
-          </VStack>
-        )}
-        {error && (
-          <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.800" zIndex={10} px={6}>
-            <Text color="red.400" fontSize="sm" textAlign="center">{error}</Text>
-          </VStack>
-        )}
-        {isPrivateRepo && !loading && (
-          <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.800" zIndex={10} px={6} spacing={2}>
-            <Icon as={GithubIcon} boxSize="32px" color="whiteAlpha.300" />
-            <Text color="whiteAlpha.700" fontSize="sm" fontWeight="600">Private repository</Text>
-            <Text color="whiteAlpha.400" fontSize="xs" textAlign="center">
-              Code preview is unavailable for private repositories.
-            </Text>
-          </VStack>
-        )}
-        <Box position="absolute" inset={0}>
-          <CodeMirror
-            ref={editorRef}
-            value={code}
-            height="100%"
-            extensions={getLanguageExtension()}
-            theme={oneDark}
-            readOnly={true}
-            editable={false}
-            basicSetup={{
-              lineNumbers: true,
-              highlightActiveLineGutter: true,
-              highlightSelectionMatches: true,
-            }}
-            style={{ fontSize: '12px', height: '100%' }}
-          />
+      {isFileLink ? (
+        <Box flex={1} overflow="hidden" position="relative" bg="var(--bg-main)">
+          {loading && (
+            <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.600" zIndex={10}>
+              <Spinner color="blue.400" />
+              <Text color="white" fontSize="sm">Loading source...</Text>
+            </VStack>
+          )}
+          {error && (
+            <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.800" zIndex={10} px={6}>
+              <Text color="red.400" fontSize="sm" textAlign="center">{error}</Text>
+            </VStack>
+          )}
+          {isPrivateRepo && !loading && (
+            <VStack position="absolute" inset={0} justify="center" align="center" bg="blackAlpha.800" zIndex={10} px={6} spacing={2}>
+              <Icon as={GithubIcon} boxSize="32px" color="whiteAlpha.300" />
+              <Text color="whiteAlpha.700" fontSize="sm" fontWeight="600">Private repository</Text>
+              <Text color="whiteAlpha.400" fontSize="xs" textAlign="center">
+                Code preview is unavailable for private repositories.
+              </Text>
+            </VStack>
+          )}
+          <Box position="absolute" inset={0}>
+            <CodeMirror
+              ref={editorRef}
+              value={code}
+              height="100%"
+              extensions={getLanguageExtension()}
+              theme={oneDark}
+              readOnly={true}
+              editable={false}
+              basicSetup={{
+                lineNumbers: true,
+                highlightActiveLineGutter: true,
+                highlightSelectionMatches: true,
+              }}
+              style={{ fontSize: '12px', height: '100%' }}
+            />
+          </Box>
         </Box>
-      </Box>
+      ) : (
+        <VStack align="stretch" spacing={4} p={6} flex={1} overflowY="auto" bg="var(--bg-main)">
+          <Text fontSize="lg" fontWeight="600" color="white">
+            {linkKind === 'folder' ? 'Folder link' : 'Repository link'}
+          </Text>
+          <Text fontSize="sm" color="gray.400">
+            {linkKind === 'folder'
+              ? 'This element is linked to a folder.'
+              : 'This element is linked to the entire repository.'}
+          </Text>
+          <VStack align="stretch" spacing={3} p={4} rounded="lg" border="1px solid" borderColor="whiteAlpha.100">
+            <Box>
+              <Text fontSize="xs" color="gray.500">Repository</Text>
+              <Text fontSize="sm" color="gray.200" fontFamily="mono" overflowWrap="anywhere">{element?.repo || repositoryLabel}</Text>
+            </Box>
+            {(element?.branch || indexedRepo?.gitBranch) && (
+              <Box>
+                <Text fontSize="xs" color="gray.500">Branch</Text>
+                <Text fontSize="sm" color="gray.200" fontFamily="mono" overflowWrap="anywhere">{element?.branch || indexedRepo?.gitBranch}</Text>
+              </Box>
+            )}
+            {linkKind === 'folder' && (
+              <Box>
+                <Text fontSize="xs" color="gray.500">Folder</Text>
+                <Text fontSize="sm" color="gray.200" fontFamily="mono" overflowWrap="anywhere">{basePath}</Text>
+              </Box>
+            )}
+          </VStack>
+        </VStack>
+      )}
     </SlidingPanel>
   )
 }

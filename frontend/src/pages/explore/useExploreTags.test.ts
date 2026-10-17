@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ExploreData, PlacedElement, ViewLayer } from '../../types'
+import type { Connector, ExploreData, PlacedElement, ViewLayer } from '../../types'
 import { deriveExploreTagMetrics } from './useExploreTags'
 
 function placed(elementId: number, tags: string[]): PlacedElement {
@@ -54,11 +54,29 @@ describe('deriveExploreTagMetrics', () => {
     expect(metrics.layerElementCounts).toEqual({ 10: 3, 11: 0, 12: 2 })
   })
 
+  it('includes connector-only tags and direct connector membership in layers', () => {
+    const data: ExploreData = { tree: [], navigations: [], views: {
+      1: { placements: [placed(1, ['api']), placed(2, [])], connectors: [
+        { id: 10, tags: ['critical', 'api'] } as Connector,
+      ] },
+    } }
+    const metrics = deriveExploreTagMetrics(data, [layer(10, ['critical', 'api'])])
+    expect(metrics.allTags).toEqual(['api', 'critical'])
+    expect(metrics.tagCounts).toEqual({ api: 2, critical: 1 })
+    expect(metrics.tagElementCounts).toEqual({ api: 1 })
+    expect(metrics.tagConnectorCounts).toEqual({ api: 1, critical: 1 })
+    expect(metrics.layerElementCounts).toEqual({ 10: 1 })
+    expect(metrics.layerConnectorCounts).toEqual({ 10: 1 })
+  })
+
   it('returns empty metrics without explore data', () => {
     expect(deriveExploreTagMetrics(null, [])).toEqual({
       allTags: [],
       tagCounts: {},
+      tagElementCounts: {},
+      tagConnectorCounts: {},
       layerElementCounts: {},
+      layerConnectorCounts: {},
     })
   })
 })

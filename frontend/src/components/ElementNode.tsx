@@ -13,7 +13,7 @@ import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } f
 import { KbdHint, ShortcutHint } from './PanelUI'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import { openExternalUrl } from '../lib/desktop'
-import { parseSourceLink, sourceAnchorLabel } from '../utils/sourceLinks'
+import { parseSourceLink, sourceAnchorLabel, sourceLinkKind } from '../utils/sourceLinks'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
 import { useElementSearch } from '../hooks/useElementSearch'
 import ElementCreateSearchResults from './ElementCreateSearchResults'
@@ -86,12 +86,13 @@ function VscodeCodePreview({
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { basePath: relPath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
+  const isFileLink = sourceLinkKind(filePath) === 'file'
   const startLine = anchor.kind === 'line' ? anchor.startLine : undefined
-  const symbolName = anchor.kind === 'symbol' ? anchor.symbolName : fallbackSymbolName
-  const symbolKind = anchor.kind === 'symbol' ? anchor.nodeType : fallbackSymbolKind ?? undefined
+  const symbolName = isFileLink ? anchor.kind === 'symbol' ? anchor.symbolName : fallbackSymbolName : undefined
+  const symbolKind = isFileLink ? anchor.kind === 'symbol' ? anchor.nodeType : fallbackSymbolKind ?? undefined : undefined
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || !isFileLink) return
     const requestId = `file-${Math.random().toString(36).slice(2)}`
 
     const unsub = vscodeBridge.onMessage((msg: ExtensionToWebviewMessage) => {
@@ -109,7 +110,7 @@ function VscodeCodePreview({
     })
 
     return unsub
-  }, [isOpen, relPath, startLine])
+  }, [isOpen, relPath, startLine, isFileLink])
 
   const handleMouseEnter = () => {
     if (isCanvasMoving) return
@@ -136,7 +137,9 @@ function VscodeCodePreview({
   return (
     <Tooltip
       label={
-        content ? (
+        !isFileLink ? (
+          <Text>Folder: {relPath}</Text>
+        ) : content ? (
           <Box p={1} maxW="300px" fontFamily="mono" fontSize="xs" whiteSpace="pre" overflowX="auto">
             {content.split('\n').map((line, i) => {
               const actualLine = startLineOffset + i
@@ -208,6 +211,7 @@ interface NodeData extends PlacedElement {
   isCanvasMoving?: boolean
   isPendingElement?: boolean
   connectedHandleIds?: readonly string[]
+  tagHiddenHandleIds?: readonly string[]
   selectedHandleIds?: readonly string[]
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
@@ -656,6 +660,10 @@ function ElementNode({ data, selected }: Props) {
     () => new Set(data.connectedHandleIds ?? []),
     [data.connectedHandleIds],
   )
+  const tagHiddenHandleIds = useMemo(
+    () => new Set(data.tagHiddenHandleIds ?? []),
+    [data.tagHiddenHandleIds],
+  )
   const selectedHandleIds = useMemo(
     () => new Set(data.selectedHandleIds ?? []),
     [data.selectedHandleIds],
@@ -900,6 +908,7 @@ function ElementNode({ data, selected }: Props) {
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
+          const isTagHidden = tagHiddenHandleIds.has(handleId)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
           const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
@@ -919,7 +928,7 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
-                isConnectable={!isPending && !isPreviewHiddenSlot}
+                isConnectable={!isPending && !isPreviewHiddenSlot && !isTagHidden}
                 onPointerDown={(e: React.PointerEvent) => {
                   if (isPending) return
                   if (data.interactionSourceId === data.element_id) {
@@ -952,10 +961,11 @@ function ElementNode({ data, selected }: Props) {
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
-                  pointerEvents: isPending || isPreviewHiddenSlot ? 'none' : undefined,
+                  visibility: isTagHidden ? 'hidden' : undefined,
+                  pointerEvents: isPending || isPreviewHiddenSlot || isTagHidden ? 'none' : undefined,
                 }}
               />
-              {data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
+              {!isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
                 <Box
                   position="absolute"
                   data-testid="vieweditor-node-reconnect-zone"
@@ -1150,7 +1160,7 @@ function ElementNode({ data, selected }: Props) {
             <Tooltip
               label={
                 data.repo
-                  ? `View source: ${sourceAnchorLabel(parseSourceLink(data.file_path).anchor) || 'Link'}${data.url ? ' / URL' : ''}`
+                  ? `View source: ${sourceAnchorLabel(parseSourceLink(data.file_path).anchor) || sourceLinkKind(data.file_path)}${data.url ? ' / URL' : ''}`
                   : 'Open Link'
               }
               placement="top"
@@ -1448,6 +1458,7 @@ function arePropsEqual(prev: Props, next: Props) {
     p.forceShowTagPopup === n.forceShowTagPopup &&
     p.isMultiSelected === n.isMultiSelected &&
     p.connectedHandleIds === n.connectedHandleIds &&
+    p.tagHiddenHandleIds === n.tagHiddenHandleIds &&
     p.selectedHandleIds === n.selectedHandleIds &&
     p.reconnectCandidates === n.reconnectCandidates &&
     p.isConnectorHighlighted === n.isConnectorHighlighted &&

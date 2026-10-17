@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Tooltip } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import { api } from '../api/client'
+import { githubBranchName } from '../utils/sourceLinks'
 import { useSourceEditor } from '../utils/sourceEditor'
 import { toast } from '../utils/toast'
 
@@ -11,11 +12,11 @@ function githubFileUrl(repo: string, branch: string | null | undefined, filePath
   const match = repo.trim().match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i)
   if (!match) return null
   const root = `https://github.com/${match[1]}/${match[2]}`
-  const cleanBranch = (branch ?? '').trim()
+  const cleanBranch = githubBranchName(branch)
   const cleanPath = filePath.replace(/^\/+/, '')
   if (!cleanBranch || !cleanPath) return root
   const encoded = cleanPath.split('/').map(encodeURIComponent).join('/')
-  const blob = `${root}/blob/${encodeURIComponent(cleanBranch)}/${encoded}`
+  const blob = `${root}/${cleanPath.endsWith('/') ? 'tree' : 'blob'}/${encodeURIComponent(cleanBranch)}/${encoded}`
   return line && line > 0 ? `${blob}#L${line}` : blob
 }
 

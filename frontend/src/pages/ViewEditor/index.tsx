@@ -1,3 +1,7 @@
+import { connectorTagsForDrag } from './connectorTagDrop'
+import { getTagDragSource, useTagDragGhost } from '../../components/ViewExplorer/TagManager/tagDragGhostState'
+import { filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
+import { countCanvasTags } from '../../utils/canvasTags'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CoreUISlots } from '../../slots'
 import { resetTagFilters, toggleHiddenTags, toggleSelectedTag } from '../../utils/tagFilters'
@@ -149,6 +153,7 @@ import {
   type ViewSelectionClipboardPayload,
 } from './clipboard'
 import SelectionBulkBar from './components/SelectionBulkBar'
+import { nestSelection } from './nestSelection'
 import {
   createElementGroupTag,
   elementGroupTagForLayer,
@@ -718,6 +723,10 @@ function ViewEditorInner({
   closeImportModalRef.current = importModal.onClose
 
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
+  const [isNesting, setIsNesting] = useState(false)
+  const nestingRef = useRef(false)
+  const pendingNestRef = useRef<{ viewId: number; element: WorkspaceElement } | null>(null)
+  const [renameElementId, setRenameElementId] = useState<number | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
@@ -871,7 +880,14 @@ function ViewEditorInner({
   const [hiddenLayerTags, setHiddenLayerTags] = useState<string[]>(() => demoOptions?.defaultHiddenLayerTags ?? [])
   const hiddenLayerTagsRef = useRef<string[]>([])
   hiddenLayerTagsRef.current = hiddenLayerTags
-  const [hoveredLayerTags, setHoveredLayerTags] = useState<string[] | null>(null)
+  const [hoveredLayerTagsState, setHoveredLayerTags] = useState<string[] | null>(null)
+  const tagDrag = useTagDragGhost()
+  const draggedConnectorTags = useMemo(() => tagDrag ? connectorTagsForDrag(getTagDragSource(), layers) : null, [tagDrag, layers])
+  // Source-row hover previews must not disable connectors while tagging them.
+  const hoveredLayerTags = tagDrag ? null : hoveredLayerTagsState
+  useEffect(() => {
+    if (tagDrag) setHoveredLayerTags(null)
+  }, [tagDrag])
   const [hoveredLayerColor, setHoveredLayerColor] = useState<string | null>(null)
   const handleHoverLayer = useCallback((tags: string[] | null, color?: string | null) => {
     setHoveredLayerTags(tags)
@@ -1024,6 +1040,8 @@ function ViewEditorInner({
     hoveredLayerTags,
     hoveredLayerColor,
     tagColors,
+    workspaceSnapshot: workspaceGraphSnapshot,
+    draggedConnectorTags,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
@@ -1340,6 +1358,22 @@ function ViewEditorInner({
   const [loadedViewMarkdownContent, setLoadedViewMarkdownContent] = useState('')
   const [viewMarkdownSyncToken, setViewMarkdownSyncToken] = useState(0)
   const [isMarkdownOpen, setIsMarkdownOpen] = useState(false)
+  const markdownDeepLinkViewRef = useRef<number | null>(null)
+  const [markdownNavigation, setMarkdownNavigation] = useState<{
+    sourceViewId: number
+    sourceViewName: string | null
+    fromViewId: number | null
+    canvasViewId: number
+  } | null>(null)
+  // Mermaid navigation changes the canvas while retaining the document being read.
+  const retainedMarkdown = markdownNavigation && (
+    markdownNavigation.canvasViewId === viewId || markdownNavigation.fromViewId === viewId
+  ) ? markdownNavigation : null
+  const markdownViewId = retainedMarkdown?.sourceViewId ?? viewId
+  const markdownViewName = retainedMarkdown ? retainedMarkdown.sourceViewName : view?.name
+  useEffect(() => {
+    if (markdownNavigation && !retainedMarkdown) setMarkdownNavigation(null)
+  }, [markdownNavigation, retainedMarkdown])
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [isMarkdownMutating, setIsMarkdownMutating] = useState(false)
   const [isMarkdownSaving, setIsMarkdownSaving] = useState(false)
@@ -1449,26 +1483,38 @@ function ViewEditorInner({
   const loadedViewMarkdownPath = view && view.id === viewId ? view.markdown?.path ?? null : undefined
 
   useEffect(() => {
+    if (retainedMarkdown) return
     if (viewId === null || !loadedViewMarkdownPath) {
       resetViewMarkdown()
       return
     }
     void loadViewMarkdown(viewId, { silent: true })
-  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, viewId])
+  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, retainedMarkdown, viewId])
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
 
+  // Open linked notes only after they load; closing the panel remains under user control.
+  useEffect(() => {
+    if (searchParams.get('panel') !== 'markdown' || viewId === null ||
+      isMarkdownLoading || !viewMarkdown || viewMarkdown.path !== loadedViewMarkdownPath ||
+      markdownDeepLinkViewRef.current === viewId) return
+    markdownDeepLinkViewRef.current = viewId
+    setIsMarkdownOpen(true)
+    setLibraryOpen(false)
+    setIsExplorerOpen(false)
+  }, [isMarkdownLoading, loadedViewMarkdownPath, searchParams, viewId, viewMarkdown])
+
   const openMarkdownPathInEditor = useCallback((path?: string | null, content = viewMarkdownContent) => {
-    if (!path || viewId === null) return
+    if (!path || markdownViewId === null) return
     vscodeBridge.postMessage({
       type: 'open-markdown',
-      viewId,
+      viewId: markdownViewId,
       path,
       content,
       viewColumn: 'beside',
     })
-  }, [viewId, viewMarkdownContent])
+  }, [markdownViewId, viewMarkdownContent])
 
   const handleMarkdownResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isMarkdownOpen) return
@@ -1541,18 +1587,23 @@ function ViewEditorInner({
   }, [canEdit, dbOnlyNotes, handleCreateManagedMarkdown, openMarkdownPathInEditor, viewMarkdown])
 
   const handleOpenMarkdown = useCallback(() => {
+    if (retainedMarkdown) {
+      setMarkdownNavigation(null)
+      setIsMarkdownOpen(true)
+      return
+    }
     if (!viewMarkdown) return
     if (!dbOnlyNotes && window.__TLD_VSCODE__) {
       openMarkdownPathInEditor(viewMarkdown.path)
       return
     }
     setIsMarkdownOpen(true)
-  }, [dbOnlyNotes, openMarkdownPathInEditor, viewMarkdown])
+  }, [dbOnlyNotes, openMarkdownPathInEditor, retainedMarkdown, viewMarkdown])
 
   const handleReloadMarkdown = useCallback(async () => {
-    if (viewId === null) return
-    await loadViewMarkdown(viewId)
-  }, [loadViewMarkdown, viewId])
+    if (markdownViewId === null) return
+    await loadViewMarkdown(markdownViewId)
+  }, [loadViewMarkdown, markdownViewId])
 
   const handleLinkMarkdown = useCallback(async (path: string) => {
     if (dbOnlyNotes) return
@@ -1596,10 +1647,10 @@ function ViewEditorInner({
   }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
   const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
-    if (viewId === null || !viewMarkdown) return
+    if (markdownViewId === null || !viewMarkdown) return
     setIsMarkdownSaving(true)
     try {
-      const updated = await api.workspace.views.markdown.save(viewId, markdown, {
+      const updated = await api.workspace.views.markdown.save(markdownViewId, markdown, {
         expectedFileVersion: options.force ? undefined : viewMarkdown.file_version,
         force: options.force ?? false,
       })
@@ -1626,7 +1677,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownSaving(false)
     }
-  }, [toast, viewId, viewMarkdown])
+  }, [toast, markdownViewId, viewMarkdown])
 
   const handleForceSaveMarkdown = useCallback(async (markdown: string) => {
     await handleSaveMarkdown(markdown, { force: true })
@@ -1648,7 +1699,7 @@ function ViewEditorInner({
   }, [toast])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
-    const baseName = sanitizeExportFilename(view?.name || 'view-notes')
+    const baseName = sanitizeExportFilename(markdownViewName || 'view-notes')
     try {
       const result = await triggerBlobDownload(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${baseName}.md`, 'markdown')
       if (result.canceled) return
@@ -1660,7 +1711,7 @@ function ViewEditorInner({
         description: error instanceof Error ? error.message : String(error),
       })
     }
-  }, [toast, view?.name])
+  }, [toast, markdownViewName])
 
   const handleOpenMarkdownInEditor = useCallback(() => {
     openMarkdownPathInEditor(viewMarkdown?.path)
@@ -1922,13 +1973,12 @@ function ViewEditorInner({
     }
   }, [clearEditHistory, refreshElements, reloadVisibilityOverrides, toast, viewId])
 
-  const tagCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    viewElements.forEach(p => {
-      (p.tags ?? []).forEach(t => { counts[t] = (counts[t] ?? 0) + 1 })
-    })
-    return counts
-  }, [viewElements])
+  const { tagCounts, tagElementCounts, tagConnectorCounts } = useMemo(
+    () => countCanvasTags(viewElements, connectors), [viewElements, connectors],
+  )
+  const layerConnectorCounts = useMemo(() => Object.fromEntries(layers.map((layer) => [layer.id,
+    isElementGroupLayer(layer) ? 0 : connectors.filter((edge) => (edge.tags ?? []).some((tag) => layer.tags.includes(tag))).length,
+  ])), [layers, connectors])
 
   const layerElementCounts = useMemo(() => {
     const counts: Record<number, number> = {}
@@ -2328,6 +2378,50 @@ function ViewEditorInner({
       await refreshElements()
     }
   }, [canEdit, connectorPanel, elementPanel, pushPlacementRemoveBatchAction, refreshElements, selectedCanvasElements, setRfNodes, setViewElements, toast])
+
+  const handleNestSelection = useCallback(async () => {
+    if (!canEdit || viewId === null || nestingRef.current || selectedCanvasElements.length < 2) return
+    const bounds = selectionBounds(elementSelectionRects(rfNodes))
+    if (!bounds) return
+    nestingRef.current = true
+    setIsNesting(true)
+    try {
+      const storedConnectors = await api.workspace.connectors.list(0)
+      const element = await nestSelection({ viewId, placements: selectedCanvasElements, connectors: storedConnectors, bounds })
+      clearEditHistory()
+      await loadWorkspaceGraphSnapshot(true)
+      if (viewIdRef.current !== viewId) return
+      await refreshGrid()
+      await refreshElements()
+      if (viewIdRef.current === viewId) pendingNestRef.current = { viewId, element }
+    } catch (error) {
+      toast({ status: 'error', title: 'Failed to nest selection', description: String(error) })
+      if (viewIdRef.current === viewId) await refreshElements()
+    } finally {
+      nestingRef.current = false
+      setIsNesting(false)
+    }
+  }, [canEdit, clearEditHistory, refreshElements, refreshGrid, rfNodes, selectedCanvasElements, toast, viewId, viewIdRef])
+
+  useEffect(() => {
+    const pendingNest = pendingNestRef.current
+    if (!pendingNest) return
+    if (pendingNest.viewId !== viewId) {
+      pendingNestRef.current = null
+      return
+    }
+    if (!rfNodes.some((node) => node.type === 'elementNode' && node.id === String(pendingNest.element.id))) return
+    pendingNestRef.current = null
+    setRfNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.type === 'elementNode' && node.id === String(pendingNest.element.id) })))
+    setRfEdges((edges) => edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge))
+    setSelectedElement(pendingNest.element)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+    closeConnectorPanelRef.current()
+    closeProxyConnectorPanelRef.current()
+    setRenameElementId(pendingNest.element.id)
+    openElementPanelRef.current()
+  }, [isNesting, rfNodes, setRfEdges, setRfNodes, viewId])
 
   const handleBulkMergeInto = useCallback(async (survivorId: number) => {
     if (!canEdit || selectedCanvasElements.length < 2) return
@@ -2823,6 +2917,19 @@ function ViewEditorInner({
   const viewName = view?.name ?? null
   const viewNameById = useMemo(() => buildViewNameById(treeData), [treeData])
 
+  const { stableOnNavigateToView: navigateToViewFromCanvas } = canvas
+  const handleNavigateFromMarkdown = useCallback((id: number) => {
+    if (viewMarkdown && markdownViewId !== null) {
+      setMarkdownNavigation({
+        sourceViewId: markdownViewId,
+        sourceViewName: markdownViewName ?? null,
+        fromViewId: viewId,
+        canvasViewId: id,
+      })
+    }
+    navigateToViewFromCanvas(id)
+  }, [navigateToViewFromCanvas, markdownViewId, markdownViewName, viewId, viewMarkdown])
+
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
   const [contextNodePositionOverrides, setContextNodePositionOverrides] = useState<Record<string, ContextNodePositionOverride>>({})
   const stableOnToggleAncestorGroup = useCallback((anchorId: string) => {
@@ -2834,9 +2941,15 @@ function ViewEditorInner({
     })
   }, [])
 
+  const filteredContextSnapshot = useMemo(() => effectiveWorkspaceSnapshot
+    ? filterSnapshotConnectorsByTags(effectiveWorkspaceSnapshot, activeTags, hiddenLayerTags) : null,
+  [effectiveWorkspaceSnapshot, activeTags, hiddenLayerTags])
+
   const { contextNodes, contextConnectors, hiddenProxyCountsByPair, hiddenProxyDetailsByPair } = useViewContextNeighbours({
-    snapshot: effectiveWorkspaceSnapshot,
+    snapshot: filteredContextSnapshot,
     settings: crossBranchSettings,
+    hoveredTags: hoveredLayerTags,
+    hoverColor: hoveredLayerColor,
     viewId,
     viewElements,
     rfNodes,
@@ -4619,6 +4732,8 @@ function ViewEditorInner({
               onAddTag={(tag) => { void handleBulkTagChange(tag, 'add') }}
               onRemoveTag={(tag) => { void handleBulkTagChange(tag, 'remove') }}
               onCreateGroup={handleCreateGroup}
+              onNest={() => { void handleNestSelection() }}
+              isNesting={isNesting}
               onMergeInto={(survivorId) => { void handleBulkMergeInto(survivorId) }}
               onRemoveFromView={() => { void handleBulkRemoveFromView() }}
               onCopyMermaid={handleBulkCopyMermaid}
@@ -4668,6 +4783,9 @@ function ViewEditorInner({
               toggleTagVisibility={toggleTagVisibility}
               toggleLayerVisibility={toggleLayerVisibility}
               tagCounts={tagCounts}
+              tagElementCounts={tagElementCounts}
+              tagConnectorCounts={tagConnectorCounts}
+              layerConnectorCounts={layerConnectorCounts}
               layerElementCounts={layerElementCounts}
               setHighlightedTags={setHoveredLayerTags}
               setHighlightColor={setHoveredLayerColor}
@@ -4715,7 +4833,10 @@ function ViewEditorInner({
               >
                 <ViewMarkdownPanel
                   isOpen={isMarkdownOpen}
-                  onClose={() => setIsMarkdownOpen(false)}
+                  onClose={() => {
+                    setIsMarkdownOpen(false)
+                    setMarkdownNavigation(null)
+                  }}
                   viewName={view?.name}
                   markdown={viewMarkdown}
                   content={viewMarkdownContent}
@@ -4739,7 +4860,7 @@ function ViewEditorInner({
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={!dbOnlyNotes && window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
-                  onNavigateToView={canvas.stableOnNavigateToView}
+                  onNavigateToView={handleNavigateFromMarkdown}
                   onImportMermaidBlock={handleImportMarkdownMermaidBlock}
                 />
               </Box>
@@ -4786,6 +4907,7 @@ function ViewEditorInner({
 
         <ElementPanel
           isOpen={elementPanel.isOpen} onClose={handleElementPanelClose} element={selectedElement}
+          focusNameOnOpen={selectedElement?.id === renameElementId}
           onSave={handleElementPanelSave} autoSave
           onMerge={handleOpenMerge}
           onDelete={(elementId) => {
@@ -4853,8 +4975,8 @@ function ViewEditorInner({
           onConnectorSaved={publishRealtimeConnectorUpsert}
           hasBackdrop={isMobileLayout}
           dbOnlyNotes={dbOnlyNotes}
-          markdown={viewMarkdown}
-          markdownLoading={isMarkdownLoading}
+          markdown={retainedMarkdown ? view.markdown : viewMarkdown}
+          markdownLoading={!retainedMarkdown && isMarkdownLoading}
           onUnlinkMarkdown={handleUnlinkMarkdown}
           onOpenMarkdown={handleOpenMarkdown}
         />

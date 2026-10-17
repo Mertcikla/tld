@@ -89,7 +89,11 @@ export function MarkdownEditor({
   const codeMirrorRef = useRef<ReactCodeMirrorRef>(null)
   const previewPaneRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef(content)
-  const [mode, setMode] = useState<MarkdownPanelMode>('split')
+  const [mode, setMode] = useState<MarkdownPanelMode>(() => {
+    if (typeof window === 'undefined') return 'split'
+    const requestedMode = new URLSearchParams(window.location.search).get('markdownMode')
+    return requestedMode === 'source' || requestedMode === 'preview' ? requestedMode : 'split'
+  })
   contentRef.current = content
 
   const getMarkdown = useCallback(() => (

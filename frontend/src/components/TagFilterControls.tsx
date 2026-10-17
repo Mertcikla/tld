@@ -1,3 +1,4 @@
+import { tagCountDescription } from '../utils/canvasTags'
 import { Box, Button, HStack, IconButton, Text } from '@chakra-ui/react'
 import { CloseIcon, EyeIcon, EyeOffIcon } from './Icons'
 
@@ -14,9 +15,11 @@ export function TagFilterReset({ active, onReset }: { active: boolean; onReset?:
   )
 }
 
-export function TagFilterRow({ tag, count, color, hidden, selected = false, onSelect, onHover, onToggleVisibility, eyeTestId }: {
+export function TagFilterRow({ tag, count, elementCount, connectorCount, color, hidden, selected = false, onSelect, onHover, onToggleVisibility, eyeTestId }: {
   tag: string
   count: number
+  elementCount?: number
+  connectorCount?: number
   color?: string
   hidden: boolean
   selected?: boolean
@@ -28,7 +31,9 @@ export function TagFilterRow({ tag, count, color, hidden, selected = false, onSe
   const contents = <>
     <Box w="8px" h="8px" rounded="full" bg={color || '#A0AEC0'} flexShrink={0} />
     <Text fontSize="xs" fontWeight="600" color={selected ? 'var(--accent)' : 'gray.300'} flex={1} isTruncated textAlign="left">{tag}</Text>
-    <Text fontSize="10px" color="gray.600" flexShrink={0}>{count}</Text>
+    <Text fontSize="10px" color="gray.600" flexShrink={0}
+      title={elementCount === undefined ? undefined : tagCountDescription(elementCount, connectorCount ?? 0)}
+      aria-label={elementCount === undefined ? undefined : tagCountDescription(elementCount, connectorCount ?? 0)}>{count}</Text>
   </>
   return (
     <HStack px={1} py={0.5} spacing={0} borderRadius="md" bg={selected ? 'rgba(var(--accent-rgb), 0.12)' : undefined} onMouseEnter={onHover} opacity={hidden ? 0.4 : 1} transition="opacity 0.15s">

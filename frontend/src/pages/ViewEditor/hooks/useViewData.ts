@@ -1,8 +1,11 @@
+import { connectorAlreadyHasDraggedTags } from '../connectorTagDrop'
+import type { WorkspaceGraphSnapshot } from '../../../crossBranch/types'
 import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MarkerType } from 'reactflow'
 import { api } from '../../../api/client'
+import { deriveCanvasTagState } from '../../../utils/canvasTags'
 import type {
   ViewTreeNode,
   PlacedElement,
@@ -34,10 +37,12 @@ interface ViewDataOptions {
   selectedConnector: Connector | null
   suppressSelectedConnectorHandleHighlight?: boolean
   activeTags: string[]
+  draggedConnectorTags?: readonly string[] | null
   hiddenLayerTags: string[]
   hoveredLayerTags: string[] | null
   hoveredLayerColor: string | null
   tagColors: Record<string, Tag>
+  workspaceSnapshot?: WorkspaceGraphSnapshot | null
   // Node-level callbacks (stable refs from parent)
   stableOnZoomIn: (elementId: number) => Promise<void>
   stableOnZoomOut: (elementId: number) => Promise<void>
@@ -60,11 +65,13 @@ function alphaColor(color: string, opacity: number): string {
 // Stable style refs so unchanged nodes keep identical style references across renders,
 // letting structural-sharing fast-path bail out without rebuilding the node.
 const HIDDEN_STYLE: CSSProperties = { opacity: 0.1, pointerEvents: 'none' }
+const CONTEXT_STYLE: CSSProperties = { opacity: 0.55 }
 const SOFT_FOCUS_STYLE: CSSProperties = { opacity: 0.2 }
 const EMPTY_ARRAY: readonly never[] = Object.freeze([])
 const EMPTY_NODE_CONNECTION_META = Object.freeze({
   key: '',
   connectedHandleIds: EMPTY_ARRAY as readonly string[],
+  tagHiddenHandleIds: EMPTY_ARRAY as readonly string[],
   selectedHandleIds: EMPTY_ARRAY as readonly string[],
   reconnectCandidates: EMPTY_ARRAY as readonly NodeReconnectCandidate[],
   isConnectorHighlighted: false,
@@ -80,6 +87,7 @@ type NodeReconnectCandidate = {
 type NodeConnectionMeta = {
   key: string
   connectedHandleIds: readonly string[]
+  tagHiddenHandleIds: readonly string[]
   selectedHandleIds: readonly string[]
   reconnectCandidates: readonly NodeReconnectCandidate[]
   isConnectorHighlighted: boolean
@@ -174,10 +182,12 @@ export function useViewData({
   selectedConnector,
   suppressSelectedConnectorHandleHighlight = false,
   activeTags,
+  draggedConnectorTags,
   hiddenLayerTags,
-  hoveredLayerTags,
+  hoveredLayerTags: hoveredLayerTagsInput,
   hoveredLayerColor,
   tagColors,
+  workspaceSnapshot,
   stableOnZoomIn,
   stableOnZoomOut,
   stableOnNavigateToView,
@@ -190,6 +200,7 @@ export function useViewData({
   stableOnHoverZoom,
   hoveredZoomRef,
 }: ViewDataOptions) {
+  const hoveredLayerTags = draggedConnectorTags?.length ? null : hoveredLayerTagsInput
   const selectedEdgeId = selectedConnector?.id ?? null
   const queryClient = useQueryClient()
   const view = useStore((state) => state.view)
@@ -364,10 +375,28 @@ export function useViewData({
     [connectors, elementMap],
   )
 
+  const tagGraph = useMemo(() => {
+    const nodes = new Map(Object.entries(workspaceSnapshot?.placementsByElementId ?? {}).map(([id, placements]) => [
+      Number(id), { id: Number(id), tags: placements[0]?.element.tags },
+    ]))
+    for (const node of viewElements) nodes.set(node.element_id, { id: node.element_id, tags: node.tags })
+    const edges = [
+      ...Object.entries(workspaceSnapshot?.connectorsByViewId ?? {}).flatMap(([id, edges]) => Number(id) === viewId ? [] : edges),
+      ...connectors,
+    ]
+    return {
+      nodes: [...nodes.values()],
+      connectors: edges.map((edge) => ({ id: edge.id, source: edge.source_element_id, target: edge.target_element_id, tags: edge.tags })),
+    }
+  }, [viewElements, connectors, workspaceSnapshot, viewId])
+  const tagState = useMemo(() => deriveCanvasTagState(tagGraph.nodes, tagGraph.connectors, activeTags, hiddenLayerTags), [tagGraph, activeTags, hiddenLayerTags])
+  const hoverTagState = useMemo(() => deriveCanvasTagState(tagGraph.nodes, tagGraph.connectors, hoveredLayerTags ?? [], hiddenLayerTags), [tagGraph, hoveredLayerTags, hiddenLayerTags])
+
   const connectionMetaCacheRef = useRef<Map<number, NodeConnectionMeta>>(new Map())
   const nodeConnectionMetaByElementId = useMemo(() => {
     const drafts = new Map<number, {
       connected: Set<string>
+      visible: Set<string>
       selected: Set<string>
       reconnect: NodeReconnectCandidate[]
       highlighted: boolean
@@ -376,7 +405,7 @@ export function useViewData({
     const draftFor = (elementId: number) => {
       let draft = drafts.get(elementId)
       if (!draft) {
-        draft = { connected: new Set(), selected: new Set(), reconnect: [], highlighted: false }
+        draft = { connected: new Set(), visible: new Set(), selected: new Set(), reconnect: [], highlighted: false }
         drafts.set(elementId, draft)
       }
       return draft
@@ -392,6 +421,12 @@ export function useViewData({
 
       sourceDraft.connected.add(layout.sourceHandle)
       targetDraft.connected.add(layout.targetHandle)
+      // Keep all anchors mounted so tag dimming never changes connector routes.
+      const isDimmedByTags = connectorAlreadyHasDraggedTags(connector, draggedConnectorTags) || !tagState.visibleConnectorIds.has(connector.id) ||
+        (hoveredLayerTags !== null && !hoverTagState.visibleConnectorIds.has(connector.id))
+      if (isDimmedByTags) continue
+      sourceDraft.visible.add(layout.sourceHandle)
+      targetDraft.visible.add(layout.targetHandle)
       sourceDraft.reconnect.push({ handleId: layout.sourceHandle, edgeId, endpoint: 'source', selected: isSelected })
       targetDraft.reconnect.push({ handleId: layout.targetHandle, edgeId, endpoint: 'target', selected: isSelected })
 
@@ -409,6 +444,7 @@ export function useViewData({
     const next = new Map<number, NodeConnectionMeta>()
     for (const [elementId, draft] of drafts) {
       const connectedHandleIds = Array.from(draft.connected).sort()
+      const tagHiddenHandleIds = connectedHandleIds.filter((handleId) => !draft.visible.has(handleId))
       const selectedHandleIds = Array.from(draft.selected).sort()
       const reconnectCandidates = draft.reconnect.sort((left, right) => {
         if (left.handleId !== right.handleId) return left.handleId.localeCompare(right.handleId)
@@ -420,6 +456,7 @@ export function useViewData({
         .join(',')
       const key = [
         connectedHandleIds.join('|'),
+        tagHiddenHandleIds.join('|'),
         selectedHandleIds.join('|'),
         reconnectKey,
         draft.highlighted ? 1 : 0,
@@ -430,6 +467,7 @@ export function useViewData({
         : {
           key,
           connectedHandleIds,
+          tagHiddenHandleIds,
           selectedHandleIds,
           reconnectCandidates,
           isConnectorHighlighted: draft.highlighted,
@@ -437,27 +475,22 @@ export function useViewData({
     }
     connectionMetaCacheRef.current = next
     return next
-  }, [connectorLayouts, selectedEdgeId, suppressSelectedConnectorHandleHighlight])
+  }, [connectorLayouts, selectedEdgeId, suppressSelectedConnectorHandleHighlight, tagState, hoverTagState, hoveredLayerTags, draggedConnectorTags])
 
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
     setRfNodes((prevNodes) => {
 
       const prevNodeMap = new Map(prevNodes.map((n) => [n.id, n]))
-      const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
-      const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
-      const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
       const isCreateConnectMode = isConnectorCreatePreviewActive || isClickConnectMode || interactionSourceId !== null
       return viewElements.map((obj) => {
         const nodeId = String(obj.element_id)
         const existing = prevNodeMap.get(nodeId)
-        const objTags = obj.tags || []
-
-        const isHiddenByLayer = hiddenSet !== null && objTags.some((t) => hiddenSet.has(t))
-        const isInactive = isHiddenByLayer || (activeSet !== null && !objTags.some((t) => activeSet.has(t)))
-        const isLayerHighlighted = hoveredSet !== null && objTags.some((t) => hoveredSet.has(t))
-        const isSoftFocused = hoveredSet !== null && !isLayerHighlighted
+        const isInactive = !tagState.visibleNodeIds.has(obj.element_id)
+        const isLayerHighlighted = hoveredLayerTags !== null && hoverTagState.matchedNodeIds.has(obj.element_id)
+        const isSoftFocused = hoveredLayerTags !== null && !hoverTagState.visibleNodeIds.has(obj.element_id)
+        const isContext = tagState.contextNodeIds.has(obj.element_id) || (hoveredLayerTags !== null && hoverTagState.contextNodeIds.has(obj.element_id))
         const newZIndex = isLayerHighlighted
           ? Z_ELEMENT_LAYER_HIGHLIGHT
           : interactionSourceId === obj.element_id
@@ -467,7 +500,7 @@ export function useViewData({
           ? HIDDEN_STYLE
           : isSoftFocused
             ? SOFT_FOCUS_STYLE
-            : undefined
+            : isContext ? CONTEXT_STYLE : undefined
         const layerHighlightColor = isLayerHighlighted ? (hoveredLayerColor ?? undefined) : undefined
         const position = existing?.dragging ? existing.position : { x: obj.position_x ?? 0, y: obj.position_y ?? 0 }
         const isZoomHovered = hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null
@@ -509,6 +542,7 @@ export function useViewData({
           existing.data.forceShowTagPopup === isLayerHighlighted &&
           existing.data.isZoomHovered === isZoomHovered &&
           existing.data.connectedHandleIds === connectionMeta.connectedHandleIds &&
+          existing.data.tagHiddenHandleIds === connectionMeta.tagHiddenHandleIds &&
           existing.data.selectedHandleIds === connectionMeta.selectedHandleIds &&
           existing.data.reconnectCandidates === connectionMeta.reconnectCandidates &&
           existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted
@@ -549,6 +583,7 @@ export function useViewData({
             layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
             connectedHandleIds: connectionMeta.connectedHandleIds,
+            tagHiddenHandleIds: connectionMeta.tagHiddenHandleIds,
             selectedHandleIds: connectionMeta.selectedHandleIds,
             reconnectCandidates: connectionMeta.reconnectCandidates,
             isConnectorHighlighted: connectionMeta.isConnectorHighlighted,
@@ -562,14 +597,11 @@ export function useViewData({
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
-    nodeConnectionMetaByElementId, setRfNodes,
+    nodeConnectionMetaByElementId, setRfNodes, tagState, hoverTagState,
   ])
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────
   useEffect(() => {
-    const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
-    const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
-    const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
     setRfEdges((prevConnectors) => {
       const prevEdgeMap = new Map(prevConnectors.map((e) => [e.id, e]))
 
@@ -579,23 +611,11 @@ export function useViewData({
         const existing = prevEdgeMap.get(edgeId)
         const dir = e.direction ?? 'forward'
 
-        const sourceObj = elementMap.get(e.source_element_id)
-        const targetObj = elementMap.get(e.target_element_id)
-        const srcTags = sourceObj?.tags || []
-        const tgtTags = targetObj?.tags || []
-        const isInactiveByLayer = hiddenSet !== null && (
-          srcTags.some((t) => hiddenSet.has(t)) ||
-          tgtTags.some((t) => hiddenSet.has(t))
-        )
-        const isInactiveByFilter = activeSet !== null && (
-          !srcTags.some((t) => activeSet.has(t)) ||
-          !tgtTags.some((t) => activeSet.has(t))
-        )
-        const isInactive = isInactiveByLayer || isInactiveByFilter
-        const isSoftFocused = hoveredSet !== null && (
-          !srcTags.some((t) => hoveredSet.has(t)) ||
-          !tgtTags.some((t) => hoveredSet.has(t))
-        )
+        const isInactive = connectorAlreadyHasDraggedTags(e, draggedConnectorTags) || !tagState.visibleConnectorIds.has(e.id)
+        const isSoftFocused = hoveredLayerTags !== null && !hoverTagState.visibleConnectorIds.has(e.id)
+        const isTagHighlighted = !isInactive && hoveredLayerTags !== null && hoverTagState.matchedConnectorIds.has(e.id)
+        const stroke = isTagHighlighted ? (hoveredLayerColor || 'var(--accent)') : 'var(--accent)'
+        const strokeWidth = isTagHighlighted ? 3 : 2
         const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.8
         const markerOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
         const newZIndex = Z_CONNECTOR
@@ -611,6 +631,8 @@ export function useViewData({
           existing.sourceHandle === layout.sourceHandle &&
           existing.targetHandle === layout.targetHandle &&
           existing.zIndex === newZIndex &&
+          (existing.style as CSSProperties | undefined)?.stroke === stroke &&
+          (existing.style as CSSProperties | undefined)?.strokeWidth === strokeWidth &&
           (existing.style as CSSProperties | undefined)?.opacity === edgeOpacity &&
           (existing.style as CSSProperties | undefined)?.pointerEvents === pointerEvents &&
           (existing.labelStyle as CSSProperties | undefined)?.opacity === markerOpacity &&
@@ -647,17 +669,17 @@ export function useViewData({
             labelZIndex: Z_CONNECTOR_LABEL,
           },
 
-          style: { stroke: 'var(--accent)', strokeWidth: 2, opacity: edgeOpacity, pointerEvents },
-          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: markerOpacity },
+          style: { stroke, strokeWidth, opacity: edgeOpacity, pointerEvents },
+          labelStyle: { fontSize: 11, fill: stroke, opacity: markerOpacity },
           labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: labelBgOpacity },
-          markerEnd: (dir === 'forward' || dir === 'both') ? { ...arrowMarker, color: alphaColor('var(--accent)', markerOpacity) } : undefined,
-          markerStart: (dir === 'backward' || dir === 'both') ? { ...arrowMarker, color: alphaColor('var(--accent)', markerOpacity) } : undefined,
+          markerEnd: (dir === 'forward' || dir === 'both') ? { ...arrowMarker, color: alphaColor(stroke, markerOpacity) } : undefined,
+          markerStart: (dir === 'backward' || dir === 'both') ? { ...arrowMarker, color: alphaColor(stroke, markerOpacity) } : undefined,
           selected: existing?.selected,
           zIndex: newZIndex,
         }
       })
     })
-  }, [connectorLayouts, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges])
+  }, [connectorLayouts, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, elementMap, setRfEdges, tagState, hoverTagState, draggedConnectorTags])
 
   return {
     // State

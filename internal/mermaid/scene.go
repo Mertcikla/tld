@@ -23,6 +23,7 @@ type SceneExportOptions struct {
 // ids, labels, connector arrows, and change link styles follow the same rules
 // as the canvas overlay. Isolated container owners are represented by their
 // nested child subgraph rather than a redundant standalone node.
+// Three or more other isolated placements share a compact node within their view.
 // Membership is selected once by the impact pipeline. Rendering uses only the
 // frozen scene, without consulting the live workspace or source facts.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
@@ -161,39 +162,19 @@ func sceneChangeWord(change codeindexv1.ChangeKind) string {
 	}
 }
 
-// sceneProvenanceGlyph renders the recorded origin of a placement.
-func (v *sceneViewer) sceneProvenanceGlyph(viewID int32, element *diagv1.PlacedElement) string {
-	origin := codeindexv1.ImpactOrigin_IMPACT_ORIGIN_UNSPECIFIED
-	for _, placement := range v.scene.Views[strconv.Itoa(int(viewID))].Placements {
-		if placement.Element.ElementId == element.ElementId {
-			origin = placement.Origin
-			break
-		}
-	}
-	switch origin {
-	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_RAW:
-		return "◇ "
-	case codeindexv1.ImpactOrigin_IMPACT_ORIGIN_MAPPED:
-		return "▦ "
-	default:
-		return ""
-	}
-}
-
-func (v *sceneViewer) sceneNodeLabel(viewID int32, element *diagv1.PlacedElement) string {
+func (v *sceneViewer) sceneNodeLabel(element *diagv1.PlacedElement, separator string) string {
 	label := strings.TrimSpace(element.GetName())
 	if label == "" {
 		label = fmt.Sprintf("element %d", element.GetElementId())
 	}
-	label = v.sceneProvenanceGlyph(viewID, element) + label
 	if overlay, ok := v.overlayOf[element.GetElementId()]; ok {
 		if word := sceneChangeWord(overlay.GetChange()); word != "unchanged" {
-			label += "<br/>" + word
+			label += separator + word
 			if overlay.LinesAdded != nil && overlay.LinesRemoved != nil {
 				label += fmt.Sprintf(" +%d \u2212%d", overlay.GetLinesAdded(), overlay.GetLinesRemoved())
 			}
 		} else {
-			label += "<br/>(context)"
+			label += separator + "(context)"
 		}
 	}
 	return label
@@ -242,6 +223,9 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 	pad := strings.Repeat("  ", depth+1)
 	lines := []string{"", fmt.Sprintf(`%ssubgraph %s["%s"]`, head, sceneViewRef(viewID), escapeMermaidLabel(name))}
 	rendered := map[int32]bool{}
+	var isolated []*diagv1.PlacedElement
+	var placements []*codeindexv1.ScenePlacement
+	isolatedCount := 0
 	for _, placement := range content.GetPlacements() {
 		if placement == nil || placement.GetElement() == nil {
 			continue
@@ -249,10 +233,27 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		if v.redundantOwner(viewID, placement, kids, seen) {
 			continue
 		}
+		placements = append(placements, placement)
+		if !v.connected[sceneNodeRef(viewID, placement.GetElement().GetElementId())] {
+			isolatedCount++
+		}
+	}
+	for _, placement := range placements {
 		elementID := placement.GetElement().GetElementId()
+		if isolatedCount >= 3 && !v.connected[sceneNodeRef(viewID, elementID)] {
+			isolated = append(isolated, placement.GetElement())
+			continue
+		}
 		rendered[elementID] = true
 		lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, sceneNodeRef(viewID, elementID),
-			escapeMermaidLabel(v.sceneNodeLabel(viewID, placement.GetElement()))))
+			escapeMermaidLabel(v.sceneNodeLabel(placement.GetElement(), "<br/>"))))
+	}
+	if len(isolated) >= 3 {
+		labels := make([]string, 0, len(isolated))
+		for _, element := range isolated {
+			labels = append(labels, escapeMermaidLabel(v.sceneNodeLabel(element, " ")))
+		}
+		lines = append(lines, fmt.Sprintf(`%s%s_isolated["%s"]`, pad, sceneViewRef(viewID), strings.Join(labels, "<br/>")))
 	}
 	for _, kid := range kids {
 		lines = append(lines, v.renderTree(kid, depth+1, seen)...)

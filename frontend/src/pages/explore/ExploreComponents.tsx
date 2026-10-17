@@ -1,3 +1,4 @@
+import { tagCountDescription } from '../../utils/canvasTags'
 import { TagFilterReset, TagFilterRow } from '../../components/TagFilterControls'
 import {
   Box,
@@ -77,6 +78,9 @@ export function ExploreToolbar({
   layers,
   layerElementCounts,
   tagCounts,
+  tagElementCounts,
+  tagConnectorCounts,
+  layerConnectorCounts,
   hiddenTags,
   selectedTags = [],
   onToggleTagSelection,
@@ -101,6 +105,9 @@ export function ExploreToolbar({
   tagColors: Record<string, Tag>
   layers: ViewLayer[]
   layerElementCounts: Record<number, number>
+  tagElementCounts?: Record<string, number>
+  tagConnectorCounts?: Record<string, number>
+  layerConnectorCounts?: Record<number, number>
   tagCounts: Record<string, number>
   hiddenTags: string[]
   selectedTags?: string[]
@@ -214,8 +221,8 @@ export function ExploreToolbar({
                           <Text fontSize="xs" fontWeight="600" color="white" flex={1} isTruncated>
                             {isElementGroupLayer(layer) ? `group:${layer.name}` : layer.name}
                           </Text>
-                          <Text fontSize="10px" color="gray.600" flexShrink={0}>
-                            {layerElementCounts[layer.id] ?? 0}
+                          <Text fontSize="10px" color="gray.600" flexShrink={0} title={tagCountDescription(layerElementCounts[layer.id] ?? 0, layerConnectorCounts?.[layer.id] ?? 0)}>
+                            {(layerElementCounts[layer.id] ?? 0) + (layerConnectorCounts?.[layer.id] ?? 0)}
                           </Text>
                           <IconButton
                             aria-label={isHidden ? 'Show layer' : 'Hide layer'}
@@ -236,6 +243,8 @@ export function ExploreToolbar({
                         key={`tag-${tag}`}
                         tag={tag}
                         count={tagCounts[tag] ?? 0}
+                        elementCount={tagElementCounts?.[tag] ?? (tagConnectorCounts ? 0 : undefined)}
+                        connectorCount={tagConnectorCounts?.[tag] ?? 0}
                         color={tagColors[tag]?.color}
                         hidden={hiddenTags.includes(tag)}
                         selected={selectedTags.includes(tag)}

@@ -120,7 +120,7 @@ func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 		`el_51_7 ==>|"calls"| el_51_8`,
 		"linkStyle 0 stroke:#48bb78",
 		`subgraph view_neg1["Changes"]`,
-		"el_neg1_neg1[\"◇ new.go<br/>added +1 \u22120\"]",
+		"el_neg1_neg1[\"new.go<br/>added +1 \u22120\"]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("ExportImpactScene() missing %q in:\n%s", want, got)
@@ -128,7 +128,7 @@ func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 	}
 }
 
-func TestExportImpactSceneUsesRecordedMappedOrigin(t *testing.T) {
+func TestExportImpactSceneMappedOriginKeepsPlainLabel(t *testing.T) {
 	t.Parallel()
 
 	fixture := sceneFixture()
@@ -137,7 +137,7 @@ func TestExportImpactSceneUsesRecordedMappedOrigin(t *testing.T) {
 	got := ExportImpactScene(impact.PublicScene(fixture, true), SceneExportOptions{})
 	for _, want := range []string{
 		`subgraph view_51["Mine"]`,
-		"el_51_7[\"▦ svc/auth<br/>modified +3 −1\"]",
+		"el_51_7[\"svc/auth<br/>modified +3 −1\"]",
 		`subgraph view_neg1["Changes"]`,
 	} {
 		if !strings.Contains(got, want) {
@@ -229,7 +229,7 @@ func TestExportImpactSceneRendersBackendPlainSelection(t *testing.T) {
 	got := ExportImpactScene(impact.PublicScene(fixture, true), SceneExportOptions{})
 	for _, want := range []string{
 		`el_51_7["svc/auth<br/>modified +3 −1"]`,
-		`el_neg1_neg1["◇ new.go<br/>added +1 −0"]`,
+		`el_neg1_neg1["new.go<br/>added +1 −0"]`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("plain scene missing %q in:\n%s", want, got)
@@ -348,7 +348,7 @@ func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
 			scene := containerSceneFixture()
 			test.modify(scene)
 			got := ExportImpactScene(scene, SceneExportOptions{})
-			if !strings.Contains(got, `el_1_1["▦ tld`) || !strings.Contains(got, test.want) {
+			if !strings.Contains(got, `el_1_1["tld`) || !strings.Contains(got, test.want) {
 				t.Fatalf("owner or independent information missing:\n%s", got)
 			}
 		})

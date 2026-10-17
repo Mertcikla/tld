@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import {
+  githubBranchName,
   formatLineSourceLink,
   formatSymbolSourceLink,
   parseSourceLink,
   sourceAnchorLabel,
+  sourceLinkKind,
 } from './sourceLinks'
 
 describe('source links', () => {
+  it.each([
+    ['main', 'main'], ['origin/main', 'main'], [' origin/release/v2 ', 'release/v2'],
+    ['feature/new-ui', 'feature/new-ui'], ['refs/heads/feature/new-ui', 'feature/new-ui'],
+    ['refs/heads/origin/main', 'origin/main'], ['refs/remotes/origin/main', 'main'],
+    ['refs/remotes/upstream/release/v2', 'release/v2'], ['remotes/origin/main', 'main'],
+    [null, ''], [undefined, ''],
+  ])('uses the remote branch name for GitHub: %s', (branch, expected) => {
+    expect(githubBranchName(branch)).toBe(expected)
+  })
+
+  it.each([
+    [null, 'repository'], [undefined, 'repository'], ['', 'repository'], ['  ', 'repository'],
+    ['src/api/', 'folder'], ['src/api/#L1', 'folder'], ['src\\api\\', 'folder'],
+    ['src/main.go', 'file'], ['src/main.go#L12', 'file'], ['LICENSE', 'file'],
+  ] as const)('classifies %s as %s', (path, expected) => {
+    expect(sourceLinkKind(path)).toBe(expected)
+  })
+
   it('parses line anchors', () => {
     const parsed = parseSourceLink('grpc/server.go#L18')
 

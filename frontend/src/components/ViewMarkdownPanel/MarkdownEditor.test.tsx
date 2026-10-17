@@ -179,6 +179,17 @@ describe('MarkdownEditor', () => {
         renderer.unmount()
       })
     }
+    vi.unstubAllGlobals()
+  })
+
+  it('opens a preview deep link while keeping source editing available', () => {
+    vi.stubGlobal('window', { location: { search: '?panel=markdown&markdownMode=preview' } })
+    const { renderer } = renderEditor()
+    expect(renderer.root.findByProps({ 'data-testid': 'markdown-editor' }).props.className).toContain('--preview')
+    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-codemirror' })).toHaveLength(0)
+    const sourceButton = renderer.root.findAll((node) => node.props.children === 'Source' && typeof node.props.onClick === 'function')[0]
+    act(() => sourceButton.props.onClick())
+    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-codemirror' }).length).toBeGreaterThan(0)
   })
 
   it('saves the exact CodeMirror string without markdown normalization', () => {

@@ -168,6 +168,7 @@ function buildNodes(
         targetHandle: e.target_handle ?? null,
         type: e.style || 'bezier',
         change: connectorChangeFromTags(e.tags),
+        tags: e.tags,
       }))
 
     return {
@@ -259,6 +260,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
       targetHandle: e.target_handle ?? null,
       type: e.style || 'bezier',
       change: connectorChangeFromTags(e.tags),
+      tags: e.tags,
     }))
 
     groups.push({
