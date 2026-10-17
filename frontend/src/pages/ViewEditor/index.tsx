@@ -149,6 +149,7 @@ import {
   type ViewSelectionClipboardPayload,
 } from './clipboard'
 import SelectionBulkBar from './components/SelectionBulkBar'
+import { nestSelection } from './nestSelection'
 import {
   createElementGroupTag,
   elementGroupTagForLayer,
@@ -718,6 +719,10 @@ function ViewEditorInner({
   closeImportModalRef.current = importModal.onClose
 
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
+  const [isNesting, setIsNesting] = useState(false)
+  const nestingRef = useRef(false)
+  const pendingNestRef = useRef<{ viewId: number; element: WorkspaceElement } | null>(null)
+  const [renameElementId, setRenameElementId] = useState<number | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
@@ -2328,6 +2333,50 @@ function ViewEditorInner({
       await refreshElements()
     }
   }, [canEdit, connectorPanel, elementPanel, pushPlacementRemoveBatchAction, refreshElements, selectedCanvasElements, setRfNodes, setViewElements, toast])
+
+  const handleNestSelection = useCallback(async () => {
+    if (!canEdit || viewId === null || nestingRef.current || selectedCanvasElements.length < 2) return
+    const bounds = selectionBounds(elementSelectionRects(rfNodes))
+    if (!bounds) return
+    nestingRef.current = true
+    setIsNesting(true)
+    try {
+      const storedConnectors = await api.workspace.connectors.list(0)
+      const element = await nestSelection({ viewId, placements: selectedCanvasElements, connectors: storedConnectors, bounds })
+      clearEditHistory()
+      await loadWorkspaceGraphSnapshot(true)
+      if (viewIdRef.current !== viewId) return
+      await refreshGrid()
+      await refreshElements()
+      if (viewIdRef.current === viewId) pendingNestRef.current = { viewId, element }
+    } catch (error) {
+      toast({ status: 'error', title: 'Failed to nest selection', description: String(error) })
+      if (viewIdRef.current === viewId) await refreshElements()
+    } finally {
+      nestingRef.current = false
+      setIsNesting(false)
+    }
+  }, [canEdit, clearEditHistory, refreshElements, refreshGrid, rfNodes, selectedCanvasElements, toast, viewId, viewIdRef])
+
+  useEffect(() => {
+    const pendingNest = pendingNestRef.current
+    if (!pendingNest) return
+    if (pendingNest.viewId !== viewId) {
+      pendingNestRef.current = null
+      return
+    }
+    if (!rfNodes.some((node) => node.type === 'elementNode' && node.id === String(pendingNest.element.id))) return
+    pendingNestRef.current = null
+    setRfNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.type === 'elementNode' && node.id === String(pendingNest.element.id) })))
+    setRfEdges((edges) => edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge))
+    setSelectedElement(pendingNest.element)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+    closeConnectorPanelRef.current()
+    closeProxyConnectorPanelRef.current()
+    setRenameElementId(pendingNest.element.id)
+    openElementPanelRef.current()
+  }, [isNesting, rfNodes, setRfEdges, setRfNodes, viewId])
 
   const handleBulkMergeInto = useCallback(async (survivorId: number) => {
     if (!canEdit || selectedCanvasElements.length < 2) return
@@ -4619,6 +4668,8 @@ function ViewEditorInner({
               onAddTag={(tag) => { void handleBulkTagChange(tag, 'add') }}
               onRemoveTag={(tag) => { void handleBulkTagChange(tag, 'remove') }}
               onCreateGroup={handleCreateGroup}
+              onNest={() => { void handleNestSelection() }}
+              isNesting={isNesting}
               onMergeInto={(survivorId) => { void handleBulkMergeInto(survivorId) }}
               onRemoveFromView={() => { void handleBulkRemoveFromView() }}
               onCopyMermaid={handleBulkCopyMermaid}
@@ -4786,6 +4837,7 @@ function ViewEditorInner({
 
         <ElementPanel
           isOpen={elementPanel.isOpen} onClose={handleElementPanelClose} element={selectedElement}
+          focusNameOnOpen={selectedElement?.id === renameElementId}
           onSave={handleElementPanelSave} autoSave
           onMerge={handleOpenMerge}
           onDelete={(elementId) => {

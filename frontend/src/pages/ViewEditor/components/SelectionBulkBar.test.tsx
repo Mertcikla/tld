@@ -95,6 +95,20 @@ describe('SelectionBulkBar bulk merge', () => {
   })
 })
 
+describe('SelectionBulkBar nesting', () => {
+  it('invokes Nest and disables it while nesting', () => {
+    const onNest = vi.fn()
+    const renderer = renderBulkBar({ onNest })
+    act(() => renderer.root.findByProps({ 'data-testid': 'selection-bulk-nest' }).props.onClick())
+    expect(onNest).toHaveBeenCalledOnce()
+
+    const loading = renderBulkBar({ onNest, isNesting: true })
+    const button = loading.root.findByProps({ 'data-testid': 'selection-bulk-nest' })
+    expect(button.props.isLoading).toBe(true)
+    expect(button.props.isDisabled).toBe(true)
+  })
+})
+
 describe('SelectionBulkBar groups', () => {
   it('hides the selection toolbar when only one element is selected', () => {
     const renderer = renderBulkBar({ count: 1, onCreateGroup: vi.fn(async () => undefined) })
