@@ -1,4 +1,6 @@
-import { Box, Button, HStack, Input, Spinner, Text, VStack } from '@chakra-ui/react'
+import { AttachmentIcon, ArrowForwardIcon, EditIcon } from '@chakra-ui/icons'
+import { Box, Button, FormControl, FormLabel, HStack, Input, Spinner, Text, VStack } from '@chakra-ui/react'
+import { GitIcon, MarkdownIcon } from '../Icons'
 import type { ViewMarkdownDocument } from '../../types'
 
 interface LoadingMarkdownStateProps {
@@ -126,138 +128,147 @@ export function MarkdownSetupState({
   suggestedRepoPath,
 }: MarkdownSetupStateProps) {
   return (
-    <VStack justify="center" align="stretch" spacing={5} h="full" color="whiteAlpha.800" px={6}>
-      <Box textAlign="center">
-        <Text fontSize="sm" fontWeight="semibold">Markdown Notes</Text>
-        <Text fontSize="xs" color="gray.500" mt={1}>
-          {dbOnlyNotes
-            ? 'Create a personal note attached to this view with easy export and insert the view as a mermaid diagram'
-            : 'Attach a markdown document to keep notes alongside this view. Export, insert and sync the view as a mermaid diagram'}
-        </Text>
-      </Box>
+    <Box h="full" overflowY="auto" px={6} py={10} color="gray.100">
+      <VStack align="stretch" spacing={6} w="full" maxW="400px" mx="auto">
+        <Box>
+          <HStack spacing={2} color="var(--accent)" mb={6}>
+            <MarkdownIcon size={22} />
+            <Text fontSize="xs" fontWeight="semibold" letterSpacing="0.08em" textTransform="uppercase">
+              Markdown notes
+            </Text>
+          </HStack>
+          <Text as="h2" fontSize="24px" fontWeight="semibold" letterSpacing="-0.025em" lineHeight="short" mb={3}>
+            Choose your workflow
+          </Text>
+        </Box>
 
-      {dbOnlyNotes ? (
-        <Button
-          data-testid="view-markdown-create-private"
-          size="sm"
-          colorScheme="blue"
-          onClick={() => { void onCreateMarkdown?.('PRIVATE_APP') }}
-          isDisabled={!canEdit || !onCreateMarkdown}
+        <Box
+          borderWidth="1px"
+          borderColor="rgba(var(--accent-rgb), 0.3)"
+          borderRadius="xl"
+          bg="rgba(var(--accent-rgb), 0.05)"
+          p={5}
         >
-          Create note
-        </Button>
-      ) : (
-        <HStack spacing={3} align="stretch">
-          {/* Option 1: local note */}
-          <VStack
-            flex={1}
-            align="stretch"
-            spacing={3}
-            borderWidth="1px"
-            borderColor="whiteAlpha.200"
-            borderRadius="md"
-            p={4}
-          >
-            <Box>
-              <Text fontSize="xs" fontWeight="semibold" mb={1}>Local note</Text>
-              <Text fontSize="xs" color="gray.500" lineHeight="tall">
-                Stored locally. Not committed to your repository, ideal for personal annotations.
-              </Text>
+          <HStack spacing={3} mb={3}>
+            <Box display="flex" alignItems="center" justifyContent="center" boxSize={9} borderRadius="lg" bg="rgba(var(--accent-rgb), 0.1)" color="var(--accent)" flexShrink={0}>
+              <EditIcon boxSize={4} />
             </Box>
-            <Button
-              data-testid="view-markdown-create-private"
-              size="sm"
-              colorScheme="blue"
-              onClick={() => { void onCreateMarkdown?.('PRIVATE_WORKSPACE') }}
-              isDisabled={!canEdit || !onCreateMarkdown}
-            >
-              Create local note
-            </Button>
-          </VStack>
+            <Text fontSize="sm" fontWeight="semibold">{dbOnlyNotes ? 'Start a note' : 'Local note'}</Text>
+          </HStack>
+          <Text fontSize="sm" color="gray.400" lineHeight="tall" mb={4}>
+            {dbOnlyNotes
+              ? 'A place for notes attached to this view. Start writing and export whenever you need.'
+              : 'Just for your workspace. Keep personal notes without adding a file to your repository.'}
+          </Text>
+          <Button
+            data-testid="view-markdown-create-private"
+            size="sm"
+            w="full"
+            h={9}
+            bg="var(--accent)"
+            color="gray.900"
+            boxShadow="none"
+            _hover={{ bg: 'var(--accent)', filter: 'brightness(1.1)' }}
+            rightIcon={<ArrowForwardIcon />}
+            onClick={() => { void onCreateMarkdown?.(dbOnlyNotes ? 'PRIVATE_APP' : 'PRIVATE_WORKSPACE') }}
+            isDisabled={!canEdit || !onCreateMarkdown}
+          >
+            {dbOnlyNotes ? 'Create note' : 'Create local note'}
+          </Button>
+        </Box>
 
-          {/* Option 2: repo file */}
-          <VStack
-            flex={1}
-            align="stretch"
-            spacing={3}
-            borderWidth="1px"
-            borderColor="whiteAlpha.200"
-            borderRadius="md"
-            p={4}
-          >
-            <Box>
-              <Text fontSize="xs" fontWeight="semibold" mb={1}>File in repo</Text>
-              <Text fontSize="xs" color="gray.500" lineHeight="tall">
-                Saved as a markdown file inside your project. Can be committed with your code and visible to your team.
-              </Text>
-            </Box>
-            <Input
-              data-testid="view-markdown-repo-path"
-              size="sm"
-              value={repoPath}
-              onChange={(event) => setRepoPath(event.target.value)}
-              placeholder={suggestedRepoPath}
-            />
-            <Button
-              data-testid="view-markdown-create-repo"
-              size="sm"
-              variant="outline"
-              onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
-              isDisabled={!canEdit || !onCreateMarkdown}
-            >
-              Create file
-            </Button>
-          </VStack>
+        {!dbOnlyNotes && (
+          <VStack align="stretch" spacing={3}>
+            <HStack spacing={3} mb={1}>
+              <Box h="1px" flex={1} bg="var(--border-main)" />
+              <Text fontSize="xs" color="gray.500">Or use a Markdown file</Text>
+              <Box h="1px" flex={1} bg="var(--border-main)" />
+            </HStack>
 
-          {/* Option 3: attach existing */}
-          <VStack
-            flex={1}
-            align="stretch"
-            spacing={3}
-            borderWidth="1px"
-            borderColor="whiteAlpha.200"
-            borderRadius="md"
-            p={4}
-          >
-            <Box>
-              <Text fontSize="xs" fontWeight="semibold" mb={1}>Existing file</Text>
-              <Text fontSize="xs" color="gray.500" lineHeight="tall">
-                Link a markdown file that already exists in your project or anywhere on disk.
+            <Box borderWidth="1px" borderColor="var(--border-main)" borderRadius="xl" p={5}>
+              <HStack spacing={2} mb={2}>
+                <Box color="gray.400" display="flex"><GitIcon size={16} /></Box>
+                <Text fontSize="sm" fontWeight="semibold">File in repository</Text>
+              </HStack>
+              <Text fontSize="xs" color="gray.400" lineHeight="tall" mb={4}>
+                Keep your documentation with your code and share it with your team.
               </Text>
+              <FormControl mb={3}>
+                <FormLabel fontSize="xs" color="gray.400" mb={2}>File path</FormLabel>
+                <Input
+                  data-testid="view-markdown-repo-path"
+                  size="sm"
+                  fontFamily="mono"
+                  fontSize="xs"
+                  borderRadius="md"
+                  value={repoPath}
+                  onChange={(event) => setRepoPath(event.target.value)}
+                  placeholder={suggestedRepoPath}
+                />
+              </FormControl>
+              <Button
+                data-testid="view-markdown-create-repo"
+                size="sm"
+                w="full"
+                variant="outline"
+                onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
+                isDisabled={!canEdit || !onCreateMarkdown}
+              >
+                Create file
+              </Button>
             </Box>
-            {showAttachPathInput && (
-              <Input
-                data-testid="view-markdown-attach-path"
-                size="sm"
-                value={attachPath}
-                onChange={(event) => setAttachPath(event.target.value)}
-                placeholder="docs/overview.md or /absolute/path/overview.md"
-              />
-            )}
-            {showAttachPathInput ? (
-              <Button
-                data-testid="view-markdown-attach"
-                size="sm"
-                variant="outline"
-                onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
-                isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
-              >
-                Attach file
-              </Button>
-            ) : (
-              <Button
-                data-testid="view-markdown-choose-file"
-                size="sm"
-                variant="outline"
-                onClick={() => { void handleAttachPickedFile() }}
-                isDisabled={!canEdit || !onAttachMarkdown}
-              >
-                Choose file…
-              </Button>
-            )}
+
+            <Box borderWidth="1px" borderColor="var(--border-main)" borderRadius="xl" p={5}>
+              <HStack spacing={2} mb={2}>
+                <AttachmentIcon boxSize={4} color="gray.400" />
+                <Text fontSize="sm" fontWeight="semibold">Attach an existing file</Text>
+              </HStack>
+              <Text fontSize="xs" color="gray.400" lineHeight="tall" mb={4}>
+                Bring in a Markdown document from your project or elsewhere on disk.
+              </Text>
+              {showAttachPathInput && (
+                <FormControl mb={3}>
+                  <FormLabel fontSize="xs" color="gray.400" mb={2}>File path or absolute path</FormLabel>
+                  <Input
+                    data-testid="view-markdown-attach-path"
+                    size="sm"
+                    fontFamily="mono"
+                    fontSize="xs"
+                    borderRadius="md"
+                    value={attachPath}
+                    onChange={(event) => setAttachPath(event.target.value)}
+                    placeholder="docs/overview.md"
+                  />
+                </FormControl>
+              )}
+              {showAttachPathInput ? (
+                <Button
+                  data-testid="view-markdown-attach"
+                  size="sm"
+                  w="full"
+                  variant="outline"
+                  onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
+                  isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
+                >
+                  Attach file
+                </Button>
+              ) : (
+                <Button
+                  data-testid="view-markdown-choose-file"
+                  size="sm"
+                  w="full"
+                  variant="outline"
+                  onClick={() => { void handleAttachPickedFile() }}
+                  isDisabled={!canEdit || !onAttachMarkdown}
+                >
+                  Choose file…
+                </Button>
+              )}
+            </Box>
           </VStack>
-        </HStack>
-      )}
-    </VStack>
+        )}
+
+      </VStack>
+    </Box>
   )
 }
