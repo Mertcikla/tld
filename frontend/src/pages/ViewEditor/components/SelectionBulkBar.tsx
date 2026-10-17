@@ -140,6 +140,8 @@ export interface SelectionBulkBarProps {
   onRemoveTag: (tag: string) => void
   onMergeInto?: (survivorId: number) => void
   onCreateGroup?: (name: string, color: string) => Promise<void>
+  onNest?: () => void
+  isNesting?: boolean
   defaultGroupColor?: string
   isCreatingGroup?: boolean
   onRemoveFromView: () => void
@@ -161,6 +163,8 @@ export default function SelectionBulkBar({
   onRemoveTag,
   onMergeInto,
   onCreateGroup,
+  onNest,
+  isNesting = false,
   defaultGroupColor = '#4299E1',
   isCreatingGroup = false,
   onRemoveFromView,
@@ -227,6 +231,26 @@ export default function SelectionBulkBar({
 
           <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
         </>
+      )}
+
+      {onNest && (
+        <Button
+          data-testid="selection-bulk-nest"
+          aria-label="Nest selection"
+          variant="ghost"
+          h="28px"
+          px={2.5}
+          color="gray.300"
+          _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+          isLoading={isNesting}
+          isDisabled={isNesting}
+          onClick={onNest}
+        >
+          <HStack spacing={1.5}>
+            <LayerIcon size={15} />
+            <Text fontSize="11px">Nest</Text>
+          </HStack>
+        </Button>
       )}
 
       {onCreateGroup && (

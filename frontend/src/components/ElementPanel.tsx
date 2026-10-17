@@ -341,6 +341,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   noFocusLock?: boolean
   isInline?: boolean
   actions?: ReactNode
+  focusNameOnOpen?: boolean
 }
 
 /**
@@ -373,6 +374,7 @@ function ElementPanel({
   elementPanelAfterContentSlot,
   isInline = false,
   actions,
+  focusNameOnOpen = false,
 }: ElementPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isEdit = !!element
@@ -399,6 +401,20 @@ function ElementPanel({
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const typeInputRef = useRef<HTMLInputElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const focusedNameElementRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!isOpen) {
+      focusedNameElementRef.current = null
+      return
+    }
+    if (!element || !focusNameOnOpen || isReadOnly || name !== element.name || focusedNameElementRef.current === element.id) return
+    const frame = requestAnimationFrame(() => {
+      focusedNameElementRef.current = element.id
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [element, focusNameOnOpen, isOpen, isReadOnly, name])
   const techInputRef = useRef<HTMLInputElement>(null)
   const suppressTypeBlurRef = useRef(false)
   const lastSavedFingerprintByElementRef = useRef(new Map<number, string>())
