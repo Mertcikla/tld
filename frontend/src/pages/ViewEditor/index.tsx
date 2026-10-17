@@ -1358,6 +1358,21 @@ function ViewEditorInner({
   const [loadedViewMarkdownContent, setLoadedViewMarkdownContent] = useState('')
   const [viewMarkdownSyncToken, setViewMarkdownSyncToken] = useState(0)
   const [isMarkdownOpen, setIsMarkdownOpen] = useState(false)
+  const [markdownNavigation, setMarkdownNavigation] = useState<{
+    sourceViewId: number
+    sourceViewName: string | null
+    fromViewId: number | null
+    canvasViewId: number
+  } | null>(null)
+  // Mermaid navigation changes the canvas while retaining the document being read.
+  const retainedMarkdown = markdownNavigation && (
+    markdownNavigation.canvasViewId === viewId || markdownNavigation.fromViewId === viewId
+  ) ? markdownNavigation : null
+  const markdownViewId = retainedMarkdown?.sourceViewId ?? viewId
+  const markdownViewName = retainedMarkdown ? retainedMarkdown.sourceViewName : view?.name
+  useEffect(() => {
+    if (markdownNavigation && !retainedMarkdown) setMarkdownNavigation(null)
+  }, [markdownNavigation, retainedMarkdown])
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [isMarkdownMutating, setIsMarkdownMutating] = useState(false)
   const [isMarkdownSaving, setIsMarkdownSaving] = useState(false)
@@ -1467,26 +1482,27 @@ function ViewEditorInner({
   const loadedViewMarkdownPath = view && view.id === viewId ? view.markdown?.path ?? null : undefined
 
   useEffect(() => {
+    if (retainedMarkdown) return
     if (viewId === null || !loadedViewMarkdownPath) {
       resetViewMarkdown()
       return
     }
     void loadViewMarkdown(viewId, { silent: true })
-  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, viewId])
+  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, retainedMarkdown, viewId])
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
 
   const openMarkdownPathInEditor = useCallback((path?: string | null, content = viewMarkdownContent) => {
-    if (!path || viewId === null) return
+    if (!path || markdownViewId === null) return
     vscodeBridge.postMessage({
       type: 'open-markdown',
-      viewId,
+      viewId: markdownViewId,
       path,
       content,
       viewColumn: 'beside',
     })
-  }, [viewId, viewMarkdownContent])
+  }, [markdownViewId, viewMarkdownContent])
 
   const handleMarkdownResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isMarkdownOpen) return
@@ -1559,18 +1575,23 @@ function ViewEditorInner({
   }, [canEdit, dbOnlyNotes, handleCreateManagedMarkdown, openMarkdownPathInEditor, viewMarkdown])
 
   const handleOpenMarkdown = useCallback(() => {
+    if (retainedMarkdown) {
+      setMarkdownNavigation(null)
+      setIsMarkdownOpen(true)
+      return
+    }
     if (!viewMarkdown) return
     if (!dbOnlyNotes && window.__TLD_VSCODE__) {
       openMarkdownPathInEditor(viewMarkdown.path)
       return
     }
     setIsMarkdownOpen(true)
-  }, [dbOnlyNotes, openMarkdownPathInEditor, viewMarkdown])
+  }, [dbOnlyNotes, openMarkdownPathInEditor, retainedMarkdown, viewMarkdown])
 
   const handleReloadMarkdown = useCallback(async () => {
-    if (viewId === null) return
-    await loadViewMarkdown(viewId)
-  }, [loadViewMarkdown, viewId])
+    if (markdownViewId === null) return
+    await loadViewMarkdown(markdownViewId)
+  }, [loadViewMarkdown, markdownViewId])
 
   const handleLinkMarkdown = useCallback(async (path: string) => {
     if (dbOnlyNotes) return
@@ -1614,10 +1635,10 @@ function ViewEditorInner({
   }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
   const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
-    if (viewId === null || !viewMarkdown) return
+    if (markdownViewId === null || !viewMarkdown) return
     setIsMarkdownSaving(true)
     try {
-      const updated = await api.workspace.views.markdown.save(viewId, markdown, {
+      const updated = await api.workspace.views.markdown.save(markdownViewId, markdown, {
         expectedFileVersion: options.force ? undefined : viewMarkdown.file_version,
         force: options.force ?? false,
       })
@@ -1644,7 +1665,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownSaving(false)
     }
-  }, [toast, viewId, viewMarkdown])
+  }, [toast, markdownViewId, viewMarkdown])
 
   const handleForceSaveMarkdown = useCallback(async (markdown: string) => {
     await handleSaveMarkdown(markdown, { force: true })
@@ -1666,7 +1687,7 @@ function ViewEditorInner({
   }, [toast])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
-    const baseName = sanitizeExportFilename(view?.name || 'view-notes')
+    const baseName = sanitizeExportFilename(markdownViewName || 'view-notes')
     try {
       const result = await triggerBlobDownload(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${baseName}.md`, 'markdown')
       if (result.canceled) return
@@ -1678,7 +1699,7 @@ function ViewEditorInner({
         description: error instanceof Error ? error.message : String(error),
       })
     }
-  }, [toast, view?.name])
+  }, [toast, markdownViewName])
 
   const handleOpenMarkdownInEditor = useCallback(() => {
     openMarkdownPathInEditor(viewMarkdown?.path)
@@ -2883,6 +2904,19 @@ function ViewEditorInner({
   }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect, canvas.stableOnReconnectPick])
   const viewName = view?.name ?? null
   const viewNameById = useMemo(() => buildViewNameById(treeData), [treeData])
+
+  const { stableOnNavigateToView: navigateToViewFromCanvas } = canvas
+  const handleNavigateFromMarkdown = useCallback((id: number) => {
+    if (viewMarkdown && markdownViewId !== null) {
+      setMarkdownNavigation({
+        sourceViewId: markdownViewId,
+        sourceViewName: markdownViewName ?? null,
+        fromViewId: viewId,
+        canvasViewId: id,
+      })
+    }
+    navigateToViewFromCanvas(id)
+  }, [navigateToViewFromCanvas, markdownViewId, markdownViewName, viewId, viewMarkdown])
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
   const [contextNodePositionOverrides, setContextNodePositionOverrides] = useState<Record<string, ContextNodePositionOverride>>({})
@@ -4787,7 +4821,10 @@ function ViewEditorInner({
               >
                 <ViewMarkdownPanel
                   isOpen={isMarkdownOpen}
-                  onClose={() => setIsMarkdownOpen(false)}
+                  onClose={() => {
+                    setIsMarkdownOpen(false)
+                    setMarkdownNavigation(null)
+                  }}
                   viewName={view?.name}
                   markdown={viewMarkdown}
                   content={viewMarkdownContent}
@@ -4811,7 +4848,7 @@ function ViewEditorInner({
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={!dbOnlyNotes && window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
-                  onNavigateToView={canvas.stableOnNavigateToView}
+                  onNavigateToView={handleNavigateFromMarkdown}
                   onImportMermaidBlock={handleImportMarkdownMermaidBlock}
                 />
               </Box>
@@ -4926,8 +4963,8 @@ function ViewEditorInner({
           onConnectorSaved={publishRealtimeConnectorUpsert}
           hasBackdrop={isMobileLayout}
           dbOnlyNotes={dbOnlyNotes}
-          markdown={viewMarkdown}
-          markdownLoading={isMarkdownLoading}
+          markdown={retainedMarkdown ? view.markdown : viewMarkdown}
+          markdownLoading={!retainedMarkdown && isMarkdownLoading}
           onUnlinkMarkdown={handleUnlinkMarkdown}
           onOpenMarkdown={handleOpenMarkdown}
         />
