@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Box,
   Button,
@@ -57,6 +58,7 @@ interface Props {
 }
 
 export default function LayoutSection({ view, canEdit, onUnsupportedMutation, onConnectorSaved }: Props) {
+  const queryClient = useQueryClient()
   const { autoLayoutMode, setAutoLayoutMode } = useViewEditorContext()
   const [open, setOpen] = useState(true)
   const [algo, setAlgo] = useState<Algorithm>('dagre')
@@ -83,7 +85,8 @@ export default function LayoutSection({ view, canEdit, onUnsupportedMutation, on
     setCollisionRunning(true)
     try {
       await removeCollisions(view.id)
-      window.location.reload()
+      // Refresh the canvas without navigating away from the desktop webview.
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'views', view.id, 'editor-content'] })
     } catch (err) {
       console.error('Collision removal failed:', err)
     } finally {
@@ -167,7 +170,7 @@ export default function LayoutSection({ view, canEdit, onUnsupportedMutation, on
 
       const updatedConnectors = await Promise.all(handleUpdates)
       if (onConnectorSaved) updatedConnectors.forEach(onConnectorSaved)
-      window.location.reload()
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'views', view.id, 'editor-content'] })
     } catch (err) {
       console.error('Layout failed:', err)
     } finally {

@@ -4268,11 +4268,11 @@ function ViewEditorInner({
       closeImportModalRef.current()
       toast({ status: 'success', title: 'Import complete', description: `Created ${parsed.elements.length} elements and ${parsed.connectors.length} connectors.`, duration: 5000, isClosable: true })
       if (res.view_id && res.view_id !== currentViewId) navigate(`/views/${res.view_id}`)
-      else window.location.reload()
+      else await refreshElements()
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [clearEditHistory, getCanvasCenter, navigate, runMermaidImport, toast, viewIdRef])
+  }, [clearEditHistory, getCanvasCenter, navigate, refreshElements, runMermaidImport, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states
@@ -4573,8 +4573,10 @@ function ViewEditorInner({
                     setAdjustingLayout(true)
                     try {
                       await removeCollisions(viewId)
-                      window.location.reload()
-                    } catch {
+                      await refreshElements()
+                    } catch (error) {
+                      toast({ status: 'error', title: 'Layout adjustment failed', description: error instanceof Error ? error.message : 'Unknown error' })
+                    } finally {
                       setAdjustingLayout(false)
                     }
                   }}
