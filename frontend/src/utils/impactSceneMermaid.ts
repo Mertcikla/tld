@@ -1,4 +1,4 @@
-import { ChangeKind, ImpactOrigin, ImpactRole, type ImpactScene, type ScenePlacement, type ImpactSceneOverlay } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
+import { ChangeKind, ImpactRole, type ImpactScene, type ScenePlacement, type ImpactSceneOverlay } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import type { View } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 
 const numberRef = (id: number) => id < 0 ? `neg${-id}` : `${id}`
@@ -50,16 +50,15 @@ export function impactSceneMermaid(scene: ImpactScene): string {
   const seen = new Set<number>()
   const linkStyles: string[] = []
   let linkIndex = 0
-  const nodeLabel = (viewId: number, placement: ScenePlacement) => {
+  const nodeLabel = (placement: ScenePlacement, separator: string) => {
     const element = placement.element!
-    const origin = scene.views[String(viewId)]?.placements.find((p) => p.element?.elementId === element.elementId)?.origin
-    let label = (origin === ImpactOrigin.RAW ? '◇ ' : origin === ImpactOrigin.MAPPED ? '▦ ' : '') + (element.name.trim() || `element ${element.elementId}`)
+    let label = element.name.trim() || `element ${element.elementId}`
     const overlay = overlayOf.get(element.elementId)
     if (overlay) {
       const change = changeWord(overlay.change)
-      if (change === 'unchanged') label += '<br/>(context)'
+      if (change === 'unchanged') label += separator + '(context)'
       else {
-        label += `<br/>${change}`
+        label += separator + change
         if (overlay.linesAdded != null && overlay.linesRemoved != null) label += ` +${overlay.linesAdded} −${overlay.linesRemoved}`
       }
     }
@@ -95,13 +94,25 @@ export function impactSceneMermaid(scene: ImpactScene): string {
     const head = '  '.repeat(depth), pad = '  '.repeat(depth + 1)
     lines.push('', `${head}subgraph ${viewRef(viewId)}["${escapeLabel(names.get(viewId) || `view ${viewId}`)}"]`)
     const rendered = new Set<number>()
-    for (const placement of content.placements) {
-      if (!placement.element) continue
+    const isolated: ScenePlacement[] = []
+    const placements = content.placements.filter((placement) => {
+      if (!placement.element) return false
       const id = placement.element.elementId
       const redundantOwner = placement.role === ImpactRole.CONTAINER && !overlayOf.has(id) && !connected.has(nodeRef(viewId, id)) && kids.some((kid) => !seen.has(kid.id) && kid.ownerElementId === id && scene.views[String(kid.id)])
-      if (redundantOwner) continue
+      return !redundantOwner
+    })
+    const isolatedCount = placements.filter((placement) => !connected.has(nodeRef(viewId, placement.element!.elementId))).length
+    for (const placement of placements) {
+      const id = placement.element!.elementId
+      if (isolatedCount >= 3 && !connected.has(nodeRef(viewId, id))) {
+        isolated.push(placement)
+        continue
+      }
       rendered.add(id)
-      lines.push(`${pad}${nodeRef(viewId, id)}["${nodeLabel(viewId, placement)}"]`)
+      lines.push(`${pad}${nodeRef(viewId, id)}["${nodeLabel(placement, '<br/>')}"]`)
+    }
+    if (isolated.length >= 3) {
+      lines.push(`${pad}${viewRef(viewId)}_isolated["${isolated.map((placement) => nodeLabel(placement, ' ')).join('<br/>')}"]`)
     }
     for (const kid of kids) renderTree(kid, depth + 1)
     for (const connector of content.connectors) {

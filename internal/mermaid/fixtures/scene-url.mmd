@@ -4,10 +4,10 @@ flowchart LR
 
 subgraph view_1["Root &amp; services"]
   el_1_11["Service Ç<br/>modified +3 −2"]
-  el_1_12["▦ Mapped context<br/>(context)"]
+  el_1_12["Mapped context<br/>(context)"]
 
   subgraph view_2["Child &quot;view&quot;"]
-    el_2_neg21["◇ raw.go<br/>added"]
+    el_2_neg21["raw.go<br/>added"]
     el_2_22["Database"]
     el_2_neg21 ==>|"writes"| el_2_22
   end

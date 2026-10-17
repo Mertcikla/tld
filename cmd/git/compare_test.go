@@ -256,7 +256,7 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
 		}
 	}
-	if !regexp.MustCompile(`el_neg1_neg[0-9]+\["◇ a.go`).MatchString(mermaid) {
+	if !regexp.MustCompile(`el_neg1_neg[0-9]+\["a.go`).MatchString(mermaid) {
 		t.Fatalf("scene mermaid missing stable transient file identity: %s", mermaid)
 	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
