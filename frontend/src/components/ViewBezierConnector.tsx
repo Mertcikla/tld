@@ -183,6 +183,7 @@ function ViewBezierConnector({
   })
 
   const labelZIndex = (data as { labelZIndex?: number } | undefined)?.labelZIndex ?? Z_CONNECTOR_LABEL
+  const direction = data?.direction === 'bidirectional' ? 'both' : (data?.direction ?? 'forward')
   const labelCenterY = labelLayout.y - (proxyBadgeText ? (stackHeight - labelHeight) / 2 : 0)
   const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
@@ -195,7 +196,7 @@ function ViewBezierConnector({
   }, [edge?.data, proxyBadgeDetails])
 
   return (
-    <g {...tagDropProps}>
+    <g {...tagDropProps} className="vieweditor-connector" data-connector-direction={direction}>
       <BaseEdge
         path={path}
         markerStart={markerStart}

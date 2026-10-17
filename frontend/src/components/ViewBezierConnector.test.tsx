@@ -55,3 +55,16 @@ describe('connector tag drop affordance', () => {
     }
   })
 })
+
+describe('connector hover direction', () => {
+  it.each([
+    ['forward', 'forward'], ['backward', 'backward'], ['both', 'both'],
+    ['bidirectional', 'both'], ['none', 'none'], [undefined, 'forward'],
+  ])('exposes %s as %s for directional hover animation', (direction, expected) => {
+    const renderer = render({ data: { style: 'bezier', direction } })
+    const visual = renderer.root.findByType('g')
+    expect(visual.props.className).toBe('vieweditor-connector')
+    expect(visual.props['data-connector-direction']).toBe(expected)
+    act(() => renderer.unmount())
+  })
+})
