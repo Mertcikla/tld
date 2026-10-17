@@ -739,7 +739,10 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 
 		var element *diagv1.Element
 		if planned.GetId() != 0 {
-			element, err = a.UpdateElement(ctx, planned.GetId(), uuid.Nil, input)
+			element, err = a.GetElement(ctx, planned.GetId(), uuid.Nil)
+			if err == nil && api.PlanElementChangesMetadata(planned, element) {
+				element, err = a.UpdateElement(ctx, planned.GetId(), uuid.Nil, input)
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				if input.BypassNoiseGate == nil {
 					defaultBypass := true
@@ -781,7 +784,10 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			if planned.GetViewId() != 0 {
 				// The plan has an element name but no view name. Existing views
 				// retain their independently chosen names.
-				view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, "", nil, planned.ViewLabel, nil)
+				view, err = a.GetView(ctx, planned.GetViewId(), uuid.Nil)
+				if err == nil && planned.ViewLabel != nil && planned.GetViewLabel() != view.GetLevelLabel() {
+					view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, "", nil, planned.ViewLabel, nil)
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					ownerID := element.GetId()
 					view, err = a.CreateView(ctx, uuid.Nil, &ownerID, viewName, planned.ViewLabel, false)
@@ -794,8 +800,18 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 				return nil, err
 			}
 			if planned.ViewDensityLevel != nil {
-				if err := a.Store.SetViewDensityLevel(ctx, int64(view.GetId()), int(planned.GetViewDensityLevel())); err != nil {
+				density, err := a.Store.ViewDensityLevel(ctx, int64(view.GetId()))
+				if err != nil {
 					return nil, err
+				}
+				if density != int(planned.GetViewDensityLevel()) {
+					if err := a.Store.SetViewDensityLevel(ctx, int64(view.GetId()), int(planned.GetViewDensityLevel())); err != nil {
+						return nil, err
+					}
+					view, err = a.GetView(ctx, view.GetId(), uuid.Nil)
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 			viewIDs[planned.GetRef()] = view.GetId()
@@ -830,6 +846,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			}
 			x, y := placement.GetPositionX(), placement.GetPositionY()
 			existingPlacement := false
+			var item *diagv1.PlacedElement
 			placements, err := a.Store.Placements(ctx, int64(viewID))
 			if err != nil {
 				return nil, err
@@ -837,6 +854,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			for _, current := range placements {
 				if current.ElementID == int64(elementID) {
 					existingPlacement = true
+					item = placedElementToProto(current)
 					if placement.PositionX == nil {
 						x = current.PositionX
 					}
@@ -846,9 +864,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 					break
 				}
 			}
-			item, err := a.AddPlacement(ctx, viewID, elementID, x, y)
-			if err != nil {
-				return nil, err
+			if item == nil || item.GetPositionX() != x || item.GetPositionY() != y {
+				item, err = a.AddPlacement(ctx, viewID, elementID, x, y)
+				if err != nil {
+					return nil, err
+				}
 			}
 			if !existingPlacement && placement.PositionX == nil && placement.PositionY == nil {
 				if autoLayoutTargets[int64(viewID)] == nil {
@@ -938,7 +958,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 					input.Style = current.GetStyle()
 				}
 			}
-			connector, err = a.UpdateConnector(ctx, connectorID, uuid.Nil, input)
+			connector = current
+			err = readErr
+			if readErr == nil && api.PlanConnectorChangesMetadata(planned, current, viewID, sourceID, targetID) {
+				connector, err = a.UpdateConnector(ctx, connectorID, uuid.Nil, input)
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				connector, err = a.createConnectorWithID(ctx, planned.GetId(), input)
 			}

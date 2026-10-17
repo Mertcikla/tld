@@ -28,8 +28,8 @@ func NewSyncCmd(wdir, format *string, compact *bool) *cobra.Command {
 This is the inverse of 'tld pull': local YAML changes (for example source links
 written by 'tld link') are applied to the local database or remote server so the
 running app and UI reflect them. Elements, views, placements and connectors are
-matched to their existing target resources and updated, so re-running sync is
-safe.
+matched to their existing target resources. Unchanged values are skipped and
+reported separately from new and updated resources.
 
 Use --target to choose the destination:
   auto    API key + workspace id present -> remote, otherwise local (default)

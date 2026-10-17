@@ -10,6 +10,7 @@ import (
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
 // ImportPlan is a self-contained, idempotent ApplyPlan built from an import
@@ -20,6 +21,7 @@ import (
 // are matched to their server IDs (from the lockfile cache first, then by
 // name/endpoints) and updated instead of duplicated.
 type ImportPlan struct {
+	Unchanged           map[string]bool // resource type + ":" + ref; dependencies stay in the batch
 	Views               []workspace.ViewDiagnostics
 	PreservedPlacements map[string][]string
 
@@ -32,12 +34,14 @@ type ImportPlan struct {
 	// Connectors are the connector specs from the import document.
 	Connectors []*workspace.Connector
 
-	ElementsCreated   int
-	ElementsUpdated   int
-	ViewsPlanned      int
-	ViewsCreated      int
-	ConnectorsCreated int
-	ConnectorsUpdated int
+	ElementsCreated     int
+	ElementsUpdated     int
+	ElementsUnchanged   int
+	ViewsPlanned        int
+	ViewsCreated        int
+	ConnectorsCreated   int
+	ConnectorsUpdated   int
+	ConnectorsUnchanged int
 }
 
 type ImportFieldError struct{ Field, Hint string }
@@ -168,6 +172,7 @@ func BuildImportPlan(
 	}
 
 	plan := &ImportPlan{
+		Unchanged:    map[string]bool{},
 		Request:      &diagv1.ApplyPlanRequest{},
 		ElementSpecs: planElements,
 		Connectors:   append([]*workspace.Connector(nil), connectors...),
@@ -219,10 +224,8 @@ func BuildImportPlan(
 				}
 				pe.TechnologyLinks = current.GetTechnologyLinks()
 			}
-			plan.ElementsUpdated++
-		} else {
-			plan.ElementsCreated++
 		}
+		viewChanged, placementsChanged := false, false
 		if requiredViews[ref] {
 			pe.HasView = true
 			plan.ViewsPlanned++
@@ -239,6 +242,19 @@ func BuildImportPlan(
 				density := int32(el.DensityLevel)
 				pe.ViewDensityLevel = &density
 			}
+			view := viewByOwner[id]
+			viewChanged = view == nil || view.GetId() != pe.GetViewId() || (pe.ViewLabel != nil && pe.GetViewLabel() != view.GetLevelLabel())
+			if !viewChanged && pe.ViewDensityLevel != nil {
+				viewChanged = true // Remote exports do not expose density settings.
+				if local, ok := runner.(*localRunner); ok {
+					density, err := local.appStore.ViewDensityLevel(local.ctx(ctx), int64(pe.GetViewId()))
+					if err != nil {
+						return nil, err
+					}
+					viewChanged = density != int(pe.GetViewDensityLevel())
+				}
+			}
+			plan.Unchanged["view:"+ref] = !viewChanged
 		}
 		for _, placement := range el.Placements {
 			if !declared && id != 0 {
@@ -253,8 +269,10 @@ func BuildImportPlan(
 			if parent == workspace.RootRef {
 				parentID = rootViewID(serverViews)
 			}
+			var current *diagv1.ElementPlacement
 			for _, existing := range exported.GetPlacements() {
 				if existing.GetElementId() == id && existing.GetViewId() == parentID {
+					current = existing
 					if !placement.PositionXSet && placement.PositionX == 0 {
 						x := existing.GetPositionX()
 						pp.PositionX = &x
@@ -279,6 +297,21 @@ func BuildImportPlan(
 				pp.VisibilityDelta = &delta
 			}
 			pe.Placements = append(pe.Placements, pp)
+			visibilityChanged, err := importVisibilityChanged(ctx, runner, parentID, "element", id, pp.VisibilityDelta)
+			if err != nil {
+				return nil, err
+			}
+			placementsChanged = placementsChanged || current == nil || visibilityChanged ||
+				(pp.PositionX != nil && pp.GetPositionX() != current.GetPositionX()) ||
+				(pp.PositionY != nil && pp.GetPositionY() != current.GetPositionY())
+		}
+		if id == 0 {
+			plan.ElementsCreated++
+		} else if api.PlanElementChangesMetadata(pe, byID[id]) || viewChanged || placementsChanged {
+			plan.ElementsUpdated++
+		} else {
+			plan.Unchanged["element:"+ref] = true
+			plan.ElementsUnchanged++
 		}
 		plan.Request.Elements = append(plan.Request.Elements, pe)
 	}
@@ -333,12 +366,14 @@ func BuildImportPlan(
 			delta := int32(c.VisibilityDelta)
 			pc.VisibilityDelta = &delta
 		}
+		var current *diagv1.Connector
 		if id != 0 {
 			pc.Id = &id
-			for _, current := range serverConnectors {
-				if current.GetId() != id {
+			for _, candidate := range serverConnectors {
+				if candidate.GetId() != id {
 					continue
 				}
+				current = candidate
 				if pc.Direction == nil {
 					pc.Direction = strOrNil(current.GetDirection())
 				}
@@ -347,14 +382,43 @@ func BuildImportPlan(
 				}
 				break
 			}
+		}
+		visibilityChanged, err := importVisibilityChanged(ctx, runner, viewID, "connector", id, pc.VisibilityDelta)
+		if err != nil {
+			return nil, err
+		}
+		if id == 0 {
+			plan.ConnectorsCreated++
+		} else if api.PlanConnectorChangesMetadata(pc, current, viewID, elementIDs[c.Source], elementIDs[c.Target]) || visibilityChanged {
 			plan.ConnectorsUpdated++
 		} else {
-			plan.ConnectorsCreated++
+			plan.Unchanged["connector:"+pc.Ref] = true
+			plan.ConnectorsUnchanged++
 		}
 		plan.Request.Connectors = append(plan.Request.Connectors, pc)
 	}
 
 	return plan, nil
+}
+
+func importVisibilityChanged(ctx context.Context, runner Runner, viewID int32, resource string, id int32, delta *int32) (bool, error) {
+	if delta == nil {
+		return false, nil
+	}
+	local, ok := runner.(*localRunner)
+	if !ok {
+		return true, nil
+	} // Remote exports do not expose visibility overrides.
+	overrides, err := local.appStore.VisibilityOverrides(local.ctx(ctx), int64(viewID))
+	if err != nil {
+		return false, err
+	}
+	for _, override := range overrides {
+		if override.ResourceType == resource && override.ResourceID == int64(id) {
+			return override.LevelDelta != int(*delta), nil
+		}
+	}
+	return *delta != 0, nil
 }
 
 // collectImportElements validates the declared elements and closes the set over

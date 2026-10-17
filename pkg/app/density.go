@@ -424,6 +424,7 @@ func (s *Store) SetVisibilityOverride(ctx context.Context, viewID int64, resourc
 		On("CONFLICT(view_id, resource_type, resource_id) DO UPDATE").
 		Set("level_delta = excluded.level_delta").
 		Set("updated_at = excluded.updated_at").
+		Where("?TableAlias.level_delta <> excluded.level_delta").
 		Exec(ctx)
 	if err != nil {
 		return VisibilityOverride{}, err

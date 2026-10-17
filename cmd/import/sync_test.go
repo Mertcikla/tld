@@ -2,12 +2,17 @@ package importcmd_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/exec"
+	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
@@ -67,6 +72,72 @@ func TestSyncCmd_JSONCommandLabel(t *testing.T) {
 	if !strings.Contains(stdout, `"command": "sync"`) {
 		t.Fatalf("expected command=sync in JSON, got: %s", stdout)
 	}
+}
+
+func TestSyncCmd_ReportsChangesAndSkipsUnchangedWrites(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "import", writeImportFile(t, basicImport))
+	cmd.MustRunCmd(t, dir, "view", "create", "api")
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := exec.NewRunner(ws.Config, "local", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	db, err := store.Open(runner.TargetLabel(), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// Fail even when a redundant UPDATE would leave the same timestamp.
+	for table, condition := range map[string]string{
+		"elements":   "WHEN OLD.description IS NEW.description",
+		"connectors": "WHEN OLD.description IS NEW.description",
+		"views":      "", "placements": "",
+	} {
+		sql := fmt.Sprintf("CREATE TRIGGER reject_%s_update BEFORE UPDATE ON %s %s BEGIN SELECT RAISE(ABORT, 'unchanged write'); END", table, table, condition)
+		if _, err := db.DB().ExecContext(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want int, args ...string) {
+		t.Helper()
+		out, _ := cmd.MustRunCmd(t, dir, append([]string{"sync", "--format", "json"}, args...)...)
+		var result cmdutil.JSONOutput
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Summary["elements_updated"] != want || result.Summary["connectors_updated"] != want {
+			t.Fatalf("unexpected summary: %s", out)
+		}
+		for _, item := range result.Items {
+			expected := "unchanged"
+			if want == 1 && (item.ResourceType == "connector" || (item.ResourceType == "element" && item.Ref == "api")) {
+				expected = "update"
+			}
+			if item.Action != expected {
+				t.Errorf("%s %s: action %s, want %s", item.ResourceType, item.Ref, item.Action, expected)
+			}
+		}
+	}
+	check(0)
+	ws.Elements["api"].Description = "changed element"
+	for _, c := range ws.Connectors {
+		c.Description = "changed connector"
+	}
+	if err := workspace.Save(ws); err != nil {
+		t.Fatal(err)
+	}
+	check(1, "--dry-run")
+	if got := loadElement(t, dir, "api").GetDescription(); got != "" {
+		t.Fatalf("dry-run wrote description: %q", got)
+	}
+	check(1)
+	check(0)
 }
 
 func loadElement(t *testing.T, dir, ref string) *diagv1.Element {

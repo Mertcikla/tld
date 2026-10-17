@@ -546,6 +546,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			if id != 0 {
 				action = "update"
 			}
+			if plan.Unchanged["element:"+el.GetRef()] {
+				action = "unchanged"
+			}
 			if response != nil {
 				id = response.GetElementMetadata()[el.GetRef()].GetId()
 			}
@@ -554,6 +557,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 				viewID, viewAction := el.GetViewId(), "add"
 				if viewID != 0 {
 					viewAction = "update"
+				}
+				if plan.Unchanged["view:"+el.GetRef()] {
+					viewAction = "unchanged"
 				}
 				if response != nil {
 					viewID = response.GetViewMetadata()[el.GetRef()].GetId()
@@ -565,6 +571,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			id, action := connector.GetId(), "add"
 			if id != 0 {
 				action = "update"
+			}
+			if plan.Unchanged["connector:"+connector.GetRef()] {
+				action = "unchanged"
 			}
 			if response != nil {
 				id = response.GetConnectorMetadata()[connector.GetRef()].GetId()
@@ -583,12 +592,14 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			Items:   items,
 			Extra:   map[string]any{"views": plan.Views, "preserved_placements": plan.PreservedPlacements},
 			Summary: map[string]int{
-				"omitted_connectors": omitted,
-				"elements_created":   plan.ElementsCreated,
-				"elements_updated":   plan.ElementsUpdated,
-				"views_created":      plan.ViewsCreated,
-				"connectors_created": plan.ConnectorsCreated,
-				"connectors_updated": plan.ConnectorsUpdated,
+				"omitted_connectors":   omitted,
+				"elements_created":     plan.ElementsCreated,
+				"elements_updated":     plan.ElementsUpdated,
+				"elements_unchanged":   plan.ElementsUnchanged,
+				"views_created":        plan.ViewsCreated,
+				"connectors_created":   plan.ConnectorsCreated,
+				"connectors_updated":   plan.ConnectorsUpdated,
+				"connectors_unchanged": plan.ConnectorsUnchanged,
 			},
 		})
 	}
@@ -612,9 +623,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 	}
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
-			"dry-run: would %s %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+			"dry-run: would %s %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
 			command, elements, plan.ElementsCreated, plan.ElementsUpdated,
-			connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
+			plan.ElementsUnchanged, connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated, plan.ConnectorsUnchanged)
 		if plan.ViewsCreated > 0 {
 			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", plan.ViewsCreated)
 		}
@@ -622,9 +633,9 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 	}
 
 	term.Successf(cmd.OutOrStdout(),
-		"%s: %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+		"%s: %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
 		command, elements, plan.ElementsCreated, plan.ElementsUpdated,
-		connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
+		plan.ElementsUnchanged, connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated, plan.ConnectorsUnchanged)
 	if plan.ViewsCreated > 0 {
 		term.Infof(cmd.OutOrStdout(), "created %d view(s)", plan.ViewsCreated)
 	}
