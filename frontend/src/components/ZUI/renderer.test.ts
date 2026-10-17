@@ -4,6 +4,22 @@ import { createNodeScreenState, type SceneNode } from './sceneGraph'
 import { edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
 import { ELEMENT_NAME_INSET_RATIO } from '../../utils/elementName'
 import type { LayoutNode } from './types'
+import { connectorTagHighlightColor, setHighlightColor, setHighlightedTags, setTagColors } from './renderer'
+
+describe('connector tag highlight color', () => {
+  it('uses the hovered layer color or tag color and clears after hover', () => {
+    setHighlightedTags(new Set(['critical']))
+    setTagColors({ critical: { color: '#f00' } })
+    expect(connectorTagHighlightColor(['critical'], '#aaa')).toBe('#f00')
+    expect(connectorTagHighlightColor(['other'], '#aaa')).toBeUndefined()
+    setHighlightColor('#0f0')
+    expect(connectorTagHighlightColor(['critical'], '#aaa')).toBe('#0f0')
+    setHighlightedTags(new Set())
+    expect(connectorTagHighlightColor(['critical'], '#aaa')).toBeUndefined()
+    setHighlightColor('')
+    setTagColors({})
+  })
+})
 
 function layoutNode(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
   return {

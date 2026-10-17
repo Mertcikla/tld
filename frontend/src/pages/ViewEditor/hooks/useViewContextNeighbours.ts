@@ -23,6 +23,8 @@ import {
 interface Props {
   snapshot: WorkspaceGraphSnapshot | null
   settings: CrossBranchContextSettings
+  hoveredTags?: string[] | null
+  hoverColor?: string | null
   viewId: number | null
   viewElements: PlacedElement[]
   rfNodes: RFNode[]
@@ -585,6 +587,8 @@ export function buildSummaryLayoutById(
 export function useViewContextNeighbours({
   snapshot,
   settings,
+  hoveredTags,
+  hoverColor,
   viewId,
   viewElements,
   rfNodes,
@@ -964,7 +968,12 @@ export function useViewContextNeighbours({
       }]
     })
 
-    const contextConnectors: RFEdge[] = [...externalContextEdges, ...internalProxyEdges]
+    const contextConnectors: RFEdge[] = [...externalContextEdges, ...internalProxyEdges].map((edge) => {
+      const details = edge.data?.details as ProxyConnectorDetails | undefined
+      const highlighted = hoveredTags?.length && details?.connectors.some((leaf) =>
+        (leaf.connector.tags ?? []).some((tag) => hoveredTags.includes(tag)))
+      return highlighted ? { ...edge, data: { ...edge.data, tagHighlightColor: hoverColor || 'var(--accent)' } } : edge
+    })
 
     return {
       contextNodes: contextNodes.length > 0 ? [ContextBoundaryElement, ...contextNodes] : contextNodes,
@@ -973,5 +982,5 @@ export function useViewContextNeighbours({
       hiddenProxyCountsByPair,
       hiddenProxyDetailsByPair,
     }
-  }, [snapshot, settings, viewId, viewElements, rfNodes, stableOnNavigateToView, contextNodePositionOverrides, onSelectContextElement, onSelectProxyDetails, expandedAncestorGroups, onToggleAncestorGroup])
+  }, [snapshot, settings, hoveredTags, hoverColor, viewId, viewElements, rfNodes, stableOnNavigateToView, contextNodePositionOverrides, onSelectContextElement, onSelectProxyDetails, expandedAncestorGroups, onToggleAncestorGroup])
 }

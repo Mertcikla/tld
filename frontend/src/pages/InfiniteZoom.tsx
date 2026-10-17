@@ -175,6 +175,9 @@ function ExplorePage({ sharedToken, shareSlot, dataState }: Props, ref?: Ref<Inf
             layers={tags.layers}
             layerElementCounts={tags.layerElementCounts}
             tagCounts={tags.tagCounts}
+            tagElementCounts={tags.tagElementCounts}
+            tagConnectorCounts={tags.tagConnectorCounts}
+            layerConnectorCounts={tags.layerConnectorCounts}
             hiddenTags={tags.hiddenTags}
             selectedTags={tags.selectedTags}
             onToggleTagSelection={tags.toggleTagSelection}

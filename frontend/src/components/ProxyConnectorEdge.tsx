@@ -57,7 +57,7 @@ function scaleContextNodeBox(node: {
   return { x, y, w, h }
 }
 
-function ProxyConnectorEdge({ id, source, target, selected, style }: EdgeProps) {
+function ProxyConnectorEdge({ id, source, target, selected, style, data }: EdgeProps) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
@@ -129,8 +129,8 @@ function ProxyConnectorEdge({ id, source, target, selected, style }: EdgeProps) 
         path={path}
         style={{
           ...style,
-          stroke: 'rgba(var(--accent-rgb), 0.8)',
-          strokeWidth: selected ? 1 : 1,
+          stroke: data?.tagHighlightColor ?? 'rgba(var(--accent-rgb), 0.8)',
+          strokeWidth: data?.tagHighlightColor ? 3 : 1,
           strokeDasharray: '1 4',
           animation: 'none',
         }}

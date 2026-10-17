@@ -179,8 +179,9 @@ export function setHighlightedTags(tags: Set<string>): void {
   currentHighlightedTags = tags
 }
 
-export function setHighlightColor(_color: string): void {
-  // Retained for API compatibility; per-tag colors now drive pill chrome.
+let currentHighlightColor = ''
+export function setHighlightColor(color: string): void {
+  currentHighlightColor = color
 }
 
 let currentTagColors: Record<string, string> = {}
@@ -198,6 +199,11 @@ export function setTagColors(colors: Record<string, { color?: string } | string>
 
 function tagColorFor(tag: string, fallback: string): string {
   return currentTagColors[tag] || fallback
+}
+
+export function connectorTagHighlightColor(tags: readonly string[] = [], fallback: string): string | undefined {
+  const tag = tags.find((name) => currentHighlightedTags.has(name))
+  return tag ? currentHighlightColor || tagColorFor(tag, fallback) : undefined
 }
 
 /** Visible workspace tags for node chrome: mirrors ViewEditor's ElementNode filter. */
@@ -849,8 +855,10 @@ function drawSceneNode(
     ctx.translate(-cx, -cy)
   }
 
-  const parentAlpha = state.parentAlpha
-  const inheritedAlpha = state.inheritedAlpha
+  const tagAlpha = layout.tagHoverState === 'inactive' ? 0.2
+    : layout.tagContext || layout.tagHoverState === 'context' ? 0.55 : 1
+  const parentAlpha = state.parentAlpha * tagAlpha
+  const inheritedAlpha = state.inheritedAlpha * tagAlpha
 
   const isHovered = renderCtx.hoveredItem?.type === 'node' && renderCtx.hoveredItem.data === layout
   const borderColor = typeBorderColor(layout.type)
@@ -1390,6 +1398,11 @@ function drawEdges(
         nodeConnectorEndpointAlphaFromState(sn),
         targetSn ? nodeConnectorEndpointAlphaFromState(targetSn) : 1,
       )
+      if (edge.tagHighlighted) {
+        strokeColor = connectorTagHighlightColor(edge.tags, accent) ?? accent
+      }
+      const tagFactor = edge.tagMuted ? 0.2 : 1
+      layerFactor *= tagFactor
       const edgeAlpha = alpha * endpointAlphaFactor
       if (edgeAlpha < 0.05) continue
 
@@ -1442,7 +1455,7 @@ function drawEdges(
       ctx.strokeStyle = strokeColor
       const isHovered = hoveredItem?.type === 'edge' && !hoveredItem.data.isProxy &&
         hoveredItem.data.id === edge.id && hoveredItem.data.diagramId === node.diagramId
-      ctx.lineWidth = (isHovered ? 4 : CONNECTOR_LINE_PX) / zoom
+      ctx.lineWidth = (isHovered ? 4 : edge.tagHighlighted ? 3 : CONNECTOR_LINE_PX) / zoom
 
       if (edge.change === 'removed') {
         ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))

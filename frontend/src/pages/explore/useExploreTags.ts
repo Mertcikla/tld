@@ -3,14 +3,14 @@ import { api } from '../../api/client'
 import { useTagFilters } from '../../hooks/useTagFilters'
 import type { ExploreData, Tag, ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../utils/elementGroups'
-import { isGroundingIgnoreTag } from '../../utils/groundingTags'
+import { countCanvasTags, type CanvasTagCounts } from '../../utils/canvasTags'
 
-export interface ExploreTagsState {
+export interface ExploreTagsState extends CanvasTagCounts {
   allTags: string[]
-  tagCounts: Record<string, number>
   tagColors: Record<string, Tag>
   layers: ViewLayer[]
   layerElementCounts: Record<number, number>
+  layerConnectorCounts: Record<number, number>
   highlightedTags: string[]
   setHighlightedTags: Dispatch<SetStateAction<string[]>>
   highlightColor: string
@@ -23,28 +23,22 @@ export interface ExploreTagsState {
   toggleTagVisibility: (tag: string) => void
 }
 
-export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLayer[]): {
+export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLayer[]): CanvasTagCounts & {
   allTags: string[]
-  tagCounts: Record<string, number>
   layerElementCounts: Record<number, number>
+  layerConnectorCounts: Record<number, number>
 } {
   if (!data || !data.views) {
-    return { allTags: [], tagCounts: {}, layerElementCounts: {} }
+    return { allTags: [], ...countCanvasTags([], []), layerElementCounts: {}, layerConnectorCounts: {} }
   }
 
-  const tagSet = new Set<string>()
-  const tagCounts: Record<string, number> = {}
-  Object.values(data.views).forEach((view) => {
-      (view?.placements ?? []).forEach((placement) => {
-        (placement.tags ?? []).forEach((tag) => {
-          if (isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) return
-          tagSet.add(tag)
-          tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
-        })
-      })
-  })
+  const metrics = countCanvasTags(
+    Object.values(data.views).flatMap((view) => view?.placements ?? []),
+    Object.values(data.views).flatMap((view) => view?.connectors ?? []),
+  )
 
   const layerElementCounts: Record<number, number> = {}
+  const layerConnectorCounts: Record<number, number> = {}
   for (const layer of layers) {
     let count = 0
     const viewsToCount = isElementGroupLayer(layer)
@@ -57,12 +51,15 @@ export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLa
       })
     })
     layerElementCounts[layer.id] = count
+    layerConnectorCounts[layer.id] = groupTag ? 0 : viewsToCount.reduce((sum, view) => sum +
+      (view?.connectors ?? []).filter((edge) => (edge.tags ?? []).some((tag) => layer.tags.includes(tag))).length, 0)
   }
 
   return {
-    allTags: Array.from(tagSet).sort(),
-    tagCounts,
+    allTags: Object.keys(metrics.tagCounts).sort(),
+    ...metrics,
     layerElementCounts,
+    layerConnectorCounts,
   }
 }
 

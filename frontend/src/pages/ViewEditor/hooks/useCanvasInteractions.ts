@@ -30,6 +30,7 @@ import { parseNumericId } from '../../../utils/ids'
 import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { routeStyleFromValue } from '../../../utils/connectorRoute'
 import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
+import { connectorTagsFromDrop, resolveTagDropConnector, saveConnectorTagDrop } from '../connectorTagDrop'
 import { isElementShapedMarqueeRect, marqueeHitsElementRect } from '../selection'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
 import {
@@ -2756,6 +2757,26 @@ export function useCanvasInteractions({
     const layerIdStr = e.dataTransfer.getData('application/diag-layer')
 
     if (tagName || layerIdStr) {
+      const connector = resolveTagDropConnector(e.target, useStore.getState().connectors)
+      if (connector) {
+        const edge = _rfEdgesRef.current.find((edge) => edge.id === String(connector.id))
+        if (!edge || edge.style?.pointerEvents === 'none') return
+        const tags = connectorTagsFromDrop(e.dataTransfer, layers)
+        if (tags.length === 0) return
+        try {
+          const updated = await saveConnectorTagDrop(connector, tags)
+          if (!updated) return
+          const saved = connectorToConnector(updated)
+          upsertConnectorGraphSnapshot(saved)
+          replaceConnector(saved)
+          if (selectedConnector?.id === saved.id) setSelectedEdge(saved)
+          onConnectorSaved?.(saved)
+          onConnectorUpdated?.(connector, saved)
+        } catch (error) {
+          console.error('Failed to add connector tags:', error)
+        }
+        return
+      }
       const flowPos = screenToFlowPositionRef.current({ x: e.clientX, y: e.clientY })
       // Find node under drop position
       const nodeUnderDrop = rfNodesRef.current.find((node) => {
@@ -2795,7 +2816,7 @@ export function useCanvasInteractions({
         }
       }
     }
-  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition])
+  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition, _rfEdgesRef, replaceConnector, selectedConnector, setSelectedEdge, onConnectorSaved, onConnectorUpdated])
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return

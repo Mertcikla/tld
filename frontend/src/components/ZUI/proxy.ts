@@ -8,7 +8,7 @@ import {
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds } from './layoutEngine'
-import { pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
+import { connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import {
@@ -655,9 +655,10 @@ export function drawVisibleProxyConnectors(
 
     ctx.save()
     ctx.globalAlpha = connectorAlpha(alpha) * 0.8
-    ctx.strokeStyle = accent
+    const highlightColor = connectorTagHighlightColor(connector.details.connectors.flatMap((leaf) => leaf.connector.tags ?? []), accent)
+    ctx.strokeStyle = highlightColor ?? accent
     const isHovered = hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details?.key === connector.key
-    ctx.lineWidth = (isHovered ? 3 : 1) / zoom
+    ctx.lineWidth = (isHovered || highlightColor ? 3 : 1) / zoom
     ctx.lineCap = 'round'
     ctx.setLineDash(isHovered ? [] : [1 / zoom, 4 / zoom])
     ctx.beginPath()

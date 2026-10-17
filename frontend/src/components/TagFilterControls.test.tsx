@@ -19,6 +19,15 @@ function Harness() {
 }
 
 describe('tag filter controls', () => {
+  it('shows one total with an accessible element/connector breakdown', () => {
+    const renderer = create(<TagFilterRow tag="critical" count={5} elementCount={2} connectorCount={3}
+      hidden={false} onSelect={vi.fn()} onHover={vi.fn()} onToggleVisibility={vi.fn()} />)
+    const count = renderer.root.findAllByType('div').find((item) => item.props.title === '2 elements · 3 connectors')!
+    expect(count.children).toEqual(['5'])
+    expect(count.props['aria-label']).toBe('2 elements · 3 connectors')
+    act(() => renderer.unmount())
+  })
+
   it('keeps multiple selections and switches modes when the separate eye is clicked', () => {
     const renderer = create(<Harness />)
     const button = (label: string) => renderer.root.findAllByType('button').find((item) => item.props['aria-label'] === label)!

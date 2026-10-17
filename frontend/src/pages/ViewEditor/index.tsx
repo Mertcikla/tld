@@ -1,3 +1,7 @@
+import { connectorTagsForDrag } from './connectorTagDrop'
+import { getTagDragSource, useTagDragGhost } from '../../components/ViewExplorer/TagManager/tagDragGhostState'
+import { filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
+import { countCanvasTags } from '../../utils/canvasTags'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CoreUISlots } from '../../slots'
 import { resetTagFilters, toggleHiddenTags, toggleSelectedTag } from '../../utils/tagFilters'
@@ -876,7 +880,14 @@ function ViewEditorInner({
   const [hiddenLayerTags, setHiddenLayerTags] = useState<string[]>(() => demoOptions?.defaultHiddenLayerTags ?? [])
   const hiddenLayerTagsRef = useRef<string[]>([])
   hiddenLayerTagsRef.current = hiddenLayerTags
-  const [hoveredLayerTags, setHoveredLayerTags] = useState<string[] | null>(null)
+  const [hoveredLayerTagsState, setHoveredLayerTags] = useState<string[] | null>(null)
+  const tagDrag = useTagDragGhost()
+  const draggedConnectorTags = useMemo(() => tagDrag ? connectorTagsForDrag(getTagDragSource(), layers) : null, [tagDrag, layers])
+  // Source-row hover previews must not disable connectors while tagging them.
+  const hoveredLayerTags = tagDrag ? null : hoveredLayerTagsState
+  useEffect(() => {
+    if (tagDrag) setHoveredLayerTags(null)
+  }, [tagDrag])
   const [hoveredLayerColor, setHoveredLayerColor] = useState<string | null>(null)
   const handleHoverLayer = useCallback((tags: string[] | null, color?: string | null) => {
     setHoveredLayerTags(tags)
@@ -1029,6 +1040,8 @@ function ViewEditorInner({
     hoveredLayerTags,
     hoveredLayerColor,
     tagColors,
+    workspaceSnapshot: workspaceGraphSnapshot,
+    draggedConnectorTags,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
@@ -1927,13 +1940,12 @@ function ViewEditorInner({
     }
   }, [clearEditHistory, refreshElements, reloadVisibilityOverrides, toast, viewId])
 
-  const tagCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    viewElements.forEach(p => {
-      (p.tags ?? []).forEach(t => { counts[t] = (counts[t] ?? 0) + 1 })
-    })
-    return counts
-  }, [viewElements])
+  const { tagCounts, tagElementCounts, tagConnectorCounts } = useMemo(
+    () => countCanvasTags(viewElements, connectors), [viewElements, connectors],
+  )
+  const layerConnectorCounts = useMemo(() => Object.fromEntries(layers.map((layer) => [layer.id,
+    isElementGroupLayer(layer) ? 0 : connectors.filter((edge) => (edge.tags ?? []).some((tag) => layer.tags.includes(tag))).length,
+  ])), [layers, connectors])
 
   const layerElementCounts = useMemo(() => {
     const counts: Record<number, number> = {}
@@ -2883,9 +2895,15 @@ function ViewEditorInner({
     })
   }, [])
 
+  const filteredContextSnapshot = useMemo(() => effectiveWorkspaceSnapshot
+    ? filterSnapshotConnectorsByTags(effectiveWorkspaceSnapshot, activeTags, hiddenLayerTags) : null,
+  [effectiveWorkspaceSnapshot, activeTags, hiddenLayerTags])
+
   const { contextNodes, contextConnectors, hiddenProxyCountsByPair, hiddenProxyDetailsByPair } = useViewContextNeighbours({
-    snapshot: effectiveWorkspaceSnapshot,
+    snapshot: filteredContextSnapshot,
     settings: crossBranchSettings,
+    hoveredTags: hoveredLayerTags,
+    hoverColor: hoveredLayerColor,
     viewId,
     viewElements,
     rfNodes,
@@ -4719,6 +4737,9 @@ function ViewEditorInner({
               toggleTagVisibility={toggleTagVisibility}
               toggleLayerVisibility={toggleLayerVisibility}
               tagCounts={tagCounts}
+              tagElementCounts={tagElementCounts}
+              tagConnectorCounts={tagConnectorCounts}
+              layerConnectorCounts={layerConnectorCounts}
               layerElementCounts={layerElementCounts}
               setHighlightedTags={setHoveredLayerTags}
               setHighlightColor={setHoveredLayerColor}
