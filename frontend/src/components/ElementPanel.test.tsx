@@ -280,6 +280,80 @@ describe('ElementPanel bypass noise gate', () => {
     }))
   })
 
+  it('does not autosave the previous draft into elements selected while the panel is closed', async () => {
+    const onSave = vi.fn()
+    const onClose = vi.fn()
+    const source = element({ id: 40, name: 'Product Catalog', description: 'Product grids', tags: ['catalog'] })
+    const target = element({ id: 12, name: 'Cart State', description: 'Local cart state', tags: ['state'] })
+    const nextTarget = element({ id: 15, name: 'Checkout Flow', description: 'Checkout steps', tags: ['checkout'] })
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ElementPanel isOpen autoSave element={source} onClose={onClose} onSave={onSave} />)
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+    })
+    apiMocks.updateElement.mockClear()
+
+    await act(async () => {
+      renderer!.update(<ElementPanel isOpen={false} autoSave element={source} onClose={onClose} onSave={onSave} />)
+    })
+    for (const selected of [target, nextTarget]) {
+      await act(async () => {
+        renderer!.update(<ElementPanel isOpen={false} autoSave element={selected} onClose={onClose} onSave={onSave} />)
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(150)
+      })
+    }
+
+    expect(apiMocks.updateElement).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer!.update(<ElementPanel isOpen autoSave element={target} onClose={onClose} onSave={onSave} />)
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.onChange({ target: { value: 'Shopping Cart' } })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenCalledExactlyOnceWith(12, expect.objectContaining({
+      name: 'Shopping Cart',
+      description: 'Local cart state',
+      tags: ['state'],
+    }))
+    await act(async () => renderer!.unmount())
+  })
+
+  it('saves a pending edit to its original element after closing and changing selection', async () => {
+    const onSave = vi.fn()
+    const onClose = vi.fn()
+    const source = element({ id: 40, name: 'Product Catalog' })
+    const target = element({ id: 12, name: 'Cart State' })
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ElementPanel isOpen autoSave element={source} onClose={onClose} onSave={onSave} />)
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.onChange({ target: { value: 'Updated Catalog' } })
+    })
+    await act(async () => {
+      renderer!.update(<ElementPanel isOpen={false} autoSave element={source} onClose={onClose} onSave={onSave} />)
+    })
+    await act(async () => {
+      renderer!.update(<ElementPanel isOpen={false} autoSave element={target} onClose={onClose} onSave={onSave} />)
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenCalledExactlyOnceWith(40, expect.objectContaining({ name: 'Updated Catalog' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: 40, name: 'Updated Catalog' }))
+    await act(async () => renderer!.unmount())
+  })
+
   it('creates a custom technology inline, attaches it, and autosaves the primary icon', async () => {
     const onSave = vi.fn()
     const fileInputClick = vi.fn()

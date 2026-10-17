@@ -382,6 +382,7 @@ function ElementPanel({
   const autoSaveEdit = autoSave && isEdit && !isReadOnly
   const navigate = useNavigate()
   const toast = useToast()
+  const [draftElementId, setDraftElementId] = useState<number | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [type, setType] = useState('')
@@ -421,7 +422,7 @@ function ElementPanel({
   const autoSaveStateByElementRef = useRef(new Map<number, ElementAutoSaveState>())
   const saveIfDirtyByElementRef = useRef(new Map<number, SaveIfDirty>())
   const activeElementIdRef = useRef<number | null>(element?.id ?? null)
-  activeElementIdRef.current = element?.id ?? null
+  activeElementIdRef.current = isOpen ? element?.id ?? null : null
   const [techResultIndex, setTechResultIndex] = useState(-1)
   const confirmPermanentDelete = useDisclosure()
   const customTechnologyFileInputRef = useRef<HTMLInputElement>(null)
@@ -468,6 +469,7 @@ function ElementPanel({
         }
       }
       initializedElementIdRef.current = element.id
+      setDraftElementId(element.id)
       setName(element.name)
       setDescription(element.description ?? '')
       setType(element.kind ?? '')
@@ -513,6 +515,7 @@ function ElementPanel({
         })
     } else {
       initializedElementIdRef.current = null
+      setDraftElementId(null)
       setName('')
       setDescription('')
       setType('')
@@ -598,7 +601,7 @@ function ElementPanel({
   }, [technologyLinks, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate, resolveTechnologyLogoUrlForSave])
 
   const saveIfDirty = useCallback(async (overrides?: AutoSaveOverrides) => {
-    if (!autoSaveEdit || !element) return
+    if (!autoSaveEdit || !element || draftElementId !== element.id) return
     if (!name.trim()) return
 
     let saveState = autoSaveStateByElementRef.current.get(element.id)
@@ -629,9 +632,9 @@ function ElementPanel({
         void pendingSave.save(pendingSave.overrides)
       }
     }
-  }, [autoSaveEdit, element, name, buildPayloadAndFingerprint, onSave])
+  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave])
 
-  if (element) {
+  if (element && draftElementId === element.id) {
     // A delayed blur save must use this element's newest draft, even after selection changes.
     saveIfDirtyByElementRef.current.set(element.id, saveIfDirty)
   }
@@ -640,7 +643,7 @@ function ElementPanel({
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
 
   const scheduleAutoSave = (overrides?: AutoSaveOverrides) => {
-    if (!autoSaveEdit || !element) return
+    if (!isOpen || !autoSaveEdit || !element || draftElementId !== element.id) return
     const elementId = element.id
     window.setTimeout(() => {
       void saveIfDirtyByElementRef.current.get(elementId)?.(overrides)
@@ -648,19 +651,19 @@ function ElementPanel({
   }
 
   useEffect(() => {
-    if (!autoSaveEdit || !element) return
+    if (!isOpen || !autoSaveEdit || !element || draftElementId !== element.id) return
     const elementId = element.id
     const save = saveIfDirty
     const timer = window.setTimeout(() => {
       void save()
     }, AUTO_SAVE_DELAY_MS)
     return () => {
-      // Keep the old element's debounce alive across selection changes so its edit is saved.
+      // Preserve valid pending edits when the panel closes or selection changes.
       if (activeElementIdRef.current === elementId) {
         window.clearTimeout(timer)
       }
     }
-  }, [autoSaveEdit, element, saveIfDirty])
+  }, [isOpen, autoSaveEdit, element, draftElementId, saveIfDirty])
 
   const handleClose = useCallback(async () => {
     if (autoSaveEdit) {
