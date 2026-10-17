@@ -37,7 +37,7 @@ import { getParser, extractSymbols, detectLanguage, type SupportedLanguage, type
 import { githubCache } from '../utils/githubCache'
 import { parseRepoSlug } from '../utils/url'
 import { githubRequest } from '../utils/githubApi'
-import { formatLineSourceLink, formatSymbolSourceLink, parseSourceLink } from '../utils/sourceLinks'
+import { githubBranchName, formatLineSourceLink, formatSymbolSourceLink, parseSourceLink } from '../utils/sourceLinks'
 import { openExternalUrl } from '../lib/desktop'
 import { api, type IndexedRepository } from '../api/client'
 import { isLocalRepoPath, listIndexedRepositories, normalizeRemoteKey } from '../utils/repositoryResolver'
@@ -75,8 +75,8 @@ type ManualKind = 'url' | 'repo' | 'path'
 // Detect which source form the element currently encodes so the editor opens on
 // the matching tab. Mirrors the forms accepted by `tld link`.
 function detectSourceKind(element: LibraryElement): SourceKind {
-  if (element.repo && element.file_path) return 'file'
-  if (element.repo || element.file_path || element.url) return 'manual'
+  if (element.repo) return 'file'
+  if (element.file_path || element.url) return 'manual'
   return 'file'
 }
 
@@ -121,7 +121,7 @@ function manualTargetHint(value: string): string {
   }
 }
 
-const STEP_LABELS = ['Repo', 'Branch', 'File', 'Symbol']
+const STEP_LABELS = ['Repo', 'Branch', 'Path', 'Symbol']
 
 const SOURCE_KIND_TABS: ReadonlyArray<readonly [SourceKind, string]> = [
   ['file', 'Git'],
@@ -517,7 +517,19 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   }, [step])
 
   const filteredBranches = branches.filter(b => b.toLowerCase().includes(branchSearch.toLowerCase()))
-  const filteredFiles = fileTree.filter(p => p.toLowerCase().includes(fileSearch.toLowerCase())).slice(0, 100)
+  // Derive folders from file paths so cached and locally indexed trees work too.
+  const sourcePaths = useMemo(() => {
+    const paths = new Set(fileTree)
+    for (const path of fileTree) {
+      for (let slash = path.indexOf('/'); slash >= 0; slash = path.indexOf('/', slash + 1)) {
+        paths.add(path.slice(0, slash + 1))
+      }
+    }
+    return [...paths].sort((a, b) => a.localeCompare(b))
+  }, [fileTree])
+  const filteredFiles = sourcePaths.filter(p => p.toLowerCase().includes(fileSearch.toLowerCase())).slice(0, 100)
+  const pathTarget = fileSearch.trim()
+  const isFolderTarget = pathTarget.endsWith('/')
   const isSupported = SUPPORTED_LANGUAGES.includes(language as SupportedLanguage)
 
   // Find full symbol data (with line numbers) for the currently selected symbol
@@ -627,7 +639,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     setApiRateLimited(false)
     setFileTreeTruncated(false)
     try {
-      const res = await githubRequest(`/repos/${repoSlug}/git/trees/${branchName}?recursive=1`)
+      const res = await githubRequest(`/repos/${repoSlug}/git/trees/${encodeURIComponent(githubBranchName(branchName))}?recursive=1`)
       if (res.status === 403 || res.status === 429) { setApiRateLimited(true); return }
       if (!res.ok) throw new Error(res.statusText)
       const data: { tree: { path: string; type: string }[]; truncated?: boolean } = await res.json()
@@ -643,17 +655,17 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     }
   }
 
-  async function fetchSourceText(): Promise<string> {
+  async function fetchSourceText(path: string): Promise<string> {
     const indexed = await resolveIndexedRepo(repo)
     if (indexed) {
       const { content } = await api.editor.source({
         repository_id: indexed.id,
         repo: indexed.root,
-        file_path: filePath,
+        file_path: path,
       })
       return content
     }
-    const rawUrl = `https://raw.githubusercontent.com/${repo}/refs/heads/${branch}/${filePath}`
+    const rawUrl = `https://raw.githubusercontent.com/${repo}/refs/heads/${githubBranchName(branch) || 'main'}/${path}`
     const cached = githubCache.getContent(rawUrl)
     if (cached) return cached
     const res = await fetch(rawUrl)
@@ -663,12 +675,12 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     return text
   }
 
-  async function fetchAndParseSymbols(lang: SupportedLanguage) {
+  async function fetchAndParseSymbols(lang: SupportedLanguage, path: string) {
     setSymbolLoading(true)
     setSymbols([])
     setRawCode('')
     try {
-      const source = await fetchSourceText()
+      const source = await fetchSourceText(path)
       setRawCode(source)
       const parser = await getParser(lang)
       const tree = parser.parse(source)
@@ -684,11 +696,11 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     }
   }
 
-  async function fetchRawCode() {
+  async function fetchRawCode(path: string) {
     setRawCodeLoading(true)
     setRawCode('')
     try {
-      setRawCode(await fetchSourceText())
+      setRawCode(await fetchSourceText(path))
     } catch (err: unknown) {
       toast({ title: 'Failed to fetch file', description: err instanceof Error ? err.message : String(err), status: 'error', duration: 4000 })
     } finally {
@@ -720,13 +732,16 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
       }
     }
     if (nextStep === 4) {
-      const detected = detectLanguage(filePath)
+      const path = fileSearch.trim()
+      if (!path || path.endsWith('/')) return
+      if (path !== filePath) handleFileSelect(path)
+      const detected = detectLanguage(path)
       const lang = detected ?? 'unsupported'
       setLanguage(lang)
       if (SUPPORTED_LANGUAGES.includes(lang as SupportedLanguage)) {
-        fetchAndParseSymbols(lang as SupportedLanguage)
+        fetchAndParseSymbols(lang as SupportedLanguage, path)
       } else {
-        fetchRawCode()
+        fetchRawCode(path)
       }
     }
   }
@@ -752,15 +767,19 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     return filePath
   }
 
-  function handleApply() {
+  function handleApply(level: 'repo' | 'path' | 'anchor') {
+    if (isReadOnly) return
+    const path = level === 'repo' ? null : level === 'path' ? pathTarget : buildFilePath()
+    if (level !== 'repo' && !path) return
+    const pathLanguage = path && !path.endsWith('/') ? detectLanguage(parseSourceLink(path).basePath) : null
     const unchanged = repo.trim() === '' || repo === (element.repo ?? '')
     const preserveRepositoryID = isLocalRepoPath(repo) || unchanged
     onUpdate({
       repo: isLocalRepoPath(repo) ? repo : parseRepoSlug(repo),
       repository_id: indexedRepo?.id ?? (preserveRepositoryID ? element.repository_id ?? null : null),
-      branch,
-      file_path: buildFilePath(),
-      language: isSupported ? language : undefined,
+      branch: branch.trim() || null,
+      file_path: path,
+      language: pathLanguage ?? null,
       url: null,
       tags: withExternalTag(element.tags, false),
     })
@@ -942,7 +961,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                   )}
                   {showGithubLink && hasFilePath && (
                     <Button
-                      onClick={() => openExternalUrl(`https://github.com/${summaryRemoteSlug}/blob/${element.branch || 'main'}/${parsedExisting.basePath}`)}
+                      onClick={() => openExternalUrl(`https://github.com/${summaryRemoteSlug}/${isFolderLink ? 'tree' : 'blob'}/${encodeURIComponent(githubBranchName(element.branch) || 'main')}/${parsedExisting.basePath}`)}
                       size="xs" variant="ghost" leftIcon={<ExternalLinkIcon />}
                       justifyContent="flex-start" px={0} mt={0.5} h="auto" py={1}
                       color="blue.400" _hover={{ color: 'blue.200', bg: 'transparent' }}>
@@ -1024,10 +1043,16 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                         {indexedRepo ? `Indexed locally · ${indexedRepo.name}` : 'Public GitHub repositories only'}
                       </Text>
                     </FormControl>
-                    <Button size="sm" rightIcon={<ChevronRightIcon />} isDisabled={!repoValid || isReadOnly}
-                      onClick={() => advanceTo(2)} alignSelf="flex-end" colorScheme="blue" variant="outline" h="32px">
-                      Next
-                    </Button>
+                    <HStack justify="flex-end">
+                      <Button size="sm" colorScheme="blue" isDisabled={!repoValid || isReadOnly}
+                        onClick={() => handleApply('repo')} h="32px">
+                        Link repository
+                      </Button>
+                      <Button size="sm" rightIcon={<ChevronRightIcon />} isDisabled={!repoValid || isReadOnly}
+                        onClick={() => advanceTo(2)} colorScheme="blue" variant="outline" h="32px">
+                        Next
+                      </Button>
+                    </HStack>
                   </VStack>
                 )}
 
@@ -1076,7 +1101,6 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                                         setBranch(selected)
                                         setBranchSearch('')
                                         setBranchOpen(false)
-                                        advanceTo(3)
                                       } else if (branch) {
                                         advanceTo(3)
                                       }
@@ -1111,7 +1135,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                                   <Box key={b} px={3} py={1.5} cursor="pointer" fontSize="sm" color="gray.200"
                                     _hover={{ bg: 'whiteAlpha.100' }}
                                     bg={branch === b ? 'blue.900' : branchActiveIndex === idx ? 'whiteAlpha.200' : undefined}
-                                    onClick={() => { setBranch(b); setBranchSearch(''); setBranchOpen(false); advanceTo(3) }}>
+                                    onClick={() => { setBranch(b); setBranchSearch(''); setBranchOpen(false) }}>
                                     {b}
                                   </Box>
                                 ))}
@@ -1121,6 +1145,10 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                         </Popover>
                       )}
                     </FormControl>
+                    <Button size="sm" colorScheme="blue" isDisabled={!repoValid || isReadOnly}
+                      onClick={() => handleApply('repo')} h="32px">
+                      Link repository
+                    </Button>
                     <HStack justify="space-between">
                       <Button size="sm" variant="ghost" color="gray.500" onClick={() => setStep(1)} h="32px">← Back</Button>
                       <Button size="sm" rightIcon={<ChevronRightIcon />} isDisabled={!branch || isReadOnly}
@@ -1140,17 +1168,17 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                       <Badge colorScheme="blue" fontSize="9px">{branch}</Badge>
                     </HStack>
                     <FormControl>
-                      <FormLabel fontSize="xs" color="gray.400">File Path</FormLabel>
+                      <FormLabel fontSize="xs" color="gray.400">File or Folder Path</FormLabel>
                       {apiRateLimited ? (
                         <>
                           <Alert status="warning" rounded="md" mb={2} py={2} px={3}>
                             <AlertIcon boxSize={3} mr={2} />
-                            <AlertDescription fontSize="xs">GitHub API rate limit reached enter file path manually</AlertDescription>
+                            <AlertDescription fontSize="xs">GitHub API rate limit reached - enter a file or folder path manually</AlertDescription>
                           </Alert>
                           <Input size="sm" value={fileSearch}
-                            onChange={e => { setFileSearch(e.target.value); setFilePath(e.target.value) }}
-                            onKeyDown={e => { if (e.key === 'Enter' && fileSearch) { handleFileSelect(fileSearch); advanceTo(4) } }}
-                            placeholder="src/components/Foo.tsx"
+                            onChange={e => setFileSearch(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && fileSearch.trim()) handleFileSelect(fileSearch.trim()) }}
+                            placeholder="src/components/ or src/components/Foo.tsx"
                             bg="whiteAlpha.50" borderColor="whiteAlpha.100" />
                         </>
                       ) : (
@@ -1198,16 +1226,14 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                                       e.preventDefault()
                                       if (filteredFiles.length > 0) {
                                         handleFileSelect(filteredFiles[fileActiveIndex])
-                                        advanceTo(4)
                                       } else if (fileSearch) {
-                                        handleFileSelect(fileSearch)
-                                        advanceTo(4)
+                                        handleFileSelect(fileSearch.trim())
                                       }
                                     } else if (e.key === 'Escape') {
                                       setFileOpen(false)
                                     }
                                   }}
-                                  placeholder={fileTreeLoading ? 'Fetching file tree...' : 'Type to search files...'}
+                                  placeholder={fileTreeLoading ? 'Fetching file tree...' : 'Search files or folders...'}
                                   bg="whiteAlpha.50"
                                   borderColor="whiteAlpha.100"
                                   _hover={{ borderColor: 'whiteAlpha.300' }}
@@ -1240,7 +1266,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                                   <Box key={p} px={3} py={1.5} cursor="pointer" fontSize="xs" color="gray.300"
                                     fontFamily="mono" _hover={{ bg: 'whiteAlpha.100' }}
                                     bg={filePath === p ? 'blue.900' : fileActiveIndex === idx ? 'whiteAlpha.200' : undefined}
-                                    onClick={() => { handleFileSelect(p); advanceTo(4) }}>
+                                    onClick={() => handleFileSelect(p)}>
                                     {p}
                                   </Box>
                                 ))}
@@ -1250,10 +1276,17 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                         </Popover>
                       )}
                     </FormControl>
+                    <Text fontSize="10px" color="gray.500">
+                      Link this path, or continue to choose a symbol or line. End folder paths with /.
+                    </Text>
+                    <Button size="sm" colorScheme="blue" isDisabled={!pathTarget || isReadOnly}
+                      onClick={() => handleApply('path')} h="32px">
+                      {isFolderTarget ? 'Link folder' : 'Link file'}
+                    </Button>
                     <HStack justify="space-between">
                       <Button size="sm" variant="ghost" color="gray.500" onClick={() => setStep(2)} h="32px">← Back</Button>
                       <Button size="sm" rightIcon={<ChevronRightIcon />}
-                        isDisabled={!filePath || isReadOnly}
+                        isDisabled={!pathTarget || isFolderTarget || isReadOnly}
                         onClick={() => advanceTo(4)} colorScheme="blue" variant="outline" h="32px">
                         Next
                       </Button>
@@ -1320,7 +1353,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
 
                     <HStack justify="space-between">
                       <Button size="sm" variant="ghost" color="gray.500" onClick={() => setStep(3)} h="32px">← Back</Button>
-                      <Button size="sm" colorScheme="blue" onClick={handleApply} isDisabled={isReadOnly || symbolLoading || rawCodeLoading} h="32px">
+                      <Button size="sm" colorScheme="blue" onClick={() => handleApply('anchor')} isDisabled={isReadOnly || symbolLoading || rawCodeLoading} h="32px">
                         Apply
                       </Button>
                     </HStack>

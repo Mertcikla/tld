@@ -25,6 +25,21 @@ export function sourceBasePath(link: string | null | undefined) {
   return hashIdx >= 0 ? value.slice(0, hashIdx) : value
 }
 
+// GitHub uses the branch name on the remote, not Git's local tracking ref.
+// Only strip known tracking prefixes; names like feature/new-ui are branches.
+export function githubBranchName(branch: string | null | undefined): string {
+  const name = (branch ?? '').trim()
+  if (name.startsWith('refs/heads/')) return name.slice('refs/heads/'.length)
+  const remoteRef = name.match(/^(?:refs\/)?remotes\/[^/]+\/(.+)$/)
+  return remoteRef ? remoteRef[1] : name.replace(/^origin\//, '')
+}
+
+export function sourceLinkKind(link: string | null | undefined): 'repository' | 'folder' | 'file' {
+  const path = sourceBasePath(link).trim()
+  if (!path) return 'repository'
+  return path.endsWith('/') || path.endsWith('\\') ? 'folder' : 'file'
+}
+
 export function parseSourceAnchor(anchorText: string | null | undefined): SourceAnchor {
   const text = (anchorText ?? '').trim()
   if (!text) return { kind: 'none' }
