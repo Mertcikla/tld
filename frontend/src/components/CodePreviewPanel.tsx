@@ -262,7 +262,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const editorPath = basePath || indexedRepo?.root || (localRepo ? element?.repo : '')
   const title = linkKind === 'repository'
     ? repositoryLabel
-    : basePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || basePath
+    : basePath.split(/[\\/]/).filter(Boolean).pop() || basePath
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
