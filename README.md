@@ -23,7 +23,14 @@
 
 ## Highlights
 
-- **UI**: A frontend optimized to handle complex architectures, with intuitive design and polished with tools to manage contextual views.
+- **Markdown Notes Support**: Add notes and documentation for your diagram or link an existing one, preview and edit diagrams and markdown side-by-side. 
+- **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer [docs](https://tldiagram.com/docs/ui/mermaid/).
+  
+<p align="center">
+<img width="900" height="900" alt="markdown-integration" src="https://github.com/user-attachments/assets/de20855f-8f65-4aca-b06c-b880f731a57e" />
+</p>
+
+
 - **Standalone Distribution**: A single, dependency-free binary containing both the server and the web application. Available as CLI + WebUI or Native app(windows and macOS).
 - **CLI that speaks agent**: Use the [agent skill](./skills/create-diagram/SKILL.md) and use your agent to create a diagram of your codebase with the exact detail level you need. Prompt the agent to add/remove details you see fit. 
 Here are some examples that were generated using the agent skill.
@@ -37,18 +44,20 @@ Here are some examples that were generated using the agent skill.
   - [.NET eShop reference](https://tldiagram.com/app/explore/shared/ba6cbf2a-e0ff-468a-87e5-f720d35f448d)
 
 - **Editor and Github Integration**: Jump to the code in your editor or Github from diagrams, or open the code symbol in diagram from your editor to visualize the code using the [VSCode extension](https://marketplace.visualstudio.com/items?itemName=tlDiagram-com.tldiagram). 
-- **Markdown Notes Support**: Add notes and documentation for your diagram or link an existing one, preview and edit diagrams and markdown side-by-side. 
-- **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer [docs](https://tldiagram.com/docs/ui/mermaid/).
+
 - **Bi-directional Sync**: Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Git diff visualization**: Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
 - **Codebase Mapping**: Generate source grounded elements to jump-start your diagramming process. 
 - **Visualize Code Changes**: Visualize the changes between commits or a PR [docs](./docs/git-compare.md).
 - **PR Diagram Bot**: Automatically generate a diagram for your PR and visualize the changes in your codebase [docs](https://github.com/Mertcikla/tld-pr-bot).
 - **Diagrams as Code**: Manage architectural evolution alongside your source code.
+
+
+- **UI**: A frontend optimized to handle complex architectures, with intuitive design and polished with tools to manage contextual views.
+
 <p align="center">
 <img width="1280" height="882" alt="editor" src="https://github.com/user-attachments/assets/4ee283b0-ee45-4a04-86e4-f477c26e9977" />
 </p>
-
 
 ## Quick Start
 
