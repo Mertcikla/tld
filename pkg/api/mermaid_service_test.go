@@ -61,7 +61,7 @@ func TestMermaidServiceExportMermaidViewIncludesGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportMermaidView() error = %v", err)
 	}
-	for _, want := range []string{`subgraph group_7["Payments"]`, `node_1["API"]`, "style group_7 fill:#33669926,stroke:#336699"} {
+	for _, want := range []string{`subgraph group_7["Payments"]`, `node_1("API")`, "style group_7 fill:#33669926,stroke:#336699"} {
 		if !strings.Contains(resp.Msg.GetCode(), want) {
 			t.Errorf("export code missing %q:\n%s", want, resp.Msg.GetCode())
 		}

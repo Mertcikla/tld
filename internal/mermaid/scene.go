@@ -18,7 +18,7 @@ type SceneExportOptions struct {
 	// Theme enables themed labels and styles. Nil preserves legacy presentation
 	// for existing Go consumers. The CLI and server supply DefaultTheme.
 	Theme *Theme
-	// NoTheme emits no classDef, class, or linkStyle statements, retaining text
+	// NoTheme emits no theme frontmatter, classDef, class, or linkStyle statements, retaining text
 	// change markers so the unstyled diagram still communicates change status.
 	NoTheme bool
 	// IncludeMetadata prepends a %% tld-scene comment naming the repository
@@ -35,7 +35,7 @@ type SceneExportOptions struct {
 // never mutated and rendering never consults live workspace or source facts.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
 	if scene == nil {
-		return "flowchart LR\n"
+		return strings.Join(themedHeader(opts.Theme, opts.NoTheme), "\n") + "\n"
 	}
 	scene = SelectImpactScene(scene, scene.GetComparison().GetEffectiveRadius(), opts.Plain || scene.GetComparison().GetPlain())
 	view := sceneViewer{plain: opts.Plain || scene.GetComparison().GetPlain(), scene: scene, theme: opts.Theme, noTheme: opts.NoTheme, classes: map[string][]string{}}
@@ -44,7 +44,7 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 	}
 	view.index()
 
-	lines := []string{"flowchart LR"}
+	lines := themedHeader(opts.Theme, opts.NoTheme)
 	if opts.IncludeMetadata {
 		parts := []string{"%% tld-scene"}
 		appendEntry := func(key, value string) {
@@ -203,7 +203,16 @@ func (v *sceneViewer) sceneNodeLabel(element *diagv1.PlacedElement, separator st
 				detail = append(detail, word)
 			}
 			if showChurn && overlay.LinesAdded != nil && overlay.LinesRemoved != nil {
-				detail = append(detail, fmt.Sprintf("+%d \u2212%d", overlay.GetLinesAdded(), overlay.GetLinesRemoved()))
+				addedColor, removedColor := "", ""
+				if v.theme != nil && !v.noTheme {
+					addedColor, removedColor = v.theme.Labels.AddedColor, v.theme.Labels.RemovedColor
+				}
+				if overlay.GetLinesAdded() > 0 {
+					detail = append(detail, churnLabel("+", overlay.GetLinesAdded(), addedColor))
+				}
+				if overlay.GetLinesRemoved() > 0 {
+					detail = append(detail, churnLabel("−", overlay.GetLinesRemoved(), removedColor))
+				}
 			}
 			if len(detail) > 0 {
 				label += separator + strings.Join(detail, " ")
@@ -211,6 +220,15 @@ func (v *sceneViewer) sceneNodeLabel(element *diagv1.PlacedElement, separator st
 		} else if showContext {
 			label += separator + "(context)"
 		}
+	}
+	return label
+}
+
+func churnLabel(sign string, count uint32, color string) string {
+	label := fmt.Sprintf("%s%d", sign, count)
+	// Validate even for Go callers that construct Theme directly.
+	if themeProperties["color"].MatchString(color) {
+		return "<span style='color:" + color + "!important'>" + label + "</span>"
 	}
 	return label
 }
@@ -300,7 +318,7 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 			continue
 		}
 		rendered[elementID] = true
-		lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, sceneNodeRef(viewID, elementID),
+		lines = append(lines, fmt.Sprintf(`%s%s("%s")`, pad, sceneNodeRef(viewID, elementID),
 			escapeMermaidLabel(v.sceneNodeLabel(placement.GetElement(), "<br/>"))))
 		v.styleNode(sceneNodeRef(viewID, elementID), v.nodeState(placement.GetElement()))
 	}
@@ -325,7 +343,7 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 			if state != "" {
 				id += "_" + state
 			}
-			lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, pad, id, strings.Join(labels, "<br/>")))
+			lines = append(lines, fmt.Sprintf(`%s%s("%s")`, pad, id, strings.Join(labels, "<br/>")))
 			v.styleNode(id, state)
 		}
 	}

@@ -75,11 +75,26 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 
 ## Mermaid themes
 
+Open [the theme studio](mermaid-theme-editor.html) in a browser to tune every
+style and label option against a live mock diagram, import partial overrides,
+and download a compatible `theme.json`. The single HTML file embeds the default
+theme and loads Mermaid from a pinned CDN URL.
+
 CLI and UI Mermaid output use the embedded [theme.json](../internal/mermaid/theme.json).
-Changed nodes have tinted fills, stronger borders and heavier text; context is
-neutral. Modified, added and removed nodes use amber, green and red respectively.
+The default uses Mermaid's customizable `base` theme with explicit frontmatter
+`themeVariables` and the `classic` look. Nodes share the canvas's default slate
+fill (`#2d3748`) and light text; amber (`#ecc94b`), green (`#48bb78`), and red
+(`#fc8181`) borders and edges indicate modified, added, and removed resources.
+Diagram, subgraph, and edge-label backgrounds stay transparent so GitHub's
+page background shows through. HTML labels color added line counts yellow and removed counts red. A scoped
+`themeCSS` rule keeps Mermaid's HTML edge-label backgrounds transparent. Muted container and edge labels remain visible on light
+and dark pages. Nodes, including compact isolated groups, use rounded Mermaid
+syntax (`id("Label")`) in UI and CLI output. Mermaid controls layout and does
+not reproduce canvas positions, badges, or user-specific appearance settings.
 Removed nodes also have dashed borders. Labels retain known line counts without
-repeating `modified` or `(context)` in every node. Compact isolated-node groups
+repeating `modified` or `(context)` in every node. Zero churn counts are omitted
+(`+42 −0` becomes `+42`, and `+0 −31` becomes `−31`); counts with both sides zero
+produce no churn label. Compact isolated-node groups
 are separated by change type so they cannot misrepresent a mixed group.
 
 Use a partial JSON override to customize the presentation:
@@ -101,15 +116,31 @@ tld git compare main feature --auto --markdown --theme ./review-theme.json
 tld git compare main feature --auto --markdown --no-theme
 ```
 
-The format has four top-level fields:
+The format has six top-level fields:
 
 - `version`: currently `1`; optional in a partial override.
+- `baseTheme`: Mermaid's built-in theme, defaulting to `base`. Choose
+  `default`, `neutral`, `dark`, `forest`, `base`, `redux-color`, `redux-dark-color`,
+  `redux`, `redux-dark`, `neo`, or `neo-dark`. The theme studio saves this selection.
+  Themed CLI and UI exports prepend YAML frontmatter (`config.theme`) before
+  `flowchart`. Keep `base` for Mermaid's supported custom theme behavior.
+- `themeVariables`: partial overrides for Mermaid's frontmatter theme variables.
+  Supported values are `darkMode` (boolean), `fontFamily` (a font stack),
+  `fontSize` (a CSS size), and hex colors for `primaryColor`, `primaryTextColor`,
+  `primaryBorderColor`, the corresponding `secondary*` and `tertiary*` colors,
+  `mainBkg`, `nodeBorder`, `nodeTextColor`, `clusterBorder`, `lineColor`,
+  `defaultLinkColor`, `textColor`, and `titleColor`. `background`, `clusterBkg`,
+  and `edgeLabelBackground` additionally accept `transparent` (the default).
+  Missing variables inherit the embedded defaults. Per-state node/edge styles
+  take precedence over these diagram-wide defaults.
 - `nodes` and `edges`: each contains `context`, `modified`, `added`, and `removed`
   style objects. Missing states and properties inherit the embedded default.
   An empty string removes a style property; an empty object inherits everything.
 - `labels`: `change`, `context`, and `churn` booleans control status words,
   the `(context)` suffix, and known line counts. Defaults are `false`, `false`,
-  and `true`. Missing counts are never presented as zero.
+  and `true`. `addedColor` and `removedColor` set the line-count text colors
+  (hex colors, default yellow `#ecc94b` and red `#fc8181`); an empty string
+  disables that count color. Missing counts are never presented as zero.
 
 Supported style properties and values:
 
@@ -129,7 +160,7 @@ indexing. The theme accepts presentation values rather than arbitrary CSS or
 Mermaid directives. Fonts must be available on the reader's system; the theme
 does not load external fonts. Set text and fill colors together for contrast.
 
-`--no-theme` emits no `classDef`, `class`, or `linkStyle` statements. It restores
+`--no-theme` emits no theme frontmatter, `classDef`, `class`, or `linkStyle` statements. It restores
 textual change/context labels and line counts, and preserves change arrow
 shapes. It does not change scene selection. `--plain` can be combined with
 `--no-theme`; plain Mermaid omits view subgraphs, while its canvas behavior

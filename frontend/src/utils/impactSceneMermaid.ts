@@ -47,7 +47,12 @@ export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolea
       connected.add(nodeRef(targetView, connector.targetElementId))
     }
   }
-  const lines = ['flowchart LR']
+  const lines = theme ? [
+    '---', 'config:', `  theme: '${theme.baseTheme}'`, '  look: classic', '  htmlLabels: true',
+    "  themeCSS: '.edgeLabel .labelBkg { background: transparent !important; }'", '  themeVariables:',
+    ...Object.entries(theme.themeVariables).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `    ${key}: ${JSON.stringify(value)}`),
+    '---', 'flowchart LR',
+  ] : ['flowchart LR']
   const metadata = ['%% tld-scene']
   for (const [key, value] of [['repo', scene.comparison?.repositoryId], ['key', scene.comparison?.key]]) {
     if (value?.trim()) metadata.push(`${key}=${escapeMetadata(value.trim())}`)
@@ -70,7 +75,11 @@ export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolea
       else {
         const parts: string[] = []
         if (!theme || theme.labels.change) parts.push(change)
-        if ((!theme || theme.labels.churn) && overlay.linesAdded != null && overlay.linesRemoved != null) parts.push(`+${overlay.linesAdded} −${overlay.linesRemoved}`)
+        if ((!theme || theme.labels.churn) && overlay.linesAdded != null && overlay.linesRemoved != null) {
+          const churnLabel = (sign: string, count: number, color?: string) => color ? `<span style='color:${color}!important'>${sign}${count}</span>` : `${sign}${count}`
+          if (overlay.linesAdded > 0) parts.push(churnLabel('+', overlay.linesAdded, theme?.labels.addedColor))
+          if (overlay.linesRemoved > 0) parts.push(churnLabel('−', overlay.linesRemoved, theme?.labels.removedColor))
+        }
         if (parts.length) label += separator + parts.join(' ')
       }
     }
@@ -122,7 +131,7 @@ export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolea
         continue
       }
       rendered.add(id)
-      lines.push(`${pad}${nodeRef(viewId, id)}["${nodeLabel(placement, '<br/>')}"]`)
+      lines.push(`${pad}${nodeRef(viewId, id)}("${nodeLabel(placement, '<br/>')}")`)
       styleNode(nodeRef(viewId, id), nodeState(id))
     }
     if (isolated.length >= 3) {
@@ -131,7 +140,7 @@ export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolea
         const group = isolated.filter(p => !state || nodeState(p.element!.elementId) === state)
         if (!group.length) continue
         const id = `${viewRef(viewId)}_isolated${state ? '_' + state : ''}`
-        lines.push(`${pad}${id}["${group.map(p => nodeLabel(p, ' ')).join('<br/>')}"]`)
+        lines.push(`${pad}${id}("${group.map(p => nodeLabel(p, ' ')).join('<br/>')}")`)
         if (state) styleNode(id, state)
       }
     }

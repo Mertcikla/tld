@@ -245,7 +245,16 @@ func writeAutoFiles(out *strings.Builder, files []*pb.ImpactFile) {
 			out.WriteString(" — modified")
 		}
 		if file.LinesAdded != nil && file.LinesRemoved != nil {
-			fmt.Fprintf(out, " (+%d / −%d)", file.GetLinesAdded(), file.GetLinesRemoved())
+			var counts []string
+			if file.GetLinesAdded() > 0 {
+				counts = append(counts, fmt.Sprintf("+%d", file.GetLinesAdded()))
+			}
+			if file.GetLinesRemoved() > 0 {
+				counts = append(counts, fmt.Sprintf("−%d", file.GetLinesRemoved()))
+			}
+			if len(counts) > 0 {
+				fmt.Fprintf(out, " (%s)", strings.Join(counts, " / "))
+			}
 		}
 		out.WriteByte('\n')
 	}
