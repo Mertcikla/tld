@@ -42,6 +42,8 @@ import { ELEMENT_TYPES, type LibraryElement, type ViewConnector, type Technology
 import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
+import PanelSaveStatus from './PanelSaveStatus'
+import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
@@ -398,6 +400,7 @@ function ElementPanel({
   const [tags, setTags] = useState<string[]>([])
   const [bypassNoiseGate, setBypassNoiseGate] = useState(false)
   const [loading, setLoading] = useState(false)
+  const { state: saveState, startSaving, saved: reportSaved, failed } = usePanelSaveFeedback(`element-${isOpen ? element?.id ?? 'new' : 'closed'}`)
   const [explicitLogoClear, setExplicitLogoClear] = useState(false)
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const typeInputRef = useRef<HTMLInputElement>(null)
@@ -619,11 +622,13 @@ function ElementPanel({
     try {
       const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
+      startSaving()
       const saved = await api.elements.update(element.id, payload)
       lastSavedFingerprintByElementRef.current.set(element.id, fingerprint)
+      reportSaved()
       onSave(saved)
     } catch {
-      // ignore
+      failed()
     } finally {
       saveState.saving = false
       if (saveState.pending) {
@@ -632,7 +637,7 @@ function ElementPanel({
         void pendingSave.save(pendingSave.overrides)
       }
     }
-  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave])
+  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
 
   if (element && draftElementId === element.id) {
     // A delayed blur save must use this element's newest draft, even after selection changes.
@@ -797,8 +802,9 @@ function ElementPanel({
   }, [isOpen, technologyQuery])
 
   const handleSave = useCallback(async () => {
-    if (isReadOnly || !name.trim()) return
+    if (isReadOnly || !name.trim() || loading) return
     setLoading(true)
+    startSaving()
     try {
       const primaryLink = technologyLinks.find((link) => (
         !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
@@ -829,14 +835,15 @@ function ElementPanel({
       const saved = isEdit
         ? await api.elements.update(element!.id, payload)
         : await api.elements.create(payload)
+      reportSaved()
       onSave(saved)
       handleClose()
     } catch {
-      // intentionally empty
+      failed()
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, name, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave])
+  }, [isReadOnly, name, loading, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave, startSaving, reportSaved, failed])
 
   useEffect(() => {
     if (!isOpen) return
@@ -1405,7 +1412,7 @@ function ElementPanel({
                                   Create custom technology
                                 </Text>
                               </HStack>
-                              <Text fontSize="xs" color="gray.500" flexShrink={0}>
+                              <Text fontSize="xs" color="text.muted" flexShrink={0}>
                                 Add icon
                               </Text>
                             </HStack>
@@ -1473,7 +1480,7 @@ function ElementPanel({
                                       <Text fontSize="sm" color="gray.100" noOfLines={1}>
                                         {customTechnologyFile ? customTechnologyFile.name : 'Upload icon'}
                                       </Text>
-                                      <Text fontSize="xs" color="gray.500" lineHeight="1.35">
+                                      <Text fontSize="xs" color="text.muted" lineHeight="1.35">
                                         {customTechnologyFile ? 'Click to replace, or drop another file.' : 'Drop or choose SVG/PNG, max 2 MB.'}
                                       </Text>
                                     </Box>
@@ -1591,7 +1598,7 @@ function ElementPanel({
                                 <Button
                                   data-testid="custom-technology-save"
                                   size="sm"
-                                  colorScheme="blue"
+                                  variant="primary"
                                   isLoading={customTechnologySaving}
                                   isDisabled={!customTechnologyCanCreate}
                                   w="full"
@@ -1767,7 +1774,7 @@ function ElementPanel({
                       <>
                         <HStack justify="space-between" align="flex-start" mb={2.5}>
                           <Box>
-                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing when filtering is enabled.</Text>
+                            <Text fontSize="xs" color="text.muted">Choose when this element starts appearing when filtering is enabled.</Text>
                           </Box>
                         </HStack>
                         <Box px={1} pt={1} pb={0.5} mb={isEdit && canEdit && onMerge ? 3 : 0}>
@@ -1960,13 +1967,14 @@ function ElementPanel({
         </ScrollIndicatorWrapper>
 
         {/* Footer */}
+        {canEdit && <PanelSaveStatus state={saveState} hasFooter={!autoSaveEdit && !isInline} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         {!autoSaveEdit && !isInline && (
           <HStack px={4} py={3} justify="flex-end" flexShrink={0}>
             <Button variant="ghost" size="sm" onClick={handleClose}>
               Cancel
             </Button>
             {canEdit && (
-              <Button size="sm" px={5} colorScheme="blue" onClick={handleSave} isLoading={loading}>
+              <Button size="sm" px={5} variant="primary" onClick={handleSave} isLoading={loading}>
                 Save
               </Button>
             )}

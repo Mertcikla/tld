@@ -5,7 +5,6 @@ export interface ViewEditorDemoOptions {
   revealProgress?: number
   disableImportExport?: boolean
   hideFlowControls?: boolean
-  disableOnboarding?: boolean
   hideFocusView?: boolean
   hideExpandExtras?: boolean
   defaultHiddenLayerTags?: string[]
@@ -14,7 +13,6 @@ export interface ViewEditorDemoOptions {
 export const DEMO_VIEW_EDITOR_OPTIONS: Omit<ViewEditorDemoOptions, 'revealProgress'> = {
   disableImportExport: true,
   hideFlowControls: true,
-  disableOnboarding: true,
   hideFocusView: true,
   hideExpandExtras: true,
   defaultHiddenLayerTags: ['view_layers:admin', 'view_layers:ops'],

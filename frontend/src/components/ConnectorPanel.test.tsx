@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Connector } from '../types'
 import ConnectorPanel from './ConnectorPanel'
+import { api } from '../api/client'
 
 const testContext = vi.hoisted(() => ({ canEdit: true }))
 
@@ -43,6 +44,7 @@ vi.mock('@chakra-ui/react', async () => {
     TagLabel: passthrough,
     useBreakpointValue: () => false,
     useDisclosure: () => ({ isOpen: false, onOpen: vi.fn(), onClose: vi.fn() }),
+    useToast: () => vi.fn(),
     VStack: passthrough,
     Wrap: passthrough,
     WrapItem: passthrough,
@@ -70,7 +72,9 @@ function connector(id = 10): Connector {
 
 describe('ConnectorPanel noise gate', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     testContext.canEdit = true
+    vi.mocked(api.workspace.connectors.update).mockReset()
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -80,7 +84,33 @@ describe('ConnectorPanel noise gate', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('reports autosave failure and retries the current draft', async () => {
+    const onSave = vi.fn()
+    const onClose = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ConnectorPanel isOpen autoSave connector={connector()} orgId="" onSave={onSave} onClose={onClose} onDelete={vi.fn()} />)
+    })
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'panel-save-status' })).toHaveLength(0)
+    vi.mocked(api.workspace.connectors.update).mockRejectedValueOnce(new Error('offline'))
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'connector-panel-label-input' }).props.onChange({ target: { value: 'Updated label' } })
+    })
+    await act(async () => { vi.advanceTimersByTime(150) })
+    expect(api.workspace.connectors.update).toHaveBeenCalledWith(1, 10, expect.objectContaining({ label: 'Updated label' }))
+    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.role).toBe('alert')
+    expect(onSave).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    vi.mocked(api.workspace.connectors.update).mockResolvedValueOnce({ ...connector(), label: 'Updated label' })
+    await act(async () => { renderer!.root.findByProps({ 'data-testid': 'panel-save-retry' }).props.onClick(); await Promise.resolve() })
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ label: 'Updated label' }))
+    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes saved.')
+    expect(onClose).not.toHaveBeenCalled()
+    await act(async () => { renderer!.unmount() })
   })
 
   it('maps the slider level to an exact visibility delta', async () => {

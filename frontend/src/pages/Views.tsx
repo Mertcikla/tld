@@ -7,30 +7,24 @@ import {
   Text,
   Spinner,
   Center,
-  FormControl,
-  FormLabel,
   HStack,
   IconButton,
   Input,
   InputGroup,
   InputLeftElement,
   InputRightElement,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
   useDisclosure,
   useBreakpointValue,
 } from '@chakra-ui/react'
 import { AddIcon, CloseIcon, SearchIcon } from '@chakra-ui/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
+import CreateViewDialog from '../components/CreateViewDialog'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { useExploreData } from './explore/useExploreData'
 import { ZoomInIcon } from '../components/Icons'
 import { ShortcutHint } from '../components/PanelUI'
+import { modeSwitchGroupStyles, modeSwitchOptionStyles } from '../styles/modeSwitch'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ExploreData, ViewTreeNode } from '../types'
@@ -94,7 +88,6 @@ function DiagramJumpToolbar({
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [searchFocused, setSearchFocused] = useState(false)
-  const inactiveColor = 'gray.400'
   const searchHasContent = searchTerm.length > 0 || searchResults.length > 0
   const searchIsActive = searchFocused || searchHasContent
   const showCreateButton = !searchHasContent
@@ -129,7 +122,7 @@ function DiagramJumpToolbar({
       transform="translateX(-50%)"
       zIndex={1000}
       pointerEvents="auto"
-      w={isMobileLayout ? "calc(100vw - 24px)" : "auto"}
+      w={isMobileLayout ? "calc(100vw - 24px)" : "max-content"}
       maxW="calc(100vw - 24px)"
     >
       <motion.div
@@ -145,76 +138,36 @@ function DiagramJumpToolbar({
           gap={1.5}
           boxShadow="0 5px 10px rgba(0,0,0,0.5)"
           align="center"
-          w={isMobileLayout ? "full" : "auto"}
+          w="full"
           maxW="full"
           overflow="visible"
-          transition="all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
+          transition="border-color 0.2s ease, box-shadow 0.2s ease"
         >
-          <HStack
-            spacing={0.5}
-            p={0.5}
-            bg="blackAlpha.200"
-            border="1px solid"
-            borderColor="whiteAlpha.50"
-            borderRadius="lg"
-            flexShrink={0}
-          >
+          <HStack spacing={0} sx={modeSwitchGroupStyles} role="group" aria-label="Diagram mode">
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="md"
-              position="relative"
-              px={isMobileLayout ? 2.5 : 3}
-              h="28px"
-              minW={isMobileLayout ? "34px" : "auto"}
+              sx={modeSwitchOptionStyles}
               onClick={() => onViewChange('explore')}
-              _hover={{ bg: 'transparent' }}
-              _active={{ bg: 'transparent' }}
-              color={view === 'explore' ? 'white' : inactiveColor}
-              transition="color 0.2s"
               aria-label="Explore view"
+              aria-pressed={view === 'explore'}
             >
-              {view === 'explore' && (
-                <Box
-                  position="absolute"
-                  inset={0}
-                  bg="var(--bg-element)"
-                  borderRadius="md"
-                  zIndex={-1}
-                />
-              )}
-              <HStack spacing={1.5} zIndex={1}>
+              <HStack spacing={1.5}>
                 <ZoomInIcon size={13} strokeWidth={2.4} />
-                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Explore</Text>
+                <Text display={isMobileLayout ? "none" : "block"}>Explore</Text>
               </HStack>
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="md"
-              position="relative"
-              px={isMobileLayout ? 2.5 : 3}
-              h="28px"
-              minW={isMobileLayout ? "34px" : "auto"}
+              sx={modeSwitchOptionStyles}
               onClick={() => onViewChange('hierarchy')}
-              _hover={{ bg: 'transparent' }}
-              _active={{ bg: 'transparent' }}
-              color={view === 'hierarchy' ? 'white' : inactiveColor}
-              transition="color 0.2s"
               aria-label="Hierarchy view"
+              aria-pressed={view === 'hierarchy'}
             >
-              {view === 'hierarchy' && (
-                <Box
-                  position="absolute"
-                  inset={0}
-                  bg="var(--bg-element)"
-                  borderRadius="md"
-                  zIndex={-1}
-                />
-              )}
-              <HStack spacing={1.5} zIndex={1}>
+              <HStack spacing={1.5}>
                 <HierarchyModeIcon />
-                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Hierarchy</Text>
+                <Text display={isMobileLayout ? "none" : "block"}>Hierarchy</Text>
               </HStack>
             </Button>
           </HStack>
@@ -225,7 +178,7 @@ function DiagramJumpToolbar({
             initial={false}
             animate={isMobileLayout ? undefined : { width: desktopSearchWidth }}
             transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
-            style={{ flex: isMobileLayout ? '1 1 0' : '0 0 auto', minWidth: 0 }}
+            style={{ flex: isMobileLayout ? '1 1 0' : '0 1 auto', minWidth: 0 }}
           >
             <InputGroup size="sm" w="full">
               <InputLeftElement pointerEvents="none" h="28px" w="28px">
@@ -251,7 +204,6 @@ function DiagramJumpToolbar({
                 h="28px"
                 pl="28px"
                 pr={searchTerm ? 8 : searchFocused ? 2 : '2.75rem'}
-                _placeholder={{ color: 'whiteAlpha.350' }}
                 _hover={{ borderColor: 'whiteAlpha.200' }}
                 _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.45)' }}
               />
@@ -297,18 +249,11 @@ function DiagramJumpToolbar({
                   data-testid="views-new-diagram-button"
                   size="sm"
                   h="28px"
-                  leftIcon={<AddIcon fontSize="9px" />}
-                  bg="var(--accent)"
-                  color="white"
-                  _hover={{ bg: "var(--accent)", filter: "brightness(1.08)", transform: 'translateY(-1px)' }}
-                  _active={{ transform: 'translateY(0)', filter: "brightness(0.92)" }}
-                  variant="solid"
-                  borderRadius="lg"
+                  leftIcon={<AddIcon fontSize="12px" />}
+                  variant="primary"
                   px={3}
-                  fontSize="11px"
-                  fontWeight="semibold"
+                  fontSize="14px"
                   onClick={onCreateOpen}
-                  transition="transform 0.18s ease, filter 0.18s ease"
                 >
                   New
                 </Button>
@@ -596,7 +541,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   }, [activeSearchIndex, commitSearchResult, searchResults, view])
 
   const handleCreate = useCallback(async () => {
-    if (!newName.trim()) return
+    if (!newName.trim() || isCreating) return
     setIsCreating(true)
     try {
       let d
@@ -619,7 +564,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     } finally {
       setIsCreating(false)
     }
-  }, [navigate, newName, onCreateClose, refreshTree, treeData])
+  }, [navigate, newName, isCreating, onCreateClose, refreshTree, treeData])
 
   if (initializing) {
     return (
@@ -674,65 +619,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
         </MotionBox>
       </AnimatePresence>
 
-      <Modal
+      <CreateViewDialog
         isOpen={isCreateOpen}
         onClose={onCreateClose}
-        isCentered
-        size="sm"
-      >
-        <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-        <ModalContent
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor="var(--border-main)"
-          borderRadius="xl"
-          boxShadow="0 24px 64px rgba(0,0,0,0.8)"
-        >
-          <ModalHeader color="gray.100" pb={1} fontSize="md">Create New Diagram</ModalHeader>
-          <ModalBody>
-            <FormControl id="new-view-name">
-              <FormLabel fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="0.05em">
-                Diagram Name
-              </FormLabel>
-              <Input
-                data-testid="views-new-diagram-name-input"
-                name="name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                size="sm"
-                bg="whiteAlpha.50"
-                border="1px solid"
-                borderColor="whiteAlpha.100"
-                _hover={{ borderColor: 'whiteAlpha.300' }}
-                _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' }}
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                placeholder="My New Architecture"
-              />
-            </FormControl>
-          </ModalBody>
-          <ModalFooter gap={2} pt={6}>
-            <Button size="sm" variant="ghost" color="gray.500" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={onCreateClose}>
-              Cancel
-            </Button>
-            <Button
-              data-testid="views-create-diagram-submit"
-              size="sm"
-              bg="var(--accent)"
-              color="white"
-              _hover={{ bg: "var(--accent)", filter: "brightness(1.1)" }}
-              _active={{ bg: "var(--accent)", filter: "brightness(0.9)" }}
-              isLoading={isCreating}
-              isDisabled={!newName.trim()}
-              onClick={handleCreate}
-              borderRadius="lg"
-              px={6}
-            >
-              Create
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        name={newName}
+        onNameChange={setNewName}
+        onSubmit={handleCreate}
+        isSaving={isCreating}
+        nameInputId="new-view-name"
+        nameInputTestId="views-new-diagram-name-input"
+        submitTestId="views-create-diagram-submit"
+      />
     </Box>
   )
 }

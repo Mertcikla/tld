@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Box, FocusLock, useBreakpointValue } from '@chakra-ui/react'
 import { type ReactNode, useRef, useEffect } from 'react'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
+import { floatingSurfaceStyles, panelSurfaceStyles } from '../styles/surfaces'
 
 const EASE = [0.25, 0.46, 0.45, 0.94]
 
@@ -66,12 +67,13 @@ export default function SlidingPanel({
       <Box
         data-testid={dataTestId}
         ref={boxRef}
+        position="relative"
         w="full"
         h="full"
         overflow="hidden"
         display="flex"
         flexDir="column"
-        bg="transparent"
+        sx={panelSurfaceStyles}
       >
         <Box display="flex" flexDirection="column" flex="1 1 auto" minHeight={0} height="100%">
           {children}
@@ -126,6 +128,7 @@ export default function SlidingPanel({
             <Box
               data-testid={dataTestId}
               ref={boxRef}
+              position="relative"
               pointerEvents="auto"
               w={width}
               minW={minWidth}
@@ -135,16 +138,15 @@ export default function SlidingPanel({
               overflow="hidden"
               display="flex"
               flexDir="column"
-              bg={isFlat ? 'var(--bg-main)' : 'var(--bg-panel)'}
-              bgImage={isFlat ? 'none' : 'var(--grad-panel)'}
-              backdropFilter={isFlat ? 'none' : 'blur(24px)'}
               border={isFlat ? 'none' : '1px solid'}
               borderLeft={isFlat && side === 'right' ? '1px solid' : undefined}
               borderRight={isFlat && side === 'left' ? '1px solid' : undefined}
-              borderColor="whiteAlpha.100"
               rounded={isFlat ? 'none' : 'xl'}
               shadow={isFlat ? 'none' : 'panel'}
               sx={{
+                ...(isFlat ? panelSurfaceStyles : floatingSurfaceStyles),
+                // Keep flat panels attached to their layout without floating geometry.
+                ...(isFlat ? { borderRadius: 0, boxShadow: 'none' } : {}),
                 '& > div:not([data-focus-guard])': {
                   display: 'flex',
                   flexDirection: 'column',

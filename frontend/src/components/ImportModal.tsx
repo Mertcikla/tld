@@ -274,7 +274,7 @@ function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onI
               <Button
                 size="sm"
                 data-testid="import-next"
-                colorScheme="blue"
+                variant="primary"
                 onClick={handleNext}
                 isDisabled={!code.trim()}
                 isLoading={isParsing}
@@ -290,7 +290,7 @@ function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onI
               <Button
                 size="sm"
                 data-testid="import-confirm"
-                colorScheme="green"
+                variant="primary"
                 onClick={handleSubmit}
                 isLoading={isImporting}
               >

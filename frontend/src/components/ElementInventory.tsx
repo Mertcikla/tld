@@ -427,7 +427,7 @@ function ElementLibrary({
               </Box>
               <VStack align="start" spacing={0} flex={1}>
                 <Text fontWeight="semibold" fontSize="sm" color="white">New Element</Text>
-                <Text fontSize="10px" color="gray.500">Add to the inventory</Text>
+                <Text fontSize="10px" color="text.muted">Add to the inventory</Text>
               </VStack>
               <KbdHint>C</KbdHint>
             </Box>
@@ -448,8 +448,8 @@ function ElementLibrary({
 
           {!loading && filtered.length === 0 && elements.length === 0 && (
             <VStack spacing={2} py={6} px={2} textAlign="center">
-              <Text color="gray.600" fontSize="sm" fontWeight="medium">No elements yet</Text>
-              <Text color="gray.700" fontSize="xs" lineHeight="tall">
+              <Text color="text.secondary" fontSize="sm" fontWeight="medium">No elements yet</Text>
+              <Text color="text.muted" fontSize="xs" lineHeight="tall">
                 Elements are reusable building blocks - services, databases, people, and more.
               </Text>
               {canEdit && (
@@ -460,7 +460,7 @@ function ElementLibrary({
             </VStack>
           )}
           {filtered.length === 0 && elements.length > 0 && (
-            <Text color="gray.700" textAlign="center" py={6} fontSize="sm">
+            <Text color="text.muted" textAlign="center" py={6} fontSize="sm">
               No results for &ldquo;{search}&rdquo;
             </Text>
           )}

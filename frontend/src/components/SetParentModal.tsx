@@ -80,13 +80,7 @@ export default function SetParentModal({ isOpen, onClose, targetId, treeData, on
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size="sm">
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <ModalContent
-        bg="var(--bg-panel)"
-        border="1px solid"
-        borderColor="var(--border-main)"
-        borderRadius="12px"
-        boxShadow="0 20px 60px rgba(0,0,0,0.6)"
-      >
+      <ModalContent>
         <ModalHeader color="gray.100" pb={2} fontSize="md" fontWeight="semibold">
           Set Parent Diagram
         </ModalHeader>
@@ -173,7 +167,7 @@ export default function SetParentModal({ isOpen, onClose, targetId, treeData, on
           </Button>
           <Button
             size="sm"
-            colorScheme="blue"
+            variant="primary"
             isDisabled={selectedId === null}
             isLoading={saving}
             onClick={handleConfirm}

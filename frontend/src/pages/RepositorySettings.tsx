@@ -290,7 +290,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
               }}>Use global defaults</Button>
               <Flex align="center" gap={3} wrap="wrap">
                 {hasMapChanges && <Text fontSize="xs" color="orange.300" role="status">Unsaved changes</Text>}
-                <Button size="sm" bg="var(--accent)" color="white" _hover={{ filter: 'brightness(1.1)' }} isLoading={saving} isDisabled={busy} data-testid="repository-map-save" onClick={() => void saveOverrides()}>Save map overrides</Button>
+                <Button size="sm" variant="primary" isLoading={saving} isDisabled={busy} data-testid="repository-map-save" onClick={() => void saveOverrides()}>Save map overrides</Button>
               </Flex>
             </Flex>
           </>

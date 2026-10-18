@@ -61,7 +61,7 @@ export default function ProfileSettings() {
 
         {error && <Text fontSize="sm" color="red.300">{error}</Text>}
 
-        <Button alignSelf="flex-start" colorScheme="blue" onClick={save} isLoading={saving} isDisabled={!profile}>
+        <Button alignSelf="flex-start" variant="primary" onClick={save} isLoading={saving} isDisabled={!profile}>
           Save
         </Button>
       </VStack>

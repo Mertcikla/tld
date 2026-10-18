@@ -65,6 +65,7 @@ import { INVENTORY_PAGE_SIZES, type InventoryTableState } from './useInventoryTa
 import { inventoryCreatedAt, inventoryKindLabel } from './inventoryColumns'
 import { resolveElementIconUrl } from '../utils/elementIcon'
 import { TYPE_COLORS } from '../types'
+import { modeSwitchGroupStyles, modeSwitchOptionStyles } from '../styles/modeSwitch'
 
 const types = [
   ['all', 'All'],
@@ -318,26 +319,22 @@ export default function InventoryList({
           <Tabs
             index={types.findIndex(([value]) => value === selectedType)}
             onChange={(index) => updateParams({ type: types[index][0] === 'all' ? '' : types[index][0] })}
-            variant="soft-rounded"
-            colorScheme="blue"
+            variant="unstyled"
             size="sm"
             flex={{ base: '1 0 100%', md: 1 }}
             minW={0}
           >
-            <TabList aria-label="Inventory object type" gap={1}>
+            <TabList aria-label="Inventory object type" sx={modeSwitchGroupStyles} w={{ base: 'full', md: 'fit-content' }}>
               {types.map(([value, label]) => (
                 <Tab
                   key={value}
                   data-testid={`inventory-tab-${value}`}
                   flex={{ base: 1, md: 'initial' }}
                   px={{ base: 2, md: 3 }}
-                  borderRadius="md"
-                  color="gray.300"
-                  _selected={{ bg: 'rgba(var(--accent-rgb), 0.18)', color: 'var(--accent)' }}
-                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.10)' }}
+                  sx={modeSwitchOptionStyles}
                 >
                   {label}
-                  <Badge ml={2} display={{ base: 'none', sm: 'inline' }}>
+                  <Badge ml={1.5} fontSize="10px" borderRadius="sm" display={{ base: 'none', sm: 'inline' }}>
                     {value === 'all'
                       ? rows.length
                       : rows.filter((row) => `${row.objectType}s` === value).length}
@@ -361,7 +358,7 @@ export default function InventoryList({
                 size="sm"
                 leftIcon={<AddIcon />}
                 rightIcon={<ChevronDownIcon />}
-                colorScheme="blue"
+                variant="primary"
                 data-testid="inventory-new"
                 isDisabled={loading || busy}
               >

@@ -44,6 +44,7 @@ export default function ElementPanelCollaboration({
 }: Props) {
   const { viewId, selectedElement } = useViewEditorContext()
   const element = propsElement ?? selectedElement
+  const elementId = element?.id
   const [threads, setThreads] = useState<ViewThread[]>([])
   const [threadInput, setThreadInput] = useState('')
   const [replyInputByThread, setReplyInputByThread] = useState<Record<number, string>>({})
@@ -53,20 +54,20 @@ export default function ElementPanelCollaboration({
   const pickerRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
-    if (viewId == null || !element) return
+    if (viewId == null || elementId == null) return
     const [threadList, reactionList] = await Promise.all([
-      api.workspace.views.threads.listForElement(viewId, element.id).catch(() => []),
+      api.workspace.views.threads.listForElement(viewId, elementId).catch(() => []),
       api.workspace.views.reactions.list(viewId).catch(() => []),
     ])
     setThreads(threadList)
-    setReactions(reactionList.filter((item) => item.element_id === element.id))
-  }, [element, viewId])
+    setReactions(reactionList.filter((item) => item.element_id === elementId))
+  }, [elementId, viewId])
 
   useEffect(() => {
-    if (viewId == null || !element) return
+    if (viewId == null || elementId == null) return
     setLoading(true)
     refresh().finally(() => setLoading(false))
-  }, [element, refresh, viewId])
+  }, [elementId, refresh, viewId])
 
   useEffect(() => {
     if (!element || !liveThreadUpsert || liveThreadUpsert.element_id !== element.id) return

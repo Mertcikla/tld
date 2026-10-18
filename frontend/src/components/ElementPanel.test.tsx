@@ -186,6 +186,27 @@ describe('ElementPanel bypass noise gate', () => {
     vi.useRealTimers()
   })
 
+  it('keeps failed autosave edits available and reports a successful retry', async () => {
+    const onSave = vi.fn()
+    const onClose = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => { renderer = create(<ElementPanel isOpen autoSave element={element()} onSave={onSave} onClose={onClose} />) })
+    apiMocks.updateElement.mockRejectedValueOnce(new Error('offline'))
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.onChange({ target: { value: 'Updated API' } })
+    })
+    await act(async () => { vi.advanceTimersByTime(150) })
+    expect(onSave).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.role).toBe('alert')
+    expect(renderer!.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.value).toBe('Updated API')
+    await act(async () => { renderer!.root.findByProps({ 'data-testid': 'panel-save-retry' }).props.onClick(); await Promise.resolve() })
+    expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({ name: 'Updated API' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: 'Updated API' }))
+    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes saved.')
+    await act(async () => { renderer!.unmount() })
+  })
+
   it('autosaves the bypass flag and hides the noise gate slider while bypassed', async () => {
     const onSave = vi.fn()
     let renderer: ReturnType<typeof create>

@@ -25,6 +25,8 @@ import { api } from '../api/client'
 import type { Connector, ViewTreeNode, ViewMarkdownDocument } from '../types'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
+import PanelSaveStatus from './PanelSaveStatus'
+import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import LayoutSection from './LayoutSection'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -101,6 +103,7 @@ function ViewPanel({
   const [levelLabel, setLevelLabel] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const { state: saveState, startSaving, saved, failed } = usePanelSaveFeedback(`view-${isOpen ? view?.id : 'closed'}`)
 
   const [deleteManagedFile, setDeleteManagedFile] = useState(true)
   const [markdownAction, setMarkdownAction] = useState<'unlink' | null>(null)
@@ -127,8 +130,9 @@ function ViewPanel({
   }, [isOpen, onClose])
 
   const handleSave = async () => {
-    if (isReadOnly || !view) return
+    if (isReadOnly || !view || saving || !name.trim()) return
     setSaving(true)
+    startSaving()
     try {
       const updated = await api.workspace.views.update(view.id, {
         name: name.trim(),
@@ -137,9 +141,10 @@ function ViewPanel({
         tags,
       })
       onSave({ ...view, name: updated.name, description, level_label: updated.label, tags: updated.tags })
+      saved()
       onClose()
     } catch {
-      // intentionally empty
+      failed()
     } finally {
       setSaving(false)
     }
@@ -251,7 +256,7 @@ function ViewPanel({
                     </Text>
 
                     {markdownLoading ? (
-                      <Text fontSize="xs" color="gray.500">Loading markdown metadata…</Text>
+                      <Text fontSize="xs" color="text.muted">Loading markdown metadata…</Text>
                     ) : markdown ? (
                       <Box
                         p={3}
@@ -278,11 +283,11 @@ function ViewPanel({
                             )}
                           </HStack>
                           {markdown.updated_at && (
-                            <Text fontSize="10px" color="gray.500">
+                            <Text fontSize="10px" color="text.muted">
                               Updated {new Date(markdown.updated_at).toLocaleString()}
                             </Text>
                           )}
-                          <Text fontSize="10px" color={markdown.exists ? 'gray.500' : 'red.300'}>
+                          <Text fontSize="10px" color={markdown.exists ? 'text.muted' : 'red.300'}>
                             {viewMarkdownSummary(markdown)}
                           </Text>
                           {markdown.is_managed && canEdit && !dbOnlyNotes && (
@@ -309,13 +314,13 @@ function ViewPanel({
                         </VStack>
                       </Box>
                     ) : (
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="text.muted">
                         {dbOnlyNotes ? 'No note created.' : 'No file attached.'}
                       </Text>
                     )}
 
                     {canEdit && !markdown && (
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="text.muted">
                         {dbOnlyNotes
                           ? 'Open Notes from the canvas toolbar to create a note.'
                           : 'Open Notes from the canvas toolbar to create or attach a markdown file.'}
@@ -329,10 +334,10 @@ function ViewPanel({
 
           {view && (
             <Box pt={2} borderTop="1px solid" borderColor="whiteAlpha.50">
-              <Text fontSize="xs" color="gray.600">
+              <Text fontSize="xs" color="text.muted">
                 Created {new Date(view.created_at).toLocaleString()}
               </Text>
-              <Text fontSize="xs" color="gray.600">
+              <Text fontSize="xs" color="text.muted">
                 Updated {new Date(view.updated_at).toLocaleString()}
               </Text>
             </Box>
@@ -340,7 +345,7 @@ function ViewPanel({
         </VStack>
       </ScrollIndicatorWrapper>
 
-      <Divider borderColor="whiteAlpha.100" />
+      {canEdit && <PanelSaveStatus state={saveState} hasFooter />}
 
       {/* Footer */}
       <HStack px={4} py={3} justify="flex-end" flexShrink={0}>
@@ -355,7 +360,7 @@ function ViewPanel({
               data-testid="view-panel-save"
               size="sm"
               px={5}
-              colorScheme="blue"
+              variant="primary"
               onClick={handleSave}
               isLoading={saving}
               isDisabled={isReadOnly || !name.trim()}

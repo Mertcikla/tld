@@ -15,17 +15,8 @@ import {
   Box,
   Button,
   Flex,
-  FormControl,
-  FormLabel,
   Heading,
   HStack,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
   Spinner,
   Text,
   useDisclosure,
@@ -555,12 +546,6 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
   // Counts cache
   const [countsByView, setCountsByDiagram] = useState<Record<number, { nodes: number; edges: number }>>({})
 
-  // Onboarding wizard
-  const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2>(0)
-  const [onboardingName, setOnboardingName] = useState('My First Diagram')
-  const [onboardingViewId, setOnboardingDiagramId] = useState<number | null>(null)
-  const [onboardingCreating, setOnboardingCreating] = useState(false)
-
   // Details drawer
   const [detailsView, setDetailsDiagram] = useState<ViewTreeNode | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
@@ -572,13 +557,6 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
 
   // Level change mode
   const [levelEditingNodeId, setLevelEditingNodeId] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (treeData.length === 0 && !loading && !localStorage.getItem('onboarding_shown')) {
-      localStorage.setItem('onboarding_shown', '1')
-      setOnboardingStep(1)
-    }
-  }, [loading, treeData.length])
 
   // Fetch visible grid cards and node/edge counts in one workspace roundtrip.
   useEffect(() => {
@@ -702,18 +680,6 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
     }
     await refreshTree()
   }, [levelEditingNodeId, treeData, refreshTree, setTreeData])
-
-  const handleOnboardingCreate = async () => {
-    setOnboardingCreating(true)
-    try {
-      const d = await api.workspace.views.create({ name: onboardingName.trim() || 'My First Diagram' })
-      setOnboardingDiagramId(d.id)
-      await refreshTree()
-      setOnboardingStep(2)
-    } catch { /* ignore */ } finally {
-      setOnboardingCreating(false)
-    }
-  }
 
   // ── RF nodes - pure derivation, no useState/useEffect ───────────────────────
   const displayTree = useMemo(
@@ -1229,78 +1195,6 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
         hasBackdrop={isMobileLayout}
       />
 
-      {/* Feature tutorial */}
-
-      {/* Onboarding Wizard */}
-      <Modal
-        isOpen={onboardingStep === 1 || onboardingStep === 2}
-        onClose={() => setOnboardingStep(0)}
-        isCentered
-        size="sm"
-      >
-        <ModalOverlay bg="blackAlpha.700" />
-        <ModalContent bg="var(--bg-panel)" border="1px solid" borderColor="var(--border-main)">
-          {onboardingStep === 1 && (
-            <>
-              <ModalHeader color="gray.100" pb={1}>Welcome to tldiagram!</ModalHeader>
-              <ModalBody>
-                <Text fontSize="sm" color="gray.400" mb={4}>
-                  Start by creating your first diagram.
-                </Text>
-                <FormControl id="onboarding-view-name">
-                  <FormLabel fontSize="xs" color="gray.500" textTransform="uppercase">
-                    Diagram Name
-                  </FormLabel>
-                  <Input
-                    name="name"
-                    value={onboardingName}
-                    onChange={(e) => setOnboardingName(e.target.value)}
-                    size="sm"
-                    autoFocus
-                    onKeyDown={(e) => e.key === 'Enter' && handleOnboardingCreate()}
-                  />
-                </FormControl>
-              </ModalBody>
-              <ModalFooter gap={2}>
-                <Button size="sm" variant="ghost" color="gray.500" onClick={() => setOnboardingStep(0)}>
-                  Skip
-                </Button>
-                <Button
-                  size="sm"
-                  colorScheme="blue"
-                  isLoading={onboardingCreating}
-                  isDisabled={!onboardingName.trim()}
-                  onClick={handleOnboardingCreate}
-                >
-                  Create Diagram
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-          {onboardingStep === 2 && (
-            <>
-              <ModalHeader color="gray.100" pb={1}>Your diagram is ready!</ModalHeader>
-              <ModalBody>
-                <Text fontSize="sm" color="gray.400">
-                  Next, add elements to your diagram to start building your architecture.
-                </Text>
-              </ModalBody>
-              <ModalFooter>
-                <Button
-                  size="sm"
-                  colorScheme="blue"
-                  onClick={() => {
-                    setOnboardingStep(0)
-                    if (onboardingViewId !== null) navigate(`/views/${onboardingViewId}`)
-                  }}
-                >
-                  Start Building
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
     </Box>
   )
 }

@@ -6,7 +6,6 @@ import { BrowserRouter } from "react-router-dom"
 import App from "./App"
 import theme from "./theme"
 import { routerBasename } from "./config/runtime"
-import { ToastContainer } from "./utils/toast"
 import { installAppViewportHeight } from "./utils/viewportHeight"
 import { PlatformProvider } from "./platform/PlatformContext"
 import { platform as localPlatform } from "./platform/local"
@@ -43,7 +42,6 @@ createRoot(document.getElementById("root")!).render(
           <BrowserRouter basename={routerBasename}>
             <App />
           </BrowserRouter>
-          <ToastContainer />
         </PlatformProvider>
       </ChakraProvider>
     </QueryClientProvider>
