@@ -237,9 +237,7 @@ interface Props {
   selected: boolean
 }
 
-// Small icon button used for zoom-in / zoom-out
-// variant='out' → extruded (raised clay bump)
-// variant='in'  → sunken  (pressed clay indentation)
+// Flat icon button used for zoom-in / zoom-out.
 function LayerButton({
   label,
   active,
@@ -263,14 +261,6 @@ function LayerButton({
 }) {
   const isOut = variant === 'out'
 
-  const shadow = active
-    ? isOut
-      ? 'clay-out'
-      : 'clay-in'
-    : 'none'
-
-
-
   return (
     <Tooltip label={label} placement="top" openDelay={300} isDisabled={isDisabled}>
       <Box
@@ -287,7 +277,7 @@ function LayerButton({
         color={active ? (isOut ? 'blue.400' : 'teal.400') : 'whiteAlpha.300'}
         border="none"
         opacity={active ? 1 : 0.5}
-        boxShadow={shadow}
+        boxShadow="none"
         position="relative"
         _hover={{
           opacity: 1,
