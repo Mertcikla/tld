@@ -67,6 +67,7 @@ function HierarchyModeIcon({ size = 13 }: { size?: number }) {
 }
 
 interface DiagramJumpToolbarProps {
+  toolbarRef: React.RefObject<HTMLDivElement>
   view: ViewType
   searchTerm: string
   searchResults: JumpSearchResult[]
@@ -79,6 +80,7 @@ interface DiagramJumpToolbarProps {
 }
 
 function DiagramJumpToolbar({
+  toolbarRef,
   view,
   searchTerm,
   searchResults,
@@ -119,6 +121,8 @@ function DiagramJumpToolbar({
 
   return (
     <Box
+      ref={toolbarRef}
+      data-testid="views-jump-toolbar"
       position="absolute"
       top={isMobileLayout ? 3 : 4}
       left="50%"
@@ -407,6 +411,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   const [newName, setNewName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const exploreRef = useRef<InfiniteZoomHandle>(null)
+  const jumpToolbarRef = useRef<HTMLDivElement>(null)
   const initialTreeLoadRef = useRef<Promise<ViewTreeNode[] | null> | null>(null)
   // The page, jump search, and canvas share this workspace response.
   const exploreDataState = useExploreData(undefined, view === 'explore')
@@ -627,6 +632,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   return (
     <Box position="relative" w="full" h="full" overflow="hidden">
       <DiagramJumpToolbar
+        toolbarRef={jumpToolbarRef}
         view={view}
         searchTerm={searchTerm}
         searchResults={searchResults}
@@ -653,7 +659,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
           h="full"
         >
           {view === 'explore' ? (
-            <InfiniteZoom ref={exploreRef} shareSlot={shareSlot} dataState={{ ...exploreDataState, reload: loadExploreData }} />
+            <InfiniteZoom ref={exploreRef} breadcrumbBoundaryRef={jumpToolbarRef} shareSlot={shareSlot} dataState={{ ...exploreDataState, reload: loadExploreData }} />
           ) : (
             <ViewsGrid
               onShare={onShareView}

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { ReactNode, Ref } from 'react'
+import type { ReactNode, Ref, RefObject } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Box, Center, Spinner, useDisclosure } from '@chakra-ui/react'
 import ExploreOnboarding from '../components/ExploreOnboarding'
@@ -12,6 +12,7 @@ import { useExploreTags } from './explore/useExploreTags'
 import { parseNumericId } from '../utils/ids'
 
 interface Props {
+  breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
   sharedToken?: string
   shareSlot?: ReactNode
   dataState?: ExploreDataState
@@ -26,7 +27,7 @@ export interface InfiniteZoomHandle {
 
 const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 
-function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnectorsEnabled }: Props, ref?: Ref<InfiniteZoomHandle>) {
+function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnectorsEnabled, breadcrumbBoundaryRef }: Props, ref?: Ref<InfiniteZoomHandle>) {
   const navigate = useNavigate()
   const location = useLocation()
   const zuiRef = useRef<ZUICanvasHandle>(null)
@@ -154,6 +155,7 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
       {data && (
         <>
           <ZUICanvas
+            breadcrumbBoundaryRef={breadcrumbBoundaryRef}
             ref={zuiRef}
             data={data}
             onReady={() => setCanvasReady(true)}

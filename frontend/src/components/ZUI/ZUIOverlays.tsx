@@ -20,7 +20,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
@@ -28,7 +28,7 @@ import { EDGE_CHANGE_META } from './edgeChange'
 
 const MAX_PROXY_HOVER_VIEW_LINKS = 5
 const BREADCRUMB_MAX_LABEL_WIDTH = 200
-const BREADCRUMB_DESKTOP_RESERVE = 320
+const BREADCRUMB_HORIZONTAL_GUTTER = 32
 
 function BreadcrumbItemIcon({ item }: { item: PathItem }) {
   return (
@@ -54,11 +54,13 @@ export function ZUIBreadcrumb({
   isMobileLayout,
   currentPath,
   onZoomToPathItem,
+  breadcrumbBoundaryRef,
 }: {
   initialized: boolean
   isMobileLayout: boolean
   currentPath: PathItem[]
   onZoomToPathItem: (item: PathItem) => void
+  breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
@@ -67,15 +69,24 @@ export function ZUIBreadcrumb({
   const measureRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
-    if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return
+    if (typeof window === 'undefined') return
     const container = containerRef.current
     const measure = measureRef.current
-    if (!container || !measure) return
+    const canvas = container?.parentElement
+    const boundary = breadcrumbBoundaryRef?.current
+    if (!container || !canvas || !measure) return
     const update = () => {
-      const maxWidth = Number.parseFloat(window.getComputedStyle(container).maxWidth)
+      let maxWidth = Math.max(0, canvas.clientWidth - BREADCRUMB_HORIZONTAL_GUTTER)
+      if (boundary) {
+        const breadcrumbRect = container.getBoundingClientRect()
+        const boundaryRect = boundary.getBoundingClientRect()
+        if (boundaryRect.top < breadcrumbRect.bottom && boundaryRect.bottom > breadcrumbRect.top) {
+          maxWidth = Math.max(0, Math.min(maxWidth, boundaryRect.left - breadcrumbRect.left - BREADCRUMB_HORIZONTAL_GUTTER / 2))
+        }
+      }
       const naturalWidth = measure.getBoundingClientRect().width
-      setAvailableWidth(Number.isFinite(maxWidth) ? maxWidth : null)
-      setOverflowing(Number.isFinite(maxWidth) && naturalWidth > maxWidth + 1)
+      setAvailableWidth(maxWidth)
+      setOverflowing(Math.ceil(naturalWidth) > Math.floor(maxWidth))
     }
     update()
     if (typeof ResizeObserver === 'undefined') {
@@ -83,10 +94,11 @@ export function ZUIBreadcrumb({
       return () => window.removeEventListener('resize', update)
     }
     const observer = new ResizeObserver(update)
-    observer.observe(container)
+    observer.observe(canvas)
     observer.observe(measure)
+    if (boundary) observer.observe(boundary)
     return () => observer.disconnect()
-  }, [currentPath, initialized, isMobileLayout])
+  }, [breadcrumbBoundaryRef, currentPath, initialized, isMobileLayout])
 
   if (!initialized || currentPath.length === 0) return null
 
@@ -94,7 +106,7 @@ export function ZUIBreadcrumb({
   const truncated = overflowing && currentPath.length > 2
   const showMenu = truncated && menuOpen
   const collapsedLabelMaxW = availableWidth !== null
-    ? Math.max(56, Math.floor((availableWidth - 88) / 2))
+    ? Math.max(0, Math.floor(availableWidth / 2))
     : BREADCRUMB_MAX_LABEL_WIDTH
   const separator = <Text color="whiteAlpha.400" fontSize="xs">/</Text>
 
@@ -135,7 +147,7 @@ export function ZUIBreadcrumb({
         top={isMobileLayout ? '66px' : 4}
         left={4}
         zIndex={10}
-        maxW={isMobileLayout ? 'calc(100vw - 32px)' : `max(160px, calc(50vw - ${BREADCRUMB_DESKTOP_RESERVE}px))`}
+        maxW={availableWidth !== null ? `${availableWidth}px` : `calc(100% - ${BREADCRUMB_HORIZONTAL_GUTTER}px)`}
         pointerEvents="auto"
         onMouseEnter={() => setMenuOpen(true)}
         onMouseLeave={() => setMenuOpen(false)}
@@ -222,6 +234,11 @@ export function ZUIBreadcrumb({
 
       <Box
         ref={measureRef}
+        className="glass"
+        borderRadius="lg"
+        px={3}
+        py={1.5}
+        width="max-content"
         position="fixed"
         top="-10000px"
         left={0}
@@ -231,11 +248,9 @@ export function ZUIBreadcrumb({
         whiteSpace="nowrap"
       >
         <Breadcrumb spacing="8px" separator={separator}>
-          {currentPath.map((item) => (
-            <BreadcrumbItem key={item.id}>
-              <BreadcrumbLink display="flex" alignItems="center" gap={1.5} fontSize="xs">
-                {renderLabel(item)}
-              </BreadcrumbLink>
+          {currentPath.map((item, idx) => (
+            <BreadcrumbItem key={item.id} isCurrentPage={idx === lastIndex}>
+              {renderCrumbLink(item, idx)}
             </BreadcrumbItem>
           ))}
         </Breadcrumb>

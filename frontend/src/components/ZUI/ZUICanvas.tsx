@@ -1,5 +1,5 @@
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react'
 import { useBreakpointValue } from '@chakra-ui/react'
 import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
 import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
@@ -53,6 +53,7 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
   animateUpdates?: boolean
   preserveCameraOnUpdate?: boolean
   changeOverlays?: Record<number, ZUIChangeOverlay>
@@ -73,6 +74,7 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  breadcrumbBoundaryRef,
   preserveCameraOnUpdate = false,
   animateUpdates = false,
   changeOverlays,
@@ -374,6 +376,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       />
 
       <ZUIBreadcrumb
+        breadcrumbBoundaryRef={breadcrumbBoundaryRef}
         initialized={initialized}
         isMobileLayout={isMobileLayout}
         currentPath={currentPath}
