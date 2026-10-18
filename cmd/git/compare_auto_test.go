@@ -1,10 +1,15 @@
 package git
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +19,8 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/codeindex/model"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func autoCompareFixture(changed, contextNodes int) *model.Diagram {
@@ -127,7 +134,8 @@ func TestAutoCompareDeclinesUnreadableChangesWithoutDroppingFiles(t *testing.T) 
 	}
 }
 
-func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
+func autoCompareRepo(t *testing.T) string {
+	t.Helper()
 	dir := compareRepo(t)
 	writeSource(t, dir, "go.mod", "module example.com/auto\n\ngo 1.24\n")
 	writeSource(t, dir, "a.go", "package a\nfunc A() int { return B() }\n")
@@ -137,6 +145,11 @@ func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
 	writeSource(t, dir, "a.go", "package a\nfunc A() int { return B()+1 }\n")
 	gitRun(t, dir, "add", ".")
 	gitRun(t, dir, "commit", "-m", "change caller")
+	return dir
+}
+
+func assertAutoCanvasExportsUnchanged(t *testing.T, dir string) {
+	t.Helper()
 	// Auto is a Mermaid presentation option; it must not expand or prune
 	// the canonical JSON or the self-contained canvas URL.
 	for _, flags := range [][]string{nil, {"--url", "--url-base", "https://example.com"}} {
@@ -146,10 +159,29 @@ func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
 			t.Fatal(err)
 		}
 		withAuto, _, err := runGitCompare(t, append(baseArgs, "--auto")...)
-		if err != nil || canonical != withAuto {
-			t.Fatalf("auto changed canvas export %v: %v", flags, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := decodeAutoCanvasExport(t, canonical, len(flags) > 0)
+		after := decodeAutoCanvasExport(t, withAuto, len(flags) > 0)
+		// Failed optional analysis is retried, yielding new snapshots and
+		// comparison identities. All scene content and selection must agree.
+		before.Comparison.Key, after.Comparison.Key = "", ""
+		before.Comparison.Version, after.Comparison.Version = "", ""
+		if !proto.Equal(before, after) {
+			t.Fatalf("auto changed canvas export %v:\nwithout auto:\n%s\nwith auto:\n%s", flags, protojson.Format(before), protojson.Format(after))
 		}
 	}
+}
+
+func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
+	tool, err := exec.LookPath("scip-go")
+	if err != nil {
+		t.Skip("scip-go is required for dependency-expansion integration; missing-indexer behavior is tested separately")
+	}
+	t.Setenv("CODEINDEX_SCIP_GO", tool)
+	dir := autoCompareRepo(t)
+	assertAutoCanvasExportsUnchanged(t, dir)
 	reportPath := filepath.Join(t.TempDir(), "report.json")
 	args := []string{"compare", dir, "HEAD^", "HEAD", "--auto", "--markdown", "--report-json", reportPath}
 	out, _, err := runGitCompare(t, args...)
@@ -192,6 +224,72 @@ func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
 	if err != nil || out != "" || !strings.Contains(stderr, "--max-bytes") {
 		t.Fatalf("auto budget skip: %v stdout=%s stderr=%s", err, out, stderr)
 	}
+}
+
+func TestAutoCompareCLIWithoutIndexer(t *testing.T) {
+	t.Setenv("CODEINDEX_SCIP_GO", filepath.Join(t.TempDir(), "missing-scip-go"))
+	dir := autoCompareRepo(t)
+	assertAutoCanvasExportsUnchanged(t, dir)
+	for _, radius := range []int{2, 0} {
+		reportPath := filepath.Join(t.TempDir(), "report.json")
+		args := []string{"compare", dir, "HEAD^", "HEAD", "--auto", "--markdown", "--report-json", reportPath}
+		if radius == 0 {
+			args = append(args, "--blast-radius", "0")
+		}
+		out, _, err := runGitCompare(t, args...)
+		if err != nil || !strings.Contains(out, "Changed files") || !strings.Contains(out, "a.go") || strings.Contains(out, "b.go") {
+			t.Fatalf("missing-indexer summary: %v\n%s", err, out)
+		}
+		raw, err := os.ReadFile(reportPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report CompareReport
+		if err := json.Unmarshal(raw, &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.Status != "ready" || report.Auto == nil || report.Auto.Mode != "summary" || report.Auto.Diagrams != 0 || report.Stats.Files != 1 || report.Elements != 1 || report.RequestedRadius != radius || report.EffectiveRadius != radius {
+			t.Fatalf("unexpected missing-indexer report: %+v", report)
+		}
+		if !strings.Contains(strings.Join(report.Warnings, "\n"), "missing-scip-go") {
+			t.Fatalf("missing-indexer warning lost: %v", report.Warnings)
+		}
+	}
+}
+
+func decodeAutoCanvasExport(t *testing.T, output string, url bool) *pb.ImpactScene {
+	t.Helper()
+	raw := []byte(output)
+	if url {
+		const prefix = "https://example.com/compare#v1="
+		if !strings.HasPrefix(output, prefix) {
+			t.Fatalf("unexpected comparison URL: %s", output)
+		}
+		compressed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(strings.TrimSpace(output), prefix))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err = io.ReadAll(reader)
+		closeErr := reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}
+	scene := &pb.ImpactScene{}
+	if err := protojson.Unmarshal(raw, scene); err != nil {
+		t.Fatal(err)
+	}
+	if scene.Comparison == nil || scene.Comparison.Key == "" || scene.Comparison.Version == "" {
+		t.Fatal("canvas export is missing its comparison identity")
+	}
+	return scene
 }
 
 func TestAutoSummaryEscapesPathsAndKeepsUnknownCounts(t *testing.T) {

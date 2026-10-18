@@ -161,10 +161,10 @@ Mermaid directives. Fonts must be available on the reader's system; the theme
 does not load external fonts. Set text and fill colors together for contrast.
 
 `--no-theme` emits no theme frontmatter, `classDef`, `class`, or `linkStyle` statements. It restores
-textual change/context labels and line counts, and preserves change arrow
-shapes. It does not change scene selection. `--plain` can be combined with
-`--no-theme`; plain Mermaid omits view subgraphs, while its canvas behavior
-remains unchanged.
+textual change/context labels and line counts, adds textual status labels to
+changed connectors, and preserves change arrow shapes. It does not change scene
+selection. `--plain` can be combined with `--no-theme`; plain Mermaid omits view
+subgraphs, while its canvas behavior remains unchanged.
 
 Both flags require `--mermaid` or `--markdown`; `--theme` and `--no-theme` are
 mutually exclusive. Themes apply to every auto panel, and styling counts toward

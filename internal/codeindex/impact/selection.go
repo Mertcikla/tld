@@ -89,11 +89,24 @@ func SelectScene(scene *model.Assembly, radius uint32, plain bool) *model.Assemb
 		out.Comparison.Plain = plain
 	}
 	kept := sceneKept(out, radius, plain)
-	return selectSceneKeys(out, kept, "")
+	return selectSceneKeys(out, kept, "", false)
 }
 
 // selectSceneKeys filters an owned copy using placement membership.
-func selectSceneKeys(out *model.Assembly, kept map[string]map[int32]bool, reasonOverride string) *model.Assembly {
+// Mermaid selections retain empty ancestors as named subgraph wrappers.
+func selectSceneKeys(out *model.Assembly, kept map[string]map[int32]bool, reasonOverride string, preserveHierarchy bool) *model.Assembly {
+	out.Tree = pruneScopedSceneTree(out.Tree, kept)
+	retainedViews := map[string]bool{}
+	if preserveHierarchy {
+		var walk func([]*diagv1.View)
+		walk = func(views []*diagv1.View) {
+			for _, view := range views {
+				retainedViews[strconv.Itoa(int(view.Id))] = true
+				walk(view.Children)
+			}
+		}
+		walk(out.Tree)
+	}
 	for _, key := range sortedKeys(out.Views) {
 		content := out.Views[key]
 		for _, placement := range content.Placements {
@@ -146,13 +159,12 @@ func selectSceneKeys(out *model.Assembly, kept map[string]map[int32]bool, reason
 			delete(out.Provenance, pkey)
 		}
 		content.Connectors = connectors
-		if len(placements) == 0 {
+		if len(placements) == 0 && !retainedViews[key] {
 			delete(out.Views, key)
 			id, _ := strconv.ParseInt(key, 10, 64)
 			delete(out.Provenance, ViewKey(id))
 		}
 	}
-	out.Tree = pruneScopedSceneTree(out.Tree, kept)
 	var navigations []*diagv1.ElementNavigationInfo
 	for _, link := range out.Navigations {
 		if len(kept[strconv.Itoa(int(link.FromViewId))]) > 0 && len(kept[strconv.Itoa(int(link.ToViewId))]) > 0 {
@@ -211,5 +223,5 @@ func SelectPresentation(scene *model.Assembly, kept map[string]map[int32]bool, r
 		out.Comparison = &pb.ImpactComparison{}
 	}
 	out.Comparison.Plain = plain
-	return selectSceneKeys(out, kept, "Mermaid: outside the presentation blast radius")
+	return selectSceneKeys(out, kept, "Mermaid: outside the presentation blast radius", true)
 }

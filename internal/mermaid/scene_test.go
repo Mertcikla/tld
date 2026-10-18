@@ -21,11 +21,12 @@ func TestExportImpactSceneConnectorDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cases []struct {
-		Direction  string
-		Change     string
-		Label      string
-		TargetView int32
-		Line       string
+		Direction   string
+		Change      string
+		Label       string
+		TargetView  int32
+		Line        string
+		NoThemeLine string
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
@@ -57,6 +58,14 @@ func TestExportImpactSceneConnectorDirections(t *testing.T) {
 			}
 			if len(parsed.Warnings) > 0 {
 				t.Fatalf("invalid Mermaid connectors: %v\n%s", parsed.Warnings, got)
+			}
+			unstyled := ExportImpactScene(scene, SceneExportOptions{NoTheme: true})
+			if !strings.Contains(unstyled, "\n  "+test.NoThemeLine+"\n") || strings.Contains(unstyled, "linkStyle") {
+				t.Fatalf("unstyled connector lost change status or direction, want %q:\n%s", test.NoThemeLine, unstyled)
+			}
+			parsed, err = Parse(unstyled)
+			if err != nil || len(parsed.Warnings) > 0 {
+				t.Fatalf("invalid unstyled Mermaid: %v\n%s", err, unstyled)
 			}
 		})
 	}

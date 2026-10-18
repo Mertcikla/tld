@@ -422,6 +422,9 @@ func (v *sceneViewer) sceneConnectorLine(sourceView, source, targetView, target 
 		}
 	}
 	text := strings.TrimSpace(label)
+	if v.noTheme && change != "" {
+		text = strings.TrimSpace(text + " (" + change + ")")
+	}
 	arrow := "-->"
 	if both {
 		arrow = "<-->"

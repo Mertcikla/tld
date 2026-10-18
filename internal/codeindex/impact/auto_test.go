@@ -131,6 +131,35 @@ func TestSplitAutoSceneKeepsFileRepresentativesTogether(t *testing.T) {
 	}
 }
 
+func TestAutoSelectionsRetainEmptyAncestorViews(t *testing.T) {
+	scene := autoSceneFixture(16)
+	for i := int32(1); i < 16; i++ {
+		if i != 8 {
+			autoTestEdge(scene, i, i+1)
+		}
+	}
+	scene.Tree = []*diagv1.View{{Id: 2, Name: "Workspace", Children: scene.Tree}}
+	scene.Views["2"] = &model.ViewContent{}
+	trimmed := AutoContext(scene)
+	separated, _ := SeparateAutoFiles(scene)
+	panels := SplitAutoScene(scene)
+	if len(panels) != 2 {
+		t.Fatal("fixture did not split")
+	}
+	for _, selected := range append([]*model.Assembly{trimmed, separated}, panels...) {
+		ancestor := selected.Views["2"]
+		if ancestor == nil || len(ancestor.Placements) != 0 || selected.Tree[0].Name != "Workspace" {
+			t.Fatal("lost empty ancestor wrapper")
+		}
+		if err := ValidateCoverage(selected); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if SelectScene(scene, 0, false).Views["2"] != nil {
+		t.Fatal("Mermaid hierarchy policy leaked into canonical selection")
+	}
+}
+
 func TestSeparateAutoFilesListsOnlyIsolatedRawChanges(t *testing.T) {
 	scene := autoSceneFixture(5)
 	for _, p := range scene.Provenance {

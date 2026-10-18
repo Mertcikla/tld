@@ -96,7 +96,9 @@ export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolea
       const properties = style(theme.edges[state])
       if (properties) linkStyles.push(`linkStyle ${linkIndex} ${properties}`)
     }
-    const text = escapeLabel(label.trim())
+    let text = label.trim()
+    if (!theme && change) text = `${text} (${change.slice(7)})`.trim()
+    text = escapeLabel(text)
     let arrow = both ? '<-->' : none ? '---' : '-->'
     if (change === 'change:added') {
       arrow = both ? '<==>' : none ? '===' : '==>'

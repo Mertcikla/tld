@@ -53,7 +53,7 @@ func AutoContext(scene *model.Assembly) *model.Assembly {
 		}
 	}
 	pruneAutoLeaves(out, kept)
-	return selectSceneKeys(out, kept, "Auto: optional unchanged context")
+	return selectSceneKeys(out, kept, "Auto: optional unchanged context", true)
 }
 
 // Wide stars become unreadable when scaled to a PR comment. Trim only optional
@@ -172,7 +172,7 @@ func SeparateAutoFiles(scene *model.Assembly) (*model.Assembly, []*pb.ImpactFile
 		}
 	}
 	out.Files = retained
-	return selectSceneKeys(out, kept, "Auto: represented in the changed-file list"), files
+	return selectSceneKeys(out, kept, "Auto: represented in the changed-file list", true), files
 }
 
 func representsFile(scene *model.Assembly, key string) bool {
@@ -225,7 +225,7 @@ func SplitAutoScene(scene *model.Assembly) []*model.Assembly {
 			}
 		}
 		out.Files = files
-		result = append(result, selectSceneKeys(out, kept, "Auto: represented in the other diagram"))
+		result = append(result, selectSceneKeys(out, kept, "Auto: represented in the other diagram", true))
 	}
 	return result
 }

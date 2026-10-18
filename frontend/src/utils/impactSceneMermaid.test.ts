@@ -9,11 +9,11 @@ import { ELEMENT_DEFAULT } from '../constants/colors'
 import { impactSceneMermaid } from './impactSceneMermaid'
 
 const cases = JSON.parse(readFileSync(new URL('../../../internal/mermaid/fixtures/connector-directions.json', import.meta.url), 'utf8')) as {
-  direction: string; change: string; label: string; targetView: number; line: string
+  direction: string; change: string; label: string; targetView: number; line: string; noThemeLine: string
 }[]
 
 describe('comparison Mermaid connector directions', () => {
-  it.each(cases)('$direction/$change preserves endpoints and arrows', ({ direction, change, label, targetView, line }) => {
+  it.each(cases)('$direction/$change preserves endpoints and arrows', ({ direction, change, label, targetView, line, noThemeLine }) => {
     const scene = create(ImpactSceneSchema, {
       views: {
         '1': {
@@ -29,6 +29,9 @@ describe('comparison Mermaid connector directions', () => {
       scene.views['1'].connectorTargets['1'] = create(ImpactPlacementRefSchema, { viewId: targetView, elementId: 20 })
     }
     expect(impactSceneMermaid(scene)).toContain('\n  ' + line + '\n')
+    const unstyled = impactSceneMermaid(scene, { noTheme: true })
+    expect(unstyled).toContain('\n  ' + noThemeLine + '\n')
+    expect(unstyled).not.toContain('linkStyle')
   })
 })
 
