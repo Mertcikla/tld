@@ -1,4 +1,4 @@
-import { CloseButton, Divider, HStack, Text } from '@chakra-ui/react'
+import { CloseButton, HStack, Text } from '@chakra-ui/react'
 import type { ReactNode } from 'react'
 
 interface Props {
@@ -9,7 +9,7 @@ interface Props {
   actions?: ReactNode
 }
 
-export default function PanelHeader({ title, onClose, hasCloseButton = true, isInline = false, actions }: Props) {
+export default function PanelHeader({ title, onClose, hasCloseButton = true, actions }: Props) {
   const headerContent = (
     <>
       <Text fontSize="xs" fontWeight="700" color="white" letterSpacing="0.02em" textTransform="uppercase">
@@ -30,35 +30,17 @@ export default function PanelHeader({ title, onClose, hasCloseButton = true, isI
     </>
   )
 
-  if (isInline) {
-    return (
-      <HStack
-        h="40px"
-        minH="40px"
-        maxH="40px"
-        px={4}
-        justify="space-between"
-        flexShrink={0}
-        borderBottom="1px solid"
-        borderColor="whiteAlpha.100"
-      >
-        {headerContent}
-      </HStack>
-    )
-  }
-
   return (
-    <>
-      <HStack
-        px={4}
-        pt={4}
-        pb={3}
-        justify="space-between"
-        flexShrink={0}
-      >
-        {headerContent}
-      </HStack>
-      <Divider borderColor="whiteAlpha.100" />
-    </>
+    <HStack
+      h="44px"
+      minH="44px"
+      px={4}
+      justify="space-between"
+      flexShrink={0}
+      borderBottom="1px solid"
+      borderColor="var(--border-main)"
+    >
+      {headerContent}
+    </HStack>
   )
 }

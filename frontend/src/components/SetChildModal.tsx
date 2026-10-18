@@ -79,13 +79,7 @@ export default function SetChildModal({ isOpen, onClose, targetId, treeData, onC
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size="sm">
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <ModalContent
-        bg="var(--bg-panel)"
-        border="1px solid"
-        borderColor="var(--border-main)"
-        borderRadius="12px"
-        boxShadow="0 20px 60px rgba(0,0,0,0.6)"
-      >
+      <ModalContent>
         <ModalHeader color="gray.100" pb={2} fontSize="md" fontWeight="semibold">
           Add Existing Child
         </ModalHeader>

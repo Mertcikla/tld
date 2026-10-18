@@ -191,20 +191,20 @@ export default function TopMenuBar({
           maxH="calc(var(--app-viewport-height) - 96px)"
           display="flex"
           flexDirection="column"
-          bg="rgba(var(--bg-main-rgb), 0.95)"
-          backdropFilter="blur(18px)"
-          borderColor="whiteAlpha.200"
-          boxShadow="0 18px 48px rgba(0,0,0,0.45)"
-          borderRadius="20px"
+          bg="var(--bg-menu)"
+          backdropFilter="blur(20px)"
+          borderColor="var(--border-main)"
+          boxShadow="panel"
+          borderRadius="xl"
           overflow="hidden"
           position="relative"
           _focus={{
             outline: "none",
-            boxShadow: "0 18px 48px rgba(0,0,0,0.45)",
+            boxShadow: "panel",
           }}
           _focusVisible={{
             outline: "none",
-            boxShadow: "0 18px 48px rgba(0,0,0,0.45)",
+            boxShadow: "panel",
           }}
         >
           <PopoverArrow bg="rgba(var(--bg-main-rgb), 0.95)" />

@@ -1,4 +1,5 @@
 import { extendTheme, type ThemeConfig } from '@chakra-ui/react'
+import { floatingSurfaceStyles } from './styles/surfaces'
 
 const config: ThemeConfig = {
   initialColorMode: 'dark',
@@ -30,7 +31,7 @@ export default extendTheme({
     },
     glass: {
       bg: 'var(--bg-panel)',
-      border: 'rgba(255, 255, 255, 0.08)',
+      border: 'var(--border-main)',
     },
   },
   shadows: {
@@ -38,6 +39,10 @@ export default extendTheme({
     'panel': '0 8px 32px rgba(0,0,0,0.5)',
     'panel-sm': '0 4px 10px rgba(0,0,0,0.3)',
     'panel-hover': '0 6px 15px rgba(0,0,0,0.4)',
+    // Keep legacy variants and downstream themes using these names functional.
+    'clay-out': 'var(--chakra-shadows-panel-sm)',
+    'clay-out-hover': 'var(--chakra-shadows-panel-hover)',
+    'clay-in': 'inset 0 1px 3px rgba(0,0,0,0.3)',
     'node-selected': '0 0 0 3px rgba(99,179,237,0.35), 0 10px 36px rgba(0,0,0,0.55), 0 3px 10px rgba(0,0,0,0.4)',
     'node-source': '0 0 0 3px rgba(72, 151, 187, 0.55), 0 0 24px rgba(72, 149, 187, 0.25)',
   },
@@ -56,7 +61,7 @@ export default extendTheme({
       body: { bg: 'var(--bg-main)', color: 'gray.100' },
       '.glass': {
         bg: 'glass.bg',
-        backdropFilter: 'blur(16px)',
+        backdropFilter: 'blur(20px)',
         border: '1px solid',
         borderColor: 'glass.border',
       },
@@ -71,6 +76,11 @@ export default extendTheme({
   components: {
     Popover: {
       baseStyle: {
+        content: {
+          ...floatingSurfaceStyles,
+          bg: 'var(--bg-menu)',
+          _focus: { boxShadow: 'panel' },
+        },
         arrow: {
           display: 'none',
         },
@@ -78,42 +88,38 @@ export default extendTheme({
     },
     Modal: {
       baseStyle: {
+        overlay: { bg: 'blackAlpha.700', backdropFilter: 'blur(4px)' },
         dialog: {
-          bg: 'clay.bg',
-          borderRadius: '16px',
-          boxShadow: 'clay-out',
-          border: '1px solid rgba(255,255,255,0.06)',
+          ...floatingSurfaceStyles,
         },
         header: {
           color: 'gray.100',
           fontSize: 'lg',
           fontWeight: 'bold',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          borderBottom: '1px solid var(--border-main)',
         },
         body: {
           color: 'gray.300',
         },
         footer: {
-          borderTop: '1px solid rgba(255,255,255,0.06)',
+          borderTop: '1px solid var(--border-main)',
         },
       },
     },
     Drawer: {
       baseStyle: {
         dialog: {
-          bg: 'clay.bg',
-          borderLeft: '1px solid rgba(255,255,255,0.06)',
-          boxShadow: 'clay-out',
+          bg: 'var(--bg-panel)',
+          borderLeft: '1px solid var(--border-main)',
+          boxShadow: 'panel',
         },
       },
     },
     Menu: {
       baseStyle: {
         list: {
-          bg: 'clay.bg',
-          boxShadow: 'clay-out',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '12px',
+          ...floatingSurfaceStyles,
+          bg: 'var(--bg-menu)',
           py: 2,
           minW: '200px',
           zIndex: 9999,
@@ -130,14 +136,14 @@ export default extendTheme({
     },
     Tooltip: {
       baseStyle: {
-        bg: 'clay.out',
+        bg: 'var(--bg-menu)',
         color: 'clay.text',
         fontSize: '12px',
         borderRadius: '8px',
         px: 3,
         py: 1.5,
-        boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
-        border: '1px solid rgba(255,255,255,0.06)',
+        boxShadow: 'panel-sm',
+        border: '1px solid var(--border-main)',
         zIndex: 99999,
         arrow: {
           display: 'none',

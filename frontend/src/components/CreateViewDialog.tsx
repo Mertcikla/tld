@@ -58,11 +58,6 @@ export default function CreateViewDialog({
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
       <ModalContent
         mx={3}
-        bg="var(--bg-panel)"
-        border="1px solid"
-        borderColor="var(--border-main)"
-        borderRadius="xl"
-        boxShadow="panel"
         as="form"
         onSubmit={(event) => {
           event.preventDefault()

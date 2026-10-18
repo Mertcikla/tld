@@ -30,11 +30,10 @@ export default function NodeHoverCard({ data, anchorRect, tagColors }: Props) {
             pointerEvents="none"
             minW="220px"
             maxW="300px"
-            // Soft Clay styles
-            bg="clay.bg"
-            border="1px solid rgba(255,255,255,0.08)"
+            bg="var(--bg-menu)"
+            border="1px solid var(--border-main)"
             rounded="xl"
-            boxShadow="clay-out"
+            boxShadow="panel"
             px={4}
             py={3}
             // Fade-in animation
@@ -57,7 +56,7 @@ export default function NodeHoverCard({ data, anchorRect, tagColors }: Props) {
                 borderLeft="6px solid transparent"
                 borderRight="6px solid transparent"
                 borderTop="6px solid"
-                borderTopColor="clay.bg"
+                borderTopColor="var(--bg-menu)"
             />
 
             <VStack align="stretch" spacing={2}>

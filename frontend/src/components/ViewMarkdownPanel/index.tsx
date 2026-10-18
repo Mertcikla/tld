@@ -98,7 +98,6 @@ function ViewMarkdownPanel({
       display="flex"
       flexDir="column"
       bg="var(--bg-panel)"
-      bgImage="var(--grad-panel)"
     >
       <Box
         flex="1 1 auto"
