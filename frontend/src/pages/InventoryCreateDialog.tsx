@@ -16,6 +16,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { api } from '../api/client'
+import CreateViewDialog from '../components/CreateViewDialog'
 import type { LibraryElement, ViewTreeNode } from '../types'
 import type { InventoryObjectType } from './inventoryData'
 
@@ -71,6 +72,20 @@ export default function InventoryCreateDialog({
       setSaving(false)
     }
   }
+  if (type === 'view') {
+    return (
+      <CreateViewDialog
+        isOpen
+        onClose={onClose}
+        name={name}
+        onNameChange={setName}
+        onSubmit={save}
+        isSaving={saving}
+        error={error}
+        nameInputId="inventory-create-name"
+      />
+    )
+  }
   return (
     <Modal
       isOpen
@@ -94,9 +109,9 @@ export default function InventoryCreateDialog({
         <ModalCloseButton isDisabled={saving} />
         <ModalBody>
           <VStack align="stretch" spacing={4}>
-            <FormControl isRequired={type === 'view'}>
+            <FormControl>
               <FormLabel htmlFor="inventory-create-name">
-                {type === 'view' ? 'Name' : 'Label (optional)'}
+                Label (optional)
               </FormLabel>
               <Input
                 id="inventory-create-name"

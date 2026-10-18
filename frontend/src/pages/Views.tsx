@@ -7,26 +7,19 @@ import {
   Text,
   Spinner,
   Center,
-  FormControl,
-  FormLabel,
   HStack,
   IconButton,
   Input,
   InputGroup,
   InputLeftElement,
   InputRightElement,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
   useDisclosure,
   useBreakpointValue,
 } from '@chakra-ui/react'
 import { AddIcon, CloseIcon, SearchIcon } from '@chakra-ui/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
+import CreateViewDialog from '../components/CreateViewDialog'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { useExploreData } from './explore/useExploreData'
 import { ZoomInIcon } from '../components/Icons'
@@ -550,7 +543,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   }, [activeSearchIndex, commitSearchResult, searchResults, view])
 
   const handleCreate = useCallback(async () => {
-    if (!newName.trim()) return
+    if (!newName.trim() || isCreating) return
     setIsCreating(true)
     try {
       let d
@@ -573,7 +566,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     } finally {
       setIsCreating(false)
     }
-  }, [navigate, newName, onCreateClose, refreshTree, treeData])
+  }, [navigate, newName, isCreating, onCreateClose, refreshTree, treeData])
 
   if (initializing) {
     return (
@@ -628,61 +621,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
         </MotionBox>
       </AnimatePresence>
 
-      <Modal
+      <CreateViewDialog
         isOpen={isCreateOpen}
         onClose={onCreateClose}
-        isCentered
-        size="sm"
-      >
-        <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-        <ModalContent
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor="var(--border-main)"
-          borderRadius="xl"
-          boxShadow="0 24px 64px rgba(0,0,0,0.8)"
-        >
-          <ModalHeader color="gray.100" pb={1} fontSize="md">Create New Diagram</ModalHeader>
-          <ModalBody>
-            <FormControl id="new-view-name">
-              <FormLabel fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="0.05em">
-                Diagram Name
-              </FormLabel>
-              <Input
-                data-testid="views-new-diagram-name-input"
-                name="name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                size="sm"
-                bg="whiteAlpha.50"
-                border="1px solid"
-                borderColor="whiteAlpha.100"
-                _hover={{ borderColor: 'whiteAlpha.300' }}
-                _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' }}
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                placeholder="My New Architecture"
-              />
-            </FormControl>
-          </ModalBody>
-          <ModalFooter gap={2} pt={6}>
-            <Button size="sm" variant="ghost" color="gray.500" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={onCreateClose}>
-              Cancel
-            </Button>
-            <Button
-              data-testid="views-create-diagram-submit"
-              size="sm"
-              variant="primary"
-              isLoading={isCreating}
-              isDisabled={!newName.trim()}
-              onClick={handleCreate}
-              px={6}
-            >
-              Create
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        name={newName}
+        onNameChange={setNewName}
+        onSubmit={handleCreate}
+        isSaving={isCreating}
+        nameInputId="new-view-name"
+        nameInputTestId="views-new-diagram-name-input"
+        submitTestId="views-create-diagram-submit"
+      />
     </Box>
   )
 }
