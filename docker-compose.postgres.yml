@@ -20,8 +20,7 @@ services:
       postgres:
         condition: service_healthy
   postgres:
-    # Core migrations require the vector extension.
-    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    image: ${POSTGRES_IMAGE:-postgres:16}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tld}

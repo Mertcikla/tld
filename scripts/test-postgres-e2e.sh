@@ -6,7 +6,7 @@ port="${TLD_POSTGRES_PORT:-55432}"
 user="${TLD_POSTGRES_USER:-tld}"
 password="${TLD_POSTGRES_PASSWORD:-tld}"
 database="${TLD_POSTGRES_DB:-tld}"
-image="${TLD_POSTGRES_IMAGE:-pgvector/pgvector:pg16}"
+image="${TLD_POSTGRES_IMAGE:-postgres:16}"
 
 if ! docker ps --format '{{.Names}}' | grep -qx "$container"; then
   docker rm -f "$container" >/dev/null 2>&1 || true

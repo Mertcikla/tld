@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS vector;
-
 CREATE TABLE IF NOT EXISTS elements (
   id BIGSERIAL PRIMARY KEY,
   org_id UUID NULL,
@@ -244,7 +242,6 @@ CREATE TABLE IF NOT EXISTS watch_embeddings (
   owner_key TEXT NOT NULL,
   input_hash TEXT NOT NULL,
   vector BYTEA NOT NULL,
-  embedding vector,
   created_at TEXT NOT NULL,
   UNIQUE(model_id, owner_type, owner_key, input_hash)
 );
