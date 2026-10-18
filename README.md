@@ -25,7 +25,7 @@
 - **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer [docs](https://tldiagram.com/docs/ui/mermaid/).
   
 <p align="center">
-<img width="900" height="900" alt="markdown-integration" src="https://github.com/user-attachments/assets/de20855f-8f65-4aca-b06c-b880f731a57e" />
+<img width="900" height="506" alt="export-1792291239238" src="https://github.com/user-attachments/assets/bce6a3b5-fec5-44d7-a685-0710edf704dc" />
 </p>
 
 
