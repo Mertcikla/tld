@@ -31,7 +31,7 @@ export default function OnboardingHint({
       position="fixed"
       left={{ base: 3, md: 4 }}
       bottom={{ base: 3, md: 4 }}
-      zIndex={2000}
+      zIndex="overlay"
       w="calc(100% - 24px)"
       maxW="320px"
       pointerEvents="none"
