@@ -358,7 +358,7 @@ export default function InventoryList({
                 size="sm"
                 leftIcon={<AddIcon />}
                 rightIcon={<ChevronDownIcon />}
-                colorScheme="blue"
+                variant="primary"
                 data-testid="inventory-new"
                 isDisabled={loading || busy}
               >

@@ -20,11 +20,6 @@ import type { CodeSnapshot, CompletedRepositoryMap, RepositoryIndexerCheck } fro
 import RepositoryIndexerChecklist from './RepositoryIndexerChecklist'
 
 const snapshotPageSize = 5
-const accentStyle = {
-  bg: 'var(--accent)',
-  color: 'white',
-  _hover: { bg: 'var(--accent)', filter: 'brightness(1.08)' },
-}
 
 export interface RepositorySnapshotsPanelProps {
   snapshots: CodeSnapshot[]
@@ -207,7 +202,7 @@ function SnapshotDetails({ snapshot, mapped, busy, onMap, onOpenMap }: {
           )}
           <Button
             size="xs"
-            style={accentStyle}
+            variant="primary"
             data-testid={`repositories-snapshot-map-${snapshot.id}`}
             isDisabled={busy}
             onClick={() => onMap(snapshot)}
@@ -288,7 +283,7 @@ export default function RepositorySnapshotsPanel({
             )}
             <Button
               size="xs"
-              style={accentStyle}
+              variant="primary"
               data-testid="repositories-snapshot-capture"
               isLoading={capturing}
               loadingText="Capturing…"

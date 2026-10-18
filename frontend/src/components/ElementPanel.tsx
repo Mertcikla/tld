@@ -1591,7 +1591,7 @@ function ElementPanel({
                                 <Button
                                   data-testid="custom-technology-save"
                                   size="sm"
-                                  colorScheme="blue"
+                                  variant="primary"
                                   isLoading={customTechnologySaving}
                                   isDisabled={!customTechnologyCanCreate}
                                   w="full"
@@ -1966,7 +1966,7 @@ function ElementPanel({
               Cancel
             </Button>
             {canEdit && (
-              <Button size="sm" px={5} colorScheme="blue" onClick={handleSave} isLoading={loading}>
+              <Button size="sm" px={5} variant="primary" onClick={handleSave} isLoading={loading}>
                 Save
               </Button>
             )}

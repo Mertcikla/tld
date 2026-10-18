@@ -177,7 +177,7 @@ export default function SetChildModal({ isOpen, onClose, targetId, treeData, onC
           </Button>
           <Button
             size="sm"
-            colorScheme="blue"
+            variant="primary"
             isDisabled={selectedId === null}
             isLoading={saving}
             onClick={handleConfirm}

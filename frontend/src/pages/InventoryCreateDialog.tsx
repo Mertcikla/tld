@@ -179,10 +179,10 @@ export default function InventoryCreateDialog({
           </VStack>
         </ModalBody>
         <ModalFooter gap={2}>
-          <Button onClick={onClose} isDisabled={saving}>
+          <Button variant="ghost" onClick={onClose} isDisabled={saving}>
             Cancel
           </Button>
-          <Button type="submit" colorScheme="blue" isLoading={saving} isDisabled={!valid}>
+          <Button type="submit" variant="primary" isLoading={saving} isDisabled={!valid}>
             Create {type}
           </Button>
         </ModalFooter>

@@ -258,17 +258,11 @@ function DiagramJumpToolbar({
                   size="sm"
                   h="28px"
                   leftIcon={<AddIcon fontSize="9px" />}
-                  bg="var(--accent)"
-                  color="white"
-                  _hover={{ bg: "var(--accent)", filter: "brightness(1.08)", transform: 'translateY(-1px)' }}
-                  _active={{ transform: 'translateY(0)', filter: "brightness(0.92)" }}
-                  variant="solid"
-                  borderRadius="lg"
+                  variant="primary"
                   px={3}
                   fontSize="11px"
                   fontWeight="semibold"
                   onClick={onCreateOpen}
-                  transition="transform 0.18s ease, filter 0.18s ease"
                 >
                   New
                 </Button>
@@ -678,14 +672,10 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
             <Button
               data-testid="views-create-diagram-submit"
               size="sm"
-              bg="var(--accent)"
-              color="white"
-              _hover={{ bg: "var(--accent)", filter: "brightness(1.1)" }}
-              _active={{ bg: "var(--accent)", filter: "brightness(0.9)" }}
+              variant="primary"
               isLoading={isCreating}
               isDisabled={!newName.trim()}
               onClick={handleCreate}
-              borderRadius="lg"
               px={6}
             >
               Create

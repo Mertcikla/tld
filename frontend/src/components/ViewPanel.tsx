@@ -355,7 +355,7 @@ function ViewPanel({
               data-testid="view-panel-save"
               size="sm"
               px={5}
-              colorScheme="blue"
+              variant="primary"
               onClick={handleSave}
               isLoading={saving}
               isDisabled={isReadOnly || !name.trim()}

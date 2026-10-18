@@ -137,7 +137,7 @@ function ExportModal({
           <Button data-testid="export-cancel" variant="ghost" size="sm" onClick={onClose} isDisabled={isExporting}>
             Cancel
           </Button>
-          <Button data-testid="export-submit" size="sm" colorScheme="blue" onClick={handleSubmit} isLoading={isExporting}>
+          <Button data-testid="export-submit" size="sm" variant="primary" onClick={handleSubmit} isLoading={isExporting}>
             Export
           </Button>
         </ModalFooter>

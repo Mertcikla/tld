@@ -258,6 +258,28 @@ export default extendTheme({
     },
     Button: {
       variants: {
+        primary: {
+          bg: 'var(--accent)',
+          color: 'var(--accent-foreground, #000000)',
+          borderRadius: 'md',
+          border: '1px solid',
+          borderColor: 'whiteAlpha.300',
+          boxShadow: 'panel-sm',
+          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+          _hover: {
+            bg: 'var(--accent)',
+            borderColor: 'whiteAlpha.500',
+            boxShadow: 'panel-hover',
+            _disabled: { borderColor: 'whiteAlpha.300', boxShadow: 'panel-sm' },
+          },
+          _active: { bg: 'var(--accent)', boxShadow: 'none' },
+          _focusVisible: {
+            ring: '2px',
+            ringColor: 'whiteAlpha.900',
+            ringOffset: '2px',
+            ringOffsetColor: 'var(--bg-main)',
+          },
+        },
         clay: {
           bg: 'clay.out',
           color: 'clay.text',

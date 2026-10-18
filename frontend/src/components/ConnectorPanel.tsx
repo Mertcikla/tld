@@ -648,7 +648,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   </Button>
                 )}
                 {canEdit && (
-                  <Button size="sm" px={5} colorScheme="blue" onClick={handleSave} isLoading={loading}>
+                  <Button size="sm" px={5} variant="primary" onClick={handleSave} isLoading={loading}>
                     Save
                   </Button>
                 )}

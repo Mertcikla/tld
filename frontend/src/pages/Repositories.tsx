@@ -91,11 +91,6 @@ import { indexStageLabel } from '../utils/repositoryWatcher'
 import { invalidateIndexedRepositories, parseRepositoryAddInput } from '../utils/repositoryResolver'
 import { toast } from '../utils/toast'
 
-const accentStyle = {
-  bg: 'var(--accent)',
-  color: 'white',
-  _hover: { bg: 'var(--accent)', filter: 'brightness(1.08)' },
-}
 const FILES_PANEL_DEFAULT_WIDTH = 280
 const nameOf = (root: string) =>
   root.split(/[/\\]/).filter(Boolean).pop() || 'repository'
@@ -1458,7 +1453,7 @@ export default function Repositories() {
                     </Button>
                     <Button
                       size="sm"
-                      style={accentStyle}
+                      variant="primary"
                       data-testid="repositories-add-submit"
                       isLoading={adding || checkingAddIndexers}
                       loadingText={adding ? 'Adding repository' : 'Checking indexers'}
@@ -1686,7 +1681,7 @@ export default function Repositories() {
                           </VStack>
                         </Tooltip>
                         <Button
-                          {...accentStyle}
+                          variant="primary"
                           size="sm"
                           h="48px"
                           px={4}
