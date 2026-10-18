@@ -256,7 +256,7 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 			t.Fatalf("scene mermaid missing %q in:\n%s", want, mermaid)
 		}
 	}
-	if !regexp.MustCompile(`el_neg1_neg[0-9]+\["a.go`).MatchString(mermaid) {
+	if !regexp.MustCompile(`el_neg1_neg[0-9]+\("a.go`).MatchString(mermaid) {
 		t.Fatalf("scene mermaid missing stable transient file identity: %s", mermaid)
 	}
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
@@ -459,7 +459,7 @@ func TestCompareRendererMermaidSizes(t *testing.T) {
 		if size != len(text) {
 			t.Fatalf("size %d vs %d bytes for %+v", size, len(text), opts)
 		}
-		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") {
+		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "---\nconfig:\n  theme:") {
 			t.Fatalf("unexpected mermaid payload for %+v: %q", opts, text)
 		}
 		// The scene render carries the uncovered file as a transient, exactly
@@ -481,7 +481,7 @@ func TestCompareRendererUsesFrozenSceneWithoutFactGraphFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(text, "flowchart LR\n%% tld-scene\n%% impact files=0") || strings.Contains(text, "hidden.go") {
+	if !strings.HasPrefix(text, "---\nconfig:\n  theme: 'base'\n") || !strings.Contains(text, "---\nflowchart LR\n%% tld-scene\n%% impact files=0") || strings.Contains(text, "hidden.go") {
 		t.Fatalf("export changed frozen scene membership: %s", text)
 	}
 }

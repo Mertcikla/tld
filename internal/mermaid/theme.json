@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "baseTheme": "base",
+  "labels": {
+    "change": false,
+    "context": false,
+    "churn": true,
+    "addedColor": "#ecc94b",
+    "removedColor": "#fc8181"
+  },
+  "nodes": {
+    "context": {
+      "fill": "#2d3748",
+      "stroke": "#718096",
+      "color": "#f7fafc",
+      "stroke-width": "1px",
+      "font-weight": "400"
+    },
+    "modified": {
+      "fill": "#2d3748",
+      "stroke": "#ecc94b",
+      "color": "#f7fafc",
+      "stroke-width": "2px",
+      "font-weight": "600"
+    },
+    "added": {
+      "fill": "#2d3748",
+      "stroke": "#48bb78",
+      "color": "#f7fafc",
+      "stroke-width": "2px",
+      "font-weight": "600"
+    },
+    "removed": {
+      "fill": "#2d3748",
+      "stroke": "#fc8181",
+      "color": "#f7fafc",
+      "stroke-width": "2px",
+      "stroke-dasharray": "5 4",
+      "font-weight": "600"
+    }
+  },
+  "edges": {
+    "context": {
+      "color": "#718096"
+    },
+    "modified": {
+      "stroke": "#ecc94b",
+      "stroke-width": "2px",
+      "color": "#718096"
+    },
+    "added": {
+      "stroke": "#48bb78",
+      "stroke-width": "2px",
+      "color": "#718096"
+    },
+    "removed": {
+      "stroke": "#fc8181",
+      "stroke-dasharray": "5 4",
+      "color": "#718096"
+    }
+  },
+  "themeVariables": {
+    "darkMode": true,
+    "background": "transparent",
+    "primaryColor": "#2d3748",
+    "primaryTextColor": "#f7fafc",
+    "primaryBorderColor": "#718096",
+    "secondaryColor": "#2d3748",
+    "secondaryTextColor": "#f7fafc",
+    "secondaryBorderColor": "#718096",
+    "tertiaryColor": "#2d3748",
+    "tertiaryTextColor": "#718096",
+    "tertiaryBorderColor": "#718096",
+    "mainBkg": "#2d3748",
+    "nodeBorder": "#718096",
+    "nodeTextColor": "#f7fafc",
+    "clusterBkg": "transparent",
+    "clusterBorder": "#718096",
+    "lineColor": "#023148",
+    "defaultLinkColor": "#023148",
+    "textColor": "#718096",
+    "titleColor": "#718096",
+    "edgeLabelBackground": "transparent",
+    "fontFamily": "Metrophobic, system-ui, -apple-system, sans-serif",
+    "fontSize": "14px"
+  }
+}

@@ -49,8 +49,8 @@ func TestExportViewWithAndWithoutMetadata(t *testing.T) {
 	for _, want := range []string{
 		"flowchart LR",
 		"%% tld/v1 view=42",
-		`node_1["API"]`,
-		`node_2["Database &quot;Primary&quot; &amp; Cache"]`,
+		`node_1("API")`,
+		`node_2("Database &quot;Primary&quot; &amp; Cache")`,
 		"%% tld-element ref=node_2 x=320 y=80 kind=database desc=stores\\nrecords tech=Postgres tags=backend,data\\,tier techLinks=vendor:postgres:PostgreSQL:1 bypass=1 hasView=1 viewLabel=Container",
 		`node_1 -- "reads &quot;writes&quot;" --> node_2`,
 		`%% tld-connector ref=9 source=node_1 target=node_2 label=reads "writes" rel=query style=straight`,
@@ -83,11 +83,11 @@ func TestExportViewWithLayersEmitsGroupsAsColoredSubgraphs(t *testing.T) {
 	got := ExportViewWithLayers(content, 42, true, layers)
 	for _, want := range []string{
 		`subgraph group_7["Payments"]`,
-		`    node_1["API"]`,
-		`    node_2["Worker"]`,
+		`    node_1("API")`,
+		`    node_2("Worker")`,
 		"  end",
 		"style group_7 fill:#33669926,stroke:#336699",
-		`  node_3["Database"]`,
+		`  node_3("Database")`,
 		"node_1 --> node_3",
 		"tags=backend",
 	} {
@@ -98,7 +98,7 @@ func TestExportViewWithLayersEmitsGroupsAsColoredSubgraphs(t *testing.T) {
 	if strings.Contains(got, groupTag) {
 		t.Fatalf("ExportViewWithLayers() leaked internal group marker:\n%s", got)
 	}
-	if strings.Index(got, `subgraph group_7["Payments"]`) > strings.Index(got, `  node_3["Database"]`) {
+	if strings.Index(got, `subgraph group_7["Payments"]`) > strings.Index(got, `  node_3("Database")`) {
 		t.Fatalf("ungrouped node appeared before group block:\n%s", got)
 	}
 }

@@ -114,7 +114,7 @@ func ExportViewWithLayers(content *diagv1.ViewContent, viewID int32, includeTldM
 func appendPlacement(lines []string, placement *diagv1.PlacedElement, includeTldMetadata bool, indent string) []string {
 	ref := fmt.Sprintf("node_%d", placement.GetElementId())
 	nodeID := sanitizeMermaidID(ref)
-	lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, indent, nodeID, escapeMermaidLabel(placement.GetName())))
+	lines = append(lines, fmt.Sprintf(`%s%s("%s")`, indent, nodeID, escapeMermaidLabel(placement.GetName())))
 	if includeTldMetadata {
 		lines = append(lines, indent+metadataComment("tld-element", "", elementMetadataEntries(placement, ref)))
 	}

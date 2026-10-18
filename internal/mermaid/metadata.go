@@ -49,7 +49,7 @@ type tldMetadata struct {
 var (
 	metadataPairPattern               = regexp.MustCompile(`(^|\s+)([A-Za-z][A-Za-z0-9_]*)=`)
 	exportedFlowchartConnectorLineRe  = regexp.MustCompile(`^` + mermaidFlowchartIDPattern + `\s+(?:--\s+"(?:\\.|[^"\\])*"\s+-->|-->)\s+` + mermaidFlowchartIDPattern + `$`)
-	exportedFlowchartElementRefLineRe = regexp.MustCompile(`^(` + mermaidFlowchartIDPattern + `)\s*\["(?:\\.|[^"\\])*"\]$`)
+	exportedFlowchartElementRefLineRe = regexp.MustCompile(`^(` + mermaidFlowchartIDPattern + `)\s*(?:\["(?:\\.|[^"\\])*"\]|\("(?:\\.|[^"\\])*"\))$`)
 )
 
 func ParseTldMetadata(source string) *tldMetadata {

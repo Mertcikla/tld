@@ -23,7 +23,7 @@ describe('standalone comparison page', () => {
       await vi.waitFor(() => expect(captured.embedded).toBeDefined())
       const embedded = captured.embedded as { scene: { views: object }; markdown: string }
       expect(Object.keys(embedded.scene.views)).toHaveLength(2)
-      expect(embedded.markdown).toContain('```mermaid\nflowchart LR')
+      expect(embedded.markdown).toContain("```mermaid\n---\nconfig:\n  theme: 'base'\n  look: classic\n  htmlLabels: true\n  themeCSS: '.edgeLabel .labelBkg { background: transparent !important; }'\n  themeVariables:")
       expect(renderer.root.findAll((node) => node.type === 'div' && node.props.href?.startsWith('tld://compare#v1='))).toHaveLength(1)
       expect(fetch).not.toHaveBeenCalled()
     } finally { await act(async () => renderer?.unmount()); fetch.mockRestore() }

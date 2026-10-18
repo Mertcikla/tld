@@ -89,17 +89,14 @@ func (s *codeIndexService) ExportImpactMermaid(ctx context.Context, req *connect
 	if err != nil {
 		return nil, impactLookupError(err)
 	}
-	// The change diagram renders the same scene the canvas draws, so the
-	// docked pane and the canvas never disagree. The canonical scene carries
-	// its own fallback chain. The scene is pruned
-	// to the compare blast radius, so unimpacted sections never reach the
-	// payload; node and byte budgets stay CLI-side.
+	// Mermaid projects its own bounded membership from the frozen canvas scene.
 	scene, err := s.impactService().Scene(ctx, diagram)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
-	code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), mermaid.SceneExportOptions{IncludeMetadata: true})
+	radius := impact.DiagramRadius(diagram)
+	scene = impact.SelectPresentation(scene, mermaid.SceneMembership(impact.PublicScene(scene, false), radius, req.Msg.GetPlain()), radius, req.Msg.GetPlain())
+	code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), mermaid.SceneExportOptions{IncludeMetadata: true, Plain: req.Msg.GetPlain(), Theme: mermaid.DefaultTheme()})
 	response := &pb.ExportImpactMermaidResponse{Code: code}
 	if req.Msg.GetMarkdown() {
 		response.Markdown = mermaid.MermaidBlock(code)
@@ -120,7 +117,7 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	// Serve the frozen selection. Standard retains the authored skeleton;
-	// Plain applies the same backend policy used by CLI and Mermaid exports.
+	// Plain applies the canonical canvas policy, independently of Mermaid.
 	scene = impact.SelectScene(scene, impact.DiagramRadius(diagram), req.Msg.GetPlain())
 	if err := impact.ValidateCoverage(scene); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)

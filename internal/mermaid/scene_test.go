@@ -21,11 +21,12 @@ func TestExportImpactSceneConnectorDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cases []struct {
-		Direction  string
-		Change     string
-		Label      string
-		TargetView int32
-		Line       string
+		Direction   string
+		Change      string
+		Label       string
+		TargetView  int32
+		Line        string
+		NoThemeLine string
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
@@ -57,6 +58,14 @@ func TestExportImpactSceneConnectorDirections(t *testing.T) {
 			}
 			if len(parsed.Warnings) > 0 {
 				t.Fatalf("invalid Mermaid connectors: %v\n%s", parsed.Warnings, got)
+			}
+			unstyled := ExportImpactScene(scene, SceneExportOptions{NoTheme: true})
+			if !strings.Contains(unstyled, "\n  "+test.NoThemeLine+"\n") || strings.Contains(unstyled, "linkStyle") {
+				t.Fatalf("unstyled connector lost change status or direction, want %q:\n%s", test.NoThemeLine, unstyled)
+			}
+			parsed, err = Parse(unstyled)
+			if err != nil || len(parsed.Warnings) > 0 {
+				t.Fatalf("invalid unstyled Mermaid: %v\n%s", err, unstyled)
 			}
 		})
 	}
@@ -115,12 +124,12 @@ func TestExportImpactSceneGroundedMatchesCanvas(t *testing.T) {
 		"flowchart LR",
 		"%% tld-scene repo=r1 key=k1",
 		`subgraph view_51["Mine"]`,
-		"el_51_7[\"svc/auth<br/>modified +3 \u22121\"]",
-		`el_51_8["svc/db"]`,
+		"el_51_7(\"svc/auth<br/>modified +3 \u22121\")",
+		`el_51_8("svc/db")`,
 		`el_51_7 ==>|"calls"| el_51_8`,
 		"linkStyle 0 stroke:#48bb78",
 		`subgraph view_neg1["Changes"]`,
-		"el_neg1_neg1[\"new.go<br/>added +1 \u22120\"]",
+		"el_neg1_neg1(\"new.go<br/>added +1\")",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("ExportImpactScene() missing %q in:\n%s", want, got)
@@ -137,7 +146,7 @@ func TestExportImpactSceneMappedOriginKeepsPlainLabel(t *testing.T) {
 	got := ExportImpactScene(impact.PublicScene(fixture, true), SceneExportOptions{})
 	for _, want := range []string{
 		`subgraph view_51["Mine"]`,
-		"el_51_7[\"svc/auth<br/>modified +3 −1\"]",
+		"el_51_7(\"svc/auth<br/>modified +3 −1\")",
 		`subgraph view_neg1["Changes"]`,
 	} {
 		if !strings.Contains(got, want) {
@@ -154,7 +163,7 @@ func TestExportImpactSceneUntaggedPlacementInDegradedViewStaysPlain(t *testing.T
 	fixture := sceneFixture()
 	fixture.AuthoredViewIds = nil
 	got := ExportImpactScene(impact.PublicScene(fixture, true), SceneExportOptions{})
-	if !strings.Contains(got, `el_51_7["svc/auth<br/>modified +3 −1"]`) {
+	if !strings.Contains(got, `el_51_7("svc/auth<br/>modified +3 −1")`) {
 		t.Fatalf("authored placement mislabeled in degraded view:\n%s", got)
 	}
 }
@@ -228,15 +237,15 @@ func TestExportImpactSceneRendersBackendPlainSelection(t *testing.T) {
 	fixture.Views["51"].Connectors = nil
 	got := ExportImpactScene(impact.PublicScene(fixture, true), SceneExportOptions{})
 	for _, want := range []string{
-		`el_51_7["svc/auth<br/>modified +3 −1"]`,
-		`el_neg1_neg1["new.go<br/>added +1 −0"]`,
+		`el_51_7("svc/auth<br/>modified +3 −1")`,
+		`el_neg1_neg1("new.go<br/>added +1")`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("plain scene missing %q in:\n%s", want, got)
 		}
 	}
 	// The unimpacted member drops out, taking its connector with it.
-	if strings.Contains(got, `el_51_8["svc/db"]`) || strings.Contains(got, "linkStyle") {
+	if strings.Contains(got, `el_51_8("svc/db")`) || strings.Contains(got, "linkStyle") {
 		t.Fatalf("plain scene kept unimpacted content:\n%s", got)
 	}
 }
@@ -293,7 +302,7 @@ func TestExportImpactSceneFoldsIsolatedContainerIntoChildSubgraph(t *testing.T) 
 	if strings.Contains(got, "el_1_1") {
 		t.Fatalf("redundant container node remains:\n%s", got)
 	}
-	for _, want := range []string{`subgraph view_1["Workspace"]`, `  subgraph view_2["tld"]`, `el_2_2["main.go"]`} {
+	for _, want := range []string{`subgraph view_1["Workspace"]`, `  subgraph view_2["tld"]`, `el_2_2("main.go")`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q:\n%s", want, got)
 		}
@@ -303,7 +312,7 @@ func TestExportImpactSceneFoldsIsolatedContainerIntoChildSubgraph(t *testing.T) 
 	}
 }
 
-func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
+func TestExportImpactSceneKeepsOnlyRelevantOwners(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
@@ -348,7 +357,8 @@ func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
 			scene := containerSceneFixture()
 			test.modify(scene)
 			got := ExportImpactScene(scene, SceneExportOptions{})
-			if !strings.Contains(got, `el_1_1["tld`) || !strings.Contains(got, test.want) {
+			keep := test.name == "change overlay" || test.name == "dependency context" || test.name == "outgoing connector"
+			if strings.Contains(got, `el_1_1("tld`) != keep || (keep && !strings.Contains(got, test.want)) {
 				t.Fatalf("owner or independent information missing:\n%s", got)
 			}
 		})

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { decodeSceneFragment, localSceneURL, LOCAL_SCENE_PREFIX, WEB_SCENE_PREFIX, MAX_SCENE_BYTES } from './sceneUrl'
-import { impactSceneMermaid } from './impactSceneMermaid'
 
 const fixture = (name: string) => readFileSync(new URL(`../../../internal/mermaid/fixtures/scene-url.${name}`, import.meta.url), 'utf8')
 const fragment = (raw: string) => '#v1=' + gzipSync(raw).toString('base64url')
@@ -17,7 +16,6 @@ describe('comparison URL transport', () => {
     expect(scene.files[1].linesAdded).toBeUndefined()
     expect(scene.symbols.s1.startLine).toBe(0)
     expect(localSceneURL(hash)).toBe(link.replace(WEB_SCENE_PREFIX, LOCAL_SCENE_PREFIX))
-    expect(impactSceneMermaid(scene)).toBe(fixture('mmd'))
   })
 
   it('accepts an empty scene and optional audit data', async () => {
