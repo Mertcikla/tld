@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "labels": { "change": false, "context": false, "churn": true },
+  "nodes": {
+    "context": { "fill": "#f6f8fa", "stroke": "#8c959f", "color": "#57606a", "stroke-width": "1px", "font-weight": "400" },
+    "modified": { "fill": "#fff8c5", "stroke": "#9a6700", "color": "#633c01", "stroke-width": "2px", "font-weight": "600" },
+    "added": { "fill": "#dafbe1", "stroke": "#1a7f37", "color": "#116329", "stroke-width": "2px", "font-weight": "600" },
+    "removed": { "fill": "#ffebe9", "stroke": "#cf222e", "color": "#a40e26", "stroke-width": "2px", "stroke-dasharray": "5 4", "font-weight": "600" }
+  },
+  "edges": {
+    "context": {},
+    "modified": { "stroke": "#9a6700", "stroke-width": "2px" },
+    "added": { "stroke": "#1a7f37", "stroke-width": "2px" },
+    "removed": { "stroke": "#cf222e", "stroke-dasharray": "5 4" }
+  }
+}

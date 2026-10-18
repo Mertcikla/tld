@@ -33,6 +33,7 @@ import (
 )
 
 type compareOptions struct {
+	auto            bool
 	url             bool
 	urlLocal        bool
 	urlBase         string
@@ -40,6 +41,9 @@ type compareOptions struct {
 	markdown        bool
 	verbose         bool
 	plain           bool
+	noTheme         bool
+	themeFile       string
+	theme           *mermaid.Theme
 	maxNodes        int
 	maxBytes        int
 	blastRadius     int
@@ -63,6 +67,7 @@ func newCompareCmd() *cobra.Command {
 		Short: "Compare two revisions of a repository",
 		Example: `  tld git compare HEAD~1 HEAD --mermaid
   tld git compare main feature --markdown
+  tld git compare main feature --auto --markdown
   tld git compare HEAD~1 HEAD --url`,
 		Long: `Compare two Git revisions and emit the canonical impact scene.
 
@@ -85,24 +90,38 @@ dependency hops away. Context beyond that is never computed or displayed;
 when the output exceeds the node or byte budget it is progressively narrowed
 by blast radius and a warning is written to stderr. All selected workspace connectors retain their original direction and styling.
 
+--auto adapts context for PR review, simplifies unchanged relationships, and
+declines oversized changes rather than hiding changed files. An explicit
+--blast-radius caps its search (otherwise up to 2 hops). With --markdown it
+may emit two disconnected diagrams, list isolated changed files below them,
+or use a file summary when relationships are unavailable. JSON, URLs, and
+raw Mermaid remain single documents. See docs/git-compare.md for limits.
+
 Indexing progress is quiet by default so scripted runs only emit the payload
 and budget warnings; pass --verbose to follow the base and head scans on
 stderr.`,
 		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			runOpts := opts
+			if runOpts.auto && !cmd.Flags().Changed("blast-radius") {
+				runOpts.blastRadius = impact.MaxBlastRadius
+			}
 			target := "."
 			if len(args) == 3 {
 				target = args[0]
 			}
-			return runCompare(cmd, opts, target, args[len(args)-2], args[len(args)-1])
+			return runCompare(cmd, runOpts, target, args[len(args)-2], args[len(args)-1])
 		},
 	}
 	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of the scene")
 	c.Flags().BoolVar(&opts.markdown, "markdown", false, "wrap the Mermaid diagram in a Markdown code fence")
+	c.Flags().BoolVar(&opts.auto, "auto", false, "adapt context and density for PR review; Markdown may contain two diagrams or a file summary")
 	c.Flags().BoolVar(&opts.url, "url", false, "emit a self-contained comparison URL for the local web server (maximum 10000 characters)")
 	c.Flags().BoolVar(&opts.urlLocal, "url-local", false, "emit a self-contained tld:// comparison URL (maximum 10000 characters)")
 	c.Flags().StringVar(&opts.urlBase, "url-base", "", "application base URL for --url (e.g. https://tldiagram.com/app)")
 	c.Flags().BoolVar(&opts.plain, "plain", false, "hide placements without change impact from the Mermaid diagram")
+	c.Flags().StringVar(&opts.themeFile, "theme", "", "JSON theme override for --mermaid or --markdown (merged with the embedded default)")
+	c.Flags().BoolVar(&opts.noTheme, "no-theme", false, "omit Mermaid class and link styling; retain textual change labels")
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
@@ -118,6 +137,22 @@ stderr.`,
 }
 
 func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head string) error {
+	if (opts.themeFile != "" || opts.noTheme) && !opts.mermaid && !opts.markdown {
+		return fmt.Errorf("--theme and --no-theme require --mermaid or --markdown")
+	}
+	if opts.themeFile != "" && opts.noTheme {
+		return fmt.Errorf("--theme and --no-theme cannot be combined")
+	}
+	if opts.themeFile != "" {
+		raw, err := os.ReadFile(opts.themeFile)
+		if err != nil {
+			return fmt.Errorf("read Mermaid theme: %w", err)
+		}
+		opts.theme, err = mermaid.ParseTheme(raw)
+		if err != nil {
+			return err
+		}
+	}
 	if (opts.url && opts.urlLocal) || ((opts.url || opts.urlLocal) && (opts.mermaid || opts.markdown)) {
 		return fmt.Errorf("--url and --url-local cannot be combined with each other, --mermaid, or --markdown")
 	}
@@ -229,6 +264,10 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// Commit the trailing stage before reporting on the output so the notices
 	// land below the work they describe.
 	tracker.Complete(lastStage)
+	if opts.auto {
+		tracker.Finish()
+		return runAutoCompare(cmd, opts, diagram, compareRenderer{ctx: ctx, service: service, opts: opts})
+	}
 	requested := uint32(opts.blastRadius)
 	scoped := impact.Scope(diagram, requested)
 	if opts.plain && scoped.Scene != nil {
@@ -286,6 +325,9 @@ func writeCompareOutput(cmd *cobra.Command, opts compareOptions, result scopedDi
 		}
 		if encodeErr != nil {
 			report.Status, report.Reason = "skipped", encodeErr.Error()
+			if report.Auto != nil {
+				report.Auto.Mode, report.Auto.Reason, report.Auto.Diagrams = "skipped", report.Reason, 0
+			}
 			if err := writeCompareReport(opts.reportJSON, report); err != nil {
 				return err
 			}
@@ -312,6 +354,7 @@ func writeCompareOutput(cmd *cobra.Command, opts compareOptions, result scopedDi
 // CompareReport adds command status to canonical comparison fields. Hard limits
 // are checked against the requested scene; successful reports describe the emitted selection.
 type CompareReport struct {
+	Auto             *autoReport     `json:"auto,omitempty"`
 	Status           string          `json:"status"`
 	Elements         int             `json:"elements"`
 	Connectors       int             `json:"connectors"`
@@ -473,7 +516,7 @@ func (r compareRenderer) build(diagram *model.Diagram, radius uint32) (string, i
 	}
 	if r.opts.mermaid || r.opts.markdown {
 		scene = impact.SelectScene(scene, radius, r.opts.plain)
-		code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), mermaid.SceneExportOptions{IncludeMetadata: true})
+		code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), r.opts.sceneExportOptions())
 		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
 		}
@@ -499,6 +542,14 @@ func (r compareRenderer) build(diagram *model.Diagram, radius uint32) (string, i
 		size = len(normal)
 	}
 	return string(payload), size, nil
+}
+
+func (opts compareOptions) sceneExportOptions() mermaid.SceneExportOptions {
+	theme := opts.theme
+	if theme == nil {
+		theme = mermaid.DefaultTheme()
+	}
+	return mermaid.SceneExportOptions{IncludeMetadata: true, Theme: theme, NoTheme: opts.noTheme}
 }
 
 // recordSelection adds CLI-only budgets to the selected copy of the shared

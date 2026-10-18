@@ -29,6 +29,9 @@ tld git compare HEAD~1 HEAD --mermaid
 # Mermaid inside a Markdown code fence
 tld git compare HEAD~1 HEAD --markdown
 
+# Adapt context and presentation for a PR comment
+tld git compare main feature --auto --markdown --report-json comparison.json
+
 # Self-contained link for the local web viewer (no upload)
 tld git compare HEAD~1 HEAD --url
 
@@ -51,10 +54,13 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 |---|---|---|
 | `--mermaid` | off | Emit the Mermaid change diagram instead of the scene |
 | `--markdown` | off | Wrap the Mermaid diagram in a Markdown code fence |
+| `--auto` | off | Adapt context for PR review; Markdown can contain up to two diagrams or a changed-file summary |
 | `--url` | off | Emit a self-contained link for the local web viewer; maximum 10,000 characters |
 | `--url-base URL` | local server | Override the application base URL for `--url`, such as `https://tldiagram.com/app` |
 | `--url-local` | off | Emit a self-contained `tld://compare` link for the desktop app; maximum 10,000 characters |
 | `--plain` | off | Hide unrelated authored context in the selected scene; retain changes, dependency neighbours and required containers |
+| `--theme PATH` | embedded theme | Merge a JSON theme override into the default for `--mermaid` or `--markdown` |
+| `--no-theme` | off | Omit all Mermaid class and link styling; keep textual status labels |
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
 | `--max-bytes N` | `2097152` | Output byte budget; output is narrowed when exceeded (`0` disables) |
@@ -66,6 +72,78 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--report-json PATH` | unset | Write command status and canonical comparison metadata, file ledger, summary and statistics |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
+
+## Mermaid themes
+
+CLI Mermaid output uses the embedded [theme.json](../internal/mermaid/theme.json).
+Changed nodes have tinted fills, stronger borders and heavier text; context is
+neutral. Modified, added and removed nodes use amber, green and red respectively.
+Removed nodes also have dashed borders. Labels retain known line counts without
+repeating `modified` or `(context)` in every node. Compact isolated-node groups
+are separated by change type so they cannot misrepresent a mixed group.
+
+Use a partial JSON override to customize the presentation:
+
+```json
+{
+  "version": 1,
+  "nodes": {
+    "modified": { "fill": "#eaf2ff", "stroke": "#0969da", "color": "#0550ae" },
+    "context": { "font-family": "monospace" }
+  },
+  "edges": { "modified": { "stroke": "#0969da" } },
+  "labels": { "churn": false }
+}
+```
+
+```bash
+tld git compare main feature --auto --markdown --theme ./review-theme.json
+tld git compare main feature --auto --markdown --no-theme
+```
+
+The format has four top-level fields:
+
+- `version`: currently `1`; optional in a partial override.
+- `nodes` and `edges`: each contains `context`, `modified`, `added`, and `removed`
+  style objects. Missing states and properties inherit the embedded default.
+  An empty string removes a style property; an empty object inherits everything.
+- `labels`: `change`, `context`, and `churn` booleans control status words,
+  the `(context)` suffix, and known line counts. Defaults are `false`, `false`,
+  and `true`. Missing counts are never presented as zero.
+
+Supported style properties and values:
+
+| Property | Values |
+|---|---|
+| `fill`, `stroke` | `#RGB`, `#RRGGBB`, `transparent`, or `none` |
+| `color` | `#RGB` or `#RRGGBB` |
+| `stroke-width` | Nonnegative number, optionally followed by `px` |
+| `stroke-dasharray` | Space-separated nonnegative numbers, or `none` |
+| `font-size` | Nonnegative number followed by `px`, `em`, `rem`, or `%` |
+| `font-weight` | `normal`, `bold`, or `100` through `900` in steps of 100 |
+| `font-style` | `normal` or `italic` |
+| `font-family` | One family name containing letters, digits, spaces or hyphens; starts with a letter |
+
+Unknown keys, invalid values, nulls, and unsupported versions fail before
+indexing. The theme accepts presentation values rather than arbitrary CSS or
+Mermaid directives. Fonts must be available on the reader's system; the theme
+does not load external fonts. Set text and fill colors together for contrast.
+
+`--no-theme` emits no `classDef`, `class`, or `linkStyle` statements. It restores
+textual change/context labels and line counts, and preserves change arrow
+shapes. It does not change scene selection. The existing `--plain` selection
+flag is unchanged and can be combined with `--no-theme`.
+
+Both flags require `--mermaid` or `--markdown`; `--theme` and `--no-theme` are
+mutually exclusive. Themes apply to every auto panel, and styling counts toward
+`--max-bytes`. Auto file summaries keep their textual status labels. Themes do
+not change JSON scenes, URLs, or the web canvas. The PR bot passes through the
+styled Markdown without needing a new output format.
+
+Source builds can edit `internal/mermaid/theme.json` and rebuild to change the
+default. Go consumers can use `mermaid.DefaultTheme()` or
+`mermaid.ParseTheme(jsonBytes)` with `SceneExportOptions.Theme`; existing callers
+that omit `Theme` retain their legacy presentation.
 
 ## Output
 
@@ -188,6 +266,76 @@ there, rather than only in the original checkout. A setup failure stops the
 comparison. Preparation should leave tracked indexing inputs unchanged.
 
 See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached GitHub PR comments and fork support.
+
+## Automatic PR presentation
+
+`--auto` is opt-in. It uses the frozen comparison and dependency evidence; it
+does not infer intent from commit messages or claim exhaustive runtime impact.
+Without this flag, existing selection, rendering, and limit behavior is unchanged.
+
+For one or two changed files, auto tries adding one hop of context and can try
+two if the first hop has no useful relationships. For three to eight files it
+tries at most one hop, and only if the direct scene has no relationships.
+Larger comparisons use direct changes. An explicit `--blast-radius N` caps the
+search, including `--blast-radius 0`; omitting it permits up to two hops.
+Unhelpful or over-budget expansions fall back to the smaller selection.
+
+Auto removes unchanged relationships between dependency neighbours at the same
+distance and isolated unchanged context. To keep fan-out diagrams readable, it
+also trims optional dependency leaves toward six neighbours for one/two-file
+changes, or twelve otherwise. Nearer and reciprocally connected leaves take
+priority, with stable name/key ordering for ties. It preserves bridges, changed
+connector endpoints, navigation, repeated placements, and changed-file
+representatives even when those prevent meeting the neighbour target.
+Changed relationships retain their original direction and styling.
+
+For `--auto --markdown`:
+
+- Scenes with more than twelve placements and at least two connected groups of
+  three or more placements can become two diagrams. Whole disconnected groups
+  are balanced between them; no relationship or changed-file representation is
+  cut across diagrams. Connectivity includes cross-view relationships and
+  navigation. The groups are disconnected **in the selected scope**, which does
+  not establish independence in the full application.
+- In larger scenes, isolated raw changed files move to a visible list below the
+  diagrams, with full paths, change kinds, and available line counts. Every
+  changed file remains represented. Authored representations stay in diagrams.
+- If the selected scene has no relationships, output is a file summary instead
+  of a collection of disconnected boxes. This describes available evidence,
+  not the absence of dependencies. Unknown line counts stay unknown.
+- A note discloses trimmed unchanged context, and subgraphs use an explicit
+  left-to-right layout to avoid horizontal fan-out squeezing labels.
+
+JSON, URL, and raw Mermaid exports stay single documents. They use the same
+context reduction, but keep isolated changed-file placements and do not split.
+`--plain` and `--view` still apply.
+
+Auto limits each diagram to 24 placements and 40 connectors. It declines
+comparisons with more than 50 changed paths or 2,000 known added-plus-removed
+lines. Renames use the existing removal/addition ledger, so a broad move can
+exceed these limits even if Git's rename-aware summary is small. These are
+conservative review limits, not accuracy guarantees. Omit `--auto` to use manual
+controls for a larger change.
+
+Explicit `--max-nodes`, `--max-elements`, and `--max-connectors` apply to the
+**whole selected scene**, including files listed below diagrams. Unlike manual
+mode, auto checks them after simplification and can fall back to a smaller
+radius. `--max-bytes` includes all Markdown text and fences; debug provenance
+retains its existing byte-budget exemption. Zero disables the corresponding
+explicit limit, not auto's readability limits. If no complete selection fits,
+stdout is empty, stderr explains why, and the report has `status: "skipped"`;
+the command exits successfully so a bot can use its own fallback. URL encoding
+failures retain the existing nonzero exit behavior.
+
+The optional report adds an `auto` object with `mode` (`diagram`, `split`,
+`summary`, or `skipped`), `diagrams`, `listedFiles`, `prunedContext`,
+`prunedConnectors`, and `reason`. Existing status/count/statistics fields remain
+available. Counts cover the entire selection; each Markdown panel's metadata
+describes that panel's files. The canonical report retains the complete file
+ledger even when rendering is skipped. `--debug-provenance` explains reductions.
+
+See [the evaluation corpus](git-compare-auto-evaluation.md) for pinned public
+commits, observations, reproduction commands, and limitations.
 
 ## Tips
 

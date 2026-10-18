@@ -89,6 +89,11 @@ func SelectScene(scene *model.Assembly, radius uint32, plain bool) *model.Assemb
 		out.Comparison.Plain = plain
 	}
 	kept := sceneKept(out, radius, plain)
+	return selectSceneKeys(out, kept, "")
+}
+
+// selectSceneKeys filters an owned copy using placement membership.
+func selectSceneKeys(out *model.Assembly, kept map[string]map[int32]bool, reasonOverride string) *model.Assembly {
 	for _, key := range sortedKeys(out.Views) {
 		content := out.Views[key]
 		for _, placement := range content.Placements {
@@ -98,8 +103,11 @@ func SelectScene(scene *model.Assembly, radius uint32, plain bool) *model.Assemb
 			}
 			p := out.Provenance[PlacementKey(int64(element.ViewId), int64(element.ElementId))]
 			reason := "Outside effective dependency radius"
-			if plain && p != nil && p.Role == pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT {
+			if out.GetComparison().GetPlain() && p != nil && p.Role == pb.ImpactRole_IMPACT_ROLE_AUTHORED_CONTEXT {
 				reason = "Hidden authored context in Plain mode"
+			}
+			if reasonOverride != "" {
+				reason = reasonOverride
 			}
 			if p != nil {
 				out.OmittedContext = append(out.OmittedContext, shortRef(p.Key))
