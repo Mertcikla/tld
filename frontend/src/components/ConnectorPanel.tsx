@@ -4,7 +4,6 @@ import type { ConnectorPanelSlots } from '../slots'
 import {
   Box,
   Button,
-  Divider,
   FormControl,
   FormLabel,
   HStack,
@@ -30,6 +29,8 @@ import type { Connector } from '../types'
 import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
+import PanelSaveStatus from './PanelSaveStatus'
+import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import TagUpsert from './TagUpsert'
 
 import { useViewEditorContext } from '../pages/ViewEditor/context'
@@ -172,6 +173,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   const [tags, setTags] = useState<string[]>([])
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const [loading, setLoading] = useState(false)
+  const { state: saveState, startSaving, saved, failed } = usePanelSaveFeedback(`connector-${isOpen ? connector?.id : 'closed'}`)
   const confirmDelete = useDisclosure()
 
   useEffect(() => {
@@ -274,6 +276,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     if (fingerprint === lastSavedFingerprintRef.current) return
 
     savingRef.current = true
+    startSaving()
     try {
       const updated = await api.workspace.connectors.update(viewId, connector.id, {
         label: payload.label,
@@ -285,9 +288,10 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         tags: payload.tags,
       })
       lastSavedFingerprintRef.current = fingerprint
+      saved()
       onSave(updated)
     } catch {
-      // ignore
+      failed()
     } finally {
       savingRef.current = false
       if (pendingSaveRef.current) {
@@ -297,7 +301,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         }, 0)
       }
     }
-  }, [autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave])
+  }, [autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
 
   const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
@@ -318,8 +322,9 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   }, [autoSaveEdit, connector, label, description, relType, direction, connectorType, url, tags])
 
   const handleSave = useCallback(async () => {
-    if (isReadOnly || !connector || viewId == null) return
+    if (isReadOnly || !connector || viewId == null || loading) return
     setLoading(true)
+    startSaving()
     try {
       const { payload } = await buildPayloadAndFingerprint()
       const updated = await api.workspace.connectors.update(viewId, connector.id, {
@@ -331,14 +336,15 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         url: payload.url,
         tags: payload.tags,
       })
+      saved()
       onSave(updated)
       onClose()
     } catch {
-      // intentionally empty
+      failed()
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, connector, viewId, buildPayloadAndFingerprint, onSave, onClose])
+  }, [isReadOnly, connector, viewId, loading, buildPayloadAndFingerprint, onSave, onClose, startSaving, saved, failed])
 
   const handleClose = useCallback(async () => {
     if (autoSaveEdit) {
@@ -628,9 +634,8 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
           </VStack>
         </Box>
 
-        <Divider borderColor="whiteAlpha.100" />
-
         {/* Footer */}
+        {canEdit && <PanelSaveStatus state={saveState} autoSave={autoSaveEdit} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         <HStack px={4} py={3} justify="space-between" flexShrink={0}>
           {canEdit ? (
             <Button data-testid="connector-panel-delete" variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>

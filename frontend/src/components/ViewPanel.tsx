@@ -25,6 +25,8 @@ import { api } from '../api/client'
 import type { Connector, ViewTreeNode, ViewMarkdownDocument } from '../types'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
+import PanelSaveStatus from './PanelSaveStatus'
+import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import LayoutSection from './LayoutSection'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -101,6 +103,7 @@ function ViewPanel({
   const [levelLabel, setLevelLabel] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const { state: saveState, startSaving, saved, failed } = usePanelSaveFeedback(`view-${isOpen ? view?.id : 'closed'}`)
 
   const [deleteManagedFile, setDeleteManagedFile] = useState(true)
   const [markdownAction, setMarkdownAction] = useState<'unlink' | null>(null)
@@ -127,8 +130,9 @@ function ViewPanel({
   }, [isOpen, onClose])
 
   const handleSave = async () => {
-    if (isReadOnly || !view) return
+    if (isReadOnly || !view || saving || !name.trim()) return
     setSaving(true)
+    startSaving()
     try {
       const updated = await api.workspace.views.update(view.id, {
         name: name.trim(),
@@ -137,9 +141,10 @@ function ViewPanel({
         tags,
       })
       onSave({ ...view, name: updated.name, description, level_label: updated.label, tags: updated.tags })
+      saved()
       onClose()
     } catch {
-      // intentionally empty
+      failed()
     } finally {
       setSaving(false)
     }
@@ -340,7 +345,7 @@ function ViewPanel({
         </VStack>
       </ScrollIndicatorWrapper>
 
-      <Divider borderColor="whiteAlpha.100" />
+      {canEdit && <PanelSaveStatus state={saveState} />}
 
       {/* Footer */}
       <HStack px={4} py={3} justify="flex-end" flexShrink={0}>
