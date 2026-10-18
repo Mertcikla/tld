@@ -249,11 +249,10 @@ function DiagramJumpToolbar({
                   data-testid="views-new-diagram-button"
                   size="sm"
                   h="28px"
-                  leftIcon={<AddIcon fontSize="9px" />}
+                  leftIcon={<AddIcon fontSize="12px" />}
                   variant="primary"
                   px={3}
-                  fontSize="11px"
-                  fontWeight="semibold"
+                  fontSize="14px"
                   onClick={onCreateOpen}
                 >
                   New
