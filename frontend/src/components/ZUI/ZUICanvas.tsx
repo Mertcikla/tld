@@ -48,6 +48,8 @@ export interface ZUICanvasHandle {
 export interface ZUICameraFrame {
   profile: 'detail-to-overview'
   progress: number
+  detailViewId?: number
+  overviewViewId?: number
 }
 
 interface Props {

@@ -148,8 +148,12 @@ export function useZUICamera({
     const canvasH = el.offsetHeight
     if (canvasW === 0 || canvasH === 0) return false
 
-    const detailTarget = findFirstExpandableNode(layoutGroups)
-    const overviewTarget = layoutGroups[0]
+    const detailTarget = (frame.detailViewId !== undefined
+      ? findDiagramFocusTarget(layoutGroups, frame.detailViewId)
+      : null) ?? findFirstExpandableNode(layoutGroups)
+    const overviewTarget = (frame.overviewViewId !== undefined
+      ? findDiagramFocusTarget(layoutGroups, frame.overviewViewId)
+      : null) ?? findDiagramFocusTarget(layoutGroups, layoutGroups[0]?.diagramId ?? -1)
     if (!detailTarget || !overviewTarget) return false
 
     const detail = fitWorldRect(
@@ -167,10 +171,10 @@ export function useZUICamera({
 
     const overview = fitWorldRect(
       {
-        x: overviewTarget.worldX,
-        y: overviewTarget.worldY,
-        w: overviewTarget.worldW,
-        h: overviewTarget.worldH,
+        x: overviewTarget.absX,
+        y: overviewTarget.absY,
+        w: overviewTarget.absW,
+        h: overviewTarget.absH,
       },
       canvasW,
       canvasH,
