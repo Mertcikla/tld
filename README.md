@@ -1,5 +1,3 @@
-
-
 <p align="center">
   <a href="https://tldiagram.com">
     <img src="./frontend/logo/tld.svg" alt="Logo" width="200">
@@ -72,18 +70,18 @@ Windows
 powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex; tld serve --open"
 ```
 
-tld has native-desktop builds for macOS and windows. Look for tld-desktop binaries in releases.
+By default, the web UI runs at [http://127.0.0.1:8060](http://127.0.0.1:8060). `tld serve` starts the server in the background; use `tld status` to inspect it and `tld stop` to shut it down. Run `tld serve --open` to start it again.
 
-## Documentation
+### Desktop App
 
-Visit [docs](https://tldiagram.com/docs) for more info.
+Native desktop builds for macOS and Windows are available on the [releases page](https://github.com/Mertcikla/tld/releases). Look for assets named `tld-desktop-*`. CLI archives for macOS, Linux, and Windows are available there too.
 
 
 ## Deployment & Self-Hosting
 
-`tld` designed to be run fully offline, behind a reverse-proxy or in your infrastructure or as a local development tool.
+Run `tld serve` for a local SQLite-backed instance. Configuration lives in `~/.config/tldiagram/tld.global.yaml` by default; `TLD_CONFIG_DIR` overrides the configuration directory, and `TLD_DATA_DIR` overrides the directory for local data and logs.
 
-Run `tld serve` to start a local SQLite-backed instance, or configure PostgreSQL in `~/.config/tldiagram/tld.global.yaml` or via env vars
+To use PostgreSQL, configure `database.driver` and `database.url` in the global config, or set environment variables.
 
 ```bash
 export TLD_DB_DRIVER=postgres
@@ -95,36 +93,84 @@ export PORT=8060
 tld serve
 ```
 
+`TLD_HOST` controls the bind address, and `TLD_PUBLIC_URL` sets the public URL used behind a reverse proxy. The example binds to loopback for a proxy on the same host. Use `tld serve --foreground` when a service manager needs to supervise the process.
+
 ### Docker
+
+From a checkout of this repository, start one of the supplied Compose stacks:
 
 ```bash
 # SQLite
-docker compose up
+docker compose up -d
 
-# Or PostgreSQL with pgvector, required by the core migrations
-docker compose -f docker-compose.postgres.yml up
+# Or PostgreSQL
+docker compose -f docker-compose.postgres.yml up -d
 ```
 
-## Mobile 
+Both stacks expose the web UI at [http://127.0.0.1:8060](http://127.0.0.1:8060) by default and persist data in named volumes. The PostgreSQL stack uses the standard `postgres:16` image, with no extensions required. See [the SQLite Compose file](./docker-compose.yml) or [the PostgreSQL Compose file](./docker-compose.postgres.yml) for image, port, and storage settings.
 
+## Mobile
 There are Mobile apps available in both [App Store](https://apps.apple.com/us/app/tldiagram/id6760236883) and [Play Store](https://play.google.com/store/apps/details?id=com.mertcikla.tldiagram) they are mostly cloud-oriented and free but require [tldiagram.com](https://tldiagram.com) account. They are good for quickly checking stuff on-the-go, small screens are hard for full featured diagram authoring but they still received some development effort and attention to make authoring possible on mobile. 
 
-## Commands Reference
+## CLI Reference
 
-Run `tld --help` for a local diagram walkthrough and repository-analysis examples.
-Use `tld <command> --help` for details, including these discovery commands:
+The CLI is built to enable LLM integration and use in CI/CD pipelines. It is a secondary interface to the web UI, and can be used to create, update, and inspect diagrams. 
+
+Run `tld --help` for the authoring commands and `tld --help-all` for the full command catalog. Use `tld <command> --help` for fields, flags, and examples.
 
 ```bash
+tld context                       # Show the selected workspace and target
 tld list elements                 # Element refs, names, and database IDs
 tld list connectors               # Keys for inspecting and updating connectors
 tld list views --tree             # View owners and drill-down hierarchy
 tld update element --help         # Editable fields, name changes, and YAML ref changes
 tld update connector --help       # Editable fields, connector keys, and direction values
 tld view --help                   # Create and manage an element's owned view
-tld render --help                 # Export a required view as Mermaid
+tld render root                   # Export the root view as Mermaid
+tld doctor                        # Check source-indexing prerequisites
+tld index --help                  # Index a repository, generate a map of your codebase, or watch changes live
+tld git compare --help            # Compare Git revisions in a repository and visualize the changes on your diagrams
+tld mcp --help                    # Expose diagram tools to MCP clients over stdio
+```
+[User guide and CLI reference](https://tldiagram.com/docs/tld/workspace/) for more information.
+
+## Building & Development
+
+Requires Go 1.26.2 or newer, Node.js 24, npm, and Make.
+
+```bash
+git clone https://github.com/Mertcikla/tld.git
+cd tld
+make build
+"$(go env GOPATH)/bin/tld" serve --open
 ```
 
-An element can appear in multiple views. Adding a child with `--parent <ref>`
-creates the parent's view automatically; `tld view create <ref>` creates it
-explicitly. Ordinary mutations apply to their configured target immediately and
-refresh workspace YAML when present. Workspace ref changes only affect YAML.
+`make build` installs frontend dependencies, builds the web UI, and embeds it in
+the binary at `$(go env GOPATH)/bin/tld`. Build the frontend before compiling Go
+directly: the embedded assets come from `frontend/dist`.
+
+For live development, install [Air](https://github.com/air-verse/air)
+
+```bash
+go install github.com/air-verse/air@latest
+make frontend-build
+make dev
+```
+Development data is stored in
+`data/dev`, with configuration in `data/dev/config`.
+
+Run checks from the repository root:
+
+```bash
+make lint-be   # Go lint
+make lint-fe   # TypeScript lint
+make test      # Go and frontend unit tests
+make test-e2e  # Playwright end-to-end tests; requires installed browser binaries
+```
+
+The Go module is `github.com/mertcikla/tld/v2`, and the reusable frontend is
+published as `@tldiagram/core-ui`.
+
+## License
+
+[Apache License 2.0](./LICENSE).
