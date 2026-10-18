@@ -85,7 +85,6 @@ import ExportModal, { type ExportOptions } from '../../components/ExportModal'
 import ImportModal from '../../components/ImportModal'
 import { KbdHint } from '../../components/PanelUI'
 import ViewHeaderButton from '../../components/ViewHeaderButton'
-import ViewEditorOnboarding from '../../components/ViewEditorOnboarding'
 import DrawingCanvas, { type DrawingCanvasHandle, type DrawingPath } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
 import ViewDrawMenu from '../../components/ViewDrawMenu'
@@ -5008,7 +5007,6 @@ function ViewEditorInner({
           source={mergeSourceElement}
           onMerge={handleMerge}
         />
-        {!demoOptions?.disableOnboarding && <ViewEditorOnboarding hasElements={rfNodes.length > 0} />}
       </Box>
     </ViewEditorContext.Provider>
   )

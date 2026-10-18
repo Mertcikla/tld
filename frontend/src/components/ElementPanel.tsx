@@ -1967,7 +1967,7 @@ function ElementPanel({
         </ScrollIndicatorWrapper>
 
         {/* Footer */}
-        {canEdit && <PanelSaveStatus state={saveState} autoSave={autoSaveEdit} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
+        {canEdit && <PanelSaveStatus state={saveState} hasFooter={!autoSaveEdit && !isInline} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         {!autoSaveEdit && !isInline && (
           <HStack px={4} py={3} justify="flex-end" flexShrink={0}>
             <Button variant="ghost" size="sm" onClick={handleClose}>

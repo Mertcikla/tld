@@ -28,11 +28,13 @@ const view: ViewTreeNode = {
 let renderer: ReactTestRenderer
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.mocked(api.workspace.views.update).mockReset()
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
 })
 afterEach(() => {
   act(() => renderer?.unmount())
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -47,7 +49,7 @@ const saveButton = () => renderer.root.findByProps({ 'data-testid': 'view-panel-
 describe('ViewPanel saving', () => {
   it('keeps a failed draft open, shows an error, and retries the same values', async () => {
     const props = renderPanel()
-    expect(renderer.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Use Save to apply changes.')
+    expect(renderer.root.findAllByProps({ 'data-testid': 'panel-save-status' })).toHaveLength(0)
     act(() => { field().props.onChange({ target: { value: 'Updated workspace' } }) })
     vi.mocked(api.workspace.views.update).mockRejectedValueOnce(new Error('offline'))
     await act(async () => { await saveButton().props.onClick() })
@@ -68,6 +70,7 @@ describe('ViewPanel saving', () => {
     let resolve!: (value: Awaited<ReturnType<typeof api.workspace.views.update>>) => void
     vi.mocked(api.workspace.views.update).mockImplementationOnce(() => new Promise((done) => { resolve = done }))
     act(() => { void saveButton().props.onClick() })
+    act(() => { vi.advanceTimersByTime(300) })
     expect(saveButton().props.isLoading).toBe(true)
     expect(renderer.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Saving changes…')
     await act(async () => { await saveButton().props.onClick() })

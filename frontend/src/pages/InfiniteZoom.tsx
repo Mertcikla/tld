@@ -2,8 +2,6 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { ReactNode, Ref, RefObject } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Box, Center, Spinner, useDisclosure } from '@chakra-ui/react'
-import ExploreOnboarding from '../components/ExploreOnboarding'
-import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { ExploreEmptyState, ExploreToolbar } from './explore/ExploreComponents'
@@ -25,15 +23,11 @@ export interface InfiniteZoomHandle {
   setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
-const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
-
 function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnectorsEnabled, breadcrumbBoundaryRef }: Props, ref?: Ref<InfiniteZoomHandle>) {
   const navigate = useNavigate()
   const location = useLocation()
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const [canvasReady, setCanvasReady] = useState(false)
-  const [showMiniOnboarding, setShowMiniOnboarding] = useState(false)
-  const [miniOnboardingInteractionSeen, setMiniOnboardingInteractionSeen] = useState(false)
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const [isCrossBranchControlsOpen, setIsCrossBranchControlsOpen] = useState(false)
   const localDataState = useExploreData(sharedToken, !dataState)
@@ -74,33 +68,6 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
       return zuiRef.current?.setCameraFrame(frame) ?? false
     },
   }), [])
-
-  useEffect(() => {
-    if (isDetailToOverviewProfile) return
-    if (sharedToken && canvasReady && !localStorage.getItem(MINI_ONBOARDING_KEY)) {
-      setShowMiniOnboarding(true)
-    }
-  }, [sharedToken, canvasReady, isDetailToOverviewProfile])
-
-  const dismissMiniOnboarding = useCallback(() => {
-    if (showMiniOnboarding) {
-      setShowMiniOnboarding(false)
-      if (!isDetailToOverviewProfile) {
-        localStorage.setItem(MINI_ONBOARDING_KEY, 'true')
-      }
-    }
-  }, [isDetailToOverviewProfile, showMiniOnboarding])
-
-  const showMiniOnboardingAfterCanvasInteraction = useCallback(() => {
-    if (!isDetailToOverviewProfile || miniOnboardingInteractionSeen) return
-    setMiniOnboardingInteractionSeen(true)
-    setShowMiniOnboarding(true)
-  }, [isDetailToOverviewProfile, miniOnboardingInteractionSeen])
-
-  const handleCanvasZoom = useCallback(() => {
-    setMiniOnboardingInteractionSeen(true)
-    dismissMiniOnboarding()
-  }, [dismissMiniOnboarding])
 
   useEffect(() => {
     if (!sharedToken) return
@@ -159,8 +126,6 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
             ref={zuiRef}
             data={data}
             onReady={() => setCanvasReady(true)}
-            onZoom={handleCanvasZoom}
-            onPan={showMiniOnboardingAfterCanvasInteraction}
             initialCameraFrame={initialCameraFrame}
             highlightedTags={tags.highlightedTags}
             highlightColor={tags.highlightColor}
@@ -171,9 +136,6 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen || isCrossBranchControlsOpen}
           />
-
-          {!sharedToken && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
-          <MiniZoomOnboarding isVisible={showMiniOnboarding} onClose={dismissMiniOnboarding} />
 
           <ExploreToolbar
             showContent={showContent}

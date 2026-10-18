@@ -16,6 +16,13 @@ beforeEach(() => { toast.mockClear() })
 afterEach(() => { act(() => renderer?.unmount()) })
 
 describe('panel save feedback', () => {
+  it('leaves active-panel failures to the local toast without duplicating notifications', () => {
+    act(() => { renderer = create(<Harness identity="element-1" />) })
+    act(() => { feedback.failed() })
+    expect(feedback.state).toBe('error')
+    expect(toast).not.toHaveBeenCalled()
+  })
+
   it('keeps a previous panel’s late result from changing the selected panel’s status', () => {
     act(() => { renderer = create(<Harness identity="element-1" />) })
     act(() => { feedback.startSaving() })

@@ -28,22 +28,23 @@ export default function ConnectorPanelCollaboration({
 }: Props) {
   const { viewId, selectedConnector } = useViewEditorContext()
   const connector = propsConnector ?? selectedConnector
+  const connectorId = connector?.id
   const [threads, setThreads] = useState<ViewThread[]>([])
   const [threadInput, setThreadInput] = useState('')
   const [replyInputByThread, setReplyInputByThread] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(async () => {
-    if (!connector || viewId == null) return
-    const list = await api.workspace.views.threads.listForConnector(viewId, connector.id).catch(() => [])
+    if (connectorId == null || viewId == null) return
+    const list = await api.workspace.views.threads.listForConnector(viewId, connectorId).catch(() => [])
     setThreads(list)
-  }, [connector, viewId])
+  }, [connectorId, viewId])
 
   useEffect(() => {
-    if (!connector || viewId == null) return
+    if (connectorId == null || viewId == null) return
     setLoading(true)
     refresh().finally(() => setLoading(false))
-  }, [connector, refresh, viewId])
+  }, [connectorId, refresh, viewId])
 
   useEffect(() => {
     if (!connector || !liveThreadUpsert || liveThreadUpsert.connector_id !== connector.id) return

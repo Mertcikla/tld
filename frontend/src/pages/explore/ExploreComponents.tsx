@@ -19,7 +19,6 @@ import type { ReactNode } from 'react'
 import type { CrossBranchConnectorPriority, CrossBranchContextSettings } from '../../crossBranch/types'
 import type { Tag, ViewLayer } from '../../types'
 import CrossBranchControls from '../../components/CrossBranchControls'
-import ExplorePageOnboarding from '../../components/ExplorePageOnboarding'
 import { EyeIcon, EyeOffIcon, FitViewIcon as FitViewSvg, TagsIcon } from '../../components/Icons'
 import { isElementGroupLayer } from '../../utils/elementGroups'
 
@@ -60,7 +59,6 @@ export function ExploreEmptyState({
           {noDiagrams ? 'Create First Diagram' : 'Go to Editor'}
         </Button>
       )}
-      {!error && !noDiagrams && !sharedToken && <ExplorePageOnboarding hasDiagrams={!noDiagrams} />}
     </Center>
   )
 }

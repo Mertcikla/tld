@@ -635,7 +635,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         </Box>
 
         {/* Footer */}
-        {canEdit && <PanelSaveStatus state={saveState} autoSave={autoSaveEdit} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
+        {canEdit && <PanelSaveStatus state={saveState} hasFooter onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         <HStack px={4} py={3} justify="space-between" flexShrink={0}>
           {canEdit ? (
             <Button data-testid="connector-panel-delete" variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>

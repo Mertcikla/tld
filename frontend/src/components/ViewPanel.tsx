@@ -345,7 +345,7 @@ function ViewPanel({
         </VStack>
       </ScrollIndicatorWrapper>
 
-      {canEdit && <PanelSaveStatus state={saveState} />}
+      {canEdit && <PanelSaveStatus state={saveState} hasFooter />}
 
       {/* Footer */}
       <HStack px={4} py={3} justify="flex-end" flexShrink={0}>

@@ -95,7 +95,7 @@ describe('ConnectorPanel noise gate', () => {
     await act(async () => {
       renderer = create(<ConnectorPanel isOpen autoSave connector={connector()} orgId="" onSave={onSave} onClose={onClose} onDelete={vi.fn()} />)
     })
-    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes save automatically.')
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'panel-save-status' })).toHaveLength(0)
     vi.mocked(api.workspace.connectors.update).mockRejectedValueOnce(new Error('offline'))
     await act(async () => {
       renderer!.root.findByProps({ 'data-testid': 'connector-panel-label-input' }).props.onChange({ target: { value: 'Updated label' } })

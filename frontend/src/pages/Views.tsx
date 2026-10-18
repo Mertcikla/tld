@@ -122,7 +122,7 @@ function DiagramJumpToolbar({
       transform="translateX(-50%)"
       zIndex={1000}
       pointerEvents="auto"
-      w={isMobileLayout ? "calc(100vw - 24px)" : "auto"}
+      w={isMobileLayout ? "calc(100vw - 24px)" : "max-content"}
       maxW="calc(100vw - 24px)"
     >
       <motion.div
@@ -138,10 +138,10 @@ function DiagramJumpToolbar({
           gap={1.5}
           boxShadow="0 5px 10px rgba(0,0,0,0.5)"
           align="center"
-          w={isMobileLayout ? "full" : "auto"}
+          w="full"
           maxW="full"
           overflow="visible"
-          transition="all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
+          transition="border-color 0.2s ease, box-shadow 0.2s ease"
         >
           <HStack spacing={0} sx={modeSwitchGroupStyles} role="group" aria-label="Diagram mode">
             <Button
@@ -178,7 +178,7 @@ function DiagramJumpToolbar({
             initial={false}
             animate={isMobileLayout ? undefined : { width: desktopSearchWidth }}
             transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
-            style={{ flex: isMobileLayout ? '1 1 0' : '0 0 auto', minWidth: 0 }}
+            style={{ flex: isMobileLayout ? '1 1 0' : '0 1 auto', minWidth: 0 }}
           >
             <InputGroup size="sm" w="full">
               <InputLeftElement pointerEvents="none" h="28px" w="28px">

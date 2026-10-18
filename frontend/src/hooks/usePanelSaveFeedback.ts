@@ -23,7 +23,8 @@ export function usePanelSaveFeedback(identity: string) {
   const saved = useCallback(() => setState('saved'), [setState])
   const failed = useCallback(() => {
     setState('error')
-    // Also report errors when a blur save finishes after its panel was closed.
+    // The open panel owns its toast. Use a global notification only after leaving it.
+    if (activeIdentity.current === identity) return
     toastRef.current({
       id: `panel-save-error-${identity}`,
       title: 'Changes weren’t saved',

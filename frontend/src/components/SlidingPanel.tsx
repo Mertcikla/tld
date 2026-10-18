@@ -67,6 +67,7 @@ export default function SlidingPanel({
       <Box
         data-testid={dataTestId}
         ref={boxRef}
+        position="relative"
         w="full"
         h="full"
         overflow="hidden"
@@ -127,6 +128,7 @@ export default function SlidingPanel({
             <Box
               data-testid={dataTestId}
               ref={boxRef}
+              position="relative"
               pointerEvents="auto"
               w={width}
               minW={minWidth}
