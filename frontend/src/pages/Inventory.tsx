@@ -123,6 +123,11 @@ export default function Inventory() {
       setGroupTagMeta(nextGroupTagMeta)
       setAvailableTags(Array.from(tagSet).sort((a, b) => a.localeCompare(b)))
       setTagColorMap(fetchedTagColors as Record<string, { color: string }>)
+      return new Set([
+        ...allElements.map((element) => `element:${element.id}`),
+        ...flatViews.map((view) => `view:${view.id}`),
+        ...nextConnectors.map((connector) => `connector:${connector.id}`),
+      ])
     } catch (error) {
       if (version === refreshVersion.current)
         setLoadError(error instanceof Error ? error.message : 'Could not load inventory.')
@@ -160,18 +165,27 @@ export default function Inventory() {
   }
 
   // Settle every operation before refreshing. Keep failures selected for a safe retry.
-  const runMutation = async (targets: InventoryRow[], mutate: (row: InventoryRow) => Promise<void>) => {
+  const runMutation = async (
+    targets: InventoryRow[],
+    mutate: (row: InventoryRow) => Promise<void>,
+    action: 'updated' | 'deleted' = 'updated',
+  ) => {
     setBulkLoading(true)
     setMutationError(null)
     try {
       const results = await Promise.allSettled(targets.map(mutate))
-      const failed = targets.filter((_row, index) => results[index].status === 'rejected')
+      const remainingKeys = await refresh()
+      // Related deletions can cascade before a selected object's own request runs.
+      // Only dismiss its failure when a successful refresh confirms it is gone.
+      const failed = targets.filter((row, index) =>
+        results[index].status === 'rejected' &&
+        (action !== 'deleted' || !remainingKeys || remainingKeys.has(row.key)),
+      )
       inventory.setRowSelection(Object.fromEntries(failed.map((row) => [row.key, true])))
       if (failed.length)
         setMutationError(
-          `${targets.length - failed.length} of ${targets.length} objects updated. ${failed.length} failed and remain selected; retry the action.`,
+          `${targets.length - failed.length} of ${targets.length} objects ${action}. ${failed.length} failed and remain selected; retry the action.`,
         )
-      await refresh()
       return failed.length === 0
     } finally {
       setBulkLoading(false)
@@ -183,7 +197,7 @@ export default function Inventory() {
       if (row.objectType === 'element') await api.workspace.elements.delete('', row.id)
       else if (row.objectType === 'view') await api.workspace.views.delete('', row.id)
       else await api.workspace.connectors.delete('', row.id)
-    })
+    }, 'deleted')
     if (success) setParam('object', '')
     return success
   }
