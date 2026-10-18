@@ -2,15 +2,6 @@ import { expect, type APIResponse, type Browser, type BrowserContext, type Locat
 
 const e2eOrgId = '11111111-1111-1111-1111-111111111111'
 
-export const onboardingStorage = {
-  editor: 'diagrameditor_tutorial_v1_core',
-  explore: 'explore_tutorial_v1_core',
-  explorePage: 'explore_page_tutorial_v1_core',
-  viewGrid: 'viewgrid_tutorial_v2_core',
-  shown: 'onboarding_shown',
-  sharedZoom: 'shared_zoom_onboarding_dismissed',
-}
-
 export type CollaborationIdentity = {
   client_id: string
   user_id: string
@@ -62,18 +53,12 @@ export async function disableAnimations(page: Page) {
 }
 
 export async function prepareStorage(page: Page) {
-  await page.addInitScript((keys) => {
-    localStorage.setItem(keys.editor, '1')
-    localStorage.setItem(keys.explore, '1')
-    localStorage.setItem(keys.explorePage, '1')
-    localStorage.setItem(keys.viewGrid, '1')
-    localStorage.setItem(keys.shown, '1')
-    localStorage.setItem(keys.sharedZoom, 'true')
+  await page.addInitScript(() => {
     localStorage.setItem('diag:snapToGrid', 'false')
     localStorage.setItem('diag:libraryOpen', 'false')
     localStorage.setItem('diag:explorerOpen', 'false')
     localStorage.setItem('tld:experimental', JSON.stringify({ populateEnabled: true }))
-  }, onboardingStorage)
+  })
 }
 
 export async function prepareE2EPage(page: Page, identity?: CollaborationIdentity) {

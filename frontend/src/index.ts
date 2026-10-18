@@ -80,13 +80,6 @@ export { TagManager } from './components/ViewExplorer/TagManager'
 // ViewEditor sub-components
 export { ViewEditorContext, useViewEditorContext } from './pages/ViewEditor/context'
 
-// Onboarding components
-export { default as ViewEditorOnboarding } from './components/ViewEditorOnboarding'
-export { default as ViewsGridOnboarding } from './components/ViewsGridOnboarding'
-export { default as ExploreOnboarding } from './components/ExploreOnboarding'
-export { default as ExplorePageOnboarding } from './components/ExplorePageOnboarding'
-export { default as MiniZoomOnboarding } from './components/MiniZoomOnboarding'
-
 // ViewEditor edge label layout
 export * from './components/ViewEditorEdgeLabelLayout'
 
