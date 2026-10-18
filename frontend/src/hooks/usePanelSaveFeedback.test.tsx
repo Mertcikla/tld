@@ -16,6 +16,37 @@ beforeEach(() => { toast.mockClear() })
 afterEach(() => { act(() => renderer?.unmount()) })
 
 describe('panel save feedback', () => {
+  it.each(['closed', 'element-2'])('clears previous feedback when returning from %s', (nextIdentity) => {
+    act(() => { renderer = create(<Harness identity="element-1" />) })
+    act(() => { feedback.failed() })
+    act(() => { renderer.update(<Harness identity="element-1" />) })
+    expect(feedback.state).toBe('error')
+
+    act(() => { renderer.update(<Harness identity={nextIdentity} />) })
+    expect(feedback.state).toBe('idle')
+    act(() => { renderer.update(<Harness identity="element-1" />) })
+    expect(feedback.state).toBe('idle')
+    expect(toast).not.toHaveBeenCalled()
+
+    act(() => { feedback.startSaving() })
+    act(() => { feedback.saved() })
+    expect(feedback.state).toBe('saved')
+  })
+
+  it('keeps late results from a previous session out of the reopened panel', () => {
+    act(() => { renderer = create(<Harness identity="element-1" />) })
+    act(() => { feedback.startSaving() })
+    const oldRequest = feedback
+    act(() => { renderer.update(<Harness identity="closed" />) })
+    act(() => { renderer.update(<Harness identity="element-1" />) })
+    act(() => { oldRequest.saved() })
+    expect(feedback.state).toBe('idle')
+    act(() => { oldRequest.failed() })
+    expect(feedback.state).toBe('idle')
+    expect(toast).toHaveBeenCalledOnce()
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }))
+  })
+
   it('leaves active-panel failures to the local toast without duplicating notifications', () => {
     act(() => { renderer = create(<Harness identity="element-1" />) })
     act(() => { feedback.failed() })
