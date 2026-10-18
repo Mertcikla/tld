@@ -218,7 +218,7 @@ func TestCompareRepositoryUsesRequestedBlastRadius(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if code.Msg.Code != mermaid.ExportImpactScene(expected, mermaid.SceneExportOptions{IncludeMetadata: true}) {
+			if code.Msg.Code != mermaid.ExportImpactScene(expected, mermaid.SceneExportOptions{IncludeMetadata: true, Theme: mermaid.DefaultTheme()}) {
 				t.Fatal("RPC Mermaid differs from canonical projection")
 			}
 
@@ -320,8 +320,16 @@ func TestExportImpactMermaidKeepsBlastRadius(t *testing.T) {
 				t.Fatalf("plain=%v diagram lost %q:\n%s", plain, want, code.Msg.GetCode())
 			}
 		}
-		if strings.Contains(code.Msg.GetCode(), "Far File") != !plain {
+		if strings.Contains(code.Msg.GetCode(), "Far File") {
 			t.Fatalf("plain=%v diagram kept a far unimpacted member:\n%s", plain, code.Msg.GetCode())
 		}
 	}
+	after, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: key}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(scene.Msg, after.Msg) {
+		t.Fatal("Mermaid export mutated the canvas scene")
+	}
+
 }

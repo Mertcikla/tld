@@ -198,3 +198,18 @@ func ValidateCoverage(scene *model.Assembly) error {
 	}
 	return nil
 }
+
+// SelectPresentation applies an export-owned membership policy to a copy.
+// Canonical assembly and canvas selection do not use this entry point.
+func SelectPresentation(scene *model.Assembly, kept map[string]map[int32]bool, radius uint32, plain bool) *model.Assembly {
+	if scene == nil {
+		return nil
+	}
+	out := model.Clone(scene)
+	out.EffectiveRadius = radius
+	if out.Comparison == nil {
+		out.Comparison = &pb.ImpactComparison{}
+	}
+	out.Comparison.Plain = plain
+	return selectSceneKeys(out, kept, "Mermaid: outside the presentation blast radius")
+}

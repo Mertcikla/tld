@@ -1,3 +1,5 @@
+import defaultTheme from '../../../internal/mermaid/theme.json'
+import { selectMermaidScene } from './impactSceneMermaidSelection'
 import { ChangeKind, ImpactRole, type ImpactScene, type ScenePlacement, type ImpactSceneOverlay } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import type { View } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 
@@ -8,9 +10,17 @@ const escapeLabel = (text: string) => text.replace(/\r\n|\n|\r|&|\\|"/g, (char) 
 const escapeMetadata = (text: string) => text.replace(/[\\\n\r\t=,|:]/g, (char) => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t' })[char] ?? `\\${char}`)
 const changeWord = (change: ChangeKind) => change === ChangeKind.ADDED ? 'added' : change === ChangeKind.REMOVED ? 'removed' : change === ChangeKind.MODIFIED ? 'modified' : 'unchanged'
 
-/** Presentation-only port of internal/mermaid/scene.go. Membership is frozen
- * in the supplied scene; this renderer never performs assembly or selection. */
-export function impactSceneMermaid(scene: ImpactScene): string {
+/** Export-only presentation; the canvas retains the complete supplied scene. */
+export function impactSceneMermaid(input: ImpactScene, options: { plain?: boolean; noTheme?: boolean } = {}): string {
+  const plain = options.plain ?? input.comparison?.plain ?? false
+  const scene = selectMermaidScene(input, input.comparison?.effectiveRadius ?? 0, plain)
+  const theme = options.noTheme ? undefined : defaultTheme
+  type State = keyof typeof defaultTheme.nodes
+  const classes = new Map<State, string[]>()
+  const style = (properties: Record<string, string>) => Object.keys(properties).sort().filter(key => properties[key]).map(key => `${key}:${properties[key]}`).join(',')
+  const nodeState = (id: number): State => { const change = changeWord(overlayOf.get(id)?.change ?? ChangeKind.UNSPECIFIED); return change === 'unchanged' ? 'context' : change }
+  const styleNode = (id: string, state: State) => { if (theme) classes.set(state, [...(classes.get(state) ?? []), id]) }
+
   const overlayOf = new Map<number, ImpactSceneOverlay>()
   const connected = new Set<string>()
   const retained = new Set<number>()
@@ -56,10 +66,12 @@ export function impactSceneMermaid(scene: ImpactScene): string {
     const overlay = overlayOf.get(element.elementId)
     if (overlay) {
       const change = changeWord(overlay.change)
-      if (change === 'unchanged') label += separator + '(context)'
+      if (change === 'unchanged') { if (!theme || theme.labels.context) label += separator + '(context)' }
       else {
-        label += separator + change
-        if (overlay.linesAdded != null && overlay.linesRemoved != null) label += ` +${overlay.linesAdded} −${overlay.linesRemoved}`
+        const parts: string[] = []
+        if (!theme || theme.labels.change) parts.push(change)
+        if ((!theme || theme.labels.churn) && overlay.linesAdded != null && overlay.linesRemoved != null) parts.push(`+${overlay.linesAdded} −${overlay.linesRemoved}`)
+        if (parts.length) label += separator + parts.join(' ')
       }
     }
     return escapeLabel(label)
@@ -70,17 +82,18 @@ export function impactSceneMermaid(scene: ImpactScene): string {
     if (direction === 'backward') [from, to] = [to, from]
     const both = direction === 'both' || direction === 'bidirectional', none = direction === 'none'
     const change = tags.find((tag) => ['change:added', 'change:removed', 'change:modified'].includes(tag))
+    if (theme) {
+      const state = (change?.slice(7) ?? 'context') as State
+      const properties = style(theme.edges[state])
+      if (properties) linkStyles.push(`linkStyle ${linkIndex} ${properties}`)
+    }
     const text = escapeLabel(label.trim())
     let arrow = both ? '<-->' : none ? '---' : '-->'
     if (change === 'change:added') {
-      linkStyles.push(`linkStyle ${linkIndex} stroke:#48bb78`)
       arrow = both ? '<==>' : none ? '===' : '==>'
     } else if (change === 'change:removed') {
-      linkStyles.push(`linkStyle ${linkIndex} stroke:#fc8181,stroke-dasharray:5 5`)
       arrow = both ? 'x--x' : none ? '---' : '--x'
       if (!both && !none) return text ? `${from}--x|"${text}"|${to}` : `${from}--x${to}`
-    } else if (change === 'change:modified') {
-      linkStyles.push(`linkStyle ${linkIndex} stroke:#ecc94b`)
     }
     if (text) return arrow === '-->' ? `${from} -- "${text}" --> ${to}` : `${from} ${arrow}|"${text}"| ${to}`
     return `${from} ${arrow} ${to}`
@@ -92,7 +105,7 @@ export function impactSceneMermaid(scene: ImpactScene): string {
       return
     }
     const head = '  '.repeat(depth), pad = '  '.repeat(depth + 1)
-    lines.push('', `${head}subgraph ${viewRef(viewId)}["${escapeLabel(names.get(viewId) || `view ${viewId}`)}"]`)
+    if (!plain) lines.push('', `${head}subgraph ${viewRef(viewId)}["${escapeLabel(names.get(viewId) || `view ${viewId}`)}"]`)
     const rendered = new Set<number>()
     const isolated: ScenePlacement[] = []
     const placements = content.placements.filter((placement) => {
@@ -110,9 +123,17 @@ export function impactSceneMermaid(scene: ImpactScene): string {
       }
       rendered.add(id)
       lines.push(`${pad}${nodeRef(viewId, id)}["${nodeLabel(placement, '<br/>')}"]`)
+      styleNode(nodeRef(viewId, id), nodeState(id))
     }
     if (isolated.length >= 3) {
-      lines.push(`${pad}${viewRef(viewId)}_isolated["${isolated.map((placement) => nodeLabel(placement, ' ')).join('<br/>')}"]`)
+      const states: (State | '')[] = theme ? ['context', 'modified', 'added', 'removed'] : ['']
+      for (const state of states) {
+        const group = isolated.filter(p => !state || nodeState(p.element!.elementId) === state)
+        if (!group.length) continue
+        const id = `${viewRef(viewId)}_isolated${state ? '_' + state : ''}`
+        lines.push(`${pad}${id}["${group.map(p => nodeLabel(p, ' ')).join('<br/>')}"]`)
+        if (state) styleNode(id, state)
+      }
     }
     for (const kid of kids) renderTree(kid, depth + 1)
     for (const connector of content.connectors) {
@@ -126,7 +147,7 @@ export function impactSceneMermaid(scene: ImpactScene): string {
       lines.push(pad + connectorLine(viewId, connector.sourceElementId, targetView, connector.targetElementId, connector.label ?? '', connector.tags, connector.direction))
       linkIndex++
     }
-    lines.push(head + 'end')
+    if (!plain) lines.push(head + 'end')
   }
   const renderTree = (view: View, depth: number) => {
     if (seen.has(view.id)) return
@@ -141,5 +162,12 @@ export function impactSceneMermaid(scene: ImpactScene): string {
     renderNested(id, 0, [])
   }
   if (linkStyles.length) lines.push('', ...linkStyles)
+  for (const state of ['context', 'modified', 'added', 'removed'] as State[]) {
+    const ids = classes.get(state)
+    if (theme && ids?.length) {
+      const properties = style(theme.nodes[state])
+      if (properties) lines.push(`classDef tld_${state} ${properties}`, `class ${ids.join(',')} tld_${state}`)
+    }
+  }
   return lines.join('\n') + '\n'
 }

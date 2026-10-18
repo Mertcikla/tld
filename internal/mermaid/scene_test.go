@@ -303,7 +303,7 @@ func TestExportImpactSceneFoldsIsolatedContainerIntoChildSubgraph(t *testing.T) 
 	}
 }
 
-func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
+func TestExportImpactSceneKeepsOnlyRelevantOwners(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
@@ -348,7 +348,8 @@ func TestExportImpactSceneKeepsOwnersWithIndependentInformation(t *testing.T) {
 			scene := containerSceneFixture()
 			test.modify(scene)
 			got := ExportImpactScene(scene, SceneExportOptions{})
-			if !strings.Contains(got, `el_1_1["tld`) || !strings.Contains(got, test.want) {
+			keep := test.name == "change overlay" || test.name == "dependency context" || test.name == "outgoing connector"
+			if strings.Contains(got, `el_1_1["tld`) != keep || (keep && !strings.Contains(got, test.want)) {
 				t.Fatalf("owner or independent information missing:\n%s", got)
 			}
 		})

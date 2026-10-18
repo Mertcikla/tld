@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// The frontend consumes these same fixtures to prevent the offline exporter
-// from drifting from the canonical Go presentation rules.
+// The frontend consumes the same JSON and URL fixtures to verify transport
+// compatibility between Go encoding and browser decoding.
 func TestSceneURLSharedFixture(t *testing.T) {
 	raw, err := os.ReadFile("fixtures/scene-url.json")
 	if err != nil {
@@ -18,13 +18,6 @@ func TestSceneURLSharedFixture(t *testing.T) {
 	scene := &pb.ImpactScene{}
 	if err := protojson.Unmarshal(raw, scene); err != nil {
 		t.Fatal(err)
-	}
-	want, err := os.ReadFile("fixtures/scene-url.mmd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := ExportImpactScene(scene, SceneExportOptions{IncludeMetadata: true}); got != string(want) {
-		t.Fatalf("Mermaid differs:\n%s", got)
 	}
 	link, err := sceneurl.Encode(raw, false)
 	if err != nil {

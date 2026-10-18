@@ -52,14 +52,14 @@ func TestAutoCompareExpandsSmallChangesAndHonorsBudgets(t *testing.T) {
 		radius uint32
 		mode   string
 	}{
-		{"expand", compareOptions{markdown: true, blastRadius: 2}, 1, "diagram"},
+		{"expand", compareOptions{markdown: true, blastRadius: 2}, 2, "diagram"},
 		{"explicit zero", compareOptions{markdown: true}, 0, "summary"},
 		{"node budget", compareOptions{markdown: true, blastRadius: 2, maxNodes: 1}, 0, "summary"},
 		{"element limit", compareOptions{markdown: true, blastRadius: 2, maxElements: 1}, 0, "summary"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			render := compareRenderer{ctx: context.Background(), opts: test.opts}
-			result, report, reason, err := selectAutoCompare(diagram, test.opts, render.build)
+			result, report, reason, err := selectAutoCompare(diagram, test.opts, render.build, autoFixtureLoader(diagram))
 			if err != nil || reason != "" || result.radius != test.radius || report.Mode != test.mode {
 				t.Fatalf("radius=%d report=%+v reason=%q error=%v", result.radius, report, reason, err)
 			}
@@ -79,7 +79,7 @@ func TestAutoCompareSplitsAndProducesValidMermaid(t *testing.T) {
 	}
 	opts := compareOptions{markdown: true, blastRadius: 2}
 	render := compareRenderer{ctx: context.Background(), opts: opts}
-	result, report, reason, err := selectAutoCompare(diagram, opts, render.build)
+	result, report, reason, err := selectAutoCompare(diagram, opts, render.build, autoFixtureLoader(diagram))
 	if err != nil || reason != "" || report.Mode != "split" || report.Diagrams != 2 {
 		t.Fatalf("report=%+v reason=%s err=%v", report, reason, err)
 	}
@@ -96,7 +96,7 @@ func TestAutoCompareSplitsAndProducesValidMermaid(t *testing.T) {
 	// Raw Mermaid must remain one document, even for disconnected islands.
 	opts.markdown, opts.mermaid = false, true
 	render.opts = opts
-	result, report, reason, err = selectAutoCompare(diagram, opts, render.build)
+	result, report, reason, err = selectAutoCompare(diagram, opts, render.build, autoFixtureLoader(diagram))
 	if err != nil || reason != "" || report.Diagrams != 1 || strings.Count(result.text, "flowchart LR") != 1 {
 		t.Fatalf("raw Mermaid: report=%+v reason=%s err=%v", report, reason, err)
 	}
@@ -119,7 +119,7 @@ func TestAutoCompareDeclinesUnreadableChangesWithoutDroppingFiles(t *testing.T) 
 				autoCompareEdge(diagram, i, i+1)
 			}
 			render := compareRenderer{ctx: context.Background(), opts: test.opts}
-			result, _, reason, err := selectAutoCompare(diagram, test.opts, render.build)
+			result, _, reason, err := selectAutoCompare(diagram, test.opts, render.build, autoFixtureLoader(diagram))
 			if err != nil || reason == "" || result.text != "" || len(result.diagram.Scene.Files) != test.nodes {
 				t.Fatalf("reason=%q err=%v files=%d", reason, err, len(result.diagram.Scene.Files))
 			}
@@ -137,6 +137,19 @@ func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
 	writeSource(t, dir, "a.go", "package a\nfunc A() int { return B()+1 }\n")
 	gitRun(t, dir, "add", ".")
 	gitRun(t, dir, "commit", "-m", "change caller")
+	// Auto is a Mermaid presentation option; it must not expand or prune
+	// the canonical JSON or the self-contained canvas URL.
+	for _, flags := range [][]string{nil, {"--url", "--url-base", "https://example.com"}} {
+		baseArgs := append([]string{"compare", dir, "HEAD^", "HEAD"}, flags...)
+		canonical, _, err := runGitCompare(t, baseArgs...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		withAuto, _, err := runGitCompare(t, append(baseArgs, "--auto")...)
+		if err != nil || canonical != withAuto {
+			t.Fatalf("auto changed canvas export %v: %v", flags, err)
+		}
+	}
 	reportPath := filepath.Join(t.TempDir(), "report.json")
 	args := []string{"compare", dir, "HEAD^", "HEAD", "--auto", "--markdown", "--report-json", reportPath}
 	out, _, err := runGitCompare(t, args...)
@@ -151,9 +164,26 @@ func TestAutoCompareCLIReportAndExplicitRadius(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Auto == nil || report.Auto.Mode != "diagram" || report.RequestedRadius != 2 || report.EffectiveRadius != 1 || report.Stats.Files != 1 || report.Elements != 2 {
+	if report.Auto == nil || report.Auto.Mode != "diagram" || report.RequestedRadius != 2 || report.EffectiveRadius != 2 || report.Stats.Files != 1 || report.Elements != 2 {
 		t.Fatalf("report=%+v", report)
 	}
+	// Force real snapshot reassembly through both lower radii. At zero the
+	// unchanged callee disappears, but the changed caller remains covered.
+	out, _, err = runGitCompare(t, append(args, "--max-nodes", "1")...)
+	if err != nil || !strings.Contains(out, "Changed files") || strings.Contains(out, "b.go") {
+		t.Fatalf("fallback failed: %v\n%s", err, out)
+	}
+	raw, err = os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "ready" || report.EffectiveRadius != 0 || report.RequestedRadius != 2 || report.Elements != 1 || fmt.Sprint(report.Auto.AttemptedRadii) != "[2 1 0]" {
+		t.Fatalf("fallback report=%+v auto=%+v", report, report.Auto)
+	}
+
 	out, _, err = runGitCompare(t, append(args, "--blast-radius", "0")...)
 	if err != nil || strings.Contains(out, "b.go") || !strings.Contains(out, "Changed files") {
 		t.Fatalf("explicit radius ignored: %v\n%s", err, out)
@@ -171,4 +201,10 @@ func TestAutoSummaryEscapesPathsAndKeepsUnknownCounts(t *testing.T) {
 	if mode != "summary" || count != 0 || strings.Contains(text, "<script>") || strings.Contains(text, "`\n") || strings.Contains(text, "+0") {
 		t.Fatalf("unsafe or misleading summary: %s", text)
 	}
+}
+
+// Synthetic scenes already have their membership classified. Production uses
+// compareRenderer.atRadius to reassemble authored views from pinned snapshots.
+func autoFixtureLoader(diagram *model.Diagram) func(uint32) (*model.Diagram, error) {
+	return func(radius uint32) (*model.Diagram, error) { return impact.Scope(diagram, radius), nil }
 }

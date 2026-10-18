@@ -22,16 +22,20 @@ const (
 )
 
 type autoReport struct {
-	Mode             string `json:"mode"` // diagram, split, summary, or skipped
-	Diagrams         int    `json:"diagrams"`
-	PrunedContext    int    `json:"prunedContext"`
-	PrunedConnectors int    `json:"prunedConnectors"`
-	ListedFiles      int    `json:"listedFiles"`
-	Reason           string `json:"reason"`
+	PlainFallback    bool     `json:"plainFallback,omitempty"`
+	AttemptedRadii   []uint32 `json:"attemptedRadii,omitempty"`
+	Mode             string   `json:"mode"` // diagram, split, summary, or skipped
+	Diagrams         int      `json:"diagrams"`
+	PrunedContext    int      `json:"prunedContext"`
+	PrunedConnectors int      `json:"prunedConnectors"`
+	ListedFiles      int      `json:"listedFiles"`
+	Reason           string   `json:"reason"`
 }
 
 func runAutoCompare(cmd *cobra.Command, opts compareOptions, diagram *model.Diagram, render compareRenderer) error {
-	result, decision, reason, err := selectAutoCompare(diagram, opts, render.build)
+	result, decision, reason, err := selectAutoCompare(diagram, opts, render.build, func(radius uint32) (*model.Diagram, error) {
+		return render.atRadius(diagram, radius)
+	})
 	if err != nil {
 		return err
 	}
@@ -49,57 +53,70 @@ func runAutoCompare(cmd *cobra.Command, opts compareOptions, diagram *model.Diag
 	return writeCompareOutput(cmd, opts, result, report)
 }
 
-// selectAutoCompare tries increasingly distant context only while the current
-// diagram lacks useful relationships. Every candidate retains the full changed
-// file ledger; budgets are checked after reduction, including actual bytes.
-func selectAutoCompare(diagram *model.Diagram, opts compareOptions, build func(*model.Diagram, uint32) (string, int, error)) (scopedDiagram, autoReport, string, error) {
+// selectAutoCompare starts at the requested ceiling and retries each smaller
+// radius when a budget is exceeded. load must assemble that exact radius from
+// the pinned snapshots: trimming a larger scene leaves authored views behind.
+func selectAutoCompare(diagram *model.Diagram, opts compareOptions, build func(*model.Diagram, uint32) (string, int, error), load func(uint32) (*model.Diagram, error)) (scopedDiagram, autoReport, string, error) {
 	stats := comparisonStats(diagram)
-	initial := scopedDiagram{diagram: impact.Scope(diagram, 0)}
+	last := scopedDiagram{diagram: impact.Scope(diagram, 0)}
 	if stats.Files > autoMaxFiles || stats.LinesAdded+stats.LinesRemoved > autoMaxChurn {
-		return initial, autoReport{}, fmt.Sprintf("auto: change exceeds review scope (%d files, %d known changed lines; limits %d/%d); use a narrower comparison or omit --auto", stats.Files, stats.LinesAdded+stats.LinesRemoved, autoMaxFiles, autoMaxChurn), nil
+		return last, autoReport{}, fmt.Sprintf("auto: change exceeds review scope (%d files, %d known changed lines; limits %d/%d); use a narrower comparison or omit --auto", stats.Files, stats.LinesAdded+stats.LinesRemoved, autoMaxFiles, autoMaxChurn), nil
 	}
-	maxRadius := uint32(opts.blastRadius)
-	if stats.Files > 8 {
-		maxRadius = 0
-	} else if stats.Files > 2 && maxRadius > 1 {
-		maxRadius = 1
-	}
-	best, decision := initial, autoReport{}
-	found := false
+	var attempted []uint32
+	var zero *model.Diagram
+	plainFallback := false
 	lastReason := "auto: no readable selection"
-	for radius := uint32(0); radius <= maxRadius; radius++ {
-		candidate := impact.Scope(diagram, radius)
-		if opts.plain {
-			candidate.Scene = impact.SelectScene(candidate.Scene, radius, true)
+	lastHop := 0
+	if !opts.plain {
+		lastHop = -1
+	}
+	for hops := opts.blastRadius; hops >= lastHop; hops-- {
+		radius := uint32(max(hops, 0))
+		plainFallback = hops < 0
+		attemptOpts := opts
+		attemptOpts.plain = opts.plain || plainFallback
+		if !plainFallback {
+			attempted = append(attempted, radius)
 		}
+		assembled := zero
+		var err error
+		if !plainFallback {
+			assembled, err = load(radius)
+		}
+		if radius == 0 {
+			zero = assembled
+		}
+		if err != nil {
+			return last, autoReport{AttemptedRadii: attempted}, "", err
+		}
+		candidate := attemptOpts.scope(assembled, radius)
 		beforeNodes, beforeEdges := impact.SceneNodeCount(candidate.Scene), autoEdgeCount(candidate.Scene)
 		candidate.Scene = impact.AutoContext(candidate.Scene)
+		// Keep the user's ceiling distinct from the chosen assembly radius.
+		candidate.Scene.RequestedRadius = uint32(opts.blastRadius)
 		recordSelection(candidate.Scene, opts)
 		if err := impact.ValidateCoverage(candidate.Scene); err != nil {
-			return best, decision, "", err
+			return last, autoReport{AttemptedRadii: attempted}, "", err
 		}
 		panels := []*model.Assembly{candidate.Scene}
 		if opts.markdown {
 			panels = impact.SplitAutoScene(candidate.Scene)
 		}
 		nodes, edges := impact.SceneNodeCount(candidate.Scene), autoEdgeCount(candidate.Scene)
+		next := autoReport{Mode: "diagram", Diagrams: 1, AttemptedRadii: attempted, PlainFallback: plainFallback,
+			PrunedContext: beforeNodes - nodes, PrunedConnectors: beforeEdges - edges,
+			Reason: fmt.Sprintf("Selected radius %d within review budgets", radius)}
+		last = scopedDiagram{diagram: candidate, radius: radius}
 		if reason := autoLimitReason(candidate, panels, opts); reason != "" {
 			lastReason = reason
 			continue
 		}
-		// An extra hop must add relationships, not just disconnected boxes.
-		if found && edges <= autoEdgeCount(best.diagram.Scene) {
-			continue
-		}
 		text, size, err := build(candidate, radius)
 		if err != nil {
-			return best, decision, "", err
+			return last, next, "", err
 		}
-		next := autoReport{Mode: "diagram", Diagrams: 1,
-			PrunedContext: beforeNodes - nodes, PrunedConnectors: beforeEdges - edges,
-			Reason: "Smallest useful dependency neighbourhood within review budgets"}
 		if opts.markdown {
-			text, next.Mode, next.Diagrams, next.ListedFiles = autoMarkdown(candidate.Scene, panels, opts.sceneExportOptions())
+			text, next.Mode, next.Diagrams, next.ListedFiles = autoMarkdown(candidate.Scene, panels, attemptOpts.sceneExportOptions())
 			if next.PrunedContext > 0 || next.PrunedConnectors > 0 {
 				text = fmt.Sprintf("Context trimmed: %d unchanged elements and %d unchanged relationships omitted.\n\n", next.PrunedContext, next.PrunedConnectors) + text
 			}
@@ -109,29 +126,35 @@ func selectAutoCompare(diagram *model.Diagram, opts compareOptions, build func(*
 			lastReason = fmt.Sprintf("auto: output needs %d bytes, exceeding --max-bytes %d; changed files were not discarded", size, opts.maxBytes)
 			continue
 		}
-		best = scopedDiagram{diagram: candidate, radius: radius, text: text, size: size}
-		decision, found = next, true
+		last.text, last.size = text, size
+		if plainFallback {
+			next.Reason = "Selected flat Plain output at radius 0 within review budgets"
+		}
 		if nodes == 0 {
-			decision.Diagrams = 0
-			decision.Reason = "No changed placements"
-			break
+			next.Diagrams = 0
+			next.Reason = "No changed placements"
+		} else if next.Mode == "summary" {
+			next.Reason = "No relationships available in the selected scope; showing the complete changed-file list"
+		} else if next.Mode == "split" {
+			next.Reason = "Disconnected change groups fit in two diagrams without cutting relationships"
 		}
-		// Small changes always get a chance at one hop. Larger changes already
-		// showing relationships do not need unrelated context added around them.
-		if edges > 0 && (radius > 0 || stats.Files > 2) {
-			break
-		}
+		return last, next, "", nil
 	}
-	if !found {
-		return initial, decision, lastReason, nil
+	return last, autoReport{AttemptedRadii: attempted, PlainFallback: plainFallback}, lastReason + "; no selection fits at radius 0, including plain mode", nil
+}
+
+// atRadius reuses the original snapshots and the radius-keyed comparison cache.
+// In particular, it never re-resolves moving Git refs or re-runs preparation.
+func (r compareRenderer) atRadius(diagram *model.Diagram, radius uint32) (*model.Diagram, error) {
+	if radius == impact.DiagramRadius(diagram) {
+		return diagram, nil
 	}
-	switch decision.Mode {
-	case "summary":
-		decision.Reason = "No relationships available in the selected scope; showing the complete changed-file list"
-	case "split":
-		decision.Reason = "Disconnected change groups fit in two diagrams without cutting relationships"
+	ctx, release, err := r.service.Index.AcquireLease(r.ctx, diagram.RepositoryId)
+	if err != nil {
+		return nil, err
 	}
-	return best, decision, "", nil
+	defer release()
+	return r.service.CompareSnapshots(ctx, diagram.RepositoryId, diagram.Diff.GetFromSnapshotId(), diagram.Diff.GetToSnapshotId(), radius, r.opts.view)
 }
 
 func autoEdgeCount(scene *model.Assembly) int {
@@ -160,7 +183,7 @@ func autoLimitReason(diagram *model.Diagram, panels []*model.Assembly, opts comp
 			}
 		}
 		if impact.SceneNodeCount(panel) > autoPanelNodes || autoEdgeCount(panel) > autoPanelEdges {
-			return fmt.Sprintf("auto: diagram exceeds readability limits (%d elements or %d connectors per diagram); use a narrower comparison or omit --auto", autoPanelNodes, autoPanelEdges)
+			return fmt.Sprintf("auto: diagram has %d elements and %d connectors; readability limits are %d elements and %d connectors per diagram; use a narrower comparison or omit --auto", impact.SceneNodeCount(panel), autoEdgeCount(panel), autoPanelNodes, autoPanelEdges)
 		}
 	}
 	return ""

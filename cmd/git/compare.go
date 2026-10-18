@@ -79,9 +79,9 @@ The default output is the canonical impact scene: the user-authored diagram stay
 canonical, each linked element is verified against the pinned snapshots, and
 the generated map contributes collapsed context only. The payload is
 self-contained, so it renders offline without the repository, its index, or
-its snapshots. Pass --mermaid to emit the same change scene the view
-draws, rendered as Mermaid: one subgraph per view, change badges on nodes,
-and added/removed/modified arrows on connectors.
+its snapshots. Pass --mermaid to render a bounded projection of that scene,
+with nested views, themed change markers, and directed connectors. Authored
+context follows connector hops; hierarchy alone does not expand Mermaid.
 
 --view restricts the scene to one authored view (id or name substring).
 Only directly changed sections are emitted by default; --blast-radius (0-2)
@@ -94,8 +94,12 @@ by blast radius and a warning is written to stderr. All selected workspace conne
 declines oversized changes rather than hiding changed files. An explicit
 --blast-radius caps its search (otherwise up to 2 hops). With --markdown it
 may emit two disconnected diagrams, list isolated changed files below them,
-or use a file summary when relationships are unavailable. JSON, URLs, and
-raw Mermaid remain single documents. See docs/git-compare.md for limits.
+or use a file summary when relationships are unavailable. Auto applies only
+to Mermaid/Markdown; JSON and canvas URLs are unchanged. See docs/git-compare.md
+for limits.
+When a budget is exceeded, auto retries at each smaller radius down to 0,
+assembling each attempt from the same pinned snapshots, then tries a flat
+Plain diagram at radius 0 before declining.
 
 Indexing progress is quiet by default so scripted runs only emit the payload
 and budget warnings; pass --verbose to follow the base and head scans on
@@ -103,7 +107,7 @@ stderr.`,
 		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runOpts := opts
-			if runOpts.auto && !cmd.Flags().Changed("blast-radius") {
+			if runOpts.auto && (runOpts.mermaid || runOpts.markdown) && !cmd.Flags().Changed("blast-radius") {
 				runOpts.blastRadius = impact.MaxBlastRadius
 			}
 			target := "."
@@ -264,13 +268,13 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// Commit the trailing stage before reporting on the output so the notices
 	// land below the work they describe.
 	tracker.Complete(lastStage)
-	if opts.auto {
+	if opts.auto && (opts.mermaid || opts.markdown) {
 		tracker.Finish()
 		return runAutoCompare(cmd, opts, diagram, compareRenderer{ctx: ctx, service: service, opts: opts})
 	}
 	requested := uint32(opts.blastRadius)
-	scoped := impact.Scope(diagram, requested)
-	if opts.plain && scoped.Scene != nil {
+	scoped := opts.scope(diagram, requested)
+	if opts.plain && !opts.mermaid && !opts.markdown && scoped.Scene != nil {
 		scoped.Scene = impact.SelectScene(scoped.Scene, requested, true)
 	}
 	recordSelection(scoped.Scene, opts)
@@ -498,7 +502,7 @@ func writeCompareReport(path string, report CompareReport) error {
 }
 
 // compareRenderer builds the payload for one blast radius. The output is
-// always the canonical impact scene — so a reader needs no repository, index, or snapshot.
+// self-contained; Mermaid applies its own presentation policy to a scene copy.
 type compareRenderer struct {
 	ctx     context.Context
 	service impact.Service
@@ -515,7 +519,7 @@ func (r compareRenderer) build(diagram *model.Diagram, radius uint32) (string, i
 		return "", 0, err
 	}
 	if r.opts.mermaid || r.opts.markdown {
-		scene = impact.SelectScene(scene, radius, r.opts.plain)
+		scene = selectMermaidAssembly(scene, radius, r.opts.plain || scene.GetComparison().GetPlain())
 		code := mermaid.ExportImpactScene(impact.PublicScene(scene, false), r.opts.sceneExportOptions())
 		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
@@ -549,7 +553,7 @@ func (opts compareOptions) sceneExportOptions() mermaid.SceneExportOptions {
 	if theme == nil {
 		theme = mermaid.DefaultTheme()
 	}
-	return mermaid.SceneExportOptions{IncludeMetadata: true, Theme: theme, NoTheme: opts.noTheme}
+	return mermaid.SceneExportOptions{IncludeMetadata: true, Theme: theme, NoTheme: opts.noTheme, Plain: opts.plain}
 }
 
 // recordSelection adds CLI-only budgets to the selected copy of the shared
@@ -606,13 +610,20 @@ type scopedDiagram struct {
 // internal encoding. If even the direct-change payload exceeds the byte budget
 // the caller is told the budget cannot be met.
 func scopeToBudget(diagram *model.Diagram, requested uint32, opts compareOptions, build func(*model.Diagram, uint32) (string, int, error)) (scopedDiagram, error) {
-	if opts.plain && diagram.GetScene() != nil {
+	if opts.plain && !opts.mermaid && !opts.markdown && diagram.GetScene() != nil {
 		diagram = impact.Scope(diagram, requested)
 		diagram.Scene = impact.SelectScene(diagram.Scene, requested, true)
 	}
 	radius, limited := impact.FitRadius(diagram, requested, opts.maxNodes)
+	if opts.mermaid || opts.markdown {
+		radius = requested
+		for radius > 0 && opts.maxNodes > 0 && impact.SceneNodeCount(opts.scope(diagram, radius).Scene) > opts.maxNodes {
+			radius--
+		}
+		limited = radius < requested
+	}
 	result := scopedDiagram{radius: radius, limited: limited}
-	scoped := impact.Scope(diagram, radius)
+	scoped := opts.scope(diagram, radius)
 	text, size, err := build(scoped, radius)
 	if err != nil {
 		return scopedDiagram{}, err
@@ -625,7 +636,7 @@ func scopeToBudget(diagram *model.Diagram, requested uint32, opts compareOptions
 		radius--
 		result.radius = radius
 		result.limited = true
-		result.diagram = impact.Scope(diagram, radius)
+		result.diagram = opts.scope(diagram, radius)
 		if result.text, result.size, err = build(result.diagram, radius); err != nil {
 			return scopedDiagram{}, err
 		}
@@ -714,4 +725,18 @@ func remoteTarget(raw string) (remote.Spec, bool) {
 		return remote.Spec{}, false
 	}
 	return spec, true
+}
+
+// scope selects presentation membership only for textual Mermaid exports.
+func (opts compareOptions) scope(diagram *model.Diagram, radius uint32) *model.Diagram {
+	out := impact.Scope(diagram, radius)
+	if (opts.mermaid || opts.markdown) && out.Scene != nil {
+		out.Scene = selectMermaidAssembly(diagram.Scene, radius, opts.plain)
+	}
+	return out
+}
+
+// selectMermaidAssembly applies the exporter policy to an owned assembly copy.
+func selectMermaidAssembly(scene *model.Assembly, radius uint32, plain bool) *model.Assembly {
+	return impact.SelectPresentation(scene, mermaid.SceneMembership(impact.PublicScene(scene, false), radius, plain), radius, plain)
 }

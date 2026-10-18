@@ -58,13 +58,13 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--url` | off | Emit a self-contained link for the local web viewer; maximum 10,000 characters |
 | `--url-base URL` | local server | Override the application base URL for `--url`, such as `https://tldiagram.com/app` |
 | `--url-local` | off | Emit a self-contained `tld://compare` link for the desktop app; maximum 10,000 characters |
-| `--plain` | off | Hide unrelated authored context in the selected scene; retain changes, dependency neighbours and required containers |
+| `--plain` | off | Mermaid: keep change/dependency evidence and flatten view wrappers. JSON/canvas: retain the existing Plain selection |
 | `--theme PATH` | embedded theme | Merge a JSON theme override into the default for `--mermaid` or `--markdown` |
 | `--no-theme` | off | Omit all Mermaid class and link styling; keep textual status labels |
 | `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--max-nodes N` | `400` | Node budget; output is narrowed when exceeded (`0` disables) |
 | `--max-bytes N` | `2097152` | Output byte budget; output is narrowed when exceeded (`0` disables) |
-| `--blast-radius N` | `0` | Dependency hops of unchanged neighbours and edges to include around each change (`0`–`2`) |
+| `--blast-radius N` | `0` | Dependency hops (`0`–`2`); Mermaid also bounds authored context by declared connector hops |
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
 | `--view REF` | unset | Restrict the scene to one authored view (id or name substring) |
@@ -75,7 +75,7 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 
 ## Mermaid themes
 
-CLI Mermaid output uses the embedded [theme.json](../internal/mermaid/theme.json).
+CLI and UI Mermaid output use the embedded [theme.json](../internal/mermaid/theme.json).
 Changed nodes have tinted fills, stronger borders and heavier text; context is
 neutral. Modified, added and removed nodes use amber, green and red respectively.
 Removed nodes also have dashed borders. Labels retain known line counts without
@@ -131,8 +131,9 @@ does not load external fonts. Set text and fill colors together for contrast.
 
 `--no-theme` emits no `classDef`, `class`, or `linkStyle` statements. It restores
 textual change/context labels and line counts, and preserves change arrow
-shapes. It does not change scene selection. The existing `--plain` selection
-flag is unchanged and can be combined with `--no-theme`.
+shapes. It does not change scene selection. `--plain` can be combined with
+`--no-theme`; plain Mermaid omits view subgraphs, while its canvas behavior
+remains unchanged.
 
 Both flags require `--mermaid` or `--markdown`; `--theme` and `--no-theme` are
 mutually exclusive. Themes apply to every auto panel, and styling counts toward
@@ -183,8 +184,14 @@ is not encrypted; anyone with the link can read its contents.
   path. Neighbours without authored or mapped representations receive raw
   file primitives. Traversal uses both directions; rendered relationships keep
   their observed direction.
-- **`--mermaid` / `--markdown`:** render the same selected scene as the canvas,
-  with nested views, change annotations, provenance glyphs and directed edges.
+- **`--mermaid` / `--markdown`:** render a bounded projection of the frozen scene,
+  with nested views, themed change markers and directed edges. Authored context
+  must be within the selected number of declared connector hops; containment
+  and navigation do not pull unrelated authored nodes into Mermaid. Changed
+  placements, changed-connector endpoints, and changed-file representatives
+  remain protected. Plain output removes hierarchy wrappers. The UI applies
+  the same policy, including offline shared comparisons. Canvas scenes and
+  their data retain the canonical hierarchy and membership.
   A synthesized connector is marked added only when the source dependency
   was added. Multiple observations between the same representatives share a
   connector and retain their evidence in provenance.
@@ -229,10 +236,11 @@ from display. It excludes raw patches, routine pipeline history and expanded
 folder memberships. Debug bytes do not affect node/byte-budget selection; the
 normal payload determines membership, with a separate notice for debug overhead.
 
-All canvas membership, grounding, coverage and Plain/radius selection decisions
-belong to canonical assembly and selection. CLI, RPC, Mermaid and the frontend
-only project that model; exporters perform no independent workspace matching.
-Mermaid annotations and report statistics use the same canonical summary.
+Canvas membership, grounding, coverage and Plain/radius selection decisions
+belong to canonical assembly and selection. Mermaid applies its own bounded
+presentation to a copy; exporters perform no independent workspace matching
+and never mutate canvas data. Mermaid placement counts describe its projection,
+while the changed-file ledger remains complete.
 
 The repositories page exposes Hops 0/1/2 before Compare and shows the Mermaid
 preview by default. Developers can open `?debugImpact=1` for the file-first Impact
@@ -271,14 +279,20 @@ See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached
 
 `--auto` is opt-in. It uses the frozen comparison and dependency evidence; it
 does not infer intent from commit messages or claim exhaustive runtime impact.
-Without this flag, existing selection, rendering, and limit behavior is unchanged.
+It applies only to `--mermaid` and `--markdown`; JSON and canvas URL exports
+retain their existing selection and limits.
 
-For one or two changed files, auto tries adding one hop of context and can try
-two if the first hop has no useful relationships. For three to eight files it
-tries at most one hop, and only if the direct scene has no relationships.
-Larger comparisons use direct changes. An explicit `--blast-radius N` caps the
-search, including `--blast-radius 0`; omitting it permits up to two hops.
-Unhelpful or over-budget expansions fall back to the smaller selection.
+Auto starts at two dependency hops and retries at one, then zero, whenever
+readability or explicit node, element, connector, or byte budgets are exceeded.
+An explicit `--blast-radius N` sets the starting ceiling; `--blast-radius 0`
+starts with direct changes. After radius zero, auto makes one final attempt
+using flat Plain output at radius zero before reporting failure. If `--plain`
+is already set, every radius uses Plain. The first complete selection within
+budget wins.
+Each attempt assembles the scene at that exact radius from the same pinned
+snapshots, reusing the comparison cache where available. This prevents authored
+views discovered at a larger radius from leaking into smaller attempts. Git
+refs are not resolved again, and indexing/preparation is not repeated.
 
 Auto removes unchanged relationships between dependency neighbours at the same
 distance and isolated unchanged context. To keep fan-out diagrams readable, it
@@ -306,9 +320,9 @@ For `--auto --markdown`:
 - A note discloses trimmed unchanged context, and subgraphs use an explicit
   left-to-right layout to avoid horizontal fan-out squeezing labels.
 
-JSON, URL, and raw Mermaid exports stay single documents. They use the same
-context reduction, but keep isolated changed-file placements and do not split.
-`--plain` and `--view` still apply.
+Raw Mermaid stays a single diagram, keeping isolated changed-file placements.
+JSON and URL exports do not use auto reduction or its Plain fallback. `--view`
+still restricts the authored view selection.
 
 Auto limits each diagram to 24 placements and 40 connectors. It declines
 comparisons with more than 50 changed paths or 2,000 known added-plus-removed
@@ -329,7 +343,8 @@ failures retain the existing nonzero exit behavior.
 
 The optional report adds an `auto` object with `mode` (`diagram`, `split`,
 `summary`, or `skipped`), `diagrams`, `listedFiles`, `prunedContext`,
-`prunedConnectors`, and `reason`. Existing status/count/statistics fields remain
+`prunedConnectors`, `attemptedRadii` (in trial order), `plainFallback` (when
+attempted), and `reason`. Existing status/count/statistics fields remain
 available. Counts cover the entire selection; each Markdown panel's metadata
 describes that panel's files. The canonical report retains the complete file
 ledger even when rendering is skipped. `--debug-provenance` explains reductions.

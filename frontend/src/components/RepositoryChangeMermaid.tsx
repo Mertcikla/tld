@@ -15,8 +15,7 @@ type MermaidPaneState =
   | { status: 'ready'; markdown: string; warnings: string[]; error: '' }
   | { status: 'error'; markdown: string; warnings: string[]; error: string }
 
-// The pane stays thin on purpose: the backend renders the same change scene
-// the canvas draws, and this only fetches and displays the markdown.
+// The backend projects a bounded Mermaid diagram from the full canvas scene.
 export default function RepositoryChangeMermaid({
   embeddedMarkdown,
   repositoryId,
@@ -32,7 +31,7 @@ export default function RepositoryChangeMermaid({
   repositoryId: string
   comparisonKey: string
   version?: string
-  /** Mirrors the canvas plain toggle so the pane never disagrees with it. */
+  /** Applies change-focused, flat Mermaid presentation. */
   plain: boolean
   open: boolean
   /** Rail form: show only the Markdown expand button. */

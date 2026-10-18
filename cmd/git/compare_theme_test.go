@@ -28,7 +28,7 @@ func TestCompareThemeAcrossFormats(t *testing.T) {
 				render := compareRenderer{ctx: context.Background(), opts: opts}
 				out, size, err := render.build(diagram, 1)
 				if auto {
-					result, _, reason, e := selectAutoCompare(diagram, opts, render.build)
+					result, _, reason, e := selectAutoCompare(diagram, opts, render.build, autoFixtureLoader(diagram))
 					if reason != "" {
 						t.Fatal(reason)
 					}

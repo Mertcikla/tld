@@ -10,11 +10,13 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 )
 
-// SceneExportOptions controls portable scene output. Display selection is
-// performed by impact.SelectScene before export.
+// SceneExportOptions controls Mermaid presentation independently of canvas data.
 type SceneExportOptions struct {
+	// Plain uses change-focused membership and omits hierarchy wrappers.
+	Plain bool
+
 	// Theme enables themed labels and styles. Nil preserves legacy presentation
-	// for existing API and frontend consumers. The compare CLI supplies DefaultTheme.
+	// for existing Go consumers. The CLI and server supply DefaultTheme.
 	Theme *Theme
 	// NoTheme emits no classDef, class, or linkStyle statements, retaining text
 	// change markers so the unstyled diagram still communicates change status.
@@ -27,19 +29,16 @@ type SceneExportOptions struct {
 	SubgraphDirection string
 }
 
-// ExportImpactScene renders a repository change scene — the exact payload the
-// canvas loads — as a Mermaid flowchart, one subgraph per retained view. Node
-// ids, labels, connector arrows, and change link styles follow the same rules
-// as the canvas overlay. Isolated container owners are represented by their
-// nested child subgraph rather than a redundant standalone node.
-// Three or more other isolated placements share a compact node within their view.
-// Membership is selected once by the impact pipeline. Rendering uses only the
-// frozen scene, without consulting the live workspace or source facts.
+// ExportImpactScene renders a bounded Mermaid projection of a frozen scene.
+// Declared connectors bring authored context into the radius; hierarchy does not.
+// Required changes remain visible. Plain omits hierarchy wrappers. The input is
+// never mutated and rendering never consults live workspace or source facts.
 func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) string {
 	if scene == nil {
 		return "flowchart LR\n"
 	}
-	view := sceneViewer{scene: scene, theme: opts.Theme, noTheme: opts.NoTheme, classes: map[string][]string{}}
+	scene = SelectImpactScene(scene, scene.GetComparison().GetEffectiveRadius(), opts.Plain || scene.GetComparison().GetPlain())
+	view := sceneViewer{plain: opts.Plain || scene.GetComparison().GetPlain(), scene: scene, theme: opts.Theme, noTheme: opts.NoTheme, classes: map[string][]string{}}
 	if opts.SubgraphDirection == "LR" || opts.SubgraphDirection == "TB" {
 		view.direction = opts.SubgraphDirection
 	}
@@ -94,6 +93,7 @@ func ExportImpactScene(scene *codeindexv1.ImpactScene, opts SceneExportOptions) 
 
 // sceneViewer renders the frozen membership and relationships without selection.
 type sceneViewer struct {
+	plain         bool
 	theme         *Theme
 	noTheme       bool
 	classes       map[string][]string
@@ -270,8 +270,11 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 	name := v.viewName(viewID)
 	head := strings.Repeat("  ", depth)
 	pad := strings.Repeat("  ", depth+1)
-	lines := []string{"", fmt.Sprintf(`%ssubgraph %s["%s"]`, head, sceneViewRef(viewID), escapeMermaidLabel(name))}
-	if v.direction != "" {
+	var lines []string
+	if !v.plain {
+		lines = []string{"", fmt.Sprintf(`%ssubgraph %s["%s"]`, head, sceneViewRef(viewID), escapeMermaidLabel(name))}
+	}
+	if v.direction != "" && !v.plain {
 		lines = append(lines, pad+"direction "+v.direction)
 	}
 	rendered := map[int32]bool{}
@@ -351,7 +354,9 @@ func (v *sceneViewer) renderNested(viewID int32, depth int, kids []*diagv1.View,
 		// just the changed ones styleLink records.
 		v.linkIndex++
 	}
-	lines = append(lines, head+"end")
+	if !v.plain {
+		lines = append(lines, head+"end")
+	}
 	return lines
 }
 
