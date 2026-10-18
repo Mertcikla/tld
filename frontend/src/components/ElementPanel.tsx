@@ -1405,7 +1405,7 @@ function ElementPanel({
                                   Create custom technology
                                 </Text>
                               </HStack>
-                              <Text fontSize="xs" color="gray.500" flexShrink={0}>
+                              <Text fontSize="xs" color="text.muted" flexShrink={0}>
                                 Add icon
                               </Text>
                             </HStack>
@@ -1473,7 +1473,7 @@ function ElementPanel({
                                       <Text fontSize="sm" color="gray.100" noOfLines={1}>
                                         {customTechnologyFile ? customTechnologyFile.name : 'Upload icon'}
                                       </Text>
-                                      <Text fontSize="xs" color="gray.500" lineHeight="1.35">
+                                      <Text fontSize="xs" color="text.muted" lineHeight="1.35">
                                         {customTechnologyFile ? 'Click to replace, or drop another file.' : 'Drop or choose SVG/PNG, max 2 MB.'}
                                       </Text>
                                     </Box>
@@ -1767,7 +1767,7 @@ function ElementPanel({
                       <>
                         <HStack justify="space-between" align="flex-start" mb={2.5}>
                           <Box>
-                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing when filtering is enabled.</Text>
+                            <Text fontSize="xs" color="text.muted">Choose when this element starts appearing when filtering is enabled.</Text>
                           </Box>
                         </HStack>
                         <Box px={1} pt={1} pb={0.5} mb={isEdit && canEdit && onMerge ? 3 : 0}>

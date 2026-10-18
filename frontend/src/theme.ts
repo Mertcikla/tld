@@ -34,6 +34,14 @@ export default extendTheme({
       border: 'var(--border-main)',
     },
   },
+  semanticTokens: {
+    colors: {
+      text: {
+        secondary: { default: 'gray.300' },
+        muted: { default: 'gray.400' },
+      },
+    },
+  },
   shadows: {
     // Semantic shadows for glass panels
     'panel': '0 8px 32px rgba(0,0,0,0.5)',
@@ -198,6 +206,9 @@ export default extendTheme({
       },
     },
     Input: {
+      baseStyle: {
+        field: { _placeholder: { color: 'text.muted', opacity: 1 } },
+      },
       variants: {
         clay: {
           field: {
@@ -228,6 +239,9 @@ export default extendTheme({
       },
     },
     Textarea: {
+      baseStyle: {
+        _placeholder: { color: 'text.muted', opacity: 1 },
+      },
       variants: {
         clay: {
           bg: 'gray.800',

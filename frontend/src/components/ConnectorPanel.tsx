@@ -571,7 +571,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   Noise Gate
                 </FormLabel>
                 <HStack justify="space-between" align="flex-start" mb={2.5}>
-                  <Text fontSize="xs" color="gray.500">Choose when this connector starts appearing when filtering is enabled.</Text>
+                  <Text fontSize="xs" color="text.muted">Choose when this connector starts appearing when filtering is enabled.</Text>
                 </HStack>
                 <Box px={1} pt={1} pb={0.5}>
                   <Slider

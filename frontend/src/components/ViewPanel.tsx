@@ -251,7 +251,7 @@ function ViewPanel({
                     </Text>
 
                     {markdownLoading ? (
-                      <Text fontSize="xs" color="gray.500">Loading markdown metadata…</Text>
+                      <Text fontSize="xs" color="text.muted">Loading markdown metadata…</Text>
                     ) : markdown ? (
                       <Box
                         p={3}
@@ -278,11 +278,11 @@ function ViewPanel({
                             )}
                           </HStack>
                           {markdown.updated_at && (
-                            <Text fontSize="10px" color="gray.500">
+                            <Text fontSize="10px" color="text.muted">
                               Updated {new Date(markdown.updated_at).toLocaleString()}
                             </Text>
                           )}
-                          <Text fontSize="10px" color={markdown.exists ? 'gray.500' : 'red.300'}>
+                          <Text fontSize="10px" color={markdown.exists ? 'text.muted' : 'red.300'}>
                             {viewMarkdownSummary(markdown)}
                           </Text>
                           {markdown.is_managed && canEdit && !dbOnlyNotes && (
@@ -309,13 +309,13 @@ function ViewPanel({
                         </VStack>
                       </Box>
                     ) : (
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="text.muted">
                         {dbOnlyNotes ? 'No note created.' : 'No file attached.'}
                       </Text>
                     )}
 
                     {canEdit && !markdown && (
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="text.muted">
                         {dbOnlyNotes
                           ? 'Open Notes from the canvas toolbar to create a note.'
                           : 'Open Notes from the canvas toolbar to create or attach a markdown file.'}
@@ -329,10 +329,10 @@ function ViewPanel({
 
           {view && (
             <Box pt={2} borderTop="1px solid" borderColor="whiteAlpha.50">
-              <Text fontSize="xs" color="gray.600">
+              <Text fontSize="xs" color="text.muted">
                 Created {new Date(view.created_at).toLocaleString()}
               </Text>
-              <Text fontSize="xs" color="gray.600">
+              <Text fontSize="xs" color="text.muted">
                 Updated {new Date(view.updated_at).toLocaleString()}
               </Text>
             </Box>

@@ -32,8 +32,8 @@ export const EmptyCanvasState: React.FC<EmptyCanvasStateProps> = React.memo(({ i
         <rect x="76" y="38" width="36" height="22" rx="4" fill="#1C2535" stroke="#3B82F6" strokeWidth="1" opacity="0.6" />
         <text x="94" y="53" textAnchor="middle" fill="#94A3B8" fontSize="7" fontFamily="system-ui,sans-serif">Service</text>
       </svg>
-      <Text fontSize="md" fontWeight="semibold" color="gray.500" mb={1}>Start building your view</Text>
-      <Text fontSize="xs" color="gray.600" lineHeight="tall">
+      <Text fontSize="md" fontWeight="semibold" color="text.secondary" mb={1}>Start building your view</Text>
+      <Text fontSize="xs" color="text.muted" lineHeight="tall">
         {isMobile
           ? 'Tap/Drag from the left panel, or Hold on the canvas to bring up the menu, then tap Add Element.'
           : <> Drag from the left panel, or press <KbdHint ml={1} mr={1} verticalAlign="middle">C</KbdHint> to create a new element directly.</>}

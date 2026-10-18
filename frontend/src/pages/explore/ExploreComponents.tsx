@@ -39,10 +39,10 @@ export function ExploreEmptyState({
   return (
     <Center h="100%" flexDir="column" gap={4} px={6} textAlign="center">
       <VStack spacing={2}>
-        <Text color="gray.300" fontWeight="bold" fontSize="lg">
+        <Text color="text.secondary" fontWeight="bold" fontSize="lg">
           {error ? 'Could not load explore map' : noDiagrams ? 'No diagrams to explore yet' : 'Your diagrams are empty'}
         </Text>
-        <Text color="gray.500" fontSize="sm" maxW="400px">
+        <Text color="text.muted" fontSize="sm" maxW="400px">
           {error
             ? error
             : noDiagrams
@@ -221,7 +221,7 @@ export function ExploreToolbar({
                           <Text fontSize="xs" fontWeight="600" color="white" flex={1} isTruncated>
                             {isElementGroupLayer(layer) ? `group:${layer.name}` : layer.name}
                           </Text>
-                          <Text fontSize="10px" color="gray.600" flexShrink={0} title={tagCountDescription(layerElementCounts[layer.id] ?? 0, layerConnectorCounts?.[layer.id] ?? 0)}>
+                          <Text fontSize="10px" color="text.muted" flexShrink={0} title={tagCountDescription(layerElementCounts[layer.id] ?? 0, layerConnectorCounts?.[layer.id] ?? 0)}>
                             {(layerElementCounts[layer.id] ?? 0) + (layerConnectorCounts?.[layer.id] ?? 0)}
                           </Text>
                           <IconButton

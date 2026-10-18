@@ -204,7 +204,6 @@ function DiagramJumpToolbar({
                 h="28px"
                 pl="28px"
                 pr={searchTerm ? 8 : searchFocused ? 2 : '2.75rem'}
-                _placeholder={{ color: 'whiteAlpha.350' }}
                 _hover={{ borderColor: 'whiteAlpha.200' }}
                 _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.45)' }}
               />
