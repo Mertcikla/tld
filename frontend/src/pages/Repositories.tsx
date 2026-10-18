@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { modeSwitchGroupStyles, modeSwitchOptionStyles } from '../styles/modeSwitch'
 import {
   Alert,
   AlertIcon,
@@ -1515,9 +1516,21 @@ export default function Repositories() {
                       <Text fontSize="10px" color="gray.500" lineHeight="14px" isTruncated>{selected.root}</Text>
                     </Box>
                   </HStack>
-                  <HStack spacing={1} h="44px" maxW="full" overflowX="auto" justifySelf="center" aria-label="Repository mode">
+                  <HStack spacing={0} sx={modeSwitchGroupStyles} my={1} maxW="full" overflowX="auto" justifySelf="center" role="group" aria-label="Repository mode">
                     {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
-                      <Button key={value} size="sm" variant="ghost" borderRadius="0" borderBottom="2px solid" borderColor={mode === value ? 'var(--accent)' : 'transparent'} px={3} h="100%" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" isDisabled={adding} bg="transparent" color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: 'whiteAlpha.50', color: 'white' }} _active={{ bg: 'transparent' }} transition="color 0.2s, border-color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant="ghost"
+                        sx={modeSwitchOptionStyles}
+                        flexShrink={0}
+                        leftIcon={<RepositoryModeIcon mode={value} />}
+                        iconSpacing={1.5}
+                        isDisabled={adding}
+                        data-testid={`repositories-${value}-tab`}
+                        aria-pressed={mode === value}
+                        onClick={() => changeMode(value)}
+                      >{label}</Button>
                     ))}
                   </HStack>
                 </Box>

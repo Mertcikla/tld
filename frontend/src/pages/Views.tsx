@@ -31,6 +31,7 @@ import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { useExploreData } from './explore/useExploreData'
 import { ZoomInIcon } from '../components/Icons'
 import { ShortcutHint } from '../components/PanelUI'
+import { modeSwitchGroupStyles, modeSwitchOptionStyles } from '../styles/modeSwitch'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ExploreData, ViewTreeNode } from '../types'
@@ -94,7 +95,6 @@ function DiagramJumpToolbar({
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [searchFocused, setSearchFocused] = useState(false)
-  const inactiveColor = 'gray.400'
   const searchHasContent = searchTerm.length > 0 || searchResults.length > 0
   const searchIsActive = searchFocused || searchHasContent
   const showCreateButton = !searchHasContent
@@ -150,71 +150,31 @@ function DiagramJumpToolbar({
           overflow="visible"
           transition="all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
         >
-          <HStack
-            spacing={0.5}
-            p={0.5}
-            bg="blackAlpha.200"
-            border="1px solid"
-            borderColor="whiteAlpha.50"
-            borderRadius="lg"
-            flexShrink={0}
-          >
+          <HStack spacing={0} sx={modeSwitchGroupStyles} role="group" aria-label="Diagram mode">
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="md"
-              position="relative"
-              px={isMobileLayout ? 2.5 : 3}
-              h="28px"
-              minW={isMobileLayout ? "34px" : "auto"}
+              sx={modeSwitchOptionStyles}
               onClick={() => onViewChange('explore')}
-              _hover={{ bg: 'transparent' }}
-              _active={{ bg: 'transparent' }}
-              color={view === 'explore' ? 'white' : inactiveColor}
-              transition="color 0.2s"
               aria-label="Explore view"
+              aria-pressed={view === 'explore'}
             >
-              {view === 'explore' && (
-                <Box
-                  position="absolute"
-                  inset={0}
-                  bg="var(--bg-element)"
-                  borderRadius="md"
-                  zIndex={-1}
-                />
-              )}
-              <HStack spacing={1.5} zIndex={1}>
+              <HStack spacing={1.5}>
                 <ZoomInIcon size={13} strokeWidth={2.4} />
-                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Explore</Text>
+                <Text display={isMobileLayout ? "none" : "block"}>Explore</Text>
               </HStack>
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="md"
-              position="relative"
-              px={isMobileLayout ? 2.5 : 3}
-              h="28px"
-              minW={isMobileLayout ? "34px" : "auto"}
+              sx={modeSwitchOptionStyles}
               onClick={() => onViewChange('hierarchy')}
-              _hover={{ bg: 'transparent' }}
-              _active={{ bg: 'transparent' }}
-              color={view === 'hierarchy' ? 'white' : inactiveColor}
-              transition="color 0.2s"
               aria-label="Hierarchy view"
+              aria-pressed={view === 'hierarchy'}
             >
-              {view === 'hierarchy' && (
-                <Box
-                  position="absolute"
-                  inset={0}
-                  bg="var(--bg-element)"
-                  borderRadius="md"
-                  zIndex={-1}
-                />
-              )}
-              <HStack spacing={1.5} zIndex={1}>
+              <HStack spacing={1.5}>
                 <HierarchyModeIcon />
-                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Hierarchy</Text>
+                <Text display={isMobileLayout ? "none" : "block"}>Hierarchy</Text>
               </HStack>
             </Button>
           </HStack>
