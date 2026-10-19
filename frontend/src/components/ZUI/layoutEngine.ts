@@ -273,8 +273,6 @@ export function updateScene(
     const gsw = layout.worldW * zoom
     const gsh = layout.worldH * zoom
     group.isVisible = gsx + gsw > 0 && gsy + gsh > 0 && gsx < canvasW && gsy < canvasH
-    group.groupLabelScreenX = gsx + layout.diagramX * zoom
-    group.groupLabelScreenY = gsy + layout.diagramY * zoom - 12
 
     for (const node of group.nodes) {
       updateNodeStateRecursive(

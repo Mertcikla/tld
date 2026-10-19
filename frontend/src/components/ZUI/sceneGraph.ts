@@ -40,8 +40,6 @@ export interface SceneGroup {
   layout: DiagramGroupLayout
   nodes: SceneNode[]
   isVisible: boolean
-  groupLabelScreenX: number
-  groupLabelScreenY: number
 }
 
 export interface SceneGraph {
@@ -75,8 +73,6 @@ export function buildSceneGraph(layout: ZUILayout): SceneGraph {
       layout: group,
       nodes,
       isVisible: false,
-      groupLabelScreenX: 0,
-      groupLabelScreenY: 0,
     }
 
     for (const node of nodes) {
