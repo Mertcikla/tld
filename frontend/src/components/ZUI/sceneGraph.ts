@@ -30,33 +30,6 @@ export function createNodeScreenState(): NodeScreenState {
   }
 }
 
-export interface EdgeScreenState {
-  sourceX: number
-  sourceY: number
-  targetX: number
-  targetY: number
-  sourceHandleX: number
-  sourceHandleY: number
-  targetHandleX: number
-  targetHandleY: number
-  labelX: number
-  labelY: number
-  labelAlpha: number
-  routeType: 'bezier' | 'straight' | 'step' | 'smoothstep'
-}
-
-export function createEdgeScreenState(): EdgeScreenState {
-  return {
-    sourceX: 0, sourceY: 0,
-    targetX: 0, targetY: 0,
-    sourceHandleX: 0, sourceHandleY: 0,
-    targetHandleX: 0, targetHandleY: 0,
-    labelX: 0, labelY: 0,
-    labelAlpha: 0,
-    routeType: 'bezier',
-  }
-}
-
 export interface SceneNode {
   layout: LayoutNode
   children: SceneNode[]
@@ -66,7 +39,6 @@ export interface SceneNode {
 export interface SceneGroup {
   layout: DiagramGroupLayout
   nodes: SceneNode[]
-  edgeStates: Map<number, EdgeScreenState>
   isVisible: boolean
   groupLabelScreenX: number
   groupLabelScreenY: number
@@ -99,15 +71,9 @@ export function buildSceneGraph(layout: ZUILayout): SceneGraph {
 
   const groups: SceneGroup[] = layout.groups.map((group) => {
     const nodes = group.nodes.map((node) => wrapNode(node))
-    const edgeStates = new Map<number, EdgeScreenState>()
-    for (const edge of group.edges) {
-      edgeStates.set(edge.id, createEdgeScreenState())
-    }
-
     const sceneGroup: SceneGroup = {
       layout: group,
       nodes,
-      edgeStates,
       isVisible: false,
       groupLabelScreenX: 0,
       groupLabelScreenY: 0,
