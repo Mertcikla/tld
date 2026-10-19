@@ -35,7 +35,7 @@
     "lint:fix": "eslint . --fix",
     "preview": "vite preview",
     "test": "vitest run src",
-    "pretest:e2e": "if [ -z \"$TLD_E2E_BINARY\" ]; then cd .. && go tool task frontend-build >/dev/null && go build -o /tmp/tld-e2e ./cmd/tld; fi",
+    "pretest:e2e": "if [ -z \"$TLD_E2E_BINARY\" ]; then cd .. && go tool task frontend-build >/dev/null && go build -tags \"$(cat .go-build-tags)\" -o /tmp/tld-e2e ./cmd/tld; fi",
     "test:e2e": "TLD_E2E_BINARY=${TLD_E2E_BINARY:-/tmp/tld-e2e} TLD_E2E_PORT=${TLD_E2E_PORT:-18060} TLD_E2E_DATA_DIR=${TLD_E2E_DATA_DIR:-/tmp/tld-playwright-local-$$} playwright test -c playwright.config.ts",
     "test:e2e:headed": "playwright test -c playwright.config.ts --headed",
     "test:e2e:debug": "playwright test -c playwright.config.ts --debug"

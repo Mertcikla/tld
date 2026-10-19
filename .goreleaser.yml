@@ -23,6 +23,8 @@ builds:
       - arm64
     main: ./cmd/tld/main.go
     binary: tld
+    tags:
+      - '{{ trim (mustReadFile ".go-build-tags") }}'
     ldflags:
       - -s -w -X github.com/mertcikla/tld/v2/cmd/version.Version={{.Version}}
     hooks:

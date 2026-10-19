@@ -5,7 +5,7 @@ tmp_dir = "tmp"
 [build]
   args_bin = ["serve", "--foreground"]
   bin = "./tmp/tlddebug"
-  cmd = "go build -o ./tmp/tlddebug ./cmd/tld"
+  cmd = "go tool task build-dev"
   delay = 1000
   exclude_dir = ["assets", "tmp", "vendor", "frontend", "data"]
   exclude_file = []
@@ -15,7 +15,7 @@ tmp_dir = "tmp"
   full_bin = ""
   include_dir = ["cmd", "internal", "pkg"]
   include_ext = ["go", "tpl", "tmpl", "html", "sql"]
-  include_file = []
+  include_file = [".go-build-tags"]
   kill_delay = "500ms"
   log = "build-errors.log"
   poll = false

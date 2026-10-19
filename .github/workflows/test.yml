@@ -32,6 +32,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go ${{ matrix.go-version }}
         uses: actions/setup-go@v6
         with:
@@ -88,6 +92,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -136,6 +144,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -170,7 +182,7 @@ jobs:
           gotestsum \
             --junitfile cli-workflow-results.xml \
             --format testdox \
-            -- -tags cliworkflow ./tests/cliworkflow -count=1 -timeout=20m \
+            -- -tags "$(cat .go-build-tags),cliworkflow" ./tests/cliworkflow -count=1 -timeout=20m \
             -rapid.checks=10 -rapid.steps=20
 
       - name: Upload CLI workflow results and failure artifacts
@@ -204,6 +216,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
 
       - name: Set up Go ${{ matrix.go-version }}
         uses: actions/setup-go@v6

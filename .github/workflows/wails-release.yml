@@ -41,6 +41,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -93,10 +97,10 @@ jobs:
           VERSION=${RELEASE_TAG#v}
           LDFLAGS="-s -w -X github.com/mertcikla/tld/v2/cmd/version.Version=${VERSION}"
 
-          wails build -platform darwin/arm64 -s -ldflags "$LDFLAGS"
+          wails build -tags "$(cat ../../.go-build-tags)" -platform darwin/arm64 -s -ldflags "$LDFLAGS"
           mv build/bin/tld.app build/release/macos-arm64/tld.app
 
-          wails build -platform darwin/amd64 -s -ldflags "$LDFLAGS"
+          wails build -tags "$(cat ../../.go-build-tags)" -platform darwin/amd64 -s -ldflags "$LDFLAGS"
           mv build/bin/tld.app build/release/macos-amd64/tld.app
 
       - name: Sign macOS Apps
@@ -268,6 +272,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -327,7 +335,7 @@ jobs:
           makensis -VERSION
           VERSION=${RELEASE_TAG#v}
           LDFLAGS="-s -w -X github.com/mertcikla/tld/v2/cmd/version.Version=${VERSION}"
-          wails build -platform windows/amd64 -nsis -s -ldflags "$LDFLAGS"
+          wails build -tags "$(cat ../../.go-build-tags)" -platform windows/amd64 -nsis -s -ldflags "$LDFLAGS"
 
       - name: Prepare Windows Release Asset
         shell: bash

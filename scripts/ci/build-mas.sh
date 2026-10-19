@@ -104,7 +104,7 @@ echo "==> Building universal Wails app (appstore tag)"
 LDFLAGS="-s -w -X github.com/mertcikla/tld/v2/cmd/version.Version=$VERSION"
 (
 	cd "$APP_DIR"
-	wails build -clean -platform darwin/universal -tags appstore -s -ldflags "$LDFLAGS"
+	wails build -clean -platform darwin/universal -tags "$(cat "$REPO_ROOT/.go-build-tags"),appstore" -s -ldflags "$LDFLAGS"
 )
 
 if [[ ! -d "$APP_BUNDLE" ]]; then

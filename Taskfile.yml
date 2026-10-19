@@ -2,6 +2,8 @@
 version: '3'
 
 vars:
+  TLD_GO_TAGS:
+    sh: cat .go-build-tags
   GOPATH:
     sh: go env GOPATH
   GOEXE:
@@ -52,7 +54,7 @@ tasks:
     deps:
       - tools-golangci-lint
     cmds:
-      - "{{.GOLANGCI_LINT_BIN}} run ./..."
+      - "{{.GOLANGCI_LINT_BIN}} run --build-tags '{{.TLD_GO_TAGS}}' ./..."
 
   tools-golangci-lint:
     desc: Install golangci-lint locally
@@ -68,6 +70,11 @@ tasks:
       - frontend-deps
     cmds:
       - cd frontend && npm run lint
+
+  build-dev:
+    desc: Build the backend binary used by Air
+    cmds:
+      - go build -tags '{{.TLD_GO_TAGS}}' -o ./tmp/tlddebug ./cmd/tld
 
   be:
     desc: Run backend in dev mode with air
@@ -91,12 +98,12 @@ tasks:
       - frontend-deps
     cmds:
       - cd frontend && npm run prepare:icons
-      - go run ./scripts/dev/run
+      - go run -tags '{{.TLD_GO_TAGS}}' ./scripts/dev/run
 
   dev-stop:
     desc: Stop registered local processes, including development watchers
     cmds:
-      - go run ./cmd/tld stop
+      - go run -tags '{{.TLD_GO_TAGS}}' ./cmd/tld stop
 
   proto:
     desc: Update go.mod to latest BSR-published proto versions
@@ -115,7 +122,7 @@ tasks:
   test-be:
     desc: Run Go backend tests
     cmds:
-      - go test ./...
+      - go test -tags '{{.TLD_GO_TAGS}}' ./...
 
   test-fe:
     desc: Run TypeScript frontend unit tests
@@ -136,19 +143,19 @@ tasks:
     deps:
       - frontend-build
     cmds:
-      - go build -o {{.GOPATH}}/bin/tld ./cmd/tld
+      - go build -tags '{{.TLD_GO_TAGS}}' -o {{.GOPATH}}/bin/tld ./cmd/tld
 
   go:
     desc: Build the Go binary without rebuilding frontend assets
     cmds:
-      - go build -o {{.GOPATH}}/bin/tld ./cmd/tld
+      - go build -tags '{{.TLD_GO_TAGS}}' -o {{.GOPATH}}/bin/tld ./cmd/tld
 
   run:
     desc: Build frontend and run the server
     deps:
       - frontend-build
     cmds:
-      - go run ./cmd/tld serve
+      - go run -tags '{{.TLD_GO_TAGS}}' ./cmd/tld serve
 
   wails-icon:
     desc: Prepare the Wails desktop app icon
@@ -167,7 +174,7 @@ tasks:
       - frontend-build
       - wails-icon
     cmds:
-      - cd cmd/tld-app && wails build -s
+      - cd cmd/tld-app && wails build -tags '{{.TLD_GO_TAGS}}' -s
 
   wails-dev:
     desc: Run the Wails desktop application in development mode
@@ -176,7 +183,7 @@ tasks:
       - wails-icon
     cmds:
       - mkdir -p frontend/dist && touch frontend/dist/placeholder
-      - cd cmd/tld-app && wails dev
+      - cd cmd/tld-app && wails dev -tags '{{.TLD_GO_TAGS}}'
 
   clean:
     desc: Clean build artifacts

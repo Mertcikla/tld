@@ -30,7 +30,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	binary = filepath.Join(dir, "tld")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/tld")
+	tags, err := os.ReadFile("../../.go-build-tags")
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		panic(err)
+	}
+	build := exec.Command("go", "build", "-tags", strings.TrimSpace(string(tags)), "-o", binary, "./cmd/tld")
 	build.Dir = "../.."
 	if out, err := build.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)

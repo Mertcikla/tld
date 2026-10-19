@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+grammar_tags="$(cat "$(dirname "$0")/../.go-build-tags"),integration"
+
 container="${TLD_POSTGRES_CONTAINER:-tld-postgres-test}"
 port="${TLD_POSTGRES_PORT:-55432}"
 user="${TLD_POSTGRES_USER:-tld}"
@@ -33,7 +35,7 @@ if ! docker exec "$container" pg_isready -U "$user" -d "$database" >/dev/null 2>
 fi
 
 export TLD_TEST_POSTGRES_URL="${TLD_TEST_POSTGRES_URL:-postgres://${user}:${password}@localhost:${port}/${database}?sslmode=disable}"
-go test -tags integration ./pkg/dbrepo -count=1 -v
-go test -tags integration ./pkg/app -count=1 -v
-go test -tags integration ./internal/codeindex/store -count=1 -v
-go test -tags integration ./tests/postgres -count=1 -v
+go test -tags "$grammar_tags" ./pkg/dbrepo -count=1 -v
+go test -tags "$grammar_tags" ./pkg/app -count=1 -v
+go test -tags "$grammar_tags" ./internal/codeindex/store -count=1 -v
+go test -tags "$grammar_tags" ./tests/postgres -count=1 -v

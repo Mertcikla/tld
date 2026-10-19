@@ -42,6 +42,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
 
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -106,6 +110,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
           fetch-depth: 0
+
+      - name: Configure Go grammar subset
+        shell: bash
+        run: echo "GOFLAGS=${GOFLAGS:+$GOFLAGS }-tags=$(cat .go-build-tags)" >> "$GITHUB_ENV"
 
       - name: Set up Go
         uses: actions/setup-go@v6
