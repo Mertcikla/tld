@@ -69,17 +69,6 @@ export function isVisible(
   return sx + sw > 0 && sy + sh > 0 && sx < canvasW && sy < canvasH
 }
 
-export function isFullyVisible(
-  worldX: number, worldY: number, worldW: number, worldH: number,
-  view: ZUIViewState, canvasW: number, canvasH: number,
-): boolean {
-  const sx = worldToScreenX(worldX, view)
-  const sy = worldToScreenY(worldY, view)
-  const sw = worldW * view.zoom
-  const sh = worldH * view.zoom
-  return sx >= 0 && sy >= 0 && sx + sw <= canvasW && sy + sh <= canvasH
-}
-
 export function getCameraRebase(view: ZUIViewState, canvasW: number, canvasH: number): ZUICameraRebase {
   const zoom = Math.max(0.0001, view.zoom)
   return {

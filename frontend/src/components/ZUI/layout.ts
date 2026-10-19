@@ -296,29 +296,3 @@ export function computeLayout(data: ExploreData): ZUILayout {
 
   return { groups, bbox }
 }
-
-/**
- * Compute the initial viewport that fits the entire layout on screen.
- * Returns a ZUIViewState (x=panX, y=panY, zoom).
- */
-export function fitViewport(
-  layout: ZUILayout,
-  canvasW: number,
-  canvasH: number,
-  padding = 0.1,
-): { x: number; y: number; zoom: number } {
-  const { bbox } = layout
-  const bboxW = bbox.maxX - bbox.minX
-  const bboxH = bbox.maxY - bbox.minY
-  if (bboxW <= 0 || bboxH <= 0) return { x: 0, y: 0, zoom: 1 }
-
-  const pad = padding
-  const zoom = Math.min(
-    (canvasW * (1 - pad * 2)) / bboxW,
-    (canvasH * (1 - pad * 2)) / bboxH,
-    4,
-  )
-  const x = (canvasW - bboxW * zoom) / 2 - bbox.minX * zoom
-  const y = (canvasH - bboxH * zoom) / 2 - bbox.minY * zoom
-  return { x, y, zoom }
-}
