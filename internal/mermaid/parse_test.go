@@ -165,7 +165,7 @@ func connectorTexts(parsed *ParsedDiagram) []string {
 	return out
 }
 
-func elementByRef(parsed *ParsedDiagram, ref string) *diagv1.PlanElement {
+func elementByRef(parsed *ParsedDiagram, ref string) *diagv1.BatchElement {
 	for _, element := range parsed.Elements {
 		if element.GetRef() == ref {
 			return element

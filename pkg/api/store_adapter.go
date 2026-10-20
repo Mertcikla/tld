@@ -907,10 +907,10 @@ func (a *APIStore) GetProjectedViewContent(ctx context.Context, viewID int32, wo
 	return out, nil
 }
 
-// ─── ApplyPlan ───────────────────────────────────────────────────────────────
-// Subset of ApplyPlan. Wrappers should override for full implementation.
+// ─── ApplyBatch ───────────────────────────────────────────────────────────────
+// Subset of ApplyBatch. Wrappers should override for full implementation.
 
-func (a *APIStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+func (a *APIStore) ApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
 	return nil, ErrUnimplemented
 }
 

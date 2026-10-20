@@ -18,5 +18,5 @@ type ExploreViewData = app.ExploreViewData
 type ExploreData = app.ExploreData
 type DependencyElement = app.DependencyElement
 type DependencyConnector = app.DependencyConnector
-type PlanElement = app.PlanElement
-type PlanConnector = app.PlanConnector
+type BatchElement = app.BatchElement
+type BatchConnector = app.BatchConnector

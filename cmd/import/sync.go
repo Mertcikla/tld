@@ -11,7 +11,7 @@ import (
 )
 
 // NewSyncCmd pushes the current workspace YAML to the sync target. It reuses the
-// import plan machinery, so it is idempotent and applies in a single
+// import batch machinery, so it is idempotent and applies in a single
 // transaction. It is the inverse of `tld pull`.
 func NewSyncCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var (
@@ -78,17 +78,17 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 	}
 
 	ctx := cmd.Context()
-	plan, err := exec.BuildImportPlan(ctx, runner, ws, ws.Elements, sortedConnectors(ws.Connectors))
+	batch, err := exec.BuildImportBatch(ctx, runner, ws, ws.Elements, sortedConnectors(ws.Connectors))
 	if err != nil {
 		return fail(fmt.Errorf("sync aborted before any changes were made: %w", err))
 	}
 
-	setImportDiagnostics(plan, ws, ws.Elements)
+	setImportDiagnostics(batch, ws, ws.Elements)
 	if dryRun {
-		return reportImport(cmd, format, compact, "sync", "dry-run", plan)
+		return reportImport(cmd, format, compact, "sync", "dry-run", batch)
 	}
 
-	resp, err := runner.ApplyPlan(ctx, plan.Request)
+	resp, err := runner.ApplyBatch(ctx, batch.Request)
 	if err != nil {
 		return fail(explainApplyError(err))
 	}
@@ -97,16 +97,16 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 	if err != nil {
 		return fail(sess.CacheError(err))
 	}
-	if err := persistImportCache(wdir, ws, plan, resp, actual); err != nil {
+	if err := persistImportCache(wdir, ws, batch, resp, actual); err != nil {
 		return fail(sess.CacheError(err))
 	}
 
-	plan.Views = ws.ViewDiagnostics()
-	return reportImport(cmd, format, compact, "sync", "ok", plan, resp)
+	batch.Views = ws.ViewDiagnostics()
+	return reportImport(cmd, format, compact, "sync", "ok", batch, resp)
 }
 
 // sortedConnectors returns the workspace connectors in a deterministic order so
-// the generated plan is stable across runs.
+// the generated batch is stable across runs.
 func sortedConnectors(connectors map[string]*workspace.Connector) []*workspace.Connector {
 	out := make([]*workspace.Connector, 0, len(connectors))
 	for _, connector := range connectors {

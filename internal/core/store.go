@@ -59,7 +59,7 @@ type ExploreStore interface {
 }
 
 type ImportStore interface {
-	ImportPlan(ctx context.Context, elements []PlanElement, connectors []PlanConnector) (int64, error)
+	ImportBatch(ctx context.Context, elements []BatchElement, connectors []BatchConnector) (int64, error)
 }
 
 type Store interface {

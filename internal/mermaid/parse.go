@@ -145,11 +145,11 @@ func addElement(result *ParsedDiagram, ref, name, kind, description, technology 
 	if kind == "" {
 		kind = "system"
 	}
-	element := &diagv1.PlanElement{
+	element := &diagv1.BatchElement{
 		Ref:        ref,
 		Name:       cleanName,
 		Kind:       &kind,
-		Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}},
+		Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}},
 	}
 	if description != "" {
 		clean := sanitizeLabel(description)
@@ -204,13 +204,13 @@ func humanizeFontAwesomeIconName(iconName string) string {
 	return strings.Join(out, " ")
 }
 
-func addConnector(result *ParsedDiagram, source, target, label string, options ...func(*diagv1.PlanConnector)) {
+func addConnector(result *ParsedDiagram, source, target, label string, options ...func(*diagv1.BatchConnector)) {
 	if source == "" || target == "" {
 		return
 	}
 	index := len(result.Connectors)
 	cleanLabel := sanitizeLabel(label)
-	connector := &diagv1.PlanConnector{
+	connector := &diagv1.BatchConnector{
 		Ref:              fmt.Sprintf("%s:%s:%d", source, target, index),
 		ViewRef:          "root",
 		SourceElementRef: source,
@@ -236,7 +236,7 @@ func visitFlowchartStatements(result *ParsedDiagram, statements []mast.Statement
 		case *mast.Link:
 			addElement(result, item.From, item.From, "system", "", "")
 			addElement(result, item.To, item.To, "system", "", "")
-			addConnector(result, item.From, item.To, item.Label, func(connector *diagv1.PlanConnector) {
+			addConnector(result, item.From, item.To, item.Label, func(connector *diagv1.BatchConnector) {
 				if item.BiDir {
 					direction := "both"
 					connector.Direction = &direction
@@ -651,7 +651,7 @@ func convertArchitectureBeta(result *ParsedDiagram, source string) error {
 			leftArrow, rightArrow := match[3], match[4]
 			sourceHandle, targetHandle := architectureHandle(match[2]), architectureHandle(match[5])
 			direction := architectureDirection(leftArrow, rightArrow)
-			addConnector(result, sourceRef, targetRef, strings.TrimSpace(match[7]), func(connector *diagv1.PlanConnector) {
+			addConnector(result, sourceRef, targetRef, strings.TrimSpace(match[7]), func(connector *diagv1.BatchConnector) {
 				connector.Direction = &direction
 				connector.SourceHandle = ptrString(sourceHandle)
 				connector.TargetHandle = ptrString(targetHandle)

@@ -13,11 +13,11 @@ func TestLayoutImportPreservesMetadataPositions(t *testing.T) {
 	x2, y2 := 460.0, 240.0
 	parsed := &ParsedDiagram{
 		Direction: DirectionLR,
-		Elements: []*diagv1.PlanElement{
-			{Ref: "node_1", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &x1, PositionY: &y1}}},
-			{Ref: "node_2", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &x2, PositionY: &y2}}},
+		Elements: []*diagv1.BatchElement{
+			{Ref: "node_1", Name: "API", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root", PositionX: &x1, PositionY: &y1}}},
+			{Ref: "node_2", Name: "DB", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root", PositionX: &x2, PositionY: &y2}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{SourceElementRef: "node_1", TargetElementRef: "node_2"}},
+		Connectors: []*diagv1.BatchConnector{{SourceElementRef: "node_1", TargetElementRef: "node_2"}},
 	}
 
 	positions := LayoutImport(parsed, Point{X: 900, Y: 700})

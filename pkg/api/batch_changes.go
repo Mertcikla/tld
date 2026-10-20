@@ -8,10 +8,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// PlanElementChangesMetadata compares the effective patch, rather than the
+// BatchElementChangesMetadata compares the effective patch, rather than the
 // serialized messages: omitted optional fields preserve their target values.
 // Owned views and placements are compared separately.
-func PlanElementChangesMetadata(planned *diagv1.PlanElement, current *diagv1.Element) bool {
+func BatchElementChangesMetadata(planned *diagv1.BatchElement, current *diagv1.Element) bool {
 	if current == nil {
 		return true
 	}
@@ -31,9 +31,9 @@ func PlanElementChangesMetadata(planned *diagv1.PlanElement, current *diagv1.Ele
 		(planned.TechnologyLinks != nil && !slices.EqualFunc(planned.TechnologyLinks, current.GetTechnologyLinks(), func(a, b *diagv1.TechnologyLink) bool { return proto.Equal(a, b) }))
 }
 
-// PlanConnectorChangesMetadata compares a connector patch after resolving refs.
+// BatchConnectorChangesMetadata compares a connector patch after resolving refs.
 // Visibility overrides are separate from connector metadata.
-func PlanConnectorChangesMetadata(planned *diagv1.PlanConnector, current *diagv1.Connector, viewID, sourceID, targetID int32) bool {
+func BatchConnectorChangesMetadata(planned *diagv1.BatchConnector, current *diagv1.Connector, viewID, sourceID, targetID int32) bool {
 	if current == nil {
 		return true
 	}

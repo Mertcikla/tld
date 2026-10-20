@@ -25,11 +25,11 @@ func TestImportResourcesDefaultsElementBypassNoiseGateFalse(t *testing.T) {
 		},
 	}
 	service := &ImportService{Store: store}
-	requestElement := &diagv1.PlanElement{Ref: "api", Name: "API"}
+	requestElement := &diagv1.BatchElement{Ref: "api", Name: "API"}
 
 	_, err := service.ImportResources(context.Background(), connect.NewRequest(&diagv1.ImportResourcesRequest{
 		OrgId:    workspaceID.String(),
-		Elements: []*diagv1.PlanElement{requestElement},
+		Elements: []*diagv1.BatchElement{requestElement},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -68,11 +68,11 @@ func TestImportResourcesSyncWithAutoLayout(t *testing.T) {
 	const label = "reads"
 	resp, err := svc.ImportResources(ctx, connect.NewRequest(&diagv1.ImportResourcesRequest{
 		OrgId: orgID.String(),
-		Elements: []*diagv1.PlanElement{
-			{Ref: "api", Name: "API", Kind: ptr("service"), Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
-			{Ref: "db", Name: "DB", Kind: ptr("database"), Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
+		Elements: []*diagv1.BatchElement{
+			{Ref: "api", Name: "API", Kind: ptr("service"), Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
+			{Ref: "db", Name: "DB", Kind: ptr("database"), Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
 		},
-		Connectors: []*diagv1.PlanConnector{
+		Connectors: []*diagv1.BatchConnector{
 			{Ref: "api:db", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Label: ptr(label)},
 		},
 	}))

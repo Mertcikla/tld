@@ -650,15 +650,15 @@ func connectorEntries(ref, viewRef, sourceRef, targetRef string, connector *diag
 	return entries
 }
 
-type importPlan struct {
+type importBatch struct {
 	views      ChangeCounts
 	elements   ChangeCounts
 	connectors ChangeCounts
 	warnings   []string
 }
 
-func planImport(desired *desiredWorkspace, state *sqliteState, lock *workspace.WorkspaceSourceLock) importPlan {
-	plan := importPlan{}
+func planImport(desired *desiredWorkspace, state *sqliteState, lock *workspace.WorkspaceSourceLock) importBatch {
+	plan := importBatch{}
 	for _, ref := range desired.ElementOrder {
 		plan.elements.Planned++
 		if resolveElementID(ref, desired.Elements[ref], state, lock) != 0 {
@@ -704,8 +704,8 @@ func planImport(desired *desiredWorkspace, state *sqliteState, lock *workspace.W
 	return plan
 }
 
-func applyImport(ctx context.Context, store Store, workspaceID uuid.UUID, desired *desiredWorkspace, state *sqliteState, lock *workspace.WorkspaceSourceLock) (importPlan, error) {
-	applied := importPlan{}
+func applyImport(ctx context.Context, store Store, workspaceID uuid.UUID, desired *desiredWorkspace, state *sqliteState, lock *workspace.WorkspaceSourceLock) (importBatch, error) {
+	applied := importBatch{}
 	elementIDs := map[string]int32{}
 	viewIDs := map[string]int32{}
 

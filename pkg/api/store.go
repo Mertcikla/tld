@@ -167,8 +167,8 @@ type Store interface {
 	UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, input RealtimeDrawingInput) error
 	DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, pathID string) error
 
-	// ApplyPlan atomically applies a CLI workspace plan (create/update elements, views, connectors).
-	ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	// ApplyBatch atomically applies a CLI workspace batch (create/update elements, views, connectors).
+	ApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error)
 
 	// GetWorkspaceResourceCounts returns current view/element/connector counts.
 	GetWorkspaceResourceCounts(ctx context.Context, workspaceID uuid.UUID) (views, elements, connectors int, err error)
