@@ -316,21 +316,14 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 		t.Fatalf("AddRepository with missing indexer = %v, want failed precondition", err)
 	}
 
-	tool := filepath.Join(t.TempDir(), "scip-go")
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\necho scip-go 0.1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// Reuse the running test executable: freshly written shell scripts can take
+	// longer than the production probe timeout to launch under suite load.
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TLD_TEST_GOPLS_HEALTH", "1")
-	gopls := filepath.Join(t.TempDir(), "gopls")
-	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'golang.org/x/tools/gopls v0.24.0'; exit 0; fi\nexec '" + strings.ReplaceAll(exe, "'", "'\\''") + "' -test.run=TestGoplsHealthProcess\n"
-	if err := os.WriteFile(gopls, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	readyCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{SCIPGo: tool, Gopls: gopls}}}
+	t.Setenv("TLD_TEST_INDEXER_PROCESS", "healthy")
+	readyCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{SCIPGo: exe, Gopls: exe}}}
 	_, readyRoutes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: readyCfg})
 	readyServer := httptest.NewServer(readyRoutes)
 	defer readyServer.Close()
@@ -346,24 +339,42 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	if indexers := check.Msg.GetIndexers(); len(indexers) != 2 || !indexers[0].GetInstalled() || !indexers[1].GetInstalled() {
 		t.Fatalf("indexers = %+v, want installed scip-go", indexers)
 	}
-	if indexer := check.Msg.GetIndexers()[0]; indexer.GetVersion() == "" || !indexer.GetBelowMinimum() {
+	if indexer := check.Msg.GetIndexers()[0]; indexer.GetVersion() != "scip-go 0.1.0" || !indexer.GetBelowMinimum() {
 		t.Fatalf("indexer = %+v, want a detected version below the minimum", indexer)
 	}
 	// A runnable executable that cannot speak LSP is unavailable, and the UI
 	// receives the concrete probe failure through the existing Connect RPC.
-	readyCfg.Index.Tools.Gopls = tool
+	t.Setenv("TLD_TEST_INDEXER_PROCESS", "version-only")
 	check, err = readyClient.CheckRepositoryIndexers(ctx, connect.NewRequest(&codeindexv1.CheckRepositoryIndexersRequest{Path: dir}))
 	if err != nil || check.Msg.GetReady() || check.Msg.GetIndexers()[1].GetInstalled() || !strings.Contains(check.Msg.GetIndexers()[1].GetCheckError(), "LSP health check:") {
 		t.Fatalf("unhealthy gopls: %+v %v", check, err)
 	}
 }
 
-// TestGoplsHealthProcess is a subprocess fixture for the real LSP health probe.
-// It prevents readiness checks from depending on developer-machine tooling.
-func TestGoplsHealthProcess(t *testing.T) {
-	if os.Getenv("TLD_TEST_GOPLS_HEALTH") != "1" {
-		return
+// TestMain also serves as an external indexer fixture. Dispatch before Go's
+// test flag parsing so the production --version and version probes work.
+func TestMain(m *testing.M) {
+	mode := os.Getenv("TLD_TEST_INDEXER_PROCESS")
+	if mode == "" {
+		os.Exit(m.Run())
 	}
+	if mode == "version-only" || (len(os.Args) == 2 && os.Args[1] == "--version") {
+		fmt.Println("scip-go 0.1.0")
+		os.Exit(0)
+	}
+	if len(os.Args) == 2 && os.Args[1] == "version" {
+		fmt.Println("golang.org/x/tools/gopls v0.24.0")
+		os.Exit(0)
+	}
+	if mode != "healthy" || len(os.Args) != 2 || os.Args[1] != "serve" {
+		os.Exit(2)
+	}
+	runGoplsHealthProcess()
+	os.Exit(0)
+}
+
+// runGoplsHealthProcess responds to the real LSP initialize/shutdown probe.
+func runGoplsHealthProcess() {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		size := 0
