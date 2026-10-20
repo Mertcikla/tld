@@ -192,6 +192,11 @@ vi.mock('@chakra-ui/react', async () => {
     Portal: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
     Progress: BoxLike,
     Select: BoxLike,
+    Menu: BoxLike,
+    MenuButton: ButtonLike,
+    MenuList: BoxLike,
+    MenuItemOption: BoxLike,
+    MenuOptionGroup: BoxLike,
     Spinner: (props: Record<string, unknown>) => ReactModule.createElement('span', { ...props, 'data-testid': 'mock-spinner' }),
     Switch: SwitchLike,
     Text: BoxLike,
@@ -273,7 +278,7 @@ describe('Repositories map action', () => {
     act(() => { renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.onLoadMore() })
     const signal = vi.mocked(api.repositories.history).mock.calls.at(-1)?.[3]?.signal
     expect(signal?.aborted).toBe(false)
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ type: 'radio', value: 'repo-1' }).props.onChange('repo-2') })
     expect(signal?.aborted).toBe(true)
     await act(async () => { finish({ ...firstPage, nextPageToken: 'stale' }) })
     const history = renderer.root.findByProps({ 'data-testid': 'mock-history' }).props
@@ -283,10 +288,44 @@ describe('Repositories map action', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('starts with the repository list collapsed when repositories already exist', async () => {
+  it('shows the selected repository and its navigation together', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    expect(renderer.root.findByProps({ 'aria-label': 'Expand repositories' })).toBeTruthy()
+    expect(renderer.root.findByProps({ type: 'radio', value: 'repo-1' })).toBeTruthy()
+    expect(renderer.root.findByProps({ 'aria-label': 'Repository mode' })).toBeTruthy()
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('collapses to icons while keeping repository switching and navigation available', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Collapse repository sidebar' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'aria-label': 'Repository sidebar' }).props.w).toBe('56px')
+    expect(renderer.root.findByProps({ 'aria-label': 'Expand repository sidebar' }).props['aria-expanded']).toBe(false)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-selector' }).props.isDisabled).toBe(false)
+    await act(async () => { renderer.root.findByProps({ type: 'radio', value: 'repo-1' }).props.onChange('repo-1') })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-label']).toBe('Snapshots')
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repository sidebar' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.children).toBe('Snapshots')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('keeps sidebar navigation available in settings', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ type: 'radio', value: 'repo-1' }).props.onChange('repo-1') })
+    const sidebar = renderer.root.findByProps({ 'aria-label': 'Repository sidebar' })
+    const settings = sidebar.findAll((node) => node.type === 'button' && node.props.children === 'Settings')[0]
+    await act(async () => { settings.props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
+    const compare = sidebar.findByProps({ 'data-testid': 'repositories-compare-tab' })
+    expect(compare.props['aria-pressed']).toBe(false)
+    await act(async () => { compare.props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' })).toHaveLength(0)
+    expect(compare.props['aria-pressed']).toBe(true)
     await act(async () => { renderer.unmount() })
   })
 
@@ -294,7 +333,6 @@ describe('Repositories map action', () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-delete-repo-1' })).toHaveLength(0)
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
@@ -393,7 +431,6 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
 
     act(() => {
@@ -472,16 +509,7 @@ describe('Repositories map action', () => {
           node.props['data-testid'] === 'repositories-add',
       )[0]
 
-    act(() => {
-      renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick()
-    })
-    act(() => {
-      renderer.root.findByProps({ 'aria-label': 'Collapse repositories' }).props.onClick()
-    })
     expect(addCell()).toBeTruthy()
-    act(() => {
-      renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick()
-    })
     act(() => {
       addCell().props.onClick()
     })
@@ -890,7 +918,6 @@ describe('Repositories map action', () => {
       renderer = create(<Repositories />)
     })
 
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'repositories-delete-repo-1' }).props.onClick({ stopPropagation: () => {} })
@@ -1203,7 +1230,6 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
@@ -1235,7 +1261,7 @@ describe('Repositories map action', () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ type: 'radio', value: 'repo-1' }).props.onChange('repo-2') })
     await act(async () => { finish(result) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
     expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 100)
@@ -1401,7 +1427,7 @@ describe('Repositories map action', () => {
       .mockResolvedValueOnce(saved.map((snapshot) => ({ ...snapshot, id: `other-${snapshot.id}`, repositoryId: 'repo-2' })))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ type: 'radio', value: 'repo-1' }).props.onChange('repo-2') })
     await act(async () => { finish(saved) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:other-snap-0')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('snapshot:other-snap-1')

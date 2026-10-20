@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { modeSwitchGroupStyles, modeSwitchOptionStyles } from '../styles/modeSwitch'
 import {
   Alert,
   AlertIcon,
@@ -22,6 +21,12 @@ import {
   ModalOverlay,
   Progress,
   Spinner,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItemOption,
+  MenuOptionGroup,
+  Portal,
   Switch,
   Text,
   Tooltip,
@@ -30,6 +35,7 @@ import {
 import {
   AddIcon,
   ChevronLeftIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   SettingsIcon,
 } from '@chakra-ui/icons'
@@ -136,38 +142,11 @@ function targetStatus(value: string, snapshots: CodeSnapshot[], maps: CompletedR
       ? { label: 'Indexed', colorScheme: 'blue' }
       : { label: 'Not captured', colorScheme: 'gray' }
 }
-function Glyph({ name }: { name: string }) {
-  return (
-    <Center
-      w="28px"
-      h="28px"
-      flexShrink={0}
-      bg="whiteAlpha.100"
-      borderRadius="md"
-      fontWeight="semibold"
-    >
-      {name[0]?.toUpperCase()}
-    </Center>
-  )
-}
 function RepositoryModeIcon({ mode }: { mode: 'snapshots' | 'compare' | 'live' | 'pr' }) {
   const icon = mode === 'snapshots' ? faCamera : mode === 'compare' ? faCodeCompare : mode === 'live' ? faEye : faCodePullRequest
   return <FontAwesomeIcon icon={icon} />
 }
 
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <Text
-      fontSize="10px"
-      fontWeight="bold"
-      color="gray.500"
-      textTransform="uppercase"
-      letterSpacing="0.06em"
-    >
-      {children}
-    </Text>
-  )
-}
 function ErrorMessage({ message }: { message: string }) {
   return message ? (
     <Alert status="error" borderRadius="md">
@@ -336,6 +315,7 @@ function FilesCollapsedRail({ fileCount, symbolCount, onExpand }: {
 }
 
 export default function Repositories() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [repositories, setRepositories] = useState<IndexedRepository[]>([])
@@ -350,8 +330,6 @@ export default function Repositories() {
   )
   const [branch, setBranch] = useState(() => params.get('branch') || '')
   const [showRepositorySettings, setShowRepositorySettings] = useState(() => params.get('page') === 'settings')
-  const [collapsed, setCollapsed] = useState(false)
-  const initializedRepositoryPanel = useRef(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
@@ -518,10 +496,6 @@ export default function Repositories() {
       const items = await api.repositories.list()
       invalidateIndexedRepositories()
       setRepositories(items)
-      if (!initializedRepositoryPanel.current) {
-        setCollapsed(items.length > 0)
-        initializedRepositoryPanel.current = true
-      }
       setSelectedId((id) =>
         items.some((r) => r.id === id) ? id : items[0]?.id || '',
       )
@@ -1146,12 +1120,16 @@ export default function Repositories() {
         <Flex
           flex={1}
           minH={0}
-          direction={{ base: 'column', lg: 'row' }}
+          direction={sidebarCollapsed ? 'row' : { base: 'column', lg: 'row' }}
           overflow="hidden"
         >
           <Box
-            w={{ base: 'full', lg: collapsed ? '52px' : '320px' }}
-            maxH={{ base: collapsed ? '96px' : '32vh', lg: 'none' }}
+            as="aside"
+            aria-label="Repository sidebar"
+            w={sidebarCollapsed ? '56px' : { base: 'full', lg: '208px' }}
+            bg="var(--bg-panel)"
+            overflow="hidden"
+            maxH={sidebarCollapsed ? 'none' : { base: '40vh', lg: 'none' }}
             display="flex"
             flexDir="column"
             flexShrink={0}
@@ -1159,176 +1137,178 @@ export default function Repositories() {
             borderBottom={{ base: '1px solid', lg: 'none' }}
             borderColor="whiteAlpha.100"
           >
-            <Flex
-              px={collapsed ? 0 : 3}
-              h="44px"
-              flexShrink={0}
-              gap={2}
-              align="center"
-              justify={collapsed ? 'center' : undefined}
-              borderBottom="1px solid"
-              borderColor="whiteAlpha.100"
-            >
-              {!collapsed && (
-                <>
-                  <Label>Repositories</Label>
-                  <Box flex={1} />
-                </>
-              )}
-              <IconButton
-                size="xs"
-                variant="ghost"
-                aria-label={
-                  collapsed ? 'Expand repositories' : 'Collapse repositories'
-                }
-                icon={collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-                onClick={() => setCollapsed(!collapsed)}
-              />
-            </Flex>
-            <Box flex="0 1 auto" minH={0} overflowY="auto">
-            {repositories.map((repo) => (
-              <Box
-                key={repo.id}
-                role="group"
-                borderBottom="1px solid"
-                borderColor="whiteAlpha.100"
-                bg={repo.id === selectedId ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
-              >
-                <Flex
-                  position="relative"
-                  px={collapsed ? 0 : 4}
-                  py={3}
-                  align="center"
-                  justify={collapsed ? 'center' : undefined}
-                  gap={3}
-                  sx={{
-                    '&:hover > .repository-settings, &:focus-within > .repository-settings':
-                      { opacity: 1, pointerEvents: 'auto' },
-                    '@media (hover: none)': {
-                      '> .repository-settings': {
-                        opacity: 1,
-                        pointerEvents: 'auto',
-                      },
-                    },
-                  }}
-                >
-                  <Button
-                      p={0}
-                      h={collapsed ? '28px' : undefined}
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                    minW="28px"
+            <Box px={sidebarCollapsed ? 2 : 4} pt={3} pb={sidebarCollapsed ? 3 : 4} flexShrink={0} borderBottom="1px solid" borderColor="whiteAlpha.100">
+              <Flex align="center" justify={sidebarCollapsed ? 'center' : 'space-between'} mb={2}>
+                {!sidebarCollapsed && <Text fontSize="10px" fontWeight="semibold" letterSpacing="0.08em" color="gray.500">REPOSITORY</Text>}
+                <Tooltip label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} placement="right">
+                  <IconButton
+                    size="xs"
+                    variant="ghost"
+                    color="gray.500"
+                    aria-label={sidebarCollapsed ? 'Expand repository sidebar' : 'Collapse repository sidebar'}
+                    aria-expanded={!sidebarCollapsed}
+                    icon={sidebarCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+                    onClick={() => setSidebarCollapsed((value) => !value)}
+                  />
+                </Tooltip>
+              </Flex>
+              <Menu placement="bottom-start" autoSelect={false}>
+                <Tooltip label={selected ? `Switch repository: ${selected.name || nameOf(selected.root)}` : 'Select repository'} isDisabled={!sidebarCollapsed} placement="right">
+                  <MenuButton
+                    as={Button}
+                    aria-label="Select repository"
+                    data-testid="repositories-selector"
+                    isDisabled={!repositories.length || adding}
                     size="sm"
-                    variant="unstyled"
-                    aria-label={`Select ${repo.name || nameOf(repo.root)}`}
-                    aria-pressed={repo.id === selectedId}
-                    onClick={() => selectRepo(repo.id)}
+                    w="full"
+                    minW={0}
+                    h="36px"
+                    px={sidebarCollapsed ? 0 : 2.5}
+                    variant="outline"
+                    bg="whiteAlpha.50"
+                    borderColor="whiteAlpha.200"
+                    borderRadius="md"
+                    textAlign={sidebarCollapsed ? 'center' : 'left'}
+                    fontWeight="semibold"
+                    leftIcon={sidebarCollapsed ? undefined : <FontAwesomeIcon icon={faGitAlt} size={14} />}
+                    rightIcon={sidebarCollapsed ? undefined : <ChevronDownIcon color="gray.500" />}
+                    _hover={{ bg: 'whiteAlpha.100', borderColor: 'whiteAlpha.300' }}
+                    _expanded={{ bg: 'whiteAlpha.100', borderColor: 'var(--accent)' }}
+                    _focusVisible={{ boxShadow: '0 0 0 2px var(--accent)' }}
                   >
-                    <Glyph name={repo.name || nameOf(repo.root)} />
-                  </Button>
-                  {!collapsed && (
-                    <>
-                      <Box
-                        flex={1}
-                        minW={0}
-                        onClick={() => selectRepo(repo.id)}
-                        cursor="pointer"
-                      >
-                        <Text fontSize="sm" fontWeight="semibold" isTruncated>
-                          {repo.name || nameOf(repo.root)}
-                        </Text>
-                        <Text
-                          fontSize="xs"
-                          color="gray.500"
-                          isTruncated
-                          title={repo.remoteUrl || repo.root}
+                    {sidebarCollapsed ? <Center as="span" w="full" fontSize="sm" fontWeight="bold">{selected ? (selected.name || nameOf(selected.root)).charAt(0) : 'R'}</Center> : <Text as="span" display="block" isTruncated>{selected ? selected.name || nameOf(selected.root) : 'No repositories'}</Text>}
+                  </MenuButton>
+                </Tooltip>
+                <Portal>
+                  <MenuList
+                    w="300px"
+                    minW={0}
+                    maxW="calc(100vw - 24px)"
+                    maxH="min(360px, 60vh)"
+                    overflowY="auto"
+                    overscrollBehavior="contain"
+                    bg="var(--bg-panel)"
+                    borderColor="whiteAlpha.200"
+                    borderRadius="lg"
+                    boxShadow="0 12px 32px rgba(0, 0, 0, 0.35)"
+                    p={1.5}
+                    zIndex="popover"
+                  >
+                    <Text px={2.5} pt={1.5} pb={2} fontSize="10px" fontWeight="semibold" color="gray.500" letterSpacing="0.06em">SWITCH REPOSITORY</Text>
+                    <MenuOptionGroup type="radio" value={selectedId} onChange={(value) => selectRepo(value as string)}>
+                      {repositories.map((repo) => (
+                        <MenuItemOption
+                          key={repo.id}
+                          value={repo.id}
+                          aria-label={`Select ${repo.name || nameOf(repo.root)}`}
+                          borderRadius="md"
+                          py={2.5}
+                          px={2.5}
+                          mb={0.5}
+                          bg={repo.id === selectedId ? 'rgba(var(--accent-rgb), 0.10)' : 'transparent'}
+                          color={repo.id === selectedId ? 'var(--accent)' : 'gray.300'}
+                          _hover={{ bg: 'whiteAlpha.100' }}
+                          _focus={{ bg: 'whiteAlpha.100' }}
                         >
-                          {repo.remoteUrl
-                            ? repo.remoteUrl.replace(/^https?:\/\//, '')
-                            : repo.root}
-                        </Text>
-                      </Box>
-                      <IconButton
-                        data-testid={`repositories-settings-${repo.id}`}
-                        aria-label={`Settings for ${repo.name || nameOf(repo.root)}`}
-                        className="repository-settings"
-                        icon={<SettingsIcon boxSize="12px" />}
-                        position="absolute"
-                        top="50%"
-                        right="6px"
-                        transform="translateY(-50%)"
-                        size="xs"
-                        variant="ghost"
-                        color="gray.400"
-                        bg="var(--bg-element)"
-                        _hover={{ bg: 'var(--bg-element)' }}
-                        _active={{ bg: 'var(--bg-element)' }}
-                        borderRadius="md"
-                        opacity={1}
-                        pointerEvents="auto"
-                        _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                        isDisabled={busy}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          selectRepo(repo.id)
-                          setShowRepositorySettings(true)
-                        }}
-                      />
-                    </>
-                  )}
-                </Flex>
-
-              </Box>
-            ))}
+                          <Text fontSize="sm" fontWeight="medium" isTruncated>{repo.name || nameOf(repo.root)}</Text>
+                          <Text mt={0.5} fontSize="xs" color="gray.500" isTruncated title={repo.remoteUrl || repo.root}>{repo.remoteUrl ? repo.remoteUrl.replace(/^https?:\/\//, '') : repo.root}</Text>
+                        </MenuItemOption>
+                      ))}
+                    </MenuOptionGroup>
+                  </MenuList>
+                </Portal>
+              </Menu>
+              {selected && !sidebarCollapsed && <Text mt={2} fontSize="10px" color="gray.500" isTruncated title={selected.remoteUrl || selected.root}>{selected.remoteUrl ? selected.remoteUrl.replace(/^https?:\/\//, '') : selected.root}</Text>}
             </Box>
+            {selected && (
+              <Box as="nav" aria-label="Repository mode" display={sidebarCollapsed ? 'block' : { base: 'grid', lg: 'block' }} gridTemplateColumns="repeat(2, minmax(0, 1fr))" flex={sidebarCollapsed ? 1 : { base: '0 1 auto', lg: 1 }} minH={0} overflowY="auto" py={3}>
+                {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
+                  <Tooltip key={value} label={label} placement="right" isDisabled={!sidebarCollapsed}>
+                    <Button
+                      aria-label={label}
+                      w="full"
+                      size="sm"
+                      h="42px"
+                      px={sidebarCollapsed ? 0 : 4}
+                      borderRadius={0}
+                      borderLeft="2px solid"
+                      borderColor={!showRepositorySettings && mode === value ? 'var(--accent)' : 'transparent'}
+                      fontSize="13px"
+                      fontWeight={!showRepositorySettings && mode === value ? 'semibold' : 'normal'}
+                      variant="ghost"
+                      justifyContent={sidebarCollapsed ? 'center' : 'flex-start'}
+                      leftIcon={sidebarCollapsed ? undefined : <RepositoryModeIcon mode={value} />}
+                      iconSpacing={3}
+                      isDisabled={adding}
+                      bg={!showRepositorySettings && mode === value ? 'whiteAlpha.50' : 'transparent'}
+                      color={!showRepositorySettings && mode === value ? 'var(--accent)' : 'gray.400'}
+                      _hover={{ bg: 'whiteAlpha.50', color: 'gray.100' }}
+                      data-testid={`repositories-${value}-tab`}
+                      aria-pressed={!showRepositorySettings && mode === value}
+                      onClick={() => { setShowRepositorySettings(false); changeMode(value) }}
+                    >{sidebarCollapsed ? <RepositoryModeIcon mode={value} /> : label}</Button>
+                  </Tooltip>
+                ))}
+                <Box display={{ base: 'none', lg: 'block' }} mx={4} my={3} borderTop="1px solid" borderColor="whiteAlpha.100" />
+                <Tooltip label="Settings" placement="right" isDisabled={!sidebarCollapsed}>
+                  <Button
+                    aria-label="Settings"
+                    w="full"
+                    size="sm"
+                    h="42px"
+                    px={sidebarCollapsed ? 0 : 4}
+                    borderRadius={0}
+                    borderLeft="2px solid"
+                    borderColor={showRepositorySettings ? 'var(--accent)' : 'transparent'}
+                    fontSize="13px"
+                    fontWeight={showRepositorySettings ? 'semibold' : 'normal'}
+                    variant="ghost"
+                    justifyContent={sidebarCollapsed ? 'center' : 'flex-start'}
+                    leftIcon={sidebarCollapsed ? undefined : <SettingsIcon />}
+                    iconSpacing={3}
+                    isDisabled={busy}
+                    bg={showRepositorySettings ? 'whiteAlpha.50' : 'transparent'}
+                    color={showRepositorySettings ? 'var(--accent)' : 'gray.400'}
+                    _hover={{ bg: 'whiteAlpha.50', color: 'gray.100' }}
+                    data-testid={`repositories-settings-${selected.id}`}
+                    aria-pressed={showRepositorySettings}
+                    onClick={() => setShowRepositorySettings(true)}
+                  >{sidebarCollapsed ? <SettingsIcon /> : 'Settings'}</Button>
+                </Tooltip>
+              </Box>
+            )}
             <Box flexShrink={0} borderTop="1px solid" borderColor="whiteAlpha.100">
-              <Flex
-                role="button"
-                tabIndex={0}
-                px={collapsed ? 0 : 4}
-                py={3}
-                align="center"
-                justify={collapsed ? 'center' : undefined}
-                gap={3}
-                cursor="pointer"
-                data-testid="repositories-add"
-                _hover={{ bg: 'whiteAlpha.50' }}
-                onClick={() => {
+              <Tooltip label="Add repository" placement="right" isDisabled={!sidebarCollapsed}>
+                <Flex
+                  aria-label="Add repository"
+                  role="button"
+                  tabIndex={0}
+                  px={3}
+                  py={2}
+                  align="center"
+                  justify={sidebarCollapsed ? 'center' : 'flex-start'}
+                  gap={3}
+                  cursor="pointer"
+                  data-testid="repositories-add"
+                  _hover={{ bg: 'whiteAlpha.50' }}
+                  onClick={() => {
                   setAddError('')
                   setFolderPickerOpen(false)
                   setAddOpen(true)
-                }}
-                onKeyDown={(e) => {
+                  }}
+                  onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     setAddError('')
                     setFolderPickerOpen(false)
                     setAddOpen(true)
                   }
-                }}
-              >
-                <Center
-                  w="28px"
-                  h="28px"
-                  flexShrink={0}
-                  bg="whiteAlpha.100"
-                  borderRadius="md"
-                  color="gray.400"
-                >
-                  <AddIcon boxSize="12px" color="var(--accent)"/>
-                </Center>
-                {!collapsed && (
-                  <Box flex={1} minW={0}>
-                    <Text fontSize="sm" fontWeight="semibold" color="gray.300">
-                      Add repository
-                    </Text>
-                    <Text fontSize="xs" color="gray.500" isTruncated>
-                      Index a local or remote repository
-                    </Text>
-                  </Box>
-                )}
-              </Flex>
+                  }}
+                  >
+                  <AddIcon boxSize="10px" color="gray.500" />
+                  {!sidebarCollapsed && <Text fontSize="xs" fontWeight="medium" color="gray.400">Add repository</Text>}
+                </Flex>
+              </Tooltip>
               <Modal
                 isOpen={addOpen}
                 onClose={() => {
@@ -1479,56 +1459,6 @@ export default function Repositories() {
               <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }} />
             ) : (
               <>
-                <Box
-                  display="grid"
-                  gridTemplateColumns={{ base: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) auto minmax(0, 1fr)' }}
-                  px={4}
-                  py={0}
-                  minH="44px"
-                  flexShrink={0}
-                  columnGap={3}
-                  alignItems="center"
-                  borderBottom="1px solid"
-                  borderColor="whiteAlpha.100"
-                >
-                  <HStack
-                    spacing={2}
-                    w="fit-content"
-                    maxW="full"
-                    minW={0}
-                    py={1}
-                    my={{ base: 2, md: 0 }}
-                    title={selected.root}
-                    aria-label="Selected repository"
-                  >
-                    <Box color="var(--accent)" display="flex" flexShrink={0}>
-                      <FontAwesomeIcon icon={faGitAlt} size={18} />
-                    </Box>
-                    <Box minW={0}>
-                      <Text fontSize="13px" fontWeight="semibold" lineHeight="18px" isTruncated>
-                        {selected.name || nameOf(selected.root)}
-                      </Text>
-                      <Text fontSize="10px" color="gray.500" lineHeight="14px" isTruncated>{selected.root}</Text>
-                    </Box>
-                  </HStack>
-                  <HStack spacing={0} sx={modeSwitchGroupStyles} my={1} maxW="full" overflowX="auto" justifySelf="center" role="group" aria-label="Repository mode">
-                    {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
-                      <Button
-                        key={value}
-                        size="sm"
-                        variant="ghost"
-                        sx={modeSwitchOptionStyles}
-                        flexShrink={0}
-                        leftIcon={<RepositoryModeIcon mode={value} />}
-                        iconSpacing={1.5}
-                        isDisabled={adding}
-                        data-testid={`repositories-${value}-tab`}
-                        aria-pressed={mode === value}
-                        onClick={() => changeMode(value)}
-                      >{label}</Button>
-                    ))}
-                  </HStack>
-                </Box>
                 {mode !== 'live' && historyError && (
                   <Text p={3} fontSize="xs" color="orange.300">
                     {historyError} · Saved snapshots remain available.
