@@ -45,8 +45,8 @@ import {
   ListViewLayersResponseSchema,
   CreateViewLayerResponseSchema,
   UpdateViewLayerResponseSchema,
-  PlanElement,
-  PlanConnector,
+  BatchElement,
+  BatchConnector,
   type View as ProtoView,
   type ViewContent,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
@@ -502,8 +502,8 @@ export type MermaidMarkdownSyncStatus = 'missing' | 'synced' | 'stale' | 'other'
 
 export interface ParsedImport {
   format: MermaidImportFormat
-  elements: PlanElement[]
-  connectors: PlanConnector[]
+  elements: BatchElement[]
+  connectors: BatchConnector[]
   warnings: string[]
   direction: MermaidDirection
   source: string
@@ -1098,13 +1098,13 @@ export function protoConnector(e: Record<string, unknown>): Connector {
   }
 }
 
-export function normalizeFrontendImportElements(elements: PlanElement[]): PlanElement[] {
+export function normalizeFrontendImportElements(elements: BatchElement[]): BatchElement[] {
   return elements.map((element) => {
     const raw = element as Record<string, unknown>
     if (raw.bypassNoiseGate != null || raw.bypass_noise_gate != null) {
       return element
     }
-    return { ...element, bypassNoiseGate: false } as PlanElement
+    return { ...element, bypassNoiseGate: false } as BatchElement
   })
 }
 
@@ -2056,7 +2056,7 @@ export const api = {
   },
 
   import: {
-    resources: (orgId: string, data: { elements: PlanElement[]; connectors: PlanConnector[] }): Promise<{ view_id: number; view_url: string }> =>
+    resources: (orgId: string, data: { elements: BatchElement[]; connectors: BatchConnector[] }): Promise<{ view_id: number; view_url: string }> =>
       rpc(async () => {
         const res = await importClient.importResources({
           orgId: orgIdOrLocal(orgId),
@@ -2065,7 +2065,7 @@ export const api = {
         })
         return { view_id: res.viewId, view_url: res.viewUrl }
       }),
-    parseStructurizr: (code: string): Promise<{ elements: PlanElement[]; connectors: PlanConnector[]; warnings: string[] }> =>
+    parseStructurizr: (code: string): Promise<{ elements: BatchElement[]; connectors: BatchConnector[]; warnings: string[] }> =>
       rpc(async () => {
         const res = await importClient.parseStructurizr({ code })
         return {

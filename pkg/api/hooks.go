@@ -26,13 +26,13 @@ type WorkspaceHooks interface {
 	// 'response' contains the optional protobuf response object if further inspection is needed.
 	AfterWrite(ctx context.Context, workspaceID uuid.UUID, action string, resourceType string, resourceID string, details map[string]any, response any)
 
-	// CheckApplyPlan allows the SaaS backend to perform resource limit checks
-	// specifically for the bulk ApplyPlan operation.
-	CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) error
+	// CheckApplyBatch allows the SaaS backend to perform resource limit checks
+	// specifically for the bulk ApplyBatch operation.
+	CheckApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) error
 
-	// AfterApplyPlan provides a hook to perform layout, versioning, and cache
-	// invalidation after a successful bulk ApplyPlan operation.
-	AfterApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest, resp *diagv1.ApplyPlanResponse)
+	// AfterApplyBatch provides a hook to perform layout, versioning, and cache
+	// invalidation after a successful bulk ApplyBatch operation.
+	AfterApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest, resp *diagv1.ApplyWorkspaceBatchResponse)
 }
 
 // NopWorkspaceHooks provides a no-op implementation for the CLI/standalone mode.
@@ -44,8 +44,8 @@ func (NopWorkspaceHooks) CheckRead(context.Context, uuid.UUID) error          { 
 func (NopWorkspaceHooks) CheckWrite(context.Context, uuid.UUID, string) error { return nil }
 func (NopWorkspaceHooks) AfterWrite(context.Context, uuid.UUID, string, string, string, map[string]any, any) {
 }
-func (NopWorkspaceHooks) CheckApplyPlan(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) error {
+func (NopWorkspaceHooks) CheckApplyBatch(context.Context, uuid.UUID, *diagv1.ApplyWorkspaceBatchRequest) error {
 	return nil
 }
-func (NopWorkspaceHooks) AfterApplyPlan(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest, *diagv1.ApplyPlanResponse) {
+func (NopWorkspaceHooks) AfterApplyBatch(context.Context, uuid.UUID, *diagv1.ApplyWorkspaceBatchRequest, *diagv1.ApplyWorkspaceBatchResponse) {
 }

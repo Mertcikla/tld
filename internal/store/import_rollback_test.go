@@ -24,18 +24,18 @@ func TestImportServiceRollsBackPartialImports(t *testing.T) {
 	svc := &api.ImportService{Store: adapter}
 	_, err := svc.ImportResources(ctx, connect.NewRequest(&diagv1.ImportResourcesRequest{
 		OrgId: orgID.String(),
-		Elements: []*diagv1.PlanElement{
+		Elements: []*diagv1.BatchElement{
 			{Ref: "platform", Name: "Platform", Kind: rollbackStrPtr("workspace"), HasView: true},
 			{
 				Ref:  "api",
 				Name: "API",
 				Kind: rollbackStrPtr("service"),
-				Placements: []*diagv1.PlanViewPlacement{
+				Placements: []*diagv1.BatchViewPlacement{
 					{ParentRef: "platform"},
 				},
 			},
 		},
-		Connectors: []*diagv1.PlanConnector{
+		Connectors: []*diagv1.BatchConnector{
 			{Ref: "api:ghost", ViewRef: "platform", SourceElementRef: "api", TargetElementRef: "ghost", Label: rollbackStrPtr("reads")},
 		},
 	}))

@@ -739,7 +739,7 @@ type contractStore struct {
 	updateConnector         func(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
 	listConnectors          func(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error)
 	listAllConnectors       func(context.Context, uuid.UUID) ([]*diagv1.Connector, error)
-	applyPlan               func(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	applyBatch              func(context.Context, uuid.UUID, *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error)
 	runInTransaction        func(context.Context, func(context.Context, Store) error) error
 }
 
@@ -962,9 +962,9 @@ func (s *contractStore) UpsertDrawing(context.Context, uuid.UUID, int32, Realtim
 func (s *contractStore) DeleteDrawing(context.Context, uuid.UUID, int32, string) error {
 	return nil
 }
-func (s *contractStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
-	if s.applyPlan != nil {
-		return s.applyPlan(ctx, workspaceID, req)
+func (s *contractStore) ApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
+	if s.applyBatch != nil {
+		return s.applyBatch(ctx, workspaceID, req)
 	}
 	return nil, nil
 }

@@ -174,7 +174,7 @@ func ApplyTldMetadata(parsed *ParsedDiagram, metadata *tldMetadata) {
 			element.ViewLabel = &item.ViewLabel
 		}
 		if item.X != nil && item.Y != nil {
-			placement := &diagv1.PlanViewPlacement{ParentRef: "root", PositionX: item.X, PositionY: item.Y}
+			placement := &diagv1.BatchViewPlacement{ParentRef: "root", PositionX: item.X, PositionY: item.Y}
 			if len(element.GetPlacements()) > 0 {
 				placement = element.GetPlacements()[0]
 				if placement.ParentRef == "" {
@@ -183,7 +183,7 @@ func ApplyTldMetadata(parsed *ParsedDiagram, metadata *tldMetadata) {
 				placement.PositionX = item.X
 				placement.PositionY = item.Y
 			}
-			element.Placements = []*diagv1.PlanViewPlacement{placement}
+			element.Placements = []*diagv1.BatchViewPlacement{placement}
 		}
 	}
 

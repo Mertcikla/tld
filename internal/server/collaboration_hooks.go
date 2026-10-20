@@ -32,8 +32,8 @@ func (h collaborationHooks) CheckWrite(ctx context.Context, workspaceID uuid.UUI
 	return h.baseHooks().CheckWrite(ctx, workspaceID, resourceType)
 }
 
-func (h collaborationHooks) CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) error {
-	return h.baseHooks().CheckApplyPlan(ctx, workspaceID, req)
+func (h collaborationHooks) CheckApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) error {
+	return h.baseHooks().CheckApplyBatch(ctx, workspaceID, req)
 }
 
 func (h collaborationHooks) AfterWrite(ctx context.Context, workspaceID uuid.UUID, action string, resourceType string, resourceID string, details map[string]any, response any) {
@@ -55,8 +55,8 @@ func (h collaborationHooks) AfterWrite(ctx context.Context, workspaceID uuid.UUI
 	}
 }
 
-func (h collaborationHooks) AfterApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest, resp *diagv1.ApplyPlanResponse) {
-	h.baseHooks().AfterApplyPlan(ctx, workspaceID, req, resp)
+func (h collaborationHooks) AfterApplyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest, resp *diagv1.ApplyWorkspaceBatchResponse) {
+	h.baseHooks().AfterApplyBatch(ctx, workspaceID, req, resp)
 	if h.hub == nil || h.store == nil || resp == nil {
 		return
 	}
