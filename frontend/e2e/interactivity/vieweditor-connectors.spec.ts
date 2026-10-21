@@ -195,8 +195,7 @@ test('drags handles to target handles, node bodies, and the inline connection pi
     await expect(page.getByTestId('click-connect-connector')).toHaveCount(0)
   })
   await expect(page.getByTestId('pending-element-label-input')).toBeVisible()
-  await expect(page.getByTestId('pending-element-mode-connect')).toHaveAttribute('aria-pressed', 'true')
-  await page.getByTestId('pending-element-mode-add').click()
+  await expect(page.getByTestId('pending-element-mode-add')).toHaveAttribute('aria-pressed', 'true')
   const pendingName = uniqueName('Connector Pending Target')
   await confirmInlineNewElement(page, pendingName)
   await expect(nodeByName(page, pendingName)).toBeVisible()
@@ -215,7 +214,7 @@ test('drags handles to target handles, node bodies, and the inline connection pi
   await page.keyboard.press('Escape')
 })
 
-test('connects to an off-view element by default and can switch to add and connect', async ({ page }) => {
+test('defaults to add and connect and can connect to off-view elements without adding them', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 1, 'Off-view Picker')
   const externalView = await createApiView(page, uniqueName('External View'))
   const external = await createPlacedElement(page, externalView.id, { name: uniqueName('External Target') })
@@ -227,7 +226,8 @@ test('connects to an off-view element by default and can switch to add and conne
     await clickRevealedHandle(nodeByName(page, elements[0].name), handleLocator(page, elements[0].id, 'right-2'))
     const paneBox = await reactFlowPaneBox(page)
     await page.mouse.click(paneBox.x + paneBox.width * 0.35, paneBox.y + paneBox.height * 0.72)
-    await expect(page.getByTestId('pending-element-mode-connect')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('pending-element-mode-add')).toHaveAttribute('aria-pressed', 'true')
+    await page.getByTestId('pending-element-mode-connect').click()
   }
 
   await openPicker()
@@ -282,6 +282,53 @@ test('connects to an off-view element by default and can switch to add and conne
   const newName = uniqueName('Standalone Element')
   await confirmInlineNewElement(page, newName)
   await expectPlacement(page, newName, true, diagram.id)
+})
+
+test('switches an unmatched connection search to add and connect only once per pending element', async ({ page }) => {
+  const { elements } = await createAndLoadDiagramWithNodes(page, 1, 'Connection Search Fallback')
+  await closeViewEditorPanels(page)
+  const input = page.getByTestId('pending-element-label-input')
+  const addMode = page.getByTestId('pending-element-mode-add')
+  const connectMode = page.getByTestId('pending-element-mode-connect')
+
+  const openPicker = async () => {
+    await clickRevealedHandle(nodeByName(page, elements[0].name), handleLocator(page, elements[0].id, 'right-2'))
+    const paneBox = await reactFlowPaneBox(page)
+    await page.mouse.click(paneBox.x + paneBox.width * 0.35, paneBox.y + paneBox.height * 0.72)
+    await expect(addMode).toHaveAttribute('aria-pressed', 'true')
+    const modes = page.getByRole('group', { name: 'Target placement' }).getByRole('button')
+    await expect(modes).toHaveText(['Add & connect', 'Connect only'])
+    await connectMode.click()
+    await expect(connectMode).toHaveAttribute('aria-pressed', 'true')
+  }
+
+  await openPicker()
+  const unmatchedName = uniqueName('No Matching Element')
+  let releaseSearch!: () => void
+  const searchGate = new Promise<void>((resolve) => { releaseSearch = resolve })
+  await page.route('**/ListElements', async (route) => {
+    if (route.request().postDataJSON()?.search === unmatchedName) await searchGate
+    await route.continue()
+  })
+  const searchStarted = page.waitForRequest((request) => request.url().endsWith('/ListElements') && request.postDataJSON()?.search === unmatchedName)
+  await input.fill(unmatchedName)
+  await searchStarted
+  await expect(connectMode).toHaveAttribute('aria-pressed', 'true')
+  releaseSearch()
+  await expect(addMode).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('pending-element-create-option')).toBeVisible()
+
+  await connectMode.click()
+  await expect(page.getByText('No matching elements.', { exact: true })).toBeVisible()
+  await input.fill(uniqueName('Still No Matching Element'))
+  await expect(page.getByText('No matching elements.', { exact: true })).toBeVisible()
+  await expect(connectMode).toHaveAttribute('aria-pressed', 'true')
+
+  await input.press('Escape')
+  await expect(input).toHaveCount(0)
+  await openPicker()
+  await input.fill(uniqueName('Another New Element'))
+  await expect(addMode).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('moves connector source and target through the connector context menu', async ({ page }) => {

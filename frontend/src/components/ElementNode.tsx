@@ -372,12 +372,13 @@ function PendingElementLabelEditor({
 }: {
   config: PendingElementCreateData
 }) {
-  const { query, setQuery, remoteElements, fetching } = useElementSearch()
+  const { query, setQuery, remoteElements, fetching, searchedQuery } = useElementSearch()
   const [activeIndex, setActiveIndex] = useState(0)
   const [busy, setBusy] = useState(false)
   const [inputRect, setInputRect] = useState<PendingInputRect | null>(null)
   const anchorRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const didAutoSwitchMode = useRef(false)
   const results = buildElementCreateSearchResults({
     query,
     allElements: config.allElements,
@@ -432,6 +433,21 @@ function PendingElementLabelEditor({
   }, [focusInput, inputRect])
 
   useEffect(() => { setActiveIndex(0) }, [query, config.connectionMode])
+
+  useEffect(() => {
+    if (
+      didAutoSwitchMode.current ||
+      config.connectionMode !== 'connect' ||
+      !config.onConnectionModeChange ||
+      config.allowCreate === false ||
+      busy || fetching ||
+      !query.trim() || searchedQuery !== query.trim() ||
+      results.length > 0
+    ) return
+
+    didAutoSwitchMode.current = true
+    config.onConnectionModeChange('add')
+  }, [busy, fetching, query, searchedQuery, results.length, config])
 
   const confirm = useCallback(async (idx: number) => {
     const item = results[idx]
@@ -589,7 +605,7 @@ function PendingElementLabelEditor({
           >
             {config.connectionMode && (
               <HStack px={1.5} py={1.5} spacing={1} borderBottom="1px solid" borderColor="whiteAlpha.100" role="group" aria-label="Target placement">
-                {(['connect', 'add'] as const).map((mode) => (
+                {(['add', 'connect'] as const).map((mode) => (
                   <Tooltip
                     key={mode}
                     label={mode === 'connect' ? 'Connect without adding the target to this view.' : 'Add the target to this view and connect it.'}

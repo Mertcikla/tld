@@ -1,5 +1,6 @@
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Connector, LibraryElement } from '../types'
 import ElementPanelCollaboration from './ElementPanelCollaboration'
@@ -39,22 +40,35 @@ const connector: Connector = {
   created_at: '', updated_at: '', tags: [],
 }
 let renderer: ReactTestRenderer
+let queryClient: QueryClient
 beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   mocks.viewId = 1
   mocks.listElementThreads.mockReset().mockResolvedValue([])
   mocks.listConnectorThreads.mockReset().mockResolvedValue([])
   mocks.listReactions.mockReset().mockResolvedValue([])
 })
-afterEach(() => { act(() => renderer?.unmount()) })
+afterEach(() => {
+  act(() => renderer?.unmount())
+  queryClient.clear()
+})
 
 describe.each(['element', 'connector'] as const)('%s collaboration panel', (kind) => {
   const listThreads = kind === 'element' ? mocks.listElementThreads : mocks.listConnectorThreads
-  const panel = (id = 10, description = '') => kind === 'element'
-    ? <ElementPanelCollaboration element={{ ...element, id, description }} />
-    : <ConnectorPanelCollaboration connector={{ ...connector, id, description }} />
+  const panel = (id = 10, description = '') => (
+    <QueryClientProvider client={queryClient}>
+      {kind === 'element'
+        ? <ElementPanelCollaboration element={{ ...element, id, description }} />
+        : <ConnectorPanelCollaboration connector={{ ...connector, id, description }} />}
+    </QueryClientProvider>
+  )
 
   it('keeps loaded comments visible when autosave replaces the metadata object', async () => {
     await act(async () => { renderer = create(panel()) })
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(renderer.root.findAllByType('button').find((button) => button.props.children === 'Post')?.props.isLoading).toBe(false)
+    })
     expect(listThreads).toHaveBeenCalledOnce()
     // An unnecessary refresh would hide the empty state until this pending request finishes.
     listThreads.mockImplementation(() => new Promise(() => {}))
