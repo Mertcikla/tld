@@ -1004,7 +1004,7 @@ export function useCanvasInteractions({
     setPendingElement({
       id: PENDING_ELEMENT_NODE_ID,
       position: resolveAutoPlacementPosition(flowX, flowY, sourceIds, sourceHandle),
-      mode: sourceIds.length > 0 ? 'connect' : 'add',
+      mode: 'add',
       sourceElementIds: sourceIds,
       sourceHandle,
     })
@@ -1033,7 +1033,7 @@ export function useCanvasInteractions({
     }
     const sourceHandle = pendingConnectionSourceHandleRef.current
     const position = resolveAutoPlacementPosition(flowX, flowY, [sourceElementId], sourceHandle)
-    const mode = 'connect'
+    const mode = 'add'
 
     setPendingElement((current) => {
       if (

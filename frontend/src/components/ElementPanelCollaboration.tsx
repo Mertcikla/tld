@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Badge,
   Box,
@@ -49,25 +50,30 @@ export default function ElementPanelCollaboration({
   const [threadInput, setThreadInput] = useState('')
   const [replyInputByThread, setReplyInputByThread] = useState<Record<number, string>>({})
   const [reactions, setReactions] = useState<ElementReactionSummary[]>([])
-  const [loading, setLoading] = useState(false)
+  const [mutating, setLoading] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
 
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ['workspace', 'views', viewId, 'elements', elementId, 'collaboration'],
+    enabled: viewId != null && elementId != null,
+    queryFn: async () => {
+      const [threads, reactions] = await Promise.all([
+        api.workspace.views.threads.listForElement(viewId!, elementId!).catch(() => []),
+        api.workspace.views.reactions.list(viewId!).catch(() => []),
+      ])
+      return { threads, reactions: reactions.filter((item) => item.element_id === elementId) }
+    },
+  })
+  const loading = mutating || isFetching
   const refresh = useCallback(async () => {
-    if (viewId == null || elementId == null) return
-    const [threadList, reactionList] = await Promise.all([
-      api.workspace.views.threads.listForElement(viewId, elementId).catch(() => []),
-      api.workspace.views.reactions.list(viewId).catch(() => []),
-    ])
-    setThreads(threadList)
-    setReactions(reactionList.filter((item) => item.element_id === elementId))
-  }, [elementId, viewId])
+    if (viewId != null && elementId != null) await refetch()
+  }, [elementId, refetch, viewId])
 
   useEffect(() => {
-    if (viewId == null || elementId == null) return
-    setLoading(true)
-    refresh().finally(() => setLoading(false))
-  }, [elementId, refresh, viewId])
+    setThreads(data?.threads ?? [])
+    setReactions(data?.reactions ?? [])
+  }, [data])
 
   useEffect(() => {
     if (!element || !liveThreadUpsert || liveThreadUpsert.element_id !== element.id) return
