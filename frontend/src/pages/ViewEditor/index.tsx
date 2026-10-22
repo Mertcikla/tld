@@ -1,3 +1,6 @@
+import PlanTagControls from "../../components/PlanTagControls"
+import PlanControls from "../../components/PlanControls"
+import { activePlanId, withPlanPath } from "../../api/planContext"
 import { connectorTagsForDrag } from './connectorTagDrop'
 import { getTagDragSource, useTagDragGhost } from '../../components/ViewExplorer/TagManager/tagDragGhostState'
 import { filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
@@ -5,7 +8,7 @@ import { countCanvasTags } from '../../utils/canvasTags'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CoreUISlots } from '../../slots'
 import { resetTagFilters, toggleHiddenTags, toggleSelectedTag } from '../../utils/tagFilters'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, type To, type NavigateOptions } from 'react-router-dom'
 import { parseNumericId } from '../../utils/ids'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { useSafeFitView } from '../../hooks/useSafeFitView'
@@ -598,7 +601,13 @@ function ViewEditorInner({
   const { id: viewIdParam } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const viewId = parseNumericId(viewIdParam)
-  const navigate = useNavigate()
+  const routerNavigate = useNavigate()
+  const navigate = useCallback((to: To | number, options?: NavigateOptions) => {
+    if (typeof to === 'number') return routerNavigate(to)
+    if (typeof to === 'string') return routerNavigate(withPlanPath(to), options)
+    const path = withPlanPath((to.pathname ?? window.location.pathname) + (to.search ?? '') + (to.hash ?? ''))
+    return routerNavigate(path, options)
+  }, [routerNavigate])
   const platform = usePlatform()
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
@@ -4745,6 +4754,20 @@ function ViewEditorInner({
               onOpenExplorer={viewId != null ? () => navigate(`/views?view=explore&focus=${viewId}`) : undefined}
               supportsZoomOut={supportsZoomOut}
               supportsZoomIn={supportsZoomIn}
+              actions={activePlanId() ? <>
+                <PlanControls viewId={viewId} elementIds={Array.from(selectedCanvasElementIds)} connectorIds={rfEdges.filter(e => e.selected).map(e => Number(e.id))} />
+                <PlanTagControls
+                  hiddenTags={hiddenLayerTags}
+                  selectedTags={activeTags}
+                  tagColors={tagColors}
+                  tagCounts={tagCounts}
+                  tagElementCounts={tagElementCounts}
+                  tagConnectorCounts={tagConnectorCounts}
+                  onSelect={toggleTagSelection}
+                  onToggleVisibility={toggleTagVisibility}
+                  onHighlight={(tags, color) => { setHoveredLayerTags(tags); setHoveredLayerColor(color) }}
+                />
+              </> : undefined}
             />
 
             <ViewFloatingMenu
@@ -4789,7 +4812,7 @@ function ViewEditorInner({
               setHighlightedTags={setHoveredLayerTags}
               setHighlightColor={setHoveredLayerColor}
               shareSlot={shareSlot}
-              toolbarSlot={toolbarSlot}
+              toolbarSlot={<>{toolbarSlot}{!activePlanId() && <PlanControls viewId={viewId} />}</>}
               hideFocusView={demoOptions?.hideFocusView}
               hideExpandExtras={demoOptions?.hideExpandExtras}
             />

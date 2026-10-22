@@ -1,6 +1,8 @@
 package cmdutil
 
 import (
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
@@ -112,6 +114,18 @@ func yamlFlagEnabled(cmd *cobra.Command) bool {
 
 // HasWorkspace reports whether YAML cache reads and writes are in play.
 func (s *Session) HasWorkspace() bool { return s.Mode == ModeWorkspace }
+func (s *Session) PlanID() string {
+	if s.command == nil {
+		return ""
+	}
+	if f := s.command.Flags().Lookup("plan"); f != nil {
+		return f.Value.String()
+	}
+	if f := s.command.Root().PersistentFlags().Lookup("plan"); f != nil {
+		return f.Value.String()
+	}
+	return ""
+}
 
 // Context derives a command context with the session's cache policy applied.
 // DB-mode contexts disable exec cache writes.
@@ -127,7 +141,13 @@ func (s *Session) Runner() (exec.Runner, error) {
 	if s.runner != nil {
 		return s.runner, nil
 	}
-	runner, err := exec.NewRunner(s.Config, s.target, s.dataDir, false)
+	var runner exec.Runner
+	var err error
+	if id := s.PlanID(); id != "" {
+		runner, err = exec.NewPlanRunner(s.Config, s.target, s.dataDir, id)
+	} else {
+		runner, err = exec.NewRunner(s.Config, s.target, s.dataDir, false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +190,88 @@ func (s *Session) CacheError(err error) error {
 // mode it is the YAML files; in DB mode it is a snapshot materialized from the
 // target export (refs are synthesized from names).
 func (s *Session) LoadWorkspace() (*workspace.Workspace, error) {
+	runner, err := s.Runner()
+	if err != nil {
+		return nil, err
+	}
+	locked := false
+	if guard, ok := runner.(interface {
+		ImplementationLocked(context.Context) (bool, error)
+	}); ok {
+		locked, err = guard.ImplementationLocked(s.ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if locked {
+		// The agent projection must not overwrite the user's YAML workspace cache.
+		s.Mode = ModeDB
+		exported, err := runner.ExportWorkspace(s.ctx)
+		if err != nil {
+			return nil, err
+		}
+		base := s.ws
+		if base == nil {
+			base = emptyWorkspace(s.Wdir, s.Config)
+		}
+		s.ws = ConvertExportResponse(base, exported)
+		return s.ws, nil
+	}
+	if s.PlanID() != "" {
+		top := s.command
+		for top.Parent() != nil && top.Parent().Parent() != nil {
+			top = top.Parent()
+		}
+		if top.Name() == "list" || top.Name() == "inspect" || top.Name() == "render" {
+			client, _, closeFn, err := exec.PlanClients(s.Config, s.target, s.dataDir, "")
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = closeFn() }()
+			radius, _ := s.command.Flags().GetUint32("radius")
+			request := &pb.PlanProjectionRequest{PlanId: s.PlanID(), Radius: radius}
+			exported := &pb.ExportOrganizationResponse{}
+			for {
+				result, err := client.GetProjection(s.ctx, connect.NewRequest(request))
+				if err != nil {
+					return nil, err
+				}
+				for _, item := range result.Msg.Resources {
+					r := item.Resource
+					if r == nil {
+						continue
+					}
+					switch {
+					case r.GetElement() != nil:
+						exported.Elements = append(exported.Elements, r.GetElement())
+					case r.GetView() != nil:
+						exported.Views = append(exported.Views, r.GetView())
+					case r.GetConnector() != nil:
+						exported.Connectors = append(exported.Connectors, r.GetConnector())
+					case r.GetPlacement() != nil:
+						exported.Placements = append(exported.Placements, r.GetPlacement())
+					case r.GetLayer() != nil:
+						exported.Layers = append(exported.Layers, r.GetLayer())
+					}
+				}
+				if result.Msg.NextCursor == "" {
+					break
+				}
+				request.Cursor = result.Msg.NextCursor
+				request.Revision = &result.Msg.Revision
+			}
+			return ConvertExportResponse(emptyWorkspace(s.Wdir, s.Config), exported), nil
+		}
+		runner, err := s.Runner()
+		if err != nil {
+			return nil, err
+		}
+		data, err := runner.ExportWorkspace(s.ctx)
+		if err != nil {
+			return nil, err
+		}
+		return ConvertExportResponse(emptyWorkspace(s.Wdir, s.Config), data), nil
+	}
 	if s.readLive {
 		runner, err := s.Runner()
 		if err != nil {
@@ -192,7 +294,7 @@ func (s *Session) LoadWorkspace() (*workspace.Workspace, error) {
 		s.ws = ws
 		return ws, nil
 	}
-	runner, err := s.Runner()
+	runner, err = s.Runner()
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +419,7 @@ func ResolveElementArg(ws *workspace.Workspace, arg string) (string, error) {
 	if el, ok := ws.Elements[arg]; ok && el != nil {
 		return arg, nil
 	}
-	if id, err := strconv.Atoi(arg); err == nil && id > 0 {
+	if id, err := strconv.Atoi(arg); err == nil && id != 0 {
 		if ref := refForResourceID(ws, id); ref != "" {
 			return ref, nil
 		}
@@ -358,7 +460,7 @@ func ResolveViewArg(ws *workspace.Workspace, arg string) (string, error) {
 		return workspace.RootRef, nil
 	}
 	if ws != nil && ws.Meta != nil {
-		if id, err := strconv.Atoi(arg); err == nil && id > 0 {
+		if id, err := strconv.Atoi(arg); err == nil && id != 0 {
 			for ref, m := range ws.Meta.Views {
 				if m != nil && int(m.ID) == id {
 					return ref, nil
@@ -391,7 +493,7 @@ func ResolveConnectorArg(ws *workspace.Workspace, arg string) (string, error) {
 			return normalized, nil
 		}
 	}
-	if id, err := strconv.Atoi(arg); err == nil && id > 0 {
+	if id, err := strconv.Atoi(arg); err == nil && id != 0 {
 		if ws.Meta != nil {
 			for key, m := range ws.Meta.Connectors {
 				if m != nil && int(m.ID) == id {

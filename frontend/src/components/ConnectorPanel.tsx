@@ -83,7 +83,8 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   orgId: string
   onSave: (connector: Connector) => void
   autoSave?: boolean
-  onDelete: (edgeId: number, ownerViewId?: number) => void
+  persistConnector?: (data: Partial<Connector>) => Promise<Connector>
+  onDelete?: (edgeId: number, ownerViewId?: number) => void
   visibilityOverrideDelta?: number
   onVisibilityOverrideDeltaChange?: (id: number, delta: number) => Promise<void> | void
   onPromoteVisibility?: (id: number) => Promise<void> | void
@@ -159,7 +160,7 @@ function visibilityDeltaFromNoiseGateLevel(level: number) {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Connector Properties, Connector Details.
  */
-function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, onDelete, visibilityOverrideDelta = 0, onVisibilityOverrideDeltaChange, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
+function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, persistConnector, onDelete, visibilityOverrideDelta = 0, onVisibilityOverrideDeltaChange, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isReadOnly = !canEdit
   const autoSaveEdit = autoSave && !!connector && !isReadOnly
@@ -266,7 +267,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   const saveIfDirty = useCallback(async () => {
     if (!autoSaveEdit || !connector) return
 
-    if (viewId == null) return
+    if (!persistConnector && viewId == null) return
     if (savingRef.current) {
       pendingSaveRef.current = true
       return
@@ -278,7 +279,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     savingRef.current = true
     startSaving()
     try {
-      const updated = await api.workspace.connectors.update(viewId, connector.id, {
+      const updated = await (persistConnector ? persistConnector(payload) : api.workspace.connectors.update(viewId!, connector.id, {
         label: payload.label,
         description: payload.description,
         relationship: payload.relationship,
@@ -286,7 +287,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         style: payload.style,
         url: payload.url,
         tags: payload.tags,
-      })
+      }))
       lastSavedFingerprintRef.current = fingerprint
       saved()
       onSave(updated)
@@ -301,7 +302,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         }, 0)
       }
     }
-  }, [autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
+  }, [persistConnector, autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
 
   const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
@@ -322,12 +323,12 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   }, [autoSaveEdit, connector, label, description, relType, direction, connectorType, url, tags])
 
   const handleSave = useCallback(async () => {
-    if (isReadOnly || !connector || viewId == null || loading) return
+    if (isReadOnly || !connector || (!persistConnector && viewId == null) || loading) return
     setLoading(true)
     startSaving()
     try {
       const { payload } = await buildPayloadAndFingerprint()
-      const updated = await api.workspace.connectors.update(viewId, connector.id, {
+      const updated = await (persistConnector ? persistConnector(payload) : api.workspace.connectors.update(viewId!, connector.id, {
         label: payload.label,
         description: payload.description,
         relationship: payload.relationship,
@@ -335,7 +336,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         style: payload.style,
         url: payload.url,
         tags: payload.tags,
-      })
+      }))
       saved()
       onSave(updated)
       onClose()
@@ -344,7 +345,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, connector, viewId, loading, buildPayloadAndFingerprint, onSave, onClose, startSaving, saved, failed])
+  }, [persistConnector, isReadOnly, connector, viewId, loading, buildPayloadAndFingerprint, onSave, onClose, startSaving, saved, failed])
 
   const handleClose = useCallback(async () => {
     if (autoSaveEdit) {
@@ -371,7 +372,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   }, [isOpen, handleClose, autoSaveEdit, handleSave])
 
   const handleDelete = async () => {
-    if (isReadOnly || !connector) return
+    if (isReadOnly || !connector || !onDelete) return
     try {
       await api.workspace.connectors.delete(orgId, connector.id)
       onDelete(connector.id, connector.view_id)
@@ -637,7 +638,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         {/* Footer */}
         {canEdit && <PanelSaveStatus state={saveState} hasFooter onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         <HStack px={4} py={3} justify="space-between" flexShrink={0}>
-          {canEdit ? (
+          {canEdit && onDelete ? (
             <Button data-testid="connector-panel-delete" variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>
               Delete
             </Button>

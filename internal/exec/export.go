@@ -24,6 +24,11 @@ func (r *remoteRunner) ExportWorkspace(ctx context.Context) (*diagv1.ExportOrgan
 }
 
 func (r *localRunner) ExportWorkspace(ctx context.Context) (*diagv1.ExportOrganizationResponse, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.ExportWorkspace(ctx)
+	}
 	var (
 		views      []*diagv1.View
 		elements   []*diagv1.Element

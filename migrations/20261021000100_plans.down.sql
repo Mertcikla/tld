@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS plan_implementations;
+DROP TABLE IF EXISTS plan_workspace_requests;
+DROP TABLE IF EXISTS plan_notes;
+DROP TABLE IF EXISTS plan_checklist_targets;
+DROP TABLE IF EXISTS plan_checklist_items;
+DROP TABLE IF EXISTS plan_members;
+DROP TABLE IF EXISTS plan_operation_preconditions;
+DROP TABLE IF EXISTS plan_operations;
+DROP TABLE IF EXISTS plans;

@@ -22,6 +22,7 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useSearchParams: () => [searchParamsMock(), setParamsMock],
 }))
+vi.mock('../components/RepositoryPlans', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-plans' }) }))
 vi.mock('../components/RepositoryTargetPicker', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', props) }))
 vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => {
   const { footerContent, ...rest } = props
@@ -1580,7 +1581,7 @@ describe('Repositories map action', () => {
       .findAll((node) => node.type === 'button' && typeof node.props['data-testid'] === 'string' && node.props['data-testid'].endsWith('-tab'))
       .map((node) => node.props['data-testid'] as string)
     expect(tabIds[0]).toBe('repositories-snapshots-tab')
-    expect(tabIds).toEqual(['repositories-snapshots-tab', 'repositories-compare-tab', 'repositories-live-tab', 'repositories-pr-tab'])
+    expect(tabIds).toEqual(['repositories-snapshots-tab', 'repositories-compare-tab', 'repositories-live-tab', 'repositories-pr-tab', 'repositories-plans-tab'])
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
     expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-snapshot-delete-snap-1')).toHaveLength(1)
@@ -1680,6 +1681,17 @@ describe('Repositories map action', () => {
     expect(details.findAll((node) => node.props.children === 'fp-1').length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-snapshot-details-snap-1' })).toHaveLength(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('switches from Plans to Watch when implementation is started', async () => {
+    let renderer!: ReturnType<typeof create>
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=plans&repo=repo-1'))
+    await act(async () => { renderer = create(<Repositories />) })
+    const plans = renderer.root.findByProps({ 'data-testid': 'mock-plans' })
+    await act(async () => { plans.props.onWatch() })
+    expect(hostNodes(renderer, 'repository-watcher')).toHaveLength(1)
+    expect(hostNodes(renderer, 'mock-plans')).toHaveLength(0)
     await act(async () => { renderer.unmount() })
   })
 

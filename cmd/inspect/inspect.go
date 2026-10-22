@@ -99,11 +99,11 @@ This command reads state without changing the diagram.`,
 			if err != nil {
 				return err
 			}
-			if readSource == "live" {
+			if readSource == "live" || sess.PlanID() != "" {
 				opts.Workspace = ws
 				opts.TargetOnly = true
 				opts.IncludeLocal = false
-				opts.IncludeCloud = includeCloud || includeAll
+				opts.IncludeCloud = (includeCloud || includeAll) && sess.PlanID() == ""
 			}
 			report, err := inspection.Build(cmd.Context(), opts)
 			if err != nil {

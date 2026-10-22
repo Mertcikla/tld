@@ -5,6 +5,7 @@ import { ZoomInIcon } from './Icons'
 import { KbdHint } from './PanelUI'
 
 export interface ViewHeaderButtonProps {
+  actions?: React.ReactNode
   name?: string
   isOpen?: boolean
   onToggle: () => void
@@ -20,6 +21,7 @@ export interface ViewHeaderButtonProps {
  * Aliases: Diagram Name Button, View Title Bar.
  */
 export default function ViewHeaderButton({
+  actions,
   name,
   isOpen,
   onToggle,
@@ -115,6 +117,24 @@ export default function ViewHeaderButton({
           </Text>
         </HStack>
       </Box>
+      {actions && (
+        <HStack
+          pointerEvents="auto"
+          maxW="calc(100vw - 32px)"
+          flexWrap="wrap"
+          justify="center"
+          spacing={2}
+          gap={1}
+          p={2}
+          bg="var(--bg-panel)"
+          border="1px solid"
+          borderColor="whiteAlpha.100"
+          rounded="xl"
+          boxShadow="0 5px 12px rgba(0,0,0,0.26)"
+        >
+          {actions}
+        </HStack>
+      )}
       <HStack
         spacing={1.5}
         opacity={0.6}

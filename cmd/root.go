@@ -17,6 +17,7 @@ import (
 	listcmd "github.com/mertcikla/tld/v2/cmd/list"
 	"github.com/mertcikla/tld/v2/cmd/login"
 	"github.com/mertcikla/tld/v2/cmd/mcp"
+	plancmd "github.com/mertcikla/tld/v2/cmd/plan"
 	"github.com/mertcikla/tld/v2/cmd/pull"
 	"github.com/mertcikla/tld/v2/cmd/remove"
 	"github.com/mertcikla/tld/v2/cmd/rename"
@@ -115,6 +116,8 @@ workspace. To change a display name in either mode, use
 	} else if _, err := os.Stat("tld"); err == nil {
 		defaultWdir = "tld"
 	}
+	root.PersistentFlags().Uint32("radius", 0, "relationship hops for plan-scoped reads")
+	root.PersistentFlags().String("plan", "", "record workspace edits in a plan and query its scope")
 	root.PersistentFlags().StringVarP(&wdir, "workspace", "w", defaultWdir, "workspace directory")
 	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "use workspace YAML refs and cache alongside the configured target")
 	root.PersistentFlags().StringVar(&outputFormat, "format", "text", "output format: text or json")
@@ -126,6 +129,18 @@ workspace. To change a display name in either mode, use
 	// resolving to the nested ".tld" directory when the root itself does not
 	// hold workspace files.
 	root.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
+		if id, _ := c.Flags().GetString("plan"); id != "" {
+			top := c
+			for top.Parent() != nil && top.Parent() != root {
+				top = top.Parent()
+			}
+			switch top.Name() {
+			case "plan", "add", "connect", "update", "remove", "rename", "link", "view", "list", "inspect", "render", "validate", "context", "export", "pull":
+			default:
+				return fmt.Errorf("%s is unavailable in plan mode", top.Name())
+			}
+		}
+
 		if target, _ := cmdutil.TargetOverrides(c, "", ""); target != "" {
 			if _, err := exec.ResolveTarget(workspace.Config{}, target); err != nil {
 				return cmdutil.WithCode(err, "invalid_value", "Use --target auto, local, remote, or cloud.")
@@ -166,6 +181,7 @@ workspace. To change a display name in either mode, use
 	root.AddGroup(resourceGroup, workspaceGroup, syncGroup, queryGroup, serverGroup, systemGroup)
 
 	// CRUD Commands
+	root.AddCommand(plancmd.NewCmd(&wdir))
 	addCmd := add.NewAddCmd(&wdir, &outputFormat, &compactJSON)
 	addCmd.GroupID = resourceGroup.ID
 

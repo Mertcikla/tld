@@ -54,6 +54,11 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if deps.Workspace == nil || deps.Codeindex == nil {
 		return nil, false, fmt.Errorf("map run requires workspace and codeindex stores")
 	}
+	if guard, ok := deps.Workspace.(interface{ CheckImplementationUnlocked(context.Context) error }); ok {
+		if err := guard.CheckImplementationUnlocked(ctx); err != nil {
+			return nil, false, err
+		}
+	}
 	report := func(stage string, current, total int, detail string) {
 		if progress != nil {
 			progress(stage, current, total, detail)

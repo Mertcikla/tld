@@ -1,3 +1,5 @@
+import { agentWorkspaceOverlay } from "../utils/agentWorkspaceOverlay"
+import type { AgentWorkspaceEdit, PlanResource } from "@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/plan_service_pb"
 import { focusMapChanges, type MapChangeFocusRequest } from '../utils/repositoryChangeFocus'
 import type { RepositoryFollowMode } from '../utils/repositoryWatcher'
 import { changedScenePlacements } from '../utils/liveSceneChanges'
@@ -29,7 +31,8 @@ const seedTagColors = (): Record<string, Tag> =>
   Object.fromEntries(
     Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
   )
-export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded, live = false, onLiveScene, focusRequest, followMode = 'off', onFollowModeChange }: {
+export default function RepositoryChangeCanvas({ agentEdits = [], agentContext = [], diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false, embedded, live = false, onLiveScene, focusRequest, followMode = 'off', onFollowModeChange }: {
+  agentEdits?: AgentWorkspaceEdit[]; agentContext?: PlanResource[]
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
   busy?: boolean
   live?: boolean
@@ -85,7 +88,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
       .catch((err: unknown) => { if (active && !controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load the change scene') })
     return () => { active = false; controller.abort() }
   }, [repositoryId, comparisonKey, version, debug, displayMode, embedded, diagram?.scene, live, onLiveScene])
-  const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
+  const view = useMemo(() => scene ? agentWorkspaceOverlay(repositoryChangeScene(scene), agentEdits, agentContext) : null, [scene, agentEdits, agentContext])
   useEffect(() => {
     if (!diagram || embedded) return
     let cancelled = false

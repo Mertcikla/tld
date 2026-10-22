@@ -264,6 +264,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
     }))
 
     groups.push({
+      agentStaged: diag.tags?.includes('agent:staged') || undefined,
       diagramId: diag.id,
       label: diag.name,
       description: diag.description ?? null,

@@ -1,3 +1,6 @@
+import { usePlanImplementation } from "../hooks/usePlanImplementation"
+import PlanImplementationReview from "../components/PlanImplementationReview"
+import RepositoryPlans from "../components/RepositoryPlans"
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -142,7 +145,7 @@ function targetStatus(value: string, snapshots: CodeSnapshot[], maps: CompletedR
       ? { label: 'Indexed', colorScheme: 'blue' }
       : { label: 'Not captured', colorScheme: 'gray' }
 }
-function RepositoryModeIcon({ mode }: { mode: 'snapshots' | 'compare' | 'live' | 'pr' }) {
+function RepositoryModeIcon({ mode }: { mode: 'snapshots' | 'compare' | 'live' | 'pr' | 'plans' }) {
   const icon = mode === 'snapshots' ? faCamera : mode === 'compare' ? faCodeCompare : mode === 'live' ? faEye : faCodePullRequest
   return <FontAwesomeIcon icon={icon} />
 }
@@ -357,8 +360,9 @@ export default function Repositories() {
   const [followMode, setFollowMode] = useState<RepositoryFollowMode>('off')
   const [watchScene, setWatchScene] = useState<RepositoryImpactScene | null>(null)
   const [focusChangeRequest, setFocusChangeRequest] = useState<MapChangeFocusRequest | null>(null)
-  const [mode, setMode] = useState(() => params.get('mode') === 'snapshots' ? 'snapshots' : params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
+  const [mode, setMode] = useState(() => params.get('mode') === 'plans' ? 'plans' : params.get('mode') === 'snapshots' ? 'snapshots' : params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
   const watchRevision = watch?.gitRevision || live?.gitRevision || history?.headSha || ''
+  const implementation = usePlanImplementation(selectedId, watchRevision, mode === 'live')
   const historyCommit = history?.commits.find((commit) => commit.sha === watchRevision)
   const watchCommitMessage = (historyCommit?.body || historyCommit?.subject || '').trim() || (watchCommit?.repositoryId === selectedId && watchCommit.revision === watchRevision ? watchCommit.message : '')
   useEffect(() => {
@@ -1222,7 +1226,7 @@ export default function Repositories() {
             </Box>
             {selected && (
               <Box as="nav" aria-label="Repository mode" display={sidebarCollapsed ? 'block' : { base: 'grid', lg: 'block' }} gridTemplateColumns="repeat(2, minmax(0, 1fr))" flex={sidebarCollapsed ? 1 : { base: '0 1 auto', lg: 1 }} minH={0} overflowY="auto" py={3}>
-                {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
+                {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review'], ['plans', 'Plans']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
                   <Tooltip key={value} label={label} placement="right" isDisabled={!sidebarCollapsed}>
                     <Button
                       aria-label={label}
@@ -1455,7 +1459,7 @@ export default function Repositories() {
             display="flex"
             flexDir="column"
           >
-            {selected && (showRepositorySettings ? (
+            {selected && (mode === 'plans' && !showRepositorySettings ? <RepositoryPlans key={selected.id} repositoryId={selected.id} onWatch={() => changeMode('live')} /> : showRepositorySettings ? (
               <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }} />
             ) : (
               <>
@@ -1635,6 +1639,7 @@ export default function Repositories() {
                 {mode === 'live' && (
                   <>
                     <RepositoryWatcherPanel key={selected.id} followMode={followMode} onFollowModeChange={setFollowMode} scene={live?.diagram?.scene?.repositoryId === selectedId ? live.diagram.scene : watchScene?.repositoryId === selectedId ? watchScene : null} onFocusChanges={(targets) => { setSelectedPath(''); setFocusChangeRequest({ repositoryId: selectedId, targets }) }} status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watchRevision} commitMessage={watchCommitMessage} worktreeStats={worktreeStats?.repositoryId === selectedId ? worktreeStats : null} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} />
+                    <PlanImplementationReview implementation={implementation} />
                     <ErrorMessage message={live?.error || ''} />
                   </>
                 )}
@@ -1750,7 +1755,7 @@ export default function Repositories() {
                         />
                     </>
                   )}
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}`} live={mode === 'live'} followMode={followMode} onFollowModeChange={setFollowMode} onLiveScene={setWatchScene} focusRequest={focusChangeRequest} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}`} agentEdits={mode === 'live' ? implementation.state?.edits : undefined} agentContext={implementation.context} live={mode === 'live'} followMode={followMode} onFollowModeChange={setFollowMode} onLiveScene={setWatchScene} focusRequest={focusChangeRequest} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
                 )}
               </>

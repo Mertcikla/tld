@@ -1,8 +1,13 @@
 package mcp
 
 import (
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	connectrpc "connectrpc.com/connect"
 	"context"
 	"database/sql"
+	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/pkg/api"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,5 +180,48 @@ func assertMCPCount(t *testing.T, db *sql.DB, query string, want int) {
 	}
 	if got != want {
 		t.Fatalf("count = %d, want %d", got, want)
+	}
+}
+
+func TestMCPLockStagesWithoutPlanArgument(t *testing.T) {
+	dataDir, session := setupMCPWorkspace(t)
+	st, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := api.WithWorkspaceID(context.Background(), uuid.Nil)
+	service := &api.PlanService{Store: st, Source: func(tx *app.Store) api.Store { return store.NewAPIAdapter(tx) }}
+	p, err := service.CreatePlan(ctx, connectrpc.NewRequest(&pb.CreatePlanRequest{RepositoryId: "repo", Name: "MCP implementation"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.LockImplementation(ctx, connectrpc.NewRequest(&pb.LockImplementationRequest{PlanId: p.Msg.Plan.Id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCallTool(t, session, "tld_add", map[string]any{"name": "Staged worker", "kind": "service"})
+	elements, _, err := st.Elements(ctx, 0, 0, "")
+	if err != nil || len(elements) != 0 {
+		t.Fatalf("MCP changed live elements: %v %v", elements, err)
+	}
+	text := toolText(mustCallTool(t, session, "tld_list_elements", nil))
+	if !strings.Contains(text, "Staged worker") {
+		t.Fatalf("agent cannot read own edits: %s", text)
+	}
+	state, err := service.GetImplementation(ctx, connectrpc.NewRequest(&pb.GetImplementationRequest{RepositoryId: "repo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Msg.Edits) == 0 {
+		t.Fatal("no proof-of-work recorded")
+	}
+	_, err = service.ReviewImplementation(ctx, connectrpc.NewRequest(&pb.ReviewImplementationRequest{RepositoryId: "repo", ExpectedRevision: state.Msg.Revision, Action: "discard"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = toolText(mustCallTool(t, session, "tld_list_elements", nil))
+	if strings.Contains(text, "Staged worker") {
+		t.Fatalf("discard left stale YAML projection: %s", text)
 	}
 }

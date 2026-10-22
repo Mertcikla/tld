@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/mertcikla/codeindex/gitstate"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -62,9 +63,23 @@ func NewWithOptions(appStore *app.Store, static fs.FS, workspaceID uuid.UUID, op
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
+	planSvc := &api.PlanService{Store: appStore, Hooks: collabHooks, NotesDir: filepath.Join(opts.DataDir, "plans"), Source: func(st *app.Store) api.Store { return store.NewAPIAdapter(st, dataDirs...) }}
 	mux := http.NewServeMux()
+	planPath, planHandler := diagv1connect.NewPlanServiceHandler(planSvc)
+	mux.Handle("/api"+planPath, http.StripPrefix("/api", planHandler))
 	selfHosted := isSelfHosted(opts)
 	watchManager := registerCodeIndexHandlers(mux, appStore, opts.DataDir, selfHosted, opts.Config)
+	planSvc.RepositoryRevision = func(ctx context.Context, repo string) (string, error) {
+		repository, err := watchManager.idx.Repository(ctx, repo)
+		if err != nil {
+			return "", err
+		}
+		if repository.Root == "" {
+			return "", nil
+		}
+		_, revision, err := gitstate.CurrentCommit(ctx, repository.Root)
+		return revision, err
+	}
 	registerEditorHandlers(mux, appStore, selfHosted)
 	registerDensityHandlers(mux, appStore)
 	registerMergeHandlers(mux, appStore)
@@ -145,7 +160,7 @@ func NewWithOptions(appStore *app.Store, static fs.FS, workspaceID uuid.UUID, op
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := api.WithWorkspaceID(r.Context(), workspaceID)
 		ctx = api.WithCollaborationRequestInfo(ctx, api.CollaborationRequestInfo{RemoteAddr: r.RemoteAddr})
-		mux.ServeHTTP(w, r.WithContext(ctx))
+		planSvc.PlanMiddleware(mux).ServeHTTP(w, r.WithContext(ctx))
 	})
 
 	return &Server{handler: localCORSMiddleware(handler, opts), watches: watchManager}, nil
@@ -178,7 +193,7 @@ func localCORSMiddleware(next http.Handler, opts Options) http.Handler {
 			if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
 				w.Header().Set("Access-Control-Allow-Private-Network", "true")
 			}
-			w.Header().Set("Access-Control-Expose-Headers", "Connect-Protocol-Version, Grpc-Status, Grpc-Message")
+			w.Header().Set("Access-Control-Expose-Headers", "Connect-Protocol-Version, Grpc-Status, Grpc-Message, X-Tld-Plan-Revision")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

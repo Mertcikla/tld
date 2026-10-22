@@ -5,12 +5,12 @@ import type { Connector } from '../types'
 import ConnectorPanel from './ConnectorPanel'
 import { api } from '../api/client'
 
-const testContext = vi.hoisted(() => ({ canEdit: true }))
+const testContext = vi.hoisted(() => ({ canEdit: true, viewId: 1 as number | null }))
 
 vi.mock('../api/client', () => ({ api: { workspace: { connectors: { update: vi.fn() } } } }))
 
 vi.mock('../pages/ViewEditor/context', () => ({
-  useViewEditorContext: () => ({ canEdit: testContext.canEdit, viewId: 1 }),
+  useViewEditorContext: () => ({ canEdit: testContext.canEdit, viewId: testContext.viewId }),
 }))
 
 vi.mock('./ConfirmDialog', () => ({ default: () => null }))
@@ -74,6 +74,7 @@ describe('ConnectorPanel noise gate', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     testContext.canEdit = true
+    testContext.viewId = 1
     vi.mocked(api.workspace.connectors.update).mockReset()
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
@@ -110,6 +111,25 @@ describe('ConnectorPanel noise gate', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ label: 'Updated label' }))
     expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes saved.')
     expect(onClose).not.toHaveBeenCalled()
+    await act(async () => { renderer!.unmount() })
+  })
+
+  it('autosaves through custom persistence without an editor view or live write', async () => {
+    testContext.viewId = null
+    const persistConnector = vi.fn().mockResolvedValue({ ...connector(), description: 'Send validated user data' })
+    const onSave = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ConnectorPanel isOpen autoSave isInline connector={connector()} orgId="" onClose={vi.fn()} onSave={onSave} persistConnector={persistConnector} />)
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ name: 'description' }).props.onChange({ target: { value: 'Send validated user data' } })
+    })
+    await act(async () => { vi.advanceTimersByTime(150) })
+    expect(persistConnector).toHaveBeenCalledWith(expect.objectContaining({ description: 'Send validated user data' }))
+    expect(api.workspace.connectors.update).not.toHaveBeenCalled()
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ description: 'Send validated user data' }))
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'connector-panel-delete' })).toHaveLength(0)
     await act(async () => { renderer!.unmount() })
   })
 

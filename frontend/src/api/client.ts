@@ -1,3 +1,4 @@
+import { planFetch } from "./planContext"
 import { createClient, ConnectError } from '@connectrpc/connect'
 import { create as createMessage, toJson } from '@bufbuild/protobuf'
 import type {
@@ -123,7 +124,7 @@ async function connectJsonRpc<T>(
   body: Record<string, unknown>,
   options: { allowNotFound?: boolean } = {},
 ): Promise<T | null> {
-  const res = await fetch(apiUrl(`/${WORKSPACE_CONNECT_SERVICE}/${method}`), {
+  const res = await planFetch(apiUrl(`/${WORKSPACE_CONNECT_SERVICE}/${method}`), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1198,7 +1199,7 @@ export const api = {
       if (!capabilitiesPromise) {
         capabilitiesPromise = (async () => {
           try {
-            const res = await fetch(apiUrl('/ready'))
+            const res = await planFetch(apiUrl('/ready'))
             if (!res.ok) return { watch: true, editor: true, repositories: true }
             const json = await res.json() as { capabilities?: { watch?: boolean; editor?: boolean; repositories?: boolean } }
             return {
@@ -1342,7 +1343,7 @@ export const api = {
       language: string | null
     }>): Promise<{ survivor: LibraryElement; deleted_id: number }> =>
       rpc(async () => {
-        const res = await fetch(apiUrl('/elements/merge'), {
+        const res = await planFetch(apiUrl('/elements/merge'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source_id: sourceId, survivor_id: survivorId, resolved }),
@@ -1381,7 +1382,7 @@ export const api = {
           }),
         delete: (name: string): Promise<void> =>
           rpc(async () => {
-            const res = await fetch(apiUrl(`/tags/${encodeURIComponent(name)}`), { method: 'DELETE' })
+            const res = await planFetch(apiUrl(`/tags/${encodeURIComponent(name)}`), { method: 'DELETE' })
             if (!res.ok && res.status !== 204) throw await responseError(res, `Failed to delete tag`)
           }),
       },
@@ -1669,13 +1670,13 @@ export const api = {
 
       density: {
         get: async (id: number): Promise<number> => {
-          const res = await fetch(apiUrl(`/views/${id}/density`))
+          const res = await planFetch(apiUrl(`/views/${id}/density`))
           if (!res.ok) throw new Error('Failed to load density')
           const json = await res.json() as { density_level?: number }
           return Number(json.density_level ?? 0)
         },
         set: async (id: number, densityLevel: number): Promise<number> => {
-          const res = await fetch(apiUrl(`/views/${id}/density`), {
+          const res = await planFetch(apiUrl(`/views/${id}/density`), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ density_level: densityLevel }),
@@ -1688,7 +1689,7 @@ export const api = {
 
       noiseGate: {
         initialize: async (id: number, densityLevel?: number): Promise<NoiseGateInitialization> => {
-          const res = await fetch(apiUrl(`/views/${id}/noise-gate/initialize`), {
+          const res = await planFetch(apiUrl(`/views/${id}/noise-gate/initialize`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(densityLevel == null ? {} : { density_level: densityLevel }),
@@ -1706,13 +1707,13 @@ export const api = {
 
       visibilityOverrides: {
         list: async (id: number): Promise<VisibilityOverride[]> => {
-          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`))
+          const res = await planFetch(apiUrl(`/views/${id}/visibility-overrides`))
           if (!res.ok) throw new Error('Failed to load visibility overrides')
           const json = await res.json() as { overrides?: Record<string, unknown>[] }
           return (json.overrides ?? []).map((override) => normalizeVisibilityOverride(override))
         },
         set: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number, levelDelta: number): Promise<VisibilityOverride> => {
-          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`), {
+          const res = await planFetch(apiUrl(`/views/${id}/visibility-overrides`), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1726,19 +1727,19 @@ export const api = {
           return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta })
         },
         promote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
-          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/promote`), { method: 'POST' })
+          const res = await planFetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/promote`), { method: 'POST' })
           if (!res.ok) throw new Error('Failed to promote visibility')
           const json = await res.json() as { override?: Record<string, unknown> }
           return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta: 1 })
         },
         demote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
-          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/demote`), { method: 'POST' })
+          const res = await planFetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/demote`), { method: 'POST' })
           if (!res.ok) throw new Error('Failed to demote visibility')
           const json = await res.json() as { override?: Record<string, unknown> }
           return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta: -1 })
         },
         reset: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<void> => {
-          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}`), { method: 'DELETE' })
+          const res = await planFetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}`), { method: 'DELETE' })
           if (!res.ok) throw new Error('Failed to reset visibility override')
         },
       },
@@ -1984,7 +1985,7 @@ export const api = {
       if (password) {
         init.body = JSON.stringify({ password })
       }
-      const res = await fetch(apiUrl(`/shared/explore/${token}`), init)
+      const res = await planFetch(apiUrl(`/shared/explore/${token}`), init)
       if (!res.ok) {
         throw new Error(`Failed to load shared diagram: ${res.statusText}`)
       }
@@ -2473,7 +2474,7 @@ export const api = {
 
   editor: {
     open: async (input: { editor: SourceEditor; repository_id?: string | null; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
-      const res = await fetch(apiUrl('/editor/open'), {
+      const res = await planFetch(apiUrl('/editor/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

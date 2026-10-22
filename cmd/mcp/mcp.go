@@ -13,6 +13,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/inspect"
 	"github.com/mertcikla/tld/v2/cmd/link"
 	"github.com/mertcikla/tld/v2/cmd/list"
+	plancmd "github.com/mertcikla/tld/v2/cmd/plan"
 	"github.com/mertcikla/tld/v2/cmd/pull"
 	"github.com/mertcikla/tld/v2/cmd/remove"
 	"github.com/mertcikla/tld/v2/cmd/rename"
@@ -30,6 +31,7 @@ import (
 )
 
 type addArgs struct {
+	Plan        string  `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Name        string  `json:"name" jsonschema:"element display name (required)"`
 	Ref         string  `json:"ref,omitempty" jsonschema:"override generated ref (default: slugified name)"`
 	Kind        string  `json:"kind,omitempty" jsonschema:"element kind (default: service)"`
@@ -44,6 +46,7 @@ type addArgs struct {
 }
 
 type connectArgs struct {
+	Plan         string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	From         string `json:"from" jsonschema:"source element ref (required)"`
 	To           string `json:"to" jsonschema:"target element ref (required)"`
 	View         string `json:"view,omitempty" jsonschema:"view ref; inferred if empty"`
@@ -57,38 +60,45 @@ type connectArgs struct {
 }
 
 type removeElementArgs struct {
-	Ref string `json:"ref" jsonschema:"element ref to remove"`
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
+	Ref  string `json:"ref" jsonschema:"element ref to remove"`
 }
 
 type removeConnectorArgs struct {
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	View string `json:"view"`
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
 type renameArgs struct {
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	From string `json:"from" jsonschema:"current element ref"`
 	To   string `json:"to" jsonschema:"new element ref"`
 }
 
 type updateElementArgs struct {
+	Plan  string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref   string `json:"ref"`
 	Field string `json:"field"`
 	Value string `json:"value"`
 }
 
 type updateConnectorArgs struct {
+	Plan  string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref   string `json:"ref" jsonschema:"connector key e.g. view/source~target[/label]"`
 	Field string `json:"field"`
 	Value string `json:"value"`
 }
 
 type validateArgs struct {
-	Strictness int  `json:"strictness,omitempty" jsonschema:"override validation level [1-3]"`
-	Verbose    bool `json:"verbose,omitempty"`
+	Plan       string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
+	Strictness int    `json:"strictness,omitempty" jsonschema:"override validation level [1-3]"`
+	Verbose    bool   `json:"verbose,omitempty"`
 }
 
 type linkArgs struct {
+	Plan     string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref      string `json:"ref" jsonschema:"element ref to link"`
 	Target   string `json:"target,omitempty" jsonschema:"file path, path#symbol, or external URL"`
 	File     string `json:"file,omitempty" jsonschema:"file or folder path within a repository"`
@@ -101,57 +111,72 @@ type linkArgs struct {
 }
 
 type linkNextArgs struct {
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 }
 
 type pullArgs struct {
-	Force  bool `json:"force,omitempty" jsonschema:"overwrite local changes without prompting"`
-	DryRun bool `json:"dry_run,omitempty"`
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
+	Force  bool   `json:"force,omitempty" jsonschema:"overwrite local changes without prompting"`
+	DryRun bool   `json:"dry_run,omitempty"`
 }
 
 type listElementsArgs struct {
+	Radius uint32 `json:"radius,omitempty" jsonschema:"plan context relationship hops"`
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Search string `json:"search,omitempty" jsonschema:"substring filter across ref, name, kind, technology, owner, and tags"`
 	Kind   string `json:"kind,omitempty" jsonschema:"only show elements of this kind"`
 }
 
 type listConnectorsArgs struct {
+	Radius uint32 `json:"radius,omitempty" jsonschema:"plan context relationship hops"`
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Search string `json:"search,omitempty" jsonschema:"substring filter across view, source, target, label, and relationship"`
 	View   string `json:"view,omitempty" jsonschema:"only show connectors bound to this view ref"`
 }
 
 type listViewsArgs struct {
+	Radius uint32 `json:"radius,omitempty" jsonschema:"plan context relationship hops"`
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Search string `json:"search,omitempty" jsonschema:"substring filter across ref, name, label, and parent"`
 	Parent string `json:"parent,omitempty" jsonschema:"only show views placed under this parent ref"`
 	Tree   bool   `json:"tree,omitempty" jsonschema:"show the derived view hierarchy with depth and path"`
 }
 
 type inspectArgs struct {
-	Ref   string `json:"ref" jsonschema:"element, view, or connector ref to inspect"`
-	Type  string `json:"type,omitempty" jsonschema:"resource type: element, view, or connector"`
-	Cloud bool   `json:"cloud,omitempty" jsonschema:"include cloud state"`
-	All   bool   `json:"all,omitempty" jsonschema:"include all state sources"`
+	Radius uint32 `json:"radius,omitempty" jsonschema:"plan context relationship hops"`
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
+	Ref    string `json:"ref" jsonschema:"element, view, or connector ref to inspect"`
+	Type   string `json:"type,omitempty" jsonschema:"resource type: element, view, or connector"`
+	Cloud  bool   `json:"cloud,omitempty" jsonschema:"include cloud state"`
+	All    bool   `json:"all,omitempty" jsonschema:"include all state sources"`
 }
 
 type viewCreateArgs struct {
+	Plan  string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref   string `json:"ref" jsonschema:"element ref that will own the view"`
 	Name  string `json:"name,omitempty" jsonschema:"view display name (default: element name)"`
 	Label string `json:"label,omitempty" jsonschema:"view level label, e.g. Container"`
 }
 
 type viewRenameArgs struct {
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref  string `json:"ref" jsonschema:"element ref that owns the view"`
 	Name string `json:"name" jsonschema:"new view display name"`
 }
 
 type viewSetLevelArgs struct {
+	Plan  string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	Ref   string `json:"ref" jsonschema:"element ref that owns the view"`
 	Label string `json:"label" jsonschema:"view level label, e.g. Container"`
 }
 
 type viewDeleteArgs struct {
-	Ref string `json:"ref" jsonschema:"element ref whose view should be deleted (the element is kept)"`
+	Plan string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
+	Ref  string `json:"ref" jsonschema:"element ref whose view should be deleted (the element is kept)"`
 }
 
 type renderArgs struct {
+	Plan   string `json:"plan,omitempty" jsonschema:"plan ID; records planning edits; an implementation lock automatically stages edits without requiring this argument"`
 	View   string `json:"view,omitempty" jsonschema:"view ref to render (default: root)"`
 	Format string `json:"format,omitempty" jsonschema:"render output format (supported: mermaid)"`
 	Output string `json:"output,omitempty" jsonschema:"write render output to this file"`
@@ -179,6 +204,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_add",
 		Description: "Add or update an element (applies immediately to the server). Adding another element with parent=<ref> opens a drill-down diagram (view) for it.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a addArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := add.NewAddCmd(wdir, format, compact)
 		args := []string{a.Name}
 		if a.Ref != "" {
@@ -221,6 +249,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_connect",
 		Description: "Add a connector between two elements (applies immediately to the server).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a connectArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := connect.NewConnectCmd(wdir, format, compact)
 		args := []string{"--from", a.From, "--to", a.To}
 		if a.View != "" {
@@ -257,6 +288,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_remove_element",
 		Description: "Remove an element (applies immediately to the server).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a removeElementArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := remove.NewRemoveCmd(wdir, format, compact)
 		args := []string{"element", a.Ref}
 		if dataDir != "" {
@@ -269,6 +303,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_remove_connector",
 		Description: "Remove matching connector(s) (applies immediately to the server).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a removeConnectorArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := remove.NewRemoveCmd(wdir, format, compact)
 		args := []string{"connector", "--view", a.View, "--from", a.From, "--to", a.To}
 		if dataDir != "" {
@@ -281,6 +318,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_rename",
 		Description: "Rename an element; references in connectors and other diagrams are updated.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a renameArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := rename.NewRenameCmd(wdir)
 		return runSubcommand(ctx, c, []string{"--from", a.From, "--to", a.To})
 	})
@@ -289,6 +329,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_update_element",
 		Description: "Update an element field (applies immediately to the server).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a updateElementArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := update.NewUpdateCmd(wdir, format, compact)
 		args := []string{"element", a.Ref, a.Field, a.Value}
 		if dataDir != "" {
@@ -301,6 +344,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		Name:        "tld_update_connector",
 		Description: "Update a connector field (applies immediately to the server).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a updateConnectorArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := update.NewUpdateCmd(wdir, format, compact)
 		args := []string{"connector", a.Ref, a.Field, a.Value}
 		if dataDir != "" {
@@ -382,6 +428,9 @@ func registerLinkTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		Name:        "tld_link",
 		Description: "Link an element to a source file/symbol or an external resource, then report the updated ARC205 grounding score.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a linkArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := link.NewLinkCmd(wdir, format, compact)
 		args := []string{a.Ref}
 		if a.Target != "" {
@@ -432,6 +481,10 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		Name:        "tld_list_elements",
 		Description: "List elements from the database or workspace, optionally filtered by search text or kind.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listElementsArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+			ctx = context.WithValue(ctx, planRadiusKey{}, a.Radius)
+		}
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"elements"}
 		if a.Search != "" {
@@ -447,6 +500,10 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		Name:        "tld_list_connectors",
 		Description: "List connectors from the database or workspace, optionally filtered by search text or view.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listConnectorsArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+			ctx = context.WithValue(ctx, planRadiusKey{}, a.Radius)
+		}
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"connectors"}
 		if a.Search != "" {
@@ -462,6 +519,10 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		Name:        "tld_list_views",
 		Description: "List views (diagrams) from the database or workspace, optionally filtered by search text or parent, with an optional hierarchy tree.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listViewsArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+			ctx = context.WithValue(ctx, planRadiusKey{}, a.Radius)
+		}
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"views"}
 		if a.Search != "" {
@@ -480,6 +541,10 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		Name:        "tld_inspect",
 		Description: "Inspect an element, view, or connector in the database; in a workspace, also reports YAML, local DB, and optional cloud state.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a inspectArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+			ctx = context.WithValue(ctx, planRadiusKey{}, a.Radius)
+		}
 		c := inspect.NewInspectCmd(wdir, format, compact)
 		args := []string{a.Ref}
 		if a.Type != "" {
@@ -501,6 +566,9 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 		Name:        "tld_render",
 		Description: "Render a view (diagram) from the database or workspace to a text format (mermaid).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a renderArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := render.NewRenderCmd(wdir)
 		target := a.View
 		if target == "" {
@@ -522,6 +590,9 @@ func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		Name:        "tld_view_create",
 		Description: "Create (or ensure) the diagram (view) owned by an existing element.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewCreateArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := view.NewViewCmd(wdir, format, compact)
 		args := []string{"create", a.Ref}
 		if a.Name != "" {
@@ -540,6 +611,9 @@ func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		Name:        "tld_view_rename",
 		Description: "Rename the diagram (view) owned by an element.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewRenameArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := view.NewViewCmd(wdir, format, compact)
 		args := []string{"rename", a.Ref, a.Name}
 		if dataDir != "" {
@@ -552,6 +626,9 @@ func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		Name:        "tld_view_set_level",
 		Description: "Set the level label of the diagram (view) owned by an element.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewSetLevelArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := view.NewViewCmd(wdir, format, compact)
 		args := []string{"set-level", a.Ref, a.Label}
 		if dataDir != "" {
@@ -564,6 +641,9 @@ func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		Name:        "tld_view_delete",
 		Description: "Delete the diagram (view) owned by an element; the element itself is kept. The view must be empty.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewDeleteArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := view.NewViewCmd(wdir, format, compact)
 		args := []string{"delete", a.Ref}
 		if dataDir != "" {
@@ -573,7 +653,20 @@ func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 	})
 }
 
+type planContextKey struct{}
+type planRadiusKey struct{}
+
 func runSubcommand(ctx context.Context, c *cobra.Command, args []string) (*mcpsdk.CallToolResult, result, error) {
+	if id, _ := ctx.Value(planContextKey{}).(string); id != "" {
+		switch c.Name() {
+		case "add", "connect", "remove", "rename", "update", "link", "list", "inspect", "view", "render":
+		default:
+			return errResult(fmt.Errorf("%s is unavailable in plan mode", c.Name()))
+		}
+		c.PersistentFlags().String("plan", id, "plan context")
+		radius, _ := ctx.Value(planRadiusKey{}).(uint32)
+		c.PersistentFlags().Uint32("radius", radius, "plan relationship hops")
+	}
 	var buf bytes.Buffer
 	c.SetOut(&buf)
 	c.SetErr(&buf)
@@ -597,6 +690,9 @@ func addPullTool(server *mcpsdk.Server, wdir *string) {
 		Name:        "tld_pull",
 		Description: "Pull current server state into local YAML files.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a pullArgs) (*mcpsdk.CallToolResult, result, error) {
+		if a.Plan != "" {
+			ctx = context.WithValue(ctx, planContextKey{}, a.Plan)
+		}
 		c := pull.NewPullCmd(wdir)
 		args := []string{}
 		if a.Force {
@@ -676,6 +772,13 @@ Accepts the same --host, --port, --data-dir flags as 'tld serve'.`,
 
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld", Version: "0.1.0"}, nil)
 			registerTools(server, cmd, wdir, format, compact, dataDir)
+			mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "tld_plan", Description: "Manage workspace change plans: new, list, show --radius, include --role, exclude, checklist, prompt, note, operations, preview, append, ready, draft, archived. Arguments are CLI tokens, not a shell command."}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a struct {
+				Args []string `json:"args"`
+			}) (*mcpsdk.CallToolResult, result, error) {
+				c := plancmd.NewCmd(wdir)
+				c.PersistentFlags().String("data-dir", dataDir, "data directory")
+				return runSubcommand(ctx, c, a.Args)
+			})
 			registerLinkTools(server, wdir, format, compact, dataDir)
 			registerViewTools(server, wdir, format, compact, dataDir)
 			registerQueryTools(server, wdir, format, compact, dataDir)

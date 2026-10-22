@@ -1191,9 +1191,9 @@ function drawSceneNode(
   // Change state reads as a single solid ring color-coded by line change.
   // Everything else (provenance, blast-radius context) reads through tags —
   // except modified, which carries its +added/−removed lines badge instead.
-  if (layout.changeOverlay && layout.changeOverlay.change !== 'unchanged' && parentAlpha > 0.05) {
+  if (layout.changeOverlay && (layout.changeOverlay.agentStaged || layout.changeOverlay.change !== 'unchanged') && parentAlpha > 0.05) {
     const change = layout.changeOverlay
-    const color = CHANGE_RING_COLORS[change.change]
+    const color = change.agentStaged ? '#4299e1' : CHANGE_RING_COLORS[change.change]
     ctx.save()
     ctx.globalAlpha = parentAlpha
     ctx.strokeStyle = color
@@ -1746,10 +1746,10 @@ export function renderFrame(
     const borderAlpha = clamp(0.5 - renderView.zoom * 0.05, 0.15, 0.5)
 
     ctx.save()
-    ctx.globalAlpha = borderAlpha
-    ctx.strokeStyle = accent
+    ctx.globalAlpha = group.layout.agentStaged ? 1 : borderAlpha
+    ctx.strokeStyle = group.layout.agentStaged ? '#4299e1' : accent
     ctx.lineWidth = 2 / renderView.zoom
-    ctx.setLineDash([2, 2])
+    ctx.setLineDash(group.layout.agentStaged ? [] : [2, 2])
     ctx.strokeRect(
       group.layout.worldX + group.layout.diagramX - rebase.originX,
       group.layout.worldY + group.layout.diagramY - rebase.originY,

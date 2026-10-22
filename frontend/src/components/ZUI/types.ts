@@ -124,6 +124,7 @@ export type ZUINodeProvenance = 'authored' | 'augmented' | 'generated'
 
 /** Transient repository comparison annotations; never workspace resources. */
 export interface ZUIChangeOverlay {
+  agentStaged?: boolean
   change: 'added' | 'removed' | 'modified' | 'unchanged'
   path: string
   linesAdded?: number
@@ -135,6 +136,7 @@ export interface ZUIChangeOverlay {
 
 /** Top-level group wrapping one root diagram. */
 export interface DiagramGroupLayout {
+  agentStaged?: boolean
   /** True when this group is a portal-linked target diagram (not a hierarchy root). */
   isPortal?: boolean
   diagramId: number

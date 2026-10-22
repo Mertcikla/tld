@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	diagv1connect "buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -150,17 +151,40 @@ func IsNotFound(err error) bool {
 // ---------- remote runner ----------
 
 type remoteRunner struct {
-	serverURL string
-	apiKey    string
-	orgID     string
-	debug     bool
+	localDataDir string
+	planClient   diagv1connect.WorkspaceServiceClient
+	planClose    func() error
+	planLocal    bool
+	serverURL    string
+	apiKey       string
+	orgID        string
+	debug        bool
 }
 
-func (r *remoteRunner) Name() string        { return TargetRemote }
-func (r *remoteRunner) TargetLabel() string { return client.NormalizeURL(r.serverURL) }
-func (r *remoteRunner) Close() error        { return nil }
+func (r *remoteRunner) Name() string {
+	if r.planLocal {
+		return TargetLocal
+	}
+	return TargetRemote
+}
+func (r *remoteRunner) TargetLabel() string {
+	if r.planLocal {
+		return localserver.DatabasePath(r.localDataDir)
+	}
+	return client.NormalizeURL(r.serverURL)
+}
+func (r *remoteRunner) DataDir() string { return r.localDataDir }
+func (r *remoteRunner) Close() error {
+	if r.planClose != nil {
+		return r.planClose()
+	}
+	return nil
+}
 
 func (r *remoteRunner) client() diagv1connect.WorkspaceServiceClient {
+	if r.planClient != nil {
+		return r.planClient
+	}
 	return client.New(r.serverURL, r.apiKey, r.debug)
 }
 
@@ -456,6 +480,9 @@ func (r *remoteRunner) ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspac
 // ---------- local runner ----------
 
 type localRunner struct {
+	config   workspace.Config
+	stageMu  sync.Mutex
+	stage    Runner
 	appStore *app.Store
 	adapter  *store.APIAdapter
 	dbPath   string
@@ -472,6 +499,7 @@ func newLocalRunner(cfg *workspace.Config, dataDir string) (*localRunner, error)
 		return nil, err
 	}
 	return &localRunner{
+		config:   *cfg,
 		appStore: appStore,
 		adapter:  store.NewAPIAdapter(appStore),
 		dbPath:   dbPath,
@@ -483,6 +511,9 @@ func (r *localRunner) Name() string        { return TargetLocal }
 func (r *localRunner) TargetLabel() string { return r.dbPath }
 func (r *localRunner) DataDir() string     { return r.dataDir }
 func (r *localRunner) Close() error {
+	if r.stage != nil {
+		_ = r.stage.Close()
+	}
 	if r.appStore != nil {
 		return r.appStore.Close()
 	}
@@ -494,35 +525,83 @@ func (r *localRunner) ctx(ctx context.Context) context.Context {
 }
 
 func (r *localRunner) CreateElement(ctx context.Context, input api.ElementInput) (*diagv1.Element, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.CreateElement(ctx, input)
+	}
+
 	return r.adapter.CreateElement(r.ctx(ctx), uuid.Nil, input)
 }
 
 func (r *localRunner) UpdateElement(ctx context.Context, id int32, input api.ElementInput) (*diagv1.Element, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.UpdateElement(ctx, id, input)
+	}
+
 	return r.adapter.UpdateElement(r.ctx(ctx), id, uuid.Nil, input)
 }
 
 func (r *localRunner) DeleteElement(ctx context.Context, id int32) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.DeleteElement(ctx, id)
+	}
+
 	return r.adapter.DeleteElement(r.ctx(ctx), id, uuid.Nil)
 }
 
 func (r *localRunner) GetElement(ctx context.Context, id int32) (*diagv1.Element, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.GetElement(ctx, id)
+	}
+
 	return r.adapter.GetElement(r.ctx(ctx), id, uuid.Nil)
 }
 
 func (r *localRunner) ListElements(ctx context.Context, search string) ([]*diagv1.Element, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.ListElements(ctx, search)
+	}
+
 	els, _, err := r.adapter.ListElements(r.ctx(ctx), uuid.Nil, 0, 0, search)
 	return els, err
 }
 
 func (r *localRunner) ListViews(ctx context.Context) ([]*diagv1.View, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.ListViews(ctx)
+	}
+
 	return r.adapter.ListViews(r.ctx(ctx), uuid.Nil)
 }
 
 func (r *localRunner) CreateView(ctx context.Context, ownerElementID *int32, name string, label *string) (*diagv1.View, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.CreateView(ctx, ownerElementID, name, label)
+	}
+
 	return r.adapter.CreateView(r.ctx(ctx), uuid.Nil, ownerElementID, name, label, false)
 }
 
 func (r *localRunner) UpdateView(ctx context.Context, id int32, name string, label *string) (*diagv1.View, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.UpdateView(ctx, id, name, label)
+	}
+
 	existing, err := r.adapter.GetView(r.ctx(ctx), id, uuid.Nil)
 	if err != nil {
 		return nil, err
@@ -535,10 +614,22 @@ func (r *localRunner) UpdateView(ctx context.Context, id int32, name string, lab
 }
 
 func (r *localRunner) DeleteView(ctx context.Context, id int32) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.DeleteView(ctx, id)
+	}
+
 	return r.adapter.DeleteView(r.ctx(ctx), id, uuid.Nil)
 }
 
 func (r *localRunner) AddPlacement(ctx context.Context, viewID, elementID int32, x, y float64) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.AddPlacement(ctx, viewID, elementID, x, y)
+	}
+
 	c := r.ctx(ctx)
 	_, err := r.adapter.AddPlacement(c, viewID, elementID, x, y)
 	if err != nil {
@@ -552,30 +643,72 @@ func (r *localRunner) AddPlacement(ctx context.Context, viewID, elementID int32,
 }
 
 func (r *localRunner) UpdatePlacement(ctx context.Context, viewID, elementID int32, x, y float64) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.UpdatePlacement(ctx, viewID, elementID, x, y)
+	}
+
 	return r.adapter.UpdatePlacementPosition(r.ctx(ctx), viewID, elementID, x, y)
 }
 
 func (r *localRunner) RemovePlacement(ctx context.Context, viewID, elementID int32) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.RemovePlacement(ctx, viewID, elementID)
+	}
+
 	return r.adapter.RemovePlacement(r.ctx(ctx), viewID, elementID)
 }
 
 func (r *localRunner) CreateConnector(ctx context.Context, input api.ConnectorInput) (*diagv1.Connector, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.CreateConnector(ctx, input)
+	}
+
 	return r.adapter.CreateConnector(r.ctx(ctx), uuid.Nil, input)
 }
 
 func (r *localRunner) UpdateConnector(ctx context.Context, id int32, input api.ConnectorInput) (*diagv1.Connector, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.UpdateConnector(ctx, id, input)
+	}
+
 	return r.adapter.UpdateConnector(r.ctx(ctx), id, uuid.Nil, input)
 }
 
 func (r *localRunner) DeleteConnector(ctx context.Context, id int32) error {
+	if stage, err := r.staging(ctx); err != nil {
+		return err
+	} else if stage != nil {
+		return stage.DeleteConnector(ctx, id)
+	}
+
 	return r.adapter.DeleteConnector(r.ctx(ctx), id, uuid.Nil)
 }
 
 func (r *localRunner) GetConnector(ctx context.Context, id int32) (*diagv1.Connector, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.GetConnector(ctx, id)
+	}
+
 	return r.adapter.GetConnector(r.ctx(ctx), id, uuid.Nil)
 }
 
 func (r *localRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.ListConnectors(ctx)
+	}
+
 	return r.adapter.ListAllConnectors(r.ctx(ctx), uuid.Nil)
 }
 
@@ -583,6 +716,12 @@ func (r *localRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector, 
 // mid-batch failure rolls the whole import back. The local adapter only
 // supports SQLite transactions; other dialects fall back to a direct apply.
 func (r *localRunner) ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
+	if stage, err := r.staging(ctx); err != nil {
+		return nil, err
+	} else if stage != nil {
+		return stage.ApplyBatch(ctx, req)
+	}
+
 	c := r.ctx(ctx)
 	var resp *diagv1.ApplyWorkspaceBatchResponse
 	err := r.adapter.RunInTransaction(c, func(txCtx context.Context, txStore api.Store) error {
@@ -594,4 +733,18 @@ func (r *localRunner) ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspace
 		return nil, err
 	}
 	return resp, nil
+}
+
+// Check on each operation, including runners opened before the user locked.
+func (r *localRunner) staging(ctx context.Context) (Runner, error) {
+	locked, err := r.appStore.ImplementationLocked(ctx, uuid.Nil.String())
+	if err != nil || !locked {
+		return nil, err
+	}
+	r.stageMu.Lock()
+	defer r.stageMu.Unlock()
+	if r.stage == nil {
+		r.stage, err = NewPlanRunner(r.config, TargetLocal, r.dataDir, "")
+	}
+	return r.stage, err
 }

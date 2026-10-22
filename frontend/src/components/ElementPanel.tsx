@@ -325,6 +325,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   onClose: () => void
   element?: LibraryElement | null
   onSave: (obj: LibraryElement) => void
+  persistElement?: (data: Partial<LibraryElement>) => Promise<LibraryElement>
   autoSave?: boolean
   onDelete?: (id: number) => void
   onPermanentDelete?: (id: number) => void
@@ -358,6 +359,7 @@ function ElementPanel({
   element,
   onSave,
   autoSave = false,
+  persistElement,
   onDelete,
   onPermanentDelete,
   onMerge,
@@ -623,7 +625,7 @@ function ElementPanel({
       const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
       startSaving()
-      const saved = await api.elements.update(element.id, payload)
+      const saved = await (persistElement ? persistElement(payload) : api.elements.update(element.id, payload))
       lastSavedFingerprintByElementRef.current.set(element.id, fingerprint)
       reportSaved()
       onSave(saved)
@@ -637,7 +639,7 @@ function ElementPanel({
         void pendingSave.save(pendingSave.overrides)
       }
     }
-  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
+  }, [persistElement, autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
 
   if (element && draftElementId === element.id) {
     // A delayed blur save must use this element's newest draft, even after selection changes.
@@ -832,7 +834,7 @@ function ElementPanel({
         tags,
         bypass_noise_gate: bypassNoiseGate,
       }
-      const saved = isEdit
+      const saved = persistElement ? await persistElement(payload) : isEdit
         ? await api.elements.update(element!.id, payload)
         : await api.elements.create(payload)
       reportSaved()
@@ -843,7 +845,7 @@ function ElementPanel({
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, name, loading, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave, startSaving, reportSaved, failed])
+  }, [persistElement, isReadOnly, name, loading, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave, startSaving, reportSaved, failed])
 
   useEffect(() => {
     if (!isOpen) return
