@@ -27,6 +27,7 @@ import UpdateSettings from "../pages/UpdateSettings"
 import { isWailsApp, isWailsMac, isWailsWindows } from "../config/runtime"
 import WindowsWindowControls from "./WindowsWindowControls"
 import FeedbackButton from "./FeedbackButton"
+import ImplementationStatus from "./ImplementationStatus"
 
 const FolderTreeIcon = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -272,6 +273,7 @@ export default function TopMenuBar({
         }}
       >
         {isWailsWindows && <WindowsWindowControls />}
+        <ImplementationStatus />
 
         <HStack
           spacing={0}

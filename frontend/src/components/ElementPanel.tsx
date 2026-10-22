@@ -1,3 +1,4 @@
+import { usePlanSaveParticipant } from "../hooks/usePlanSaveParticipant"
 import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import type { ElementPanelSlots } from '../slots'
@@ -327,6 +328,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   onSave: (obj: LibraryElement) => void
   persistElement?: (data: Partial<LibraryElement>) => Promise<LibraryElement>
   autoSave?: boolean
+  planId?: string
   onDelete?: (id: number) => void
   onPermanentDelete?: (id: number) => void
   onMerge?: (id: number) => void
@@ -359,6 +361,7 @@ function ElementPanel({
   element,
   onSave,
   autoSave = false,
+  planId,
   persistElement,
   onDelete,
   onPermanentDelete,
@@ -605,7 +608,22 @@ function ElementPanel({
     return { payload, fingerprint: JSON.stringify(payload) }
   }, [technologyLinks, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate, resolveTechnologyLogoUrlForSave])
 
+  const planSaveBarrier = usePlanSaveParticipant(planId, isOpen && autoSaveEdit, async () => {
+    if (!element || draftElementId !== element.id) return
+    if (!name.trim()) throw new Error("Enter an element name before starting implementation")
+    const { payload, fingerprint } = await buildPayloadAndFingerprint()
+    if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
+    startSaving()
+    try {
+      const updated = await (persistElement ? persistElement(payload) : api.elements.update(element.id, payload))
+      lastSavedFingerprintByElementRef.current.set(element.id, fingerprint)
+      reportSaved()
+      onSave(updated)
+    } catch (error) { failed(); throw error }
+  })
+
   const saveIfDirty = useCallback(async (overrides?: AutoSaveOverrides) => {
+    if (planSaveBarrier.blocked) return
     if (!autoSaveEdit || !element || draftElementId !== element.id) return
     if (!name.trim()) return
 
@@ -621,6 +639,7 @@ function ElementPanel({
     }
 
     saveState.saving = true
+    const finishSave = planSaveBarrier.begin()
     try {
       const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
@@ -632,6 +651,7 @@ function ElementPanel({
     } catch {
       failed()
     } finally {
+      finishSave()
       saveState.saving = false
       if (saveState.pending) {
         const pendingSave = saveState.pending
@@ -639,7 +659,7 @@ function ElementPanel({
         void pendingSave.save(pendingSave.overrides)
       }
     }
-  }, [persistElement, autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
+  }, [planSaveBarrier, persistElement, autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
 
   if (element && draftElementId === element.id) {
     // A delayed blur save must use this element's newest draft, even after selection changes.

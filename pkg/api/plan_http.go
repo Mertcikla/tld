@@ -94,6 +94,7 @@ func (s *PlanService) PlanMiddleware(next http.Handler) http.Handler {
 			}
 		}
 		if err != nil {
+			w.Header().Set("X-Tld-Plan-Revision", strconv.FormatUint(uint64(writeContext.observed), 10))
 			fail(err)
 			return
 		}

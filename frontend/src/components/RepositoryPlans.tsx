@@ -1,5 +1,5 @@
 import { SmallCloseIcon } from "@chakra-ui/icons";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Box,
   Button,
@@ -23,7 +23,8 @@ import {
 import {
   plansClient,
   appendPlan,
-  observedPlanRevision,
+  updatePlan,
+  startPlanImplementation,
   planProjection,
   resourceLabel,
   resourceId,
@@ -34,22 +35,30 @@ import {
 } from "../api/plans";
 import { api, protoConnector, protoElementToLibrary } from "../api/client";
 import ElementPanel from "./ElementPanel";
+import { planSaveQueue } from "../utils/planSaveQueue";
+import { flushPlanEdits } from "../utils/planSaveParticipants";
+import { usePlanImplementation } from "../hooks/usePlanImplementation";
+import PlanImplementationReview from "./PlanImplementationReview";
+import PlanResourceDiff from "./PlanResourceDiff";
 import ConnectorPanel from "./ConnectorPanel";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "./ViewMarkdownPanel/MarkdownEditor";
 import type { Connector, LibraryElement } from "../types";
+import { ViewEditorContext, useViewEditorContext } from "../pages/ViewEditor/context";
 
-export default function RepositoryPlans({
-  repositoryId,
-  onWatch,
-}: {
-  repositoryId: string;
-  onWatch: () => void;
+export default function RepositoryPlans(props: { repositoryId: string; onWatch: () => void; compact?: boolean; planId?: string; onPlanChange?: (id: string) => void }) {
+  const [params] = useSearchParams();
+  const planId = props.planId ?? params.get("plan") ?? "";
+  return <RepositoryPlanSession key={props.repositoryId + ":" + planId} {...props} planId={planId} />;
+}
+
+function RepositoryPlanSession({ repositoryId, onWatch, compact = false, planId, onPlanChange }: {
+  repositoryId: string; onWatch: () => void; compact?: boolean; planId: string; onPlanChange?: (id: string) => void;
 }) {
-  const [params, setParams] = useSearchParams();
-  const planId = params.get("plan") ?? "";
+  const [, setParams] = useSearchParams();
+  const panelContext = useViewEditorContext();
   const [items, setItems] = useState<Plan[]>([]);
   const [plan, setPlan] = useState<Plan>();
   const [resources, setResources] = useState<PlanProjectedResource[]>([]);
@@ -64,7 +73,17 @@ export default function RepositoryPlans({
   const [pending, setPending] = useState(0);
   const [review, setReview] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  const pendingSave = useRef(new Map<string, () => Promise<void>>());
+  const pendingSave = useRef(planSaveQueue(planId));
+  useSyncExternalStore(pendingSave.current.subscribe, pendingSave.current.snapshot);
+  const loadGeneration = useRef(0);
+  const mounted = useRef(true);
+  const [search, setSearch] = useState("");
+  const [addRole, setAddRole] = useState("change");
+  const [watchError, setWatchError] = useState("");
+  const [watchEnabled, setWatchEnabled] = useState(false);
+  const implementation = usePlanImplementation("", "", true);
+  const locked = implementation.state?.locked ?? false;
+  const implementing = locked && implementation.state?.planId === planId;
   const noteEditor = useRef<MarkdownEditorHandle | null>(null);
   const navigate = useNavigate();
   const toast = useToast();
@@ -73,41 +92,44 @@ export default function RepositoryPlans({
     (v) => v.resource?.key === selected,
   )?.resource;
   const refresh = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     const list = await plansClient.listPlans({ repositoryId });
+    if (!mounted.current || generation !== loadGeneration.current) return;
     setItems(list.plans);
-    if (!planId) {
-      setPlan(undefined);
-      return;
+    if (!planId) { setPlan(undefined); return; }
+    const projection = await planProjection(planId, true);
+    if (projection.plan?.repositoryId !== repositoryId) {
+      throw new Error("This plan belongs to a different repository. Select a plan for this repository.");
     }
-    const [projection, text, claims, all] = await Promise.all([
-      planProjection(planId),
-      plansClient.getPrompt({ planId }),
-      plansClient.getChecklist({ planId }),
-      planProjection(planId, true),
+    const [text, claims] = await Promise.all([
+      plansClient.getPrompt({ planId, revision: projection.revision }),
+      plansClient.getChecklist({ planId, revision: projection.revision }),
     ]);
-    setPlan((previous) => {
-      if (!projection.plan) return undefined;
-      return {
-        ...projection.plan,
-        name:
-          pendingSave.current.has("name") && previous
-            ? previous.name
-            : projection.plan.name,
-        objective:
-          pendingSave.current.has("objective") && previous
-            ? previous.objective
-            : projection.plan.objective,
-      };
+    if (!mounted.current || generation !== loadGeneration.current) return;
+    setPlan(projection.plan && { ...projection.plan,
+      name: pendingSave.current.draft("name") ?? projection.plan.name,
+      objective: pendingSave.current.draft("objective") ?? projection.plan.objective,
     });
-    setResources(projection.resources);
-    if (!pendingSave.current.size) setPrompt(text.text);
+    setResources(projection.resources.filter(v => v.inclusionReason === "member" || v.inclusionReason === "changed"));
+    setPrompt(text.text);
     setChecklist(claims.items);
     setResults(projection.operations);
-    setAvailable(all.resources);
+    setAvailable(projection.resources);
   }, [repositoryId, planId]);
   useEffect(() => {
-    void refresh().catch((e) => setError(String(e)));
-  }, [refresh]);
+    mounted.current = true;
+    void refresh().catch(e => { if (mounted.current) setError(String(e)); });
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === planId) void refresh().catch(e => { if (mounted.current) setError(String(e)); });
+    };
+    window.addEventListener("tld:plan-changed", changed);
+    return () => { mounted.current = false; window.removeEventListener("tld:plan-changed", changed); };
+  }, [refresh, planId]);
+  useEffect(() => {
+    let active = true;
+    void api.system.capabilities().then(caps => { if (active) setWatchEnabled(caps.watch); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     let current = true;
     setNote("");
@@ -115,7 +137,7 @@ export default function RepositoryPlans({
       void plansClient
         .getNote({ planId, viewKey: selectedResource.key })
         .then((r) => {
-          if (current) setNote(r.note?.content ?? "");
+          if (current) setNote(pendingSave.current.draft("note:" + selectedResource.key) ?? r.note?.content ?? "");
         })
         .catch(() => undefined);
     return () => {
@@ -127,9 +149,9 @@ export default function RepositoryPlans({
     setError("");
     try {
       await work();
-      await refresh();
+      if (mounted.current) await refresh();
     } catch (e) {
-      setError(String(e));
+      if (mounted.current) setError(String(e));
       throw e;
     } finally {
       setPending((n) => n - 1);
@@ -137,41 +159,41 @@ export default function RepositoryPlans({
   };
   const saveOperations = (operations: PlanOperationInput[]) =>
     run(() => appendPlan(planId, operations));
-  const schedule = (key: string, save: () => Promise<void>) => {
+  const schedule = (key: string, save: () => Promise<void>, value?: string) => {
     clearTimeout(timer.current);
-    pendingSave.current.set(key, save);
-    timer.current = setTimeout(() => {
-      void flush().catch(() => undefined);
-    }, 400);
+    pendingSave.current.set(key, save, value);
+    timer.current = setTimeout(() => { void flush().catch(() => undefined); }, 400);
   };
   const flush = async () => {
     clearTimeout(timer.current);
-    const jobs = [...pendingSave.current.entries()];
-    for (const [key, job] of jobs) {
-      await job();
-      if (pendingSave.current.get(key) === job) pendingSave.current.delete(key);
-    }
-    if (jobs.length) await refresh();
+    await flushPlanEdits(planId);
+    if (mounted.current) { setError(""); await refresh(); }
   };
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const queue = pendingSave.current;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (queue.size) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
       clearTimeout(timer.current);
-      const jobs = [...pendingSave.current.values()];
-      pendingSave.current.clear();
-      void jobs
-        .reduce((p, job) => p.then(job), Promise.resolve())
-        .catch(() => undefined);
-    },
-    [planId],
-  );
-  const choosePlan = (id: string) =>
+      // The queue retains failed input when the user returns to this plan.
+      void queue.flush().catch(() => undefined);
+    };
+  }, []);
+  const choosePlan = (id: string) => {
+    if (onPlanChange) { onPlanChange(id); return; }
     setParams((old) => {
       const next = new URLSearchParams(old);
       if (id) next.set("plan", id);
       else next.delete("plan");
       return next;
     });
+  };
   const start = async (resume: boolean) => {
+    if (pending > 0) return;
+    setPending(n => n + 1);
     try {
       const r = await plansClient.createPlan({ repositoryId, resume });
       if (!r.plan) return;
@@ -188,30 +210,16 @@ export default function RepositoryPlans({
         });
     } catch (e) {
       setError(String(e));
-    }
+    } finally { if (mounted.current) setPending(n => n - 1); }
   };
   const metadata = (field: "name" | "objective", value: string) => {
     if (!plan) return;
     setPlan({ ...plan, [field]: value });
-    setPrompt((p) =>
-      field === "name"
-        ? p.replace(plan.name, value)
-        : plan.objective
-          ? p.replace(plan.objective, value)
-          : p.replace("\n\n", "\n\n" + value),
-    );
-    schedule(field, async () => {
-      await run(() =>
-        plansClient.updatePlan({
-          planId,
-          expectedRevision: observedPlanRevision(planId),
-          [field]: value,
-        }),
-      );
-    });
+    schedule(field, async () => { await updatePlan(planId, { [field]: value }); }, value);
   };
+
   const persistElement = async (data: Partial<LibraryElement>) => {
-    if (selectedResource?.value.case !== "element")
+    if (!editable || selectedResource?.value.case !== "element")
       throw new Error("Select an element");
     const json = {
       ...data,
@@ -298,7 +306,11 @@ export default function RepositoryPlans({
     ]);
     await plansClient.getNote({ planId, viewKey: selectedResource.key });
   };
-  const editable = plan?.status !== "archived";
+  const ensureWatch = async () => {
+    const status = await api.repositories.watchStatus(repositoryId);
+    if (!status.running) await api.repositories.startWatch(repositoryId, { materialize: false });
+  };
+  const editable = !!plan && !["archived", "completed"].includes(plan.status) && !locked;
   const members = resources.filter(
     (v) => v.inclusionReason === "member" || v.inclusionReason === "changed",
   );
@@ -334,11 +346,11 @@ export default function RepositoryPlans({
     <Box p={4} overflowY="auto" w="full" data-testid="repository-plans">
       <HStack mb={4}>
         <Text fontWeight="semibold">Plans</Text>
-        <Button size="sm" onClick={() => void start(true)}>
-          New
+        <Button size="sm" isDisabled={pending > 0} onClick={() => void flush().then(() => start(false)).catch(e => setError(String(e)))}>
+          New plan
         </Button>
         {plan && (
-          <Button size="sm" variant="ghost" onClick={() => choosePlan("")}>
+          <Button size="sm" variant="ghost" onClick={() => void flush().then(() => choosePlan("")).catch(e => setError(String(e)))}>
             All plans
           </Button>
         )}
@@ -371,14 +383,26 @@ export default function RepositoryPlans({
           {error}
         </Text>
       )}
+      <PlanImplementationReview implementation={implementation} />
+      {pendingSave.current.error && <Box role="alert" mb={3}>
+        <Text>{pendingSave.current.error}</Text>
+        <Button size="sm" onClick={() => void flush().catch(e => setError(String(e)))}>Retry saving</Button>
+      </Box>}
+      {plan && <Box mb={4}>
+        <Text fontSize="sm" fontWeight="semibold">{plan.status === "completed" ? "Implementation finished" : implementing ? "Implement → Review → Finish" : "Describe → Design → Start implementation"}</Text>
+        <Text fontSize="sm" color="gray.500">{plan.status === "completed" ? "Diagram updates have been reviewed and the workspace is released." : implementing
+          ? "The specification is frozen. Workspace edits are staged for review."
+          : "You’re editing the target architecture. Diagram changes save immediately; code has not been implemented yet."}</Text>
+      </Box>}
       {!plan ? (
         <VStack align="stretch">
+          {!items.length && <Text>Create a plan, describe the goal, then add diagram objects to its scope.</Text>}
           {items.map((p) => (
             <Button
               key={p.id}
               variant="ghost"
               justifyContent="space-between"
-              onClick={() => choosePlan(p.id)}
+              onClick={() => void flush().then(() => choosePlan(p.id)).catch(e => setError(String(e)))}
             >
               <Text>{p.name}</Text>
               <Text fontSize="xs">
@@ -392,7 +416,7 @@ export default function RepositoryPlans({
           display="grid"
           gridTemplateColumns={{
             base: "1fr",
-            lg: "minmax(0,1fr) minmax(0,1fr)",
+            lg: compact ? "1fr" : "minmax(0,1fr) minmax(0,1fr)",
           }}
           gap={5}
         >
@@ -410,6 +434,20 @@ export default function RepositoryPlans({
               isReadOnly={!editable}
               onChange={(e) => metadata("objective", e.target.value)}
             />
+            <Text fontWeight="semibold">Scope · {members.length} items</Text>
+            {!members.length && <Text fontSize="sm" color="gray.500">Search for an object below, or open the editor and add your selection.</Text>}
+            {editable && <VStack align="stretch">
+              <Input aria-label="Search plan scope" placeholder="Find diagram objects to add…" value={search} onChange={e => setSearch(e.target.value)} />
+              {search.trim() && <>
+                <Select aria-label="Role for new scope items" size="sm" value={addRole} onChange={e => setAddRole(e.target.value)}>
+                  <option value="change">Change</option><option value="preserve">Keep unchanged</option><option value="context">Reference</option>
+                </Select>
+                {available.filter(v => v.resource && ["element", "connector", "view"].includes(v.resource.value.case ?? "") && !members.some(m => m.resource?.key === v.resource?.key) && label(v.resource).toLowerCase().includes(search.toLowerCase())).slice(0, 20).map(v => <Button size="sm" key={v.resource!.key} whiteSpace="normal" height="auto" py={2}
+                  onClick={() => void saveOperations([{ action: { case: "include", value: { resourceKey: v.resource!.key, role: addRole, explicit: true } } }]).catch(() => undefined)}>
+                  Add {label(v.resource!)}
+                </Button>)}
+              </>}
+            </VStack>}
             {[...new Set(members.map((v) => viewName(v.resource!)))]
               .sort()
               .map((group) => (
@@ -463,13 +501,13 @@ export default function RepositoryPlans({
                             ]).catch(() => undefined)
                           }
                         >
-                          <option value="change">Implement/change</option>
-                          <option value="preserve">Preserve</option>
-                          <option value="context">Context</option>
+                          <option value="change">Change</option>
+                          <option value="preserve">Keep unchanged</option>
+                          <option value="context">Reference</option>
                         </Select>
                         <IconButton
                           aria-label={`Remove ${label(v.resource!)} from plan`}
-                          title="Remove from plan"
+                          title="Remove from scope; diagram changes remain saved"
                           icon={<SmallCloseIcon />}
                           size="xs"
                           variant="ghost"
@@ -494,12 +532,13 @@ export default function RepositoryPlans({
                 </Box>
               ))}
             {selectedResource?.value.case === "element" && (
-              <ElementPanel
+              <ViewEditorContext.Provider value={{ ...panelContext, canEdit: editable }}><Box as="fieldset" disabled={!editable} border={0} p={0} minW={0}><ElementPanel
                 key={selectedResource.key}
                 isOpen
                 isInline
                 hasBackdrop={false}
                 autoSave
+                planId={planId}
                 element={protoElementToLibrary(
                   toJson(ElementSchema, selectedResource.value.value, {
                     useProtoFieldName: true,
@@ -508,15 +547,16 @@ export default function RepositoryPlans({
                 persistElement={persistElement}
                 onClose={() => setSelected("")}
                 onSave={() => undefined}
-              />
+              /></Box></ViewEditorContext.Provider>
             )}
             {selectedResource?.value.case === "connector" && (
-              <ConnectorPanel
+              <ViewEditorContext.Provider value={{ ...panelContext, canEdit: editable }}><Box as="fieldset" disabled={!editable} border={0} p={0} minW={0}><ConnectorPanel
                 key={selectedResource.key}
                 isOpen
                 isInline
                 hasBackdrop={false}
                 autoSave
+                planId={planId}
                 connector={protoConnector(toJson(
                   ConnectorSchema,
                   selectedResource.value.value,
@@ -526,7 +566,7 @@ export default function RepositoryPlans({
                 persistConnector={persistConnector}
                 onClose={() => setSelected("")}
                 onSave={() => undefined}
-              />
+              /></Box></ViewEditorContext.Provider>
             )}
             {selectedResource?.value.case === "view" && (
               <>
@@ -543,6 +583,7 @@ export default function RepositoryPlans({
                   </Button>
                   <Button
                     size="sm"
+                    isDisabled={!editable}
                     onClick={() => {
                       const ids = new Set(
                         available
@@ -610,7 +651,7 @@ export default function RepositoryPlans({
                           : p + "\nNote edits pending save.",
                       );
                       schedule("note:" + selectedResource.key, () =>
-                        saveNote(value),
+                        saveNote(value), value,
                       );
                     }}
                     onClose={() => setSelected("")}
@@ -641,6 +682,7 @@ export default function RepositoryPlans({
                 />
                 <Button
                   size="xs"
+                  isDisabled={!editable}
                   onClick={() =>
                     void saveOperations([
                       {
@@ -689,74 +731,66 @@ export default function RepositoryPlans({
           <VStack align="stretch" minW={0}>
             <HStack>
               <Text fontWeight="semibold" flex={1}>
-                Agent prompt
+                Implementation prompt
               </Text>
-              <Text fontSize="xs">{pending ? "Saving…" : plan.status}</Text>
+              <Text fontSize="xs" role="status">{pendingSave.current.error ? "Save failed" : pendingSave.current.size || pending ? "Saving…" : "Saved"}</Text>
               <Button
                 size="sm"
-                isDisabled={pending > 0 || !!error}
+                isDisabled={pending > 0 || !implementing}
                 onClick={() =>
                   void flush()
                     .then(async () => {
-                      const fresh = await plansClient.getPrompt({ planId });
+                      const fresh = await plansClient.getPrompt({ planId, revision: plan.readyRevision || plan.revision });
                       await navigator.clipboard.writeText(fresh.text);
                       toast({ title: "Prompt copied", status: "success" });
                     })
                     .catch((e) => setError(String(e)))
                 }
               >
-                Copy
+                Copy prompt
               </Button>
             </HStack>
+            {!implementing && <Text fontSize="sm" color="gray.500">Start implementation to freeze this specification and copy the agent prompt.</Text>}
             <Textarea
               aria-label="Plan prompt"
               value={prompt}
               isReadOnly
-              minH="420px"
+              minH={compact ? "160px" : "260px"}
               fontFamily="mono"
               fontSize="sm"
             />
-            <HStack>
-              <Button size="sm" onClick={() => setReview((v) => !v)}>
-                Review operations
-              </Button>
-              <Button
-                size="sm"
-                isDisabled={pending > 0 || !!error || !editable}
-                onClick={() =>
-                  void flush()
-                    .then(() =>
-                      run(async () => {
-                        return plansClient.updatePlan({
-                          planId,
-                          expectedRevision: observedPlanRevision(planId),
-                          status: "ready",
-                        });
-                      }),
-                    )
-                    .catch(() => undefined)
-                }
-              >
-                Mark ready
-              </Button>
-              <Box flex={1} />
-              <Button size="sm" isLoading={pending > 0} isDisabled={!editable} onClick={() => void flush().then(() => run(async () => {
-                const status = await api.repositories.watchStatus(repositoryId);
-                await plansClient.lockImplementation({ planId, expectedRevision: observedPlanRevision(planId), gitRevision: status.gitRevision || '' });
-                if (!status.running) await api.repositories.startWatch(repositoryId, { materialize: false });
-              })).then(onWatch).catch((e) => setError(`Workspace remains locked if watching failed. Retry to start watching. ${String(e)}`))}>
-                Lock and start watch
-              </Button>
+            <HStack flexWrap="wrap">
+              <Button size="sm" onClick={() => setReview(v => !v)}>Review diagram changes</Button>
+              {plan.status === "completed" && <Button size="sm" onClick={() => void run(() => updatePlan(planId, { status: "draft" })).catch(() => undefined)}>Reopen as draft</Button>}
+              {!implementing && plan.status !== "completed" && <Button size="sm" colorScheme="blue" isLoading={pending > 0}
+                isDisabled={!editable || !plan.objective.trim() || !members.length}
+                onClick={() => void flush().then(() => run(async () => {
+                  await startPlanImplementation(planId);
+                  setWatchError("");
+                  if (watchEnabled) {
+                    try { await ensureWatch(); }
+                    catch (e) { setWatchError(`Implementation prepared; Watch unavailable. ${String(e)}`); }
+                  }
+                })).catch(e => setError(String(e)))}>
+                Start implementation
+              </Button>}
+              {implementing && watchEnabled && <Button size="sm" onClick={onWatch}>Open Watch</Button>}
             </HStack>
-            {review &&
-              results.map((result) => (
-                <Box key={result.operationId} p={2} borderWidth="1px">
-                  <Text fontSize="sm">
-                    {result.status}: {result.reason || result.operationId}
-                  </Text>
-
-                </Box>
-              ))}
+            {editable && (!plan.objective.trim() || !members.length) && <Text fontSize="sm" color="gray.500">
+              Add an objective and at least one scope item to start implementation.
+            </Text>}
+            {watchError && <Box role="alert"><Text fontSize="sm">{watchError}</Text>
+              <Button size="sm" onClick={() => void ensureWatch().then(() => setWatchError("")).catch(e => setWatchError(String(e)))}>Retry Watch</Button>
+            </Box>}
+            {review && <VStack align="stretch">
+              <Text fontSize="xs" color="gray.500">Changes since each object first entered this plan. Removing an item from scope does not undo its saved diagram changes.</Text>
+              {resources.filter(item => item.change).map(item => <Box key={item.resource!.key} p={2} borderWidth="1px" borderRadius="md">
+                <Text fontSize="sm">{item.change}: {label(item.resource!)}</Text>
+                <PlanResourceDiff before={item.before} after={item.change === "remove" ? undefined : item.resource} />
+              </Box>)}
+              {!resources.some(item => item.change) && <Text fontSize="sm">No diagram changes recorded. Scope and requirements describe the requested work.</Text>}
+              {!!results.filter(result => result.reason).length && <Text fontSize="sm">{results.filter(result => result.reason).map(result => result.reason).join(" · ")}</Text>}
+            </VStack>}
           </VStack>
         </Box>
       )}

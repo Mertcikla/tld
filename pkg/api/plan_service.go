@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/mertcikla/tld/v2/pkg/plans"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -138,6 +139,9 @@ func (s *PlanService) UpdatePlan(ctx context.Context, req *connect.Request[pb.Up
 		if p.Revision != m.ExpectedRevision {
 			return app.ErrPlanConflict
 		}
+		if (p.Status == "archived" || p.Status == "completed") && (m.Status == nil || *m.Status != "draft") {
+			return fmt.Errorf("reopen this plan as a draft before editing it")
+		}
 		if m.Name != nil {
 			if strings.TrimSpace(*m.Name) == "" {
 				return fmt.Errorf("name is required")
@@ -152,7 +156,7 @@ func (s *PlanService) UpdatePlan(ctx context.Context, req *connect.Request[pb.Up
 		p.Revision++
 		if m.Status != nil {
 			switch *m.Status {
-			case "draft", "ready", "archived":
+			case "draft", "ready", "archived", "completed":
 				p.Status = *m.Status
 			default:
 				return fmt.Errorf("invalid plan status")
@@ -230,7 +234,7 @@ func (s *PlanService) AppendOperations(ctx context.Context, req *connect.Request
 		if p.Revision != m.ExpectedRevision {
 			return app.ErrPlanConflict
 		}
-		if p.Status == "archived" {
+		if p.Status == "archived" || p.Status == "completed" {
 			return fmt.Errorf("archived plan is read-only")
 		}
 		base, err := s.baseline(ctx, st)
@@ -322,7 +326,15 @@ func (s *PlanService) state(ctx context.Context, id string, revision *uint32) (*
 				return err
 			}
 		}
-		base, err = s.baseline(ctx, st)
+		// A handed-off revision reads its frozen baseline, even after implementation
+		// finishes or a different plan starts. Drafts continue to use the live diagram.
+		_, base, err = readHandoff(ctx, st, p)
+		if err != nil {
+			return err
+		}
+		if base == nil {
+			base, err = s.baseline(ctx, st)
+		}
 		if err != nil {
 			return err
 		}
@@ -405,7 +417,15 @@ func (s *PlanService) GetPrompt(ctx context.Context, req *connect.Request[pb.Get
 	if err != nil {
 		return nil, planErr(err)
 	}
-	return connect.NewResponse(&pb.PlanPromptResponse{Text: plans.Prompt(p, base, state), Revision: p.Revision}), nil
+	text := plans.Prompt(p, base, state)
+	h, _, err := readHandoff(ctx, s.Store, p)
+	if err != nil {
+		return nil, planErr(err)
+	}
+	if h != nil && h.GitRevision != "" {
+		text += "\nRepository baseline: " + h.GitRevision + "\n"
+	}
+	return connect.NewResponse(&pb.PlanPromptResponse{Text: text, Revision: p.Revision}), nil
 }
 func (s *PlanService) GetNote(ctx context.Context, req *connect.Request[pb.PlanNoteRequest]) (*connect.Response[pb.PlanNoteResponse], error) {
 	if err := s.access(ctx, false); err != nil {
@@ -418,6 +438,19 @@ func (s *PlanService) GetNote(ctx context.Context, req *connect.Request[pb.PlanN
 	r := state.Graph[req.Msg.ViewKey]
 	if r == nil || r.GetView() == nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("view not found"))
+	}
+	h, _, err := readHandoff(ctx, s.Store, p)
+	if err != nil {
+		return nil, planErr(err)
+	}
+	if h != nil {
+		note := &pb.PlanNote{ViewKey: r.Key}
+		if raw := h.Notes[r.Key]; len(raw) > 0 {
+			if err = protojson.Unmarshal(raw, note); err != nil {
+				return nil, planErr(err)
+			}
+		}
+		return connect.NewResponse(&pb.PlanNoteResponse{Note: note, Revision: p.Revision}), nil
 	}
 	_, content, e := s.Source(s.Store).GetViewMarkdown(ctx, r.GetView().Id, WorkspaceIDFromCtx(ctx))
 	if e != nil {

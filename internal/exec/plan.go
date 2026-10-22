@@ -2,6 +2,8 @@ package exec
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,8 +14,10 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/mertcikla/codeindex/gitstate"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/client"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
@@ -52,6 +56,23 @@ func PlanClients(cfg workspace.Config, target, dataDir, planID string) (rpc.Plan
 		}
 		closeFn = st.Close
 		svc := &api.PlanService{Store: st, NotesDir: filepath.Join(dir, "plans"), Source: func(tx *app.Store) api.Store { return store.NewAPIAdapter(tx, dir) }}
+		index := cstore.NewStore(st.DB(), st.BunDB(), st.Dialect())
+		svc.RepositoryRevision = func(ctx context.Context, id string) (string, error) {
+			repository, err := index.Repository(ctx, id)
+			// Existing CLI plans can refer to a repository before it is indexed.
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", nil
+			}
+			if err != nil {
+				return "", err
+			}
+			if repository.Root == "" {
+				return "", nil
+			}
+			_, revision, err := gitstate.CurrentCommit(ctx, repository.Root)
+			return revision, err
+		}
+
 		mux := http.NewServeMux()
 		path, h := rpc.NewPlanServiceHandler(svc)
 		mux.Handle("/api"+path, http.StripPrefix("/api", h))

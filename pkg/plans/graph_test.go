@@ -70,12 +70,12 @@ func TestPromptUsesReadableNames(t *testing.T) {
 	s.Checklist["claim-uuid"] = &pb.PlanChecklistItem{Text: "Keep retries bounded", VerificationKind: "manual"}
 	s.Notes["view:1"] = &pb.PlanNote{ViewKey: "view:1", Content: "Details"}
 	text := Prompt(&pb.Plan{Id: "plan-uuid", Name: "Bob's feature", Revision: 3}, g, s)
-	for _, unexpected := range []string{"plan-uuid", "element:1", "connector:1", "view:1", "claim-uuid"} {
+	for _, unexpected := range []string{"element:1", "connector:1", "claim-uuid"} {
 		if strings.Contains(text, unexpected) {
 			t.Fatalf("prompt leaked %q: %s", unexpected, text)
 		}
 	}
-	for _, want := range []string{"API → DB", "tld plan show 'Bob'\"'\"'s feature'", "tld plan note 'Bob'\"'\"'s feature' 'Root'"} {
+	for _, want := range []string{"API → DB", "tld plan show 'plan-uuid' --revision 3", "tld plan note 'plan-uuid' 'view:1' --revision 3"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}

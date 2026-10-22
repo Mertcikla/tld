@@ -8,48 +8,91 @@ import {
   type PlanResource,
 } from "@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/plan_service_pb";
 import { transport } from "./transport";
+import { knownPlanRevision, observePlanRevision, queuePlanMutation } from "./planSession";
+import { Code, ConnectError } from "@connectrpc/connect";
+import type { UpdatePlanRequest } from "@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/plan_service_pb";
 export const plansClient = createClient(PlanService, transport);
 export type { Plan, PlanProjectedResource, PlanResource };
 export type PlanOperationInput = MessageInitShape<typeof PlanOperationSchema>;
-const revisions = new Map<string, number>();
-const queues = new Map<string, Promise<unknown>>();
-export function appendPlan(planId: string, operations: PlanOperationInput[]) {
-  const previous = queues.get(planId) ?? Promise.resolve();
-  const requestId = crypto.randomUUID();
-  const run = previous.then(async () => {
-    let revision = revisions.get(planId);
+export function planChanged(planId: string) {
+  window.dispatchEvent(new CustomEvent("tld:plan-changed", { detail: planId }));
+}
+
+async function mutatePlan<T>(planId: string, work: (revision: number) => Promise<T>) {
+  return queuePlanMutation(planId, async () => {
+    let revision = knownPlanRevision(planId);
     if (revision === undefined) {
       const { plan } = await plansClient.getPlan({ planId });
       if (!plan) throw new Error("Plan not found");
       revision = plan.revision;
+      observePlanRevision(planId, revision);
     }
-    const result = await plansClient.appendOperations({
-      planId,
-      expectedRevision: revision,
-      requestId,
-      operations: operations.map((op) => create(PlanOperationSchema, op)),
+    try { return await work(revision); } catch (e) {
+      if (ConnectError.from(e).code === Code.Aborted) {
+        const fresh = await plansClient.getPlan({ planId });
+        if (fresh.plan) observePlanRevision(planId, fresh.plan.revision);
+        throw new Error("This plan changed in another window. Your input is kept. Review the latest plan and retry saving.");
+      }
+      throw e;
+    }
+  });
+}
+
+export function appendPlan(planId: string, operations: PlanOperationInput[]) {
+  const requestId = crypto.randomUUID();
+  return mutatePlan(planId, async revision => {
+    const request = { planId, expectedRevision: revision, requestId,
+      operations: operations.map(op => create(PlanOperationSchema, op)) };
+    const send = () => plansClient.appendOperations(request);
+    const result = await send().catch(e => {
+      // A lost response may follow a committed write. Retry the same identity.
+      if (ConnectError.from(e).code === Code.Unavailable) return send();
+      throw e;
     });
-    if (result.plan) revisions.set(planId, result.plan.revision);
-    window.dispatchEvent(
-      new CustomEvent("tld:plan-changed", { detail: planId }),
-    );
+    if (result.plan) observePlanRevision(planId, result.plan.revision);
+    planChanged(planId);
     return result;
   });
-  queues.set(
-    planId,
-    run.catch(() => undefined),
-  );
-  return run;
+}
+
+export function updatePlan(planId: string, fields: Pick<UpdatePlanRequest, "name" | "objective" | "status">) {
+  return mutatePlan(planId, async revision => {
+    const result = await plansClient.updatePlan({ planId, expectedRevision: revision, ...fields }).catch(async e => {
+      if (ConnectError.from(e).code === Code.Unavailable) {
+        const fresh = await plansClient.getPlan({ planId });
+        if (fresh.plan) {
+          observePlanRevision(planId, fresh.plan.revision);
+          if (Object.entries(fields).every(([field, value]) => value === undefined || fresh.plan![field as keyof Plan] === value)) return fresh;
+        }
+      }
+      throw e;
+    });
+    if (result.plan) observePlanRevision(planId, result.plan.revision);
+    planChanged(planId);
+    return result;
+  });
+}
+
+export function startPlanImplementation(planId: string) {
+  return mutatePlan(planId, async revision => {
+    const result = await plansClient.lockImplementation({ planId, expectedRevision: revision });
+    const fresh = await plansClient.getPlan({ planId });
+    if (fresh.plan) observePlanRevision(planId, fresh.plan.revision);
+    planChanged(planId);
+    return result;
+  });
 }
 export async function planProjection(
   planId: string,
   fullWorkspace = false,
   radius = 0,
+  revision?: number,
 ) {
   const first = await plansClient.getProjection({
     planId,
     fullWorkspace,
     radius,
+    revision,
   });
   let cursor = first.nextCursor;
   while (cursor) {
@@ -63,7 +106,7 @@ export async function planProjection(
     first.resources.push(...page.resources);
     cursor = page.nextCursor;
   }
-  revisions.set(planId, first.revision);
+  observePlanRevision(planId, first.revision);
   return first;
 }
 export function resourceLabel(r: PlanResource, resources: PlanResource[] = []): string {
@@ -88,7 +131,7 @@ export function resourceId(r: PlanResource): number {
 }
 
 export function observedPlanRevision(planId: string): number {
-  const revision = revisions.get(planId);
+  const revision = knownPlanRevision(planId);
   if (revision === undefined) throw new Error("Reload the plan before editing");
   return revision;
 }

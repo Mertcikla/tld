@@ -1,3 +1,4 @@
+import { usePlanSaveParticipant } from "../hooks/usePlanSaveParticipant"
 import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnectorPanelSlots } from '../slots'
@@ -83,6 +84,7 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   orgId: string
   onSave: (connector: Connector) => void
   autoSave?: boolean
+  planId?: string
   persistConnector?: (data: Partial<Connector>) => Promise<Connector>
   onDelete?: (edgeId: number, ownerViewId?: number) => void
   visibilityOverrideDelta?: number
@@ -160,7 +162,7 @@ function visibilityDeltaFromNoiseGateLevel(level: number) {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Connector Properties, Connector Details.
  */
-function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, persistConnector, onDelete, visibilityOverrideDelta = 0, onVisibilityOverrideDeltaChange, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
+function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, planId, persistConnector, onDelete, visibilityOverrideDelta = 0, onVisibilityOverrideDeltaChange, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isReadOnly = !canEdit
   const autoSaveEdit = autoSave && !!connector && !isReadOnly
@@ -264,7 +266,21 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     return { payload, fingerprint: connectorDraftFingerprint(payload) }
   }, [])
 
+  const planSaveBarrier = usePlanSaveParticipant(planId, isOpen && autoSaveEdit, async () => {
+    if (!connector || (!persistConnector && viewId == null)) return
+    const { payload, fingerprint } = await buildPayloadAndFingerprint()
+    if (fingerprint === lastSavedFingerprintRef.current) return
+    startSaving()
+    try {
+      const updated = await (persistConnector ? persistConnector(payload) : api.workspace.connectors.update(viewId!, connector.id, payload))
+      lastSavedFingerprintRef.current = fingerprint
+      saved()
+      onSave(updated)
+    } catch (error) { failed(); throw error }
+  })
+
   const saveIfDirty = useCallback(async () => {
+    if (planSaveBarrier.blocked) return
     if (!autoSaveEdit || !connector) return
 
     if (!persistConnector && viewId == null) return
@@ -274,9 +290,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     }
 
     const { payload, fingerprint } = await buildPayloadAndFingerprint()
+    if (planSaveBarrier.blocked) return
     if (fingerprint === lastSavedFingerprintRef.current) return
 
     savingRef.current = true
+    const finishSave = planSaveBarrier.begin()
     startSaving()
     try {
       const updated = await (persistConnector ? persistConnector(payload) : api.workspace.connectors.update(viewId!, connector.id, {
@@ -294,6 +312,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     } catch {
       failed()
     } finally {
+      finishSave()
       savingRef.current = false
       if (pendingSaveRef.current) {
         pendingSaveRef.current = false
@@ -302,7 +321,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         }, 0)
       }
     }
-  }, [persistConnector, autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
+  }, [planSaveBarrier, persistConnector, autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
 
   const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])

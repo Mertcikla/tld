@@ -43,3 +43,45 @@ func TestPlanCLIRecordsLiveWorkspaceChanges(t *testing.T) {
 	}
 	assertNoWorkspaceFiles(t, dir)
 }
+
+func TestPlanCLIImplementationRecovery(t *testing.T) {
+	dir := t.TempDir()
+	raw, _ := MustRunCmd(t, dir, "plan", "new", "--repository", "test-repo", "--name", "Implementation")
+	var response struct {
+		Plan struct {
+			ID string `json:"id"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatal(err)
+	}
+	id := response.Plan.ID
+	MustRunCmd(t, dir, "plan", "start", id)
+	MustRunCmd(t, dir, "add", "Staged worker")
+	status, _ := MustRunCmd(t, dir, "plan", "status")
+	var implementation struct {
+		Locked bool `json:"locked"`
+		Edits  []struct {
+			Method string `json:"method"`
+		} `json:"edits"`
+	}
+	if err := json.Unmarshal([]byte(status), &implementation); err != nil {
+		t.Fatal(err)
+	}
+	if !implementation.Locked || len(implementation.Edits) == 0 || implementation.Edits[0].Method != "CreateElement" {
+		t.Fatal(status)
+	}
+	MustRunCmd(t, dir, "plan", "finish", id)
+	live, _ := MustRunCmd(t, dir, "list", "elements")
+	if !strings.Contains(live, "Staged worker") {
+		t.Fatal(live)
+	}
+	MustRunCmd(t, dir, "plan", "draft", id)
+	MustRunCmd(t, dir, "plan", "start", id)
+	MustRunCmd(t, dir, "add", "Discard this worker")
+	MustRunCmd(t, dir, "plan", "cancel", id)
+	live, _ = MustRunCmd(t, dir, "list", "elements")
+	if strings.Contains(live, "Discard this worker") || !strings.Contains(live, "Staged worker") {
+		t.Fatal(live)
+	}
+}

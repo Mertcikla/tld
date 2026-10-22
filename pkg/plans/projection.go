@@ -210,13 +210,13 @@ func Prompt(p *pb.Plan, base Graph, s *State) string {
 	for k, v := range s.Graph {
 		graph[k] = v
 	}
-	selector := ShellQuote(p.Name)
+	selector := ShellQuote(p.Id)
 	fmt.Fprintf(&b, "Implement the code changes described by plan %s, revision %d, in its associated repository. Deliver working source changes and tests.\n\n", p.Name, p.Revision)
 	if objective := strings.TrimSpace(p.Objective); objective != "" {
 		fmt.Fprintf(&b, "Objective: %s\n\n", objective)
 	}
 	b.WriteString("The diagram is the specification already authored by the user. Scope entries describe recorded diagram changes and the software intent they represent; they are not commands to recreate nodes or connectors. Diagram edits alone do not implement this plan.\n\n")
-	fmt.Fprintf(&b, "Read the plan with `tld plan show %s` and inspect context with `tld plan show %s --radius 1`. Use the plan’s configured workspace and repository.\n\n", selector, selector)
+	fmt.Fprintf(&b, "Read the plan with `tld plan show %s` and inspect context with `tld plan show %s --radius 1`. Use the plan’s configured workspace and repository.\n\n", selector+fmt.Sprintf(" --revision %d", p.Revision), selector+fmt.Sprintf(" --revision %d", p.Revision))
 	b.WriteString("Scope (translate into code behavior and relationships):\n")
 	projection := Project(base, s, 0, false)
 	// Fold matching lifecycle placements into their element, retaining view context.
@@ -315,7 +315,7 @@ func Prompt(p *pb.Plan, base Graph, s *State) string {
 		sort.Strings(ks)
 		for _, k := range ks {
 			name := Describe(graph, graph[k])
-			fmt.Fprintf(&b, "- %s (%s): `tld plan note %s %s`\n", name, notes[k], selector, ShellQuote(name))
+			fmt.Fprintf(&b, "- %s (%s): `tld plan note %s %s`\n", name, notes[k], selector, ShellQuote(k)+fmt.Sprintf(" --revision %d", p.Revision))
 		}
 	}
 	b.WriteString("\nImplementation workflow:\n")

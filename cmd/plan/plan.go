@@ -71,7 +71,7 @@ func NewCmd(wdir *string) *cobra.Command {
 	create.Flags().StringVar(&repo, "repository", "", "repository ID")
 	create.Flags().StringVar(&name, "name", "New plan", "plan name")
 	create.Flags().StringVar(&objective, "objective", "", "feature objective")
-	create.Flags().BoolVar(&resume, "resume", true, "resume latest draft")
+	create.Flags().BoolVar(&resume, "resume", false, "resume latest draft")
 	root.AddCommand(create)
 	list := &cobra.Command{Use: "list", Short: "List plans", Args: cobra.NoArgs, RunE: withClient(func(cmd *cobra.Command, _ []string, c rpc.PlanServiceClient) error {
 		r, e := c.ListPlans(cmd.Context(), connect.NewRequest(&pb.ListPlansRequest{RepositoryId: repo}))
@@ -197,14 +197,21 @@ func NewCmd(wdir *string) *cobra.Command {
 			return print(cmd, r.Msg)
 		})})
 	}
-	root.AddCommand(&cobra.Command{Use: "note <plan-name-or-id> <view-name-or-key>", Short: "Read a linked view note", Args: cobra.ExactArgs(2), RunE: withClient(func(cmd *cobra.Command, args []string, c rpc.PlanServiceClient) error {
-		r, e := c.GetNote(cmd.Context(), connect.NewRequest(&pb.PlanNoteRequest{PlanId: args[0], ViewKey: args[1]}))
+	var noteRevision uint32
+	note := &cobra.Command{Use: "note <plan-name-or-id> <view-name-or-key>", Short: "Read a linked view note", Args: cobra.ExactArgs(2), RunE: withClient(func(cmd *cobra.Command, args []string, c rpc.PlanServiceClient) error {
+		request := &pb.PlanNoteRequest{PlanId: args[0], ViewKey: args[1]}
+		if cmd.Flags().Changed("revision") {
+			request.Revision = &noteRevision
+		}
+		r, e := c.GetNote(cmd.Context(), connect.NewRequest(request))
 		if e != nil {
 			return e
 		}
 		_, e = fmt.Fprint(cmd.OutOrStdout(), r.Msg.Note.Content)
 		return e
-	})})
+	})}
+	note.Flags().Uint32Var(&noteRevision, "revision", 0, "read a frozen handoff revision")
+	root.AddCommand(note)
 	root.AddCommand(&cobra.Command{Use: "append <plan-name-or-id> <json-file|->", Short: "Append typed operations, including checklist and note edits", Args: cobra.ExactArgs(2), RunE: withClient(func(cmd *cobra.Command, args []string, c rpc.PlanServiceClient) error {
 		var b []byte
 		var err error
@@ -230,11 +237,64 @@ func NewCmd(wdir *string) *cobra.Command {
 		}
 		return print(cmd, r.Msg)
 	})})
+	root.AddCommand(&cobra.Command{Use: "status", Short: "Show the active implementation, including recovery state", Args: cobra.NoArgs, RunE: withClient(func(cmd *cobra.Command, _ []string, c rpc.PlanServiceClient) error {
+		r, err := c.GetImplementation(cmd.Context(), connect.NewRequest(&pb.GetImplementationRequest{}))
+		if err != nil {
+			return err
+		}
+		return print(cmd, r.Msg)
+	})})
+	for _, action := range []string{"start", "review", "finish", "cancel", "unlock"} {
+		var decision, operation, hash string
+		child := &cobra.Command{Use: action + " <plan-name-or-id>", Short: map[string]string{"start": "Freeze the specification and start implementation", "review": "Apply, discard, or resolve staged diagram updates", "finish": "Apply remaining diagram updates and finish implementation", "cancel": "Discard pending diagram updates and release the workspace", "unlock": "Release the workspace when no edits remain"}[action], Args: cobra.ExactArgs(1), RunE: withClient(func(cmd *cobra.Command, args []string, c rpc.PlanServiceClient) error {
+			p, err := c.GetPlan(cmd.Context(), connect.NewRequest(&pb.GetPlanRequest{PlanId: args[0]}))
+			if err != nil {
+				return err
+			}
+			if action == "start" {
+				r, err := c.LockImplementation(cmd.Context(), connect.NewRequest(&pb.LockImplementationRequest{PlanId: p.Msg.Plan.Id, ExpectedRevision: p.Msg.Plan.Revision}))
+				if err != nil {
+					return err
+				}
+				return print(cmd, r.Msg)
+			}
+			current, err := c.GetImplementation(cmd.Context(), connect.NewRequest(&pb.GetImplementationRequest{RepositoryId: p.Msg.Plan.RepositoryId}))
+			if err != nil {
+				return err
+			}
+			if current.Msg.PlanId != p.Msg.Plan.Id {
+				return fmt.Errorf("this plan has no active implementation; use tld plan status")
+			}
+			reviewAction := action
+			if action == "review" {
+				reviewAction = decision
+			}
+			r, err := c.ReviewImplementation(cmd.Context(), connect.NewRequest(&pb.ReviewImplementationRequest{RepositoryId: p.Msg.Plan.RepositoryId, ExpectedRevision: current.Msg.Revision, Action: reviewAction, OperationId: operation, ObservedHash: hash}))
+			if err != nil {
+				return err
+			}
+			return print(cmd, r.Msg)
+		})}
+		if action == "review" {
+			child.Flags().StringVar(&decision, "action", "commit", "commit, discard, ignore (apply despite drift), or skip")
+			child.Flags().StringVar(&operation, "operation", "", "edit ID to resolve")
+			child.Flags().StringVar(&hash, "observed-hash", "", "observed drift hash to acknowledge")
+		}
+		root.AddCommand(child)
+	}
+
 	return root
 }
 
 func resolveResource(cmd *cobra.Command, c rpc.PlanServiceClient, id, selector string, viewOnly bool) (string, error) {
 	request := &pb.PlanProjectionRequest{PlanId: id, FullWorkspace: true}
+	if cmd.Flags().Lookup("revision") != nil && cmd.Flags().Changed("revision") {
+		revision, err := cmd.Flags().GetUint32("revision")
+		if err != nil {
+			return "", err
+		}
+		request.Revision = &revision
+	}
 	graph := plans.Graph{}
 	for {
 		result, err := c.GetProjection(cmd.Context(), connect.NewRequest(request))

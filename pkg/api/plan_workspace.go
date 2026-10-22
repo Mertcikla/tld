@@ -119,7 +119,7 @@ func (s *PlanService) PlanWorkspace(ctx context.Context, id, method string, in m
 			}
 			return s.decoratePlanRead(ctx, st, p, out)
 		}
-		if p.Status == "archived" {
+		if p.Status == "archived" || p.Status == "completed" {
 			return fmt.Errorf("archived plan is read-only")
 		}
 		request := uuid.NewString()
@@ -134,6 +134,9 @@ func (s *PlanService) PlanWorkspace(ctx context.Context, id, method string, in m
 		}
 		if cached != "" {
 			return json.Unmarshal([]byte(cached), &out)
+		}
+		if wc != nil && wc.expected != nil && p.Revision != *wc.expected {
+			return app.ErrPlanConflict
 		}
 		before, err := s.baseline(ctx, st)
 		if err != nil {

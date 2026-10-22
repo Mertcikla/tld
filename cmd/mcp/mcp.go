@@ -772,7 +772,7 @@ Accepts the same --host, --port, --data-dir flags as 'tld serve'.`,
 
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld", Version: "0.1.0"}, nil)
 			registerTools(server, cmd, wdir, format, compact, dataDir)
-			mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "tld_plan", Description: "Manage workspace change plans: new, list, show --radius, include --role, exclude, checklist, prompt, note, operations, preview, append, ready, draft, archived. Arguments are CLI tokens, not a shell command."}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a struct {
+			mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "tld_plan", Description: "Manage workspace change plans: new, list, show --radius, include --role, exclude, checklist, prompt, note, operations, preview, append, start, status, review, finish, cancel, unlock, ready, draft, archived. Arguments are CLI tokens, not a shell command."}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a struct {
 				Args []string `json:"args"`
 			}) (*mcpsdk.CallToolResult, result, error) {
 				c := plancmd.NewCmd(wdir)

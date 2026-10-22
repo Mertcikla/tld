@@ -1695,4 +1695,25 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
+  it('keeps a newly selected plan in the shared repository URL writer', async () => {
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=plans&repo=repo-1'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'mock-plans' }).props.onPlanChange('created-plan') })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-plans' }).props.planId).toBe('created-plan')
+    const write = setParamsMock.mock.calls.at(-1)![0] as (old: URLSearchParams) => URLSearchParams
+    expect(write(new URLSearchParams('mode=plans&repo=repo-1')).get('plan')).toBe('created-plan')
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('opens a plan link while the repository page is already mounted', async () => {
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=snapshots&repo=repo-1&page=settings'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=plans&repo=repo-1&plan=linked-plan'))
+    await act(async () => { renderer.update(<Repositories />) })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-plans' }).props.planId).toBe('linked-plan')
+    await act(async () => { renderer.unmount() })
+  })
+
 })

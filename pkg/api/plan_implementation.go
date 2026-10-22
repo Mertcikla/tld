@@ -156,11 +156,23 @@ func (s *PlanService) LockImplementation(ctx context.Context, req *connect.Reque
 		if p.Revision != req.Msg.ExpectedRevision {
 			return app.ErrPlanConflict
 		}
-		if p.Status == "archived" {
+		if p.Status == "archived" || p.Status == "completed" {
 			return fmt.Errorf("archived plan cannot be implemented")
 		}
 		if v.PlanID != p.Id {
 			v.Edits = nil
+		}
+		// Starting implementation creates one immutable, ready specification.
+		old := p.Revision
+		p.Revision++
+		p.ReadyRevision = p.Revision
+		p.Status = "ready"
+		p.UpdatedAt = nowPlan()
+		if err = st.SavePlan(ctx, planScope(ctx), p, old); err != nil {
+			return err
+		}
+		if err = s.freezeHandoff(ctx, st, p, req.Msg.GitRevision); err != nil {
+			return err
 		}
 		v.PlanID = p.Id
 		v.RepositoryID = p.RepositoryId
@@ -182,12 +194,13 @@ func (s *PlanService) GetImplementation(ctx context.Context, req *connect.Reques
 	if err != nil {
 		return nil, planErr(err)
 	}
-	if s.RepositoryRevision != nil && current.Locked && current.RepositoryID == req.Msg.RepositoryId {
-		revision, err := s.RepositoryRevision(ctx, req.Msg.RepositoryId)
-		if err != nil {
-			return nil, planErr(err)
+	if s.RepositoryRevision != nil && current.Locked && (req.Msg.RepositoryId == "" || current.RepositoryID == req.Msg.RepositoryId) {
+		revision, err := s.RepositoryRevision(ctx, current.RepositoryID)
+		// Repository access can disappear while a session is locked. Recovery must
+		// remain available; Git detection is supplementary to the stored ledger.
+		if err == nil {
+			req.Msg.GitRevision = revision
 		}
-		req.Msg.GitRevision = revision
 	}
 	var v *implementation
 	err = s.Store.RunPlanTransaction(ctx, func(st *app.Store) error {
@@ -275,7 +288,7 @@ func (s *PlanService) lockedWorkspace(ctx context.Context, method string, in map
 				}
 				response, eerr := s.liveWorkspace(simulatedCtx, st, e.Public.Method, remapInput(e.Public.Method, e.Input, ids))
 				if eerr != nil {
-					return fmt.Errorf("pending %s cannot be projected: %w; review or skip it in Watch", e.Public.Method, eerr)
+					return fmt.Errorf("pending %s cannot be projected: %w; review or skip it in Plans", e.Public.Method, eerr)
 				}
 				learnIDs(e.Response, response, ids)
 				after, eerr := s.baseline(ctx, st)
@@ -600,7 +613,7 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 	}
 	expected := req.Msg.ExpectedRevision
 	action := req.Msg.Action
-	if action != "commit" && action != "ignore" && action != "skip" && action != "discard" && action != "unlock" {
+	if action != "commit" && action != "ignore" && action != "skip" && action != "discard" && action != "unlock" && action != "finish" && action != "cancel" {
 		return nil, invalidArg("action", "invalid review action")
 	}
 	var v *implementation
@@ -619,7 +632,7 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 			if v.Revision != expected {
 				return app.ErrPlanConflict
 			}
-			if action == "discard" {
+			if action == "discard" || action == "cancel" {
 				for _, e := range v.Edits {
 					if pendingEdit(e) {
 						e.Public.Status = "discarded"
@@ -628,6 +641,12 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 				if v.PendingCommit != "" {
 					v.GitRevision = v.PendingCommit
 					v.PendingCommit = ""
+				}
+				if action == "cancel" {
+					v.Locked = false
+					if err = s.endImplementation(callCtx, st, v, "draft"); err != nil {
+						return err
+					}
 				}
 				stop = true
 				return saveImplementation(callCtx, st, v)
@@ -653,6 +672,18 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 				}
 			}
 			if next == nil {
+				if req.Msg.Action == "finish" {
+					v.Locked = false
+					if err = s.endImplementation(callCtx, st, v, "completed"); err != nil {
+						return err
+					}
+					if v.PendingCommit != "" {
+						v.GitRevision = v.PendingCommit
+						v.PendingCommit = ""
+					}
+					stop = true
+					return saveImplementation(callCtx, st, v)
+				}
 				if v.PendingCommit != "" {
 					v.GitRevision = v.PendingCommit
 					v.PendingCommit = ""
@@ -677,6 +708,17 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 				return err
 			}
 			reason, hash := drift(next, before, ids)
+			constraint, err := s.scopeWarning(callCtx, st, v, next)
+			if err != nil {
+				return err
+			}
+			if constraint != "" {
+				if reason != "" {
+					reason += "; "
+				}
+				reason += constraint
+				hash = fmt.Sprintf("%x", sha256.Sum256([]byte(hash+constraint)))
+			}
 			if reason != "" && (action != "ignore" || next.Public.Id != req.Msg.OperationId || hash != req.Msg.ObservedHash) {
 				next.Public.Status = "warning"
 				next.Public.Reason = reason
@@ -723,4 +765,64 @@ func (s *PlanService) ReviewImplementation(ctx context.Context, req *connect.Req
 		expected = v.Revision
 		action = "commit"
 	}
+}
+
+// Ending a session advances plan metadata; pinned handoffs remain readable.
+func (s *PlanService) endImplementation(ctx context.Context, st *app.Store, v *implementation, status string) error {
+	p, err := st.Plan(ctx, planScope(ctx), v.PlanID)
+	if err != nil {
+		return err
+	}
+	old := p.Revision
+	p.Revision++
+	p.Status = status
+	p.UpdatedAt = nowPlan()
+	if err = st.SavePlan(ctx, planScope(ctx), p, old); err != nil {
+		return err
+	}
+	if status == "completed" {
+		// A completed plan continues to show its reviewed target architecture,
+		// including notes, when opened without an explicit historical revision.
+		raw, err := st.PlanHandoff(ctx, p.Id, p.ReadyRevision)
+		if err != nil {
+			return err
+		}
+		if raw != "" {
+			return st.SavePlanHandoff(ctx, p.Id, p.Revision, raw)
+		}
+	}
+	return nil
+}
+
+// Scope roles are review constraints. A reviewer must acknowledge changes to
+// preserved/reference objects or to existing objects outside the specification.
+func (s *PlanService) scopeWarning(ctx context.Context, st *app.Store, v *implementation, edit *agentEdit) (string, error) {
+	p, err := st.Plan(ctx, planScope(ctx), v.PlanID)
+	if err != nil {
+		return "", err
+	}
+	h, base, err := readHandoff(ctx, st, p)
+	if err != nil || h == nil {
+		return "", err
+	} // Legacy sessions have no frozen scope.
+	ops, err := st.PlanOperations(ctx, p.Id, p.ReadyRevision)
+	if err != nil {
+		return "", err
+	}
+	state := plans.Recorded(base, ops)
+	reasons := []string{}
+	for _, op := range edit.Public.Operations {
+		key := plans.Target(op)
+		// A creation is new implementation detail; dependent placements are auxiliary.
+		if op.GetCreate() != nil || strings.HasPrefix(key, "elementplacement:") {
+			continue
+		}
+		member := state.Members[key]
+		if member != nil && (member.Role == "preserve" || member.Role == "context") {
+			reasons = append(reasons, plans.Describe(base, base[key])+" is marked "+member.Role)
+		} else if member == nil && base[key] != nil {
+			reasons = append(reasons, plans.Describe(base, base[key])+" is outside the planned scope")
+		}
+	}
+	return strings.Join(reasons, "; "), nil
 }

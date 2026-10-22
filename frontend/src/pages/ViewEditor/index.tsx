@@ -830,6 +830,14 @@ function ViewEditorInner({
   const updateStoreElementPosition = useStore((state) => state.updateElementPosition)
   const mergeElementsInto = useStore((state) => state.mergeElementsInto)
   const refreshElementsRef = useRef<() => Promise<void>>(async () => { })
+  const planContext = searchParams.get('plan') ?? ''
+  useEffect(() => {
+    const changed = () => { void refreshElementsRef.current() }
+    changed()
+    window.addEventListener('tld:plan-changed', changed)
+    return () => window.removeEventListener('tld:plan-changed', changed)
+  }, [planContext])
+
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))

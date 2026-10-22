@@ -323,6 +323,10 @@ export default function Repositories() {
   const [params, setParams] = useSearchParams()
   const [repositories, setRepositories] = useState<IndexedRepository[]>([])
   const [selectedId, setSelectedId] = useState(() => params.get('repo') || '')
+  // Keep plan selection in the same URL writer as the repository controls.
+  // Independent search-param writers can overwrite a newly created plan.
+  const [selectedPlanId, setSelectedPlanId] = useState(() => params.get('plan') || '')
+
   const [base, setBase] = useState(() => params.get('base') || '')
   const [head, setHead] = useState(() => params.get('head') || '')
   const [baseBranch, setBaseBranch] = useState(
@@ -361,8 +365,34 @@ export default function Repositories() {
   const [watchScene, setWatchScene] = useState<RepositoryImpactScene | null>(null)
   const [focusChangeRequest, setFocusChangeRequest] = useState<MapChangeFocusRequest | null>(null)
   const [mode, setMode] = useState(() => params.get('mode') === 'plans' ? 'plans' : params.get('mode') === 'snapshots' ? 'snapshots' : params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
+  const writtenLocation = useRef({ plan: selectedPlanId, repository: selectedId, mode, settings: showRepositorySettings })
+  useEffect(() => {
+    const incomingPlan = params.get('plan') || ''
+    const incomingRepository = params.get('repo') || ''
+    const requestedMode = params.get('mode')
+    const incomingMode = requestedMode === 'watch' || requestedMode === 'live' ? 'live'
+      : requestedMode === 'plans' || requestedMode === 'snapshots' || requestedMode === 'pr' ? requestedMode : 'compare'
+    if (incomingPlan !== writtenLocation.current.plan) {
+      writtenLocation.current.plan = incomingPlan
+      setSelectedPlanId(incomingPlan)
+    }
+    if (incomingRepository && incomingRepository !== writtenLocation.current.repository) {
+      writtenLocation.current.repository = incomingRepository
+      setSelectedId(incomingRepository)
+    }
+    if (incomingMode !== writtenLocation.current.mode) {
+      writtenLocation.current.mode = incomingMode
+      setMode(incomingMode)
+    }
+    const incomingSettings = params.get('page') === 'settings'
+    if (incomingSettings !== writtenLocation.current.settings) {
+      writtenLocation.current.settings = incomingSettings
+      setShowRepositorySettings(incomingSettings)
+    }
+  }, [params])
+
   const watchRevision = watch?.gitRevision || live?.gitRevision || history?.headSha || ''
-  const implementation = usePlanImplementation(selectedId, watchRevision, mode === 'live')
+  const implementation = usePlanImplementation(selectedId, watchRevision, mode !== 'plans')
   const historyCommit = history?.commits.find((commit) => commit.sha === watchRevision)
   const watchCommitMessage = (historyCommit?.body || historyCommit?.subject || '').trim() || (watchCommit?.repositoryId === selectedId && watchCommit.revision === watchRevision ? watchCommit.message : '')
   useEffect(() => {
@@ -515,11 +545,13 @@ export default function Repositories() {
     void reload()
   }, [reload])
   useEffect(() => {
+    writtenLocation.current = { plan: selectedPlanId, repository: selectedId, mode, settings: showRepositorySettings }
     setParams(
       (old) => {
         const next = new URLSearchParams(old)
         for (const [key, value] of Object.entries({
           repo: selectedId,
+          plan: selectedPlanId,
           page: showRepositorySettings ? 'settings' : '',
           mode: mode === 'live' ? 'watch' : mode,
           base,
@@ -535,7 +567,7 @@ export default function Repositories() {
       },
       { replace: true },
     )
-  }, [selectedId, base, head, branch, baseBranch, headBranch, mode, showRepositorySettings, setParams])
+  }, [selectedId, selectedPlanId, base, head, branch, baseBranch, headBranch, mode, showRepositorySettings, setParams])
   useEffect(() => {
     let stale = false
     setDataError('')
@@ -851,6 +883,7 @@ export default function Repositories() {
     setHistoryCollapsed(false)
     initialized.current = ''
     restored.current = { base: '', head: '' }
+    setSelectedPlanId('')
     setSelectedId(id)
   }
   const targetUsable = (target: string) => !!target && (
@@ -1459,7 +1492,7 @@ export default function Repositories() {
             display="flex"
             flexDir="column"
           >
-            {selected && (mode === 'plans' && !showRepositorySettings ? <RepositoryPlans key={selected.id} repositoryId={selected.id} onWatch={() => changeMode('live')} /> : showRepositorySettings ? (
+            {selected && (mode === 'plans' && !showRepositorySettings ? <RepositoryPlans key={selected.id} repositoryId={selected.id} planId={selectedPlanId} onPlanChange={setSelectedPlanId} onWatch={() => changeMode('live')} /> : showRepositorySettings ? (
               <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }} />
             ) : (
               <>
@@ -1636,10 +1669,10 @@ export default function Repositories() {
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
                 />}
+                {mode !== 'plans' && <PlanImplementationReview implementation={implementation} />}
                 {mode === 'live' && (
                   <>
                     <RepositoryWatcherPanel key={selected.id} followMode={followMode} onFollowModeChange={setFollowMode} scene={live?.diagram?.scene?.repositoryId === selectedId ? live.diagram.scene : watchScene?.repositoryId === selectedId ? watchScene : null} onFocusChanges={(targets) => { setSelectedPath(''); setFocusChangeRequest({ repositoryId: selectedId, targets }) }} status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watchRevision} commitMessage={watchCommitMessage} worktreeStats={worktreeStats?.repositoryId === selectedId ? worktreeStats : null} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} />
-                    <PlanImplementationReview implementation={implementation} />
                     <ErrorMessage message={live?.error || ''} />
                   </>
                 )}
