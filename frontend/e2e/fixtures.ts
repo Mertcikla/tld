@@ -1,8 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createWriteStream, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
 import {
   expect,
   test as base,
@@ -39,10 +38,6 @@ type CapturedE2EError = {
 const serverReadyTimeout = 30_000
 const serverShutdownTimeout = 10_000
 const workerPortOffset = 100
-
-const e2eDir = dirname(fileURLToPath(import.meta.url))
-const frontendDir = resolve(e2eDir, '..')
-const repoRoot = resolve(frontendDir, '..')
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   e2eServer: [
@@ -125,7 +120,7 @@ function workerDataDir(workerInfo: WorkerInfo) {
   const root = process.env.TLD_E2E_DATA_DIR
     ?? join(tmpdir(), `tld-playwright-${process.env.GITHUB_RUN_ID ?? 'local'}`)
   const project = sanitizePathSegment(workerInfo.project.name || 'default')
-  return join(root, project, `worker-${workerInfo.workerIndex}`)
+  return resolve(root, project, `worker-${workerInfo.workerIndex}`)
 }
 
 function sanitizePathSegment(value: string) {
@@ -147,7 +142,8 @@ function spawnServer(port: number, dataDir: string, logPath: string) {
     '--data-dir',
     dataDir,
   ], {
-    cwd: repoRoot,
+    // Managed Markdown and other workspace files must be isolated per worker too.
+    cwd: dataDir,
     env: {
       ...process.env,
       TLD_CONFIG_DIR: configDir,

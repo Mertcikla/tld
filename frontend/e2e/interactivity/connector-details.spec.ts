@@ -16,7 +16,11 @@ test('uses matching connector cards in the editor panel and explore popover', as
   })
 
   await page.goto(`/views/${root.id}`)
-  await page.getByRole('button', { name: '+1', exact: true }).click()
+  const badge = page.getByRole('button', { name: '+1', exact: true })
+  // Labels mount before the initial viewport is ready; opacity does not gate Playwright clicks.
+  await expect(page.locator('.react-flow__edgelabel-renderer').filter({ has: badge })).toHaveCSS('opacity', '1')
+  await badge.hover()
+  await badge.click()
   await expect(page.getByText('Underlying Connectors · 1', { exact: true })).toBeVisible()
   await expect(page.getByText('loads · SQL', { exact: true })).toBeVisible()
   await expect(page.getByText('Loads account records', { exact: true })).toBeVisible()

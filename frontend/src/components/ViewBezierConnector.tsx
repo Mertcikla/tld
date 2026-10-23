@@ -251,6 +251,9 @@ function ViewBezierConnector({
             {proxyBadgeText && (
               <button
                 type="button"
+                className="nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
                 onClick={handleBadgeClick}
                 style={{
                   minWidth: badgeWidth,

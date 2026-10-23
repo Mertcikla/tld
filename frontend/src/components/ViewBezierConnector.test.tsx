@@ -4,11 +4,11 @@ import { Position, type EdgeProps } from 'reactflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ViewBezierConnector from './ViewBezierConnector'
 
-const state = vi.hoisted(() => ({ canEdit: true, drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null }))
+const state = vi.hoisted(() => ({ canEdit: true, drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null, edges: [] as Array<{ id: string; data: Record<string, unknown> }> }))
 vi.mock('reactflow', async () => {
   const actual = await vi.importActual<typeof import('reactflow')>('reactflow')
   return { ...actual,
-    useStore: (selector: (store: unknown) => unknown) => selector({ nodeInternals: new Map(), edges: [] }),
+    useStore: (selector: (store: unknown) => unknown) => selector({ nodeInternals: new Map(), edges: state.edges }),
     BaseEdge: (props: Record<string, unknown>) => <path {...props} />,
     EdgeLabelRenderer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   }
@@ -24,7 +24,24 @@ function render(overrides: Partial<EdgeProps> = {}) {
     style: { stroke: '#aaa', strokeWidth: 2 }, data: { style: 'bezier' }, ...overrides,
   } as EdgeProps} />)
 }
-afterEach(() => { state.canEdit = true; state.drag = { kind: 'tag', name: 'critical', color: '#f00' } })
+afterEach(() => { state.canEdit = true; state.drag = { kind: 'tag', name: 'critical', color: '#f00' }; state.edges = [] })
+
+it('opens aggregate details without letting pointer presses change canvas selection', () => {
+  const details = { key: 'pair', connectors: [] }
+  const openDetails = vi.fn()
+  state.edges = [{ id: '12', data: { proxyBadgeCount: 1, proxyBadgeDetails: details, onOpenProxyBadge: openDetails } }]
+  const renderer = render()
+  const button = renderer.root.findByType('button')
+  for (const handler of ['onPointerDown', 'onMouseDown']) {
+    const event = { stopPropagation: vi.fn(), preventDefault: vi.fn() }
+    act(() => button.props[handler](event))
+    expect(event.stopPropagation).toHaveBeenCalledOnce()
+    expect(event.preventDefault).not.toHaveBeenCalled()
+  }
+  act(() => button.props.onClick({ stopPropagation: vi.fn(), preventDefault: vi.fn() }))
+  expect(openDetails).toHaveBeenCalledWith(details)
+  act(() => renderer.unmount())
+})
 
 describe('connector tag drop affordance', () => {
   it('highlights the line and exposes its label as the same drop target, then clears on drop', () => {

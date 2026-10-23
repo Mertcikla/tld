@@ -762,8 +762,10 @@ function ViewEditorInner({
   const handleNodeMouseLeave = useCallback(() => {
     scheduleClearHoveredElement()
   }, [scheduleClearHoveredElement])
-  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: RFEdge) => {
+  const handleEdgeMouseEnter = useCallback((event: React.MouseEvent, edge: RFEdge) => {
     clearHoveredEdge()
+    // Raising the edge moves its label into another SVG layer, replacing a pressed button.
+    if (event.target instanceof globalThis.Element && event.target.closest('button')) return
     setHoveredEdgeId(edge.id)
   }, [clearHoveredEdge])
   const handleEdgeMouseLeave = useCallback(() => {

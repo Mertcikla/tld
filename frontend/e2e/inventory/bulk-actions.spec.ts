@@ -16,7 +16,7 @@ test('bulk inventory actions add remove tags and delete only selected rows', asy
   const second = graph.both
   const survivor = graph.outgoing
 
-  await page.goto('/inventory')
+  await page.goto(`/inventory?type=elements&q=${encodeURIComponent(prefix)}`)
   await expect(page.getByTestId('inventory-page')).toBeVisible()
   await expect(page.locator(`[data-inventory-key="element:${first.id}"]`)).toBeVisible()
   await expect(page.locator(`[data-inventory-key="element:${second.id}"]`)).toBeVisible()
