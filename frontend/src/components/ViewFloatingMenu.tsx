@@ -1,6 +1,9 @@
 import { tagCountDescription } from '../utils/canvasTags'
 import { TagFilterReset, TagFilterRow } from './TagFilterControls'
 import React, { memo } from 'react'
+import { CheckIcon } from '@chakra-ui/icons'
+import { useCopyFeedback, type CopyAction } from '../hooks/useCopyFeedback'
+import { editorFeedbackStyles, editorRevealStyles, editorToolbarStyles } from '../styles/editorInteractions'
 import type { ViewFloatingMenuSlots } from '../slots'
 
 import {
@@ -56,7 +59,7 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   disableImportExport?: boolean
   onImport: () => void
   onExport: () => void
-  onCopyMermaid?: () => void
+  onCopyMermaid?: CopyAction
   onExportMermaid?: () => void
   onShare?: () => void
   focusMode: boolean
@@ -158,6 +161,7 @@ function ViewFloatingMenu({
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const { isOpen: isFiltersOpen, onClose: onFiltersClose, onToggle: onFiltersToggle } = useDisclosure()
   const [draftDensityLevel, setDraftDensityLevel] = React.useState(densityLevel)
+  const { state: copyState, copy: copyMermaid } = useCopyFeedback(onCopyMermaid)
   const activeDensityLabel = DENSITY_STOPS.find((stop) => stop.value === draftDensityLevel)?.label ?? 'Normal'
   const activeNoiseGateLabel = noiseGateEnabled ? activeDensityLabel : 'Off'
   const showFilters = !hideFocusView || !!onDensityLevelChange
@@ -199,6 +203,7 @@ function ViewFloatingMenu({
 
       <HStack
         pointerEvents="auto"
+        sx={editorToolbarStyles}
         spacing={0}
         bg="var(--bg-panel)"
         border="1px solid"
@@ -271,6 +276,7 @@ function ViewFloatingMenu({
                   onClick={onFiltersToggle}
                   data-testid="vieweditor-toolbar-filters"
                   aria-label="Open filters"
+                  aria-expanded={isFiltersOpen}
                 >
                   <HStack spacing={1.5}>
                     {hasActiveFilters && onDensityLevelChange ? (
@@ -287,6 +293,7 @@ function ViewFloatingMenu({
               </PopoverTrigger>
               <Portal>
                 <PopoverContent
+                  sx={editorToolbarStyles}
                   bg="linear-gradient(180deg, rgba(var(--bg-main-rgb), 0.98) 0%, rgba(var(--bg-main-rgb), 0.92) 100%)"
                   backdropFilter="blur(22px)"
                   borderColor="whiteAlpha.100"
@@ -434,6 +441,7 @@ function ViewFloatingMenu({
               <PopoverTrigger>
                 <Button
                   data-testid="vieweditor-toolbar-tags"
+                  aria-expanded={isTagsOpen}
                   variant="ghost" h="28px" px={2.5}
                   color={isTagsOpen ? 'var(--accent)' : 'gray.300'}
                   _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
@@ -447,6 +455,7 @@ function ViewFloatingMenu({
               </PopoverTrigger>
               <Portal>
                 <PopoverContent
+                  sx={editorToolbarStyles}
                   bg="var(--bg-panel)"
                   backdropFilter="blur(20px)"
                   borderColor="whiteAlpha.100"
@@ -527,6 +536,7 @@ function ViewFloatingMenu({
             >
               <Button
                 data-testid="vieweditor-toolbar-markdown"
+                aria-pressed={!!markdownOpen}
                 variant="ghost"
                 h="28px"
                 px={2.5}
@@ -558,6 +568,7 @@ function ViewFloatingMenu({
         >
           <Button
             data-testid="vieweditor-toolbar-draw"
+            aria-pressed={drawingMode}
             variant="ghost"
             h="28px"
             px={2.5}
@@ -585,6 +596,7 @@ function ViewFloatingMenu({
             >
               <Button
                 data-testid="vieweditor-toolbar-draw-visibility"
+                aria-pressed={drawingVisible}
                 variant="ghost"
                 h="28px"
                 minW="28px"
@@ -613,7 +625,7 @@ function ViewFloatingMenu({
         {extrasVisible && (
           <>
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-            <HStack spacing={1} pl={1} pr={0.5}>
+            <HStack spacing={1} pl={1} pr={0.5} sx={editorRevealStyles}>
 
               <Button
                 data-testid="vieweditor-toolbar-import"
@@ -655,14 +667,21 @@ function ViewFloatingMenu({
                   variant="ghost"
                   h="28px"
                   px={2.5}
-                  color="gray.300"
-                  leftIcon={<MarkdownSvg size={16} />}
+                  color={copyState === 'copied' ? 'var(--accent)' : 'gray.300'}
+                  leftIcon={<Box as="span" key={copyState} display="inline-flex" alignItems="center" justifyContent="center" boxSize="16px" sx={editorFeedbackStyles}>
+                    {copyState === 'copied' ? <CheckIcon boxSize="14px" /> : <MarkdownSvg size={16} />}
+                  </Box>}
+                  isLoading={copyState === 'copying'}
+                  aria-label={copyState === 'copying' ? 'Copying Mermaid' : undefined}
                   isDisabled={disableImportExport}
                   _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
                   _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                  onClick={onCopyMermaid}
+                  onClick={() => void copyMermaid()}
                 >
-                  <Text fontSize="11px" fontWeight="normal">Copy as Mermaid</Text>
+                  <Box as="span" display="inline-grid" fontSize="11px" fontWeight="normal">
+                    <Box as="span" gridArea="1 / 1" visibility="hidden" aria-hidden="true">Copy as Mermaid</Box>
+                    <Box as="span" gridArea="1 / 1" aria-live="polite">{copyState === 'copied' ? 'Copied' : 'Copy as Mermaid'}</Box>
+                  </Box>
                 </Button>
               )}
 
@@ -677,6 +696,7 @@ function ViewFloatingMenu({
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
             <Button
               data-testid="vieweditor-toolbar-extras"
+              aria-expanded={extrasVisible}
               variant="ghost"
               h="28px"
               minW="36px"

@@ -1,6 +1,7 @@
 import React from 'react'
 import { Box } from '@chakra-ui/react'
 import { DRAWING_COLORS } from '../constants/colors'
+import { editorRevealStyles, editorToolbarStyles } from '../styles/editorInteractions'
 
 export function UndoSvg({ size = 14 }: { size?: number }) {
   return (
@@ -73,6 +74,10 @@ function DrawingBtn({ active, disabled, onClick, title, children }: {
   <Box
       data-testid={title ? `draw-menu-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}` : undefined}
       as="button"
+      type="button"
+      disabled={disabled}
+      aria-label={title}
+      aria-pressed={active}
       title={title}
       onClick={disabled ? undefined : onClick}
       w="34px"
@@ -106,6 +111,7 @@ function DrawingBtn({ active, disabled, onClick, title, children }: {
           h="4px"
           rounded="full"
           bg="var(--accent)"
+          sx={editorRevealStyles}
         />
       )}
     </Box>
@@ -152,6 +158,9 @@ export default function ViewDrawMenu({
   return (
     <Box
       data-testid="draw-menu"
+      role="group"
+      aria-label="Drawing tools"
+      sx={editorToolbarStyles}
       position="absolute"
       top="12px"
       left="50%"
@@ -195,6 +204,9 @@ export default function ViewDrawMenu({
           <Box
             key={c}
             as="button"
+            type="button"
+            aria-label={`Drawing color ${c}`}
+            aria-pressed={drawingColor === c}
             data-testid="draw-menu-color"
             data-color={c}
             title={c}
@@ -219,6 +231,7 @@ export default function ViewDrawMenu({
                 ? `0 0 0 2px var(--bg-panel), 0 0 0 4px ${c}`
                 : `0 0 0 2px var(--bg-panel), 0 0 0 3px ${c}`
             }}
+            sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none', _hover: { transform: 'none' } } }}
           />
         ))}
       </Box>
@@ -231,6 +244,8 @@ export default function ViewDrawMenu({
           <Box
             key={size}
             as="button"
+            type="button"
+            aria-pressed={drawingWidth === size}
             data-testid="draw-menu-width"
             data-width={size}
             title={drawingTool === 'text' ? `Font size ${size * 5}px` : `Width ${size}px`}

@@ -3919,26 +3919,28 @@ function ViewEditorInner({
   // ── Export / Import ────────────────────────────────────────────────────────
   const handleCopyMermaidDirect = useCallback(async () => {
     setCanvasMenu(null)
-    if (viewId === null) return
+    if (viewId === null) return false
     try {
       const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
-      if (!exported.markdown) return
+      if (!exported.markdown) return false
       await copyTextToClipboard(exported.markdown)
-      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
+      return true
     } catch {
       toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
+      return false
     }
   }, [setCanvasMenu, toast, viewId])
 
   const handleBulkCopyMermaid = useCallback(async () => {
-    if (viewId === null) return
+    if (viewId === null) return false
     try {
       const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
-      if (!exported.markdown) return
+      if (!exported.markdown) return false
       await copyTextToClipboard(exported.markdown)
-      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
+      return true
     } catch {
       toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
+      return false
     }
   }, [toast, viewId])
 
