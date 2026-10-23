@@ -60,9 +60,9 @@ type Runner interface {
 	GetConnector(ctx context.Context, id int32) (*diagv1.Connector, error)
 	ListConnectors(ctx context.Context) ([]*diagv1.Connector, error)
 
-	// ApplyPlan atomically creates/updates a whole batch of elements, views,
+	// ApplyBatch atomically creates/updates a whole batch of elements, views,
 	// placements and connectors in a single transaction.
-	ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error)
 
 	// ExportWorkspace returns the full target state in the shared export format.
 	ExportWorkspace(ctx context.Context) (*diagv1.ExportOrganizationResponse, error)
@@ -441,12 +441,12 @@ func (r *remoteRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector,
 	return resp.Msg.GetConnectors(), nil
 }
 
-func (r *remoteRunner) ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+func (r *remoteRunner) ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
 	c := r.client()
 	if req.GetOrgId() == "" {
 		req.OrgId = r.orgID
 	}
-	resp, err := c.ApplyWorkspacePlan(ctx, connect.NewRequest(req))
+	resp, err := c.ApplyWorkspaceBatch(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
 	}
@@ -579,15 +579,15 @@ func (r *localRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector, 
 	return r.adapter.ListAllConnectors(r.ctx(ctx), uuid.Nil)
 }
 
-// ApplyPlan runs the store-level plan inside a single SQLite transaction so a
+// ApplyBatch runs the store-level batch inside a single SQLite transaction so a
 // mid-batch failure rolls the whole import back. The local adapter only
 // supports SQLite transactions; other dialects fall back to a direct apply.
-func (r *localRunner) ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+func (r *localRunner) ApplyBatch(ctx context.Context, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
 	c := r.ctx(ctx)
-	var resp *diagv1.ApplyPlanResponse
+	var resp *diagv1.ApplyWorkspaceBatchResponse
 	err := r.adapter.RunInTransaction(c, func(txCtx context.Context, txStore api.Store) error {
 		var applyErr error
-		resp, applyErr = txStore.ApplyPlan(txCtx, uuid.Nil, req)
+		resp, applyErr = txStore.ApplyBatch(txCtx, uuid.Nil, req)
 		return applyErr
 	})
 	if err != nil {

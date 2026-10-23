@@ -235,6 +235,35 @@ function nestedZuiData(connectorsByView: Record<string, Connector[]>): ExploreDa
 }
 
 describe('resolveZUIProxyConnectors', () => {
+  it.each([
+    { endpoint: 'source', sourceId: 3, targetId: 2, nativeBadge: true },
+    { endpoint: 'target', sourceId: 2, targetId: 3, nativeBadge: true },
+    { endpoint: 'source', sourceId: 3, targetId: 2, nativeBadge: false },
+    { endpoint: 'target', sourceId: 2, targetId: 3, nativeBadge: false },
+  ] as const)('keeps the actual $endpoint placement for navigation (native badge: $nativeBadge)', ({ endpoint, sourceId, targetId, nativeBadge }) => {
+    const snapshot = buildWorkspaceGraphSnapshot(baseData([
+      ...(nativeBadge ? [connector(1, 1, 1, 2, 'A-B')] : []),
+      connector(2, 1, sourceId, targetId, 'AA-B'),
+    ]))
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([[1, 'd1-o1'], [2, 'd1-o2']]),
+      zuiSettings(),
+    )
+    const groups = nativeBadge ? resolved.hiddenBadges : resolved.connectors
+    expect(groups).toHaveLength(1)
+    const leaf = groups[0].details.connectors[0]
+    expect(leaf.ownerViewId).toBe(1)
+    expect(leaf[endpoint]).toMatchObject({
+      actualElementId: 3,
+      anchorElementId: 1,
+      anchorViewId: 1,
+      placementViewId: 2,
+      placementViewName: 'A Child',
+    })
+    expect(leaf[endpoint === 'source' ? 'target' : 'source'].placementViewId).toBe(1)
+  })
+
   it('collapses direct-child off-view connectors into a native +N badge', () => {
     const snapshot = buildWorkspaceGraphSnapshot(baseData([
       connector(1, 1, 1, 2, 'A-B'),

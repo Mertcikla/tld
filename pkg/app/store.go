@@ -106,7 +106,7 @@ type DependencyConnector struct {
 	UpdatedAt        string   `json:"updated_at"`
 }
 
-type PlanConnector struct {
+type BatchConnector struct {
 	Ref              string  `json:"ref"`
 	ViewRef          string  `json:"view_ref"`
 	SourceElementRef string  `json:"source_element_ref"`
@@ -436,7 +436,7 @@ func (s *Store) Dependencies(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"elements": deps, "connectors": connectors}, nil
 }
 
-func (s *Store) ImportPlan(ctx context.Context, elements []PlanElement, connectors []PlanConnector) (int64, error) {
+func (s *Store) ImportBatch(ctx context.Context, elements []BatchElement, connectors []BatchConnector) (int64, error) {
 	viewName := "Imported Diagram"
 	if len(elements) > 0 && strings.TrimSpace(elements[0].Name) != "" {
 		viewName = strings.TrimSpace(elements[0].Name)

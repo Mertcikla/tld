@@ -43,9 +43,9 @@ func (s *ImportService) ImportResources(ctx context.Context, req *connect.Reques
 		return nil, err
 	}
 
-	elements := make([]*diagv1.PlanElement, 0, len(m.GetElements()))
+	elements := make([]*diagv1.BatchElement, 0, len(m.GetElements()))
 	for _, element := range m.GetElements() {
-		elements = append(elements, proto.Clone(element).(*diagv1.PlanElement))
+		elements = append(elements, proto.Clone(element).(*diagv1.BatchElement))
 	}
 	for _, element := range elements {
 		if element.BypassNoiseGate == nil {
@@ -85,7 +85,7 @@ func (s *ImportService) fireWrites(ctx context.Context, workspaceID uuid.UUID, w
 // importResourcesSafely applies the import inside a store transaction when the
 // store supports one, so a failure rolls back partial work. Stores that cannot
 // run transactions fall back to direct mutations.
-func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) (int32, error) {
+func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.BatchElement, connectors []*diagv1.BatchConnector) (int32, error) {
 	if transactional, ok := s.Store.(TransactionalStore); ok {
 		var (
 			viewID int32
@@ -97,7 +97,7 @@ func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID u
 				txService.Store = txStore
 			}
 			var err error
-			viewID, writes, err = txService.importPlanResources(txCtx, workspaceID, elements, connectors)
+			viewID, writes, err = txService.importBatchResources(txCtx, workspaceID, elements, connectors)
 			return err
 		})
 		switch {
@@ -110,7 +110,7 @@ func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID u
 			return 0, err
 		}
 	}
-	viewID, writes, err := s.importPlanResources(ctx, workspaceID, elements, connectors)
+	viewID, writes, err := s.importBatchResources(ctx, workspaceID, elements, connectors)
 	if err != nil {
 		return 0, err
 	}
@@ -118,17 +118,17 @@ func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID u
 	return viewID, nil
 }
 
-// importPlanResources applies a declarative import using granular store
+// importBatchResources applies a declarative import using granular store
 // mutations (elements, owned views, placements, connectors), mirroring the
-// former ApplyPlan semantics but without the bulk plan operation. Realtime
+// former ApplyBatch semantics but without the bulk batch operation. Realtime
 // hooks are collected and fired by the caller after the import commits.
-func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) (int32, []pendingWrite, error) {
+func (s *ImportService) importBatchResources(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.BatchElement, connectors []*diagv1.BatchConnector) (int32, []pendingWrite, error) {
 	viewIDs := map[string]int32{}
 	elementIDs := map[string]int32{}
 	writes := make([]pendingWrite, 0, len(elements)+len(connectors))
 	var firstViewID int32
 
-	if planNeedsRootView(elements, connectors) {
+	if batchNeedsRootView(elements, connectors) {
 		rootID, err := s.rootViewID(ctx, workspaceID)
 		if err != nil {
 			return 0, nil, err
@@ -138,10 +138,10 @@ func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uui
 
 	for _, planned := range elements {
 		if strings.TrimSpace(planned.GetRef()) == "" {
-			return 0, nil, fmt.Errorf("plan element ref is required")
+			return 0, nil, fmt.Errorf("batch element ref is required")
 		}
 		if strings.TrimSpace(planned.GetName()) == "" {
-			return 0, nil, fmt.Errorf("plan element %q name is required", planned.GetRef())
+			return 0, nil, fmt.Errorf("batch element %q name is required", planned.GetRef())
 		}
 
 		input := ElementInput{
@@ -199,7 +199,7 @@ func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uui
 	return firstPlacementViewID, writes, nil
 }
 
-func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, input ElementInput, writes *[]pendingWrite) (*diagv1.Element, error) {
+func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.BatchElement, input ElementInput, writes *[]pendingWrite) (*diagv1.Element, error) {
 	action := "create"
 	var (
 		element *diagv1.Element
@@ -226,7 +226,7 @@ func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID u
 	return element, nil
 }
 
-func (s *ImportService) upsertImportedView(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, element *diagv1.Element, writes *[]pendingWrite) (*diagv1.View, error) {
+func (s *ImportService) upsertImportedView(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.BatchElement, element *diagv1.Element, writes *[]pendingWrite) (*diagv1.View, error) {
 	viewName := firstNonEmpty(planned.GetName(), element.GetName())
 	action := "create"
 	var (
@@ -262,7 +262,7 @@ type importPlacementRecord struct {
 	item      *diagv1.PlacedElement
 }
 
-func (s *ImportService) addImportedPlacements(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) ([]importPlacementRecord, error) {
+func (s *ImportService) addImportedPlacements(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.BatchElement, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) ([]importPlacementRecord, error) {
 	var records []importPlacementRecord
 	autoLayoutTargets := map[int32]map[int64]struct{}{}
 
@@ -353,7 +353,7 @@ func (s *ImportService) autoLayoutImports(ctx context.Context, workspaceID uuid.
 	return nil
 }
 
-func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID uuid.UUID, connectors []*diagv1.PlanConnector, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) error {
+func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID uuid.UUID, connectors []*diagv1.BatchConnector, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) error {
 	for _, planned := range connectors {
 		parentRef := planned.GetViewRef()
 		if parentRef == "" {
@@ -427,7 +427,7 @@ func (s *ImportService) rootViewID(ctx context.Context, workspaceID uuid.UUID) (
 	return 0, fmt.Errorf("root view not found")
 }
 
-func planNeedsRootView(elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) bool {
+func batchNeedsRootView(elements []*diagv1.BatchElement, connectors []*diagv1.BatchConnector) bool {
 	for _, element := range elements {
 		for _, placement := range element.GetPlacements() {
 			if ref := placement.GetParentRef(); ref == "" || ref == rootViewRef {
@@ -471,7 +471,7 @@ func connectorResponse(action string, connector *diagv1.Connector) any {
 	return &diagv1.CreateConnectorResponse{Connector: connector}
 }
 
-// ParseStructurizr parses Structurizr DSL into plan elements and connectors.
+// ParseStructurizr parses Structurizr DSL into batch elements and connectors.
 func (s *ImportService) ParseStructurizr(ctx context.Context, req *connect.Request[diagv1.ParseStructurizrRequest]) (*connect.Response[diagv1.ParseStructurizrResponse], error) {
 	parsed, err := importer.ParseStructurizr(req.Msg.GetCode())
 	if err != nil {
@@ -480,12 +480,12 @@ func (s *ImportService) ParseStructurizr(ctx context.Context, req *connect.Reque
 
 	viewRef := rootViewRef
 
-	elements := make([]*diagv1.PlanElement, 0, len(parsed.Elements))
+	elements := make([]*diagv1.BatchElement, 0, len(parsed.Elements))
 	for _, e := range parsed.Elements {
-		el := &diagv1.PlanElement{
+		el := &diagv1.BatchElement{
 			Ref:  e.ID,
 			Name: e.Name,
-			Placements: []*diagv1.PlanViewPlacement{
+			Placements: []*diagv1.BatchViewPlacement{
 				{ParentRef: rootViewRef},
 			},
 		}
@@ -501,9 +501,9 @@ func (s *ImportService) ParseStructurizr(ctx context.Context, req *connect.Reque
 		elements = append(elements, el)
 	}
 
-	connectors := make([]*diagv1.PlanConnector, 0, len(parsed.Connectors))
+	connectors := make([]*diagv1.BatchConnector, 0, len(parsed.Connectors))
 	for _, c := range parsed.Connectors {
-		pc := &diagv1.PlanConnector{
+		pc := &diagv1.BatchConnector{
 			Ref:              c.SourceID + ":" + c.TargetID,
 			ViewRef:          viewRef,
 			SourceElementRef: c.SourceID,

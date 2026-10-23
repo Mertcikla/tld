@@ -3,6 +3,7 @@ import { Box, HStack, IconButton, Tooltip, VStack, Text } from '@chakra-ui/react
 import { EditIcon } from '@chakra-ui/icons'
 import { ZoomInIcon } from './Icons'
 import { KbdHint } from './PanelUI'
+import { editorControlStyles } from '../styles/editorInteractions'
 
 export interface ViewHeaderButtonProps {
   name?: string
@@ -44,6 +45,7 @@ export default function ViewHeaderButton({
             <IconButton
               aria-label="Open current view in explorer"
               data-testid="view-header-open-explorer"
+              sx={editorControlStyles}
               icon={<ZoomInIcon size={17} />}
               onClick={onOpenExplorer}
               position="absolute"
@@ -70,6 +72,9 @@ export default function ViewHeaderButton({
         <HStack
           as="button"
           type="button"
+          aria-label="View details"
+          aria-expanded={!!isOpen}
+          sx={editorControlStyles}
           position="relative"
           zIndex={1}
           onClick={onToggle}
@@ -87,7 +92,7 @@ export default function ViewHeaderButton({
           px={4}
           py={1.5}
           cursor="pointer"
-          role="group"
+          data-group=""
           transition="all 0.2s"
           _hover={{
             borderColor: isOpen ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200',

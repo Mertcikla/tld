@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { create } from '@bufbuild/protobuf'
-import type { PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
+import type { BatchElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import {
   ChangeKind,
   CodeFactSchema,
@@ -96,10 +96,10 @@ describe('element bypass noise gate normalization', () => {
     ])
   })
 
-  it('defaults frontend import plan elements to bypass_noise_gate false', () => {
-    const explicit = { ref: 'manual', name: 'Manual', bypassNoiseGate: true } as PlanElement
+  it('defaults frontend import batch elements to bypass_noise_gate false', () => {
+    const explicit = { ref: 'manual', name: 'Manual', bypassNoiseGate: true } as BatchElement
     const normalized = normalizeFrontendImportElements([
-      { ref: 'api', name: 'API' } as PlanElement,
+      { ref: 'api', name: 'API' } as BatchElement,
       explicit,
     ])
 

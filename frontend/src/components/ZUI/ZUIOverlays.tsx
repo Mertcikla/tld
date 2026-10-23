@@ -4,13 +4,10 @@ import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
-  Button,
-  Divider,
   HStack,
   Icon,
   Image as ChakraImage,
   Popover,
-  PopoverArrow,
   PopoverBody,
   PopoverContent,
   PopoverHeader,
@@ -19,14 +16,19 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { ExternalLinkIcon } from '@chakra-ui/icons'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { Link as RouterLink } from 'react-router-dom'
+import {
+  canvasPopoverContentStyles,
+  canvasPopoverInsetCardStyles,
+  canvasPopoverKindLabelStyles,
+  canvasPopoverPillStyles,
+} from '../../styles/surfaces'
 import type { HoveredItem } from './types'
+import type { ZUIHiddenProxyBadge } from '../../crossBranch/resolve'
 import type { PathItem } from './camera'
 import { EDGE_CHANGE_META } from './edgeChange'
+import { ConnectorNameButton, ConnectorRouteCard, ConnectorSummaryCard, UnderlyingConnectors } from '../ConnectorDetails'
 
-const MAX_PROXY_HOVER_VIEW_LINKS = 5
 const BREADCRUMB_MAX_LABEL_WIDTH = 200
 const BREADCRUMB_HORIZONTAL_GUTTER = 32
 
@@ -261,18 +263,26 @@ export function ZUIBreadcrumb({
 
 export function ZUIHoverPopover({
   hoveredItem,
+  hiddenProxyBadges = [],
   hoveredScreenRect,
   isHoveredItemFullyVisible,
   onHoverLock,
   onPopoverElement,
 }: {
   hoveredItem: HoveredItem | null
+  hiddenProxyBadges?: ZUIHiddenProxyBadge[]
   hoveredScreenRect: { sx: number; sy: number; sw: number; sh: number } | null
   isHoveredItemFullyVisible: boolean
   onHoverLock: (locked: boolean) => void
   onPopoverElement?: (element: HTMLElement | null) => void
 }) {
   const isOpen = isHoveredItemFullyVisible
+  const mergedProxyDetails = hoveredItem?.type === 'edge' && !hoveredItem.data.isPortalConn && !hoveredItem.data.isProxy
+    ? hiddenProxyBadges.find((badge) => (
+      (badge.sourceAnchorElementId === hoveredItem.data.sourceObjId && badge.targetAnchorElementId === hoveredItem.data.targetObjId) ||
+      (badge.targetAnchorElementId === hoveredItem.data.sourceObjId && badge.sourceAnchorElementId === hoveredItem.data.targetObjId)
+    ))?.details
+    : undefined
   const contentElementRef = useRef<HTMLElement | null>(null)
   const isOpenRef = useRef(isOpen)
   isOpenRef.current = isOpen
@@ -317,318 +327,230 @@ export function ZUIHoverPopover({
         <PopoverContent
           ref={registerPopoverElement}
           data-testid="zui-hover-popover"
-          bg="glass.bg"
-          border="1px solid"
-          borderColor="glass.border"
-          boxShadow="panel"
-          borderRadius="md"
-          width="232px"
-          _focus={{ boxShadow: 'none' }}
+          sx={canvasPopoverContentStyles}
+          width="264px"
           pointerEvents="auto"
           onMouseEnter={() => onHoverLock(true)}
           onMouseLeave={() => onHoverLock(false)}
         >
-          <PopoverArrow bg="glass.bg" />
-          {hoveredItem?.type === 'node' && (
-            <>
-              <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3} py={2}>
-                <HStack spacing={2} align="center">
-                  {hoveredItem.data.logoUrl && (
-                    <Box flexShrink={0}>
-                      <ChakraImage src={hoveredItem.data.logoUrl} boxSize="18px" objectFit="contain" />
-                    </Box>
-                  )}
-                  <VStack align="start" spacing={0} flex={1} overflow="hidden">
-                    <Text fontWeight="700" fontSize="13px" isTruncated width="100%" color="gray.50" lineHeight="1.15">
-                      {hoveredItem.data.label}
-                    </Text>
-                  </VStack>
-                </HStack>
-              </PopoverHeader>
-              <PopoverBody px={3} py={2.5}>
-                <VStack align="stretch" spacing={2}>
-                  {hoveredItem.data.changeOverlay && (
-                    <Box data-testid="zui-change-details">
-                      <Text fontSize="11px" fontWeight="semibold">{hoveredItem.data.changeOverlay.change} · {hoveredItem.data.changeOverlay.path}</Text>
-                      {hoveredItem.data.changeOverlay.linesAdded !== undefined && <HStack spacing={2} fontSize="11px"><Text color="green.300">+{hoveredItem.data.changeOverlay.linesAdded}</Text><Text color="red.300">−{hoveredItem.data.changeOverlay.linesRemoved ?? 0}</Text></HStack>}
-                      {hoveredItem.data.changeOverlay.symbols.slice(0, 6).map((symbol, i) => <Text key={i} fontSize="11px" color="gray.300">{symbol}</Text>)}
-                      {hoveredItem.data.changeOverlay.symbols.length > 6 && <Text fontSize="11px" color="gray.400">+{hoveredItem.data.changeOverlay.symbols.length - 6} more changed symbols</Text>}
-                    </Box>
-                  )}
-                  {hoveredItem.data.technology && (
-                    <Box>
-                      <Text fontSize="11px" color="gray.300" noOfLines={1}>
-                        {hoveredItem.data.technology}
+          {hoveredItem?.type === 'node' && (() => {
+            const hasNodeDetails = Boolean(
+              hoveredItem.data.changeOverlay ||
+              hoveredItem.data.technology ||
+              hoveredItem.data.description,
+            )
+            const rawKind = hoveredItem.data.kind !== undefined ? hoveredItem.data.kind : hoveredItem.data.type
+            const kindLabel = rawKind?.trim() || ''
+            const primaryHref = hoveredItem.data.isPortal
+              ? `/views/${hoveredItem.data.linkedDiagramId}`
+              : `/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.elementId}`
+
+            return (
+              <>
+                <PopoverHeader
+                  borderBottom={hasNodeDetails ? '1px solid' : 'none'}
+                  borderColor="whiteAlpha.100"
+                  px={3.5}
+                  py={2.5}
+                >
+                  <HStack spacing={2} align="center" justify="space-between">
+                    <HStack spacing={2} align="center" flex={1} minW={0}>
+                      {hoveredItem.data.logoUrl && (
+                        <Box
+                          flexShrink={0}
+                          w="22px"
+                          h="22px"
+                          rounded="md"
+                          bg="whiteAlpha.50"
+                          border="1px solid"
+                          borderColor="whiteAlpha.100"
+                          display="flex"
+                          alignItems="center"
+                          justifyContent="center"
+                        >
+                          <ChakraImage src={hoveredItem.data.logoUrl} boxSize="14px" objectFit="contain" />
+                        </Box>
+                      )}
+                      <ConnectorNameButton
+                        label={hoveredItem.data.label}
+                        to={primaryHref}
+                        isDisabled={hoveredItem.data.diagramId < 0}
+                        size="md"
+                      />
+                    </HStack>
+                    {kindLabel && (
+                      <Text sx={canvasPopoverKindLabelStyles} isTruncated title={kindLabel}>
+                        {kindLabel}
                       </Text>
-                    </Box>
-                  )}
-                  {hoveredItem.data.description && (
-                    <Box>
-                      <Text fontSize="11px" color="gray.400" noOfLines={2} lineHeight="1.35">
+                    )}
+                  </HStack>
+                </PopoverHeader>
+                {hasNodeDetails && (
+                  <PopoverBody px={3.5} py={2.5}>
+                    <VStack align="stretch" spacing={2}>
+                      {hoveredItem.data.changeOverlay && (
+                        <Box data-testid="zui-change-details" px={2.5} py={2} sx={canvasPopoverInsetCardStyles}>
+                          <HStack justify="space-between" align="center" spacing={2}>
+                            <Text fontSize="11px" fontWeight="600" color="gray.100" isTruncated>
+                              {hoveredItem.data.changeOverlay.change} · {hoveredItem.data.changeOverlay.path}
+                            </Text>
+                            {hoveredItem.data.changeOverlay.linesAdded !== undefined && (
+                              <HStack spacing={1.5} fontSize="10px" fontWeight="700" flexShrink={0}>
+                                <Text color="green.300">+{hoveredItem.data.changeOverlay.linesAdded}</Text>
+                                <Text color="red.300">−{hoveredItem.data.changeOverlay.linesRemoved ?? 0}</Text>
+                              </HStack>
+                            )}
+                          </HStack>
+                          {hoveredItem.data.changeOverlay.symbols.slice(0, 6).map((symbol, i) => (
+                            <Text key={i} fontSize="10px" color="gray.300" isTruncated mt={0.5}>
+                              {symbol}
+                            </Text>
+                          ))}
+                          {hoveredItem.data.changeOverlay.symbols.length > 6 && (
+                            <Text fontSize="10px" color="gray.400" mt={0.5}>
+                              +{hoveredItem.data.changeOverlay.symbols.length - 6} more changed symbols
+                            </Text>
+                          )}
+                        </Box>
+                      )}
+                      {hoveredItem.data.technology && (
+                        <Text fontSize="11px" fontWeight="500" color="gray.300" noOfLines={1}>
+                          {hoveredItem.data.technology}
+                        </Text>
+                      )}
+                      {hoveredItem.data.description && (
+                        <Text fontSize="11px" color="gray.400" noOfLines={3} lineHeight="1.4">
+                          {hoveredItem.data.description}
+                        </Text>
+                      )}
+                    </VStack>
+                  </PopoverBody>
+                )}
+              </>
+            )
+          })()}
+          {hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details && (() => {
+            const { details } = hoveredItem.data
+            const sourceAnchorViewId = details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId
+            const targetAnchorViewId = details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId
+
+            return (
+              <>
+                <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
+                  <HStack spacing={2} align="center" justify="space-between">
+                    <Text fontWeight="700" fontSize="13px" isTruncated color="gray.50" lineHeight="1.2">
+                      Connectors
+                    </Text>
+                  </HStack>
+                </PopoverHeader>
+                <PopoverBody px={3.5} py={2.5}>
+                  <VStack align="stretch" spacing={2.5}>
+                    <ConnectorSummaryCard
+                      details={details}
+                      sourceTo={`/views/${sourceAnchorViewId}?element=${hoveredItem.data.sourceObjId}`}
+                      sourceDisabled={sourceAnchorViewId < 0}
+                      targetTo={`/views/${targetAnchorViewId}?element=${hoveredItem.data.targetObjId}`}
+                      targetDisabled={targetAnchorViewId < 0}
+                      direction={hoveredItem.data.direction}
+                    />
+                    <UnderlyingConnectors details={details} />
+                  </VStack>
+                </PopoverBody>
+              </>
+            )
+          })()}
+          {hoveredItem?.type === 'edge' && !hoveredItem.data.isProxy && (() => {
+            const connectorTitle = hoveredItem.data.label || (hoveredItem.data.isPortalConn ? 'Portal Connection' : 'Connector')
+            const connectorHref = hoveredItem.data.id != null && hoveredItem.data.id > 0 && hoveredItem.data.diagramId > 0
+              ? `/views/${hoveredItem.data.diagramId}?connector=${hoveredItem.data.id}`
+              : undefined
+            const sourceHref = hoveredItem.data.isPortalConn
+              ? `/views/${hoveredItem.data.diagramId}`
+              : `/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`
+            const targetHref = hoveredItem.data.isPortalConn
+              ? `/views/${hoveredItem.data.targetDiagId}`
+              : `/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`
+
+            return (
+              <>
+                <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
+                  <HStack spacing={2} align="center" justify="space-between">
+                    {connectorHref ? (
+                      <ConnectorNameButton label={connectorTitle} to={connectorHref} size="md" />
+                    ) : (
+                      <Text fontWeight="700" fontSize="13px" isTruncated flex={1} color="gray.50" lineHeight="1.2">
+                        {connectorTitle}
+                      </Text>
+                    )}
+                    {hoveredItem.data.change && (
+                      <Badge
+                        data-testid="zui-edge-change"
+                        bg={EDGE_CHANGE_META[hoveredItem.data.change].color}
+                        color="black"
+                        variant="solid"
+                        sx={canvasPopoverPillStyles}
+                      >
+                        {EDGE_CHANGE_META[hoveredItem.data.change].label}
+                      </Badge>
+                    )}
+                  </HStack>
+                </PopoverHeader>
+                <PopoverBody px={3.5} py={2.5}>
+                  <VStack align="stretch" spacing={2}>
+                    <ConnectorRouteCard
+                      source={hoveredItem.data.sourceId}
+                      sourceTo={sourceHref}
+                      sourceDisabled={hoveredItem.data.diagramId < 0}
+                      target={hoveredItem.data.targetId}
+                      targetTo={targetHref}
+                      targetDisabled={hoveredItem.data.diagramId < 0}
+                      direction={hoveredItem.data.direction}
+                    />
+                    {hoveredItem.data.description && (
+                      <Text fontSize="11px" color="gray.400" noOfLines={3} lineHeight="1.4">
                         {hoveredItem.data.description}
                       </Text>
-                    </Box>
-                  )}
-                  {hoveredItem.data.linkedDiagramId && (
-                    <Box>
-                      <Text fontSize="11px" color="var(--accent)" fontWeight="600" noOfLines={1}>
-                        {'⊞'} {hoveredItem.data.linkedDiagramLabel}
-                      </Text>
-                    </Box>
-                  )}
-                  <Divider borderColor="whiteAlpha.100" />
-                  <Button
-                    as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                    to={hoveredItem.data.isPortal
-                      ? `/views/${hoveredItem.data.linkedDiagramId}`
-                      : `/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.elementId}`}
-                    size="xs"
-                    variant="outline"
-                    h="28px"
-                    width="full"
-                    bg="rgba(var(--accent-rgb), 0.08)"
-                    borderColor="rgba(var(--accent-rgb), 0.24)"
-                    color="var(--accent)"
-                    fontWeight="700"
-                    rightIcon={<ExternalLinkIcon />}
-                    _hover={{ bg: 'rgba(var(--accent-rgb), 0.14)', borderColor: 'rgba(var(--accent-rgb), 0.36)' }}
-                    _active={{ bg: 'rgba(var(--accent-rgb), 0.18)' }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {hoveredItem.data.isPortal ? 'Open Diagram' : 'Open in Editor'}
-                  </Button>
-                </VStack>
-              </PopoverBody>
-            </>
-          )}
-          {hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details && (
-            <>
-              <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.200" px={4} py={3}>
-                <VStack align="start" spacing={0}>
-                  <Text fontWeight="600" fontSize="sm" color="white">
-                    Off-View Connector
-                  </Text>
-                  <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
-                    {hoveredItem.data.details.count} connector{hoveredItem.data.details.count === 1 ? '' : 's'}
-                  </Badge>
-                </VStack>
-              </PopoverHeader>
-              <PopoverBody px={4} py={3}>
-                <VStack align="start" spacing={3}>
-                  <VStack align="start" spacing={1}>
-                    <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">BETWEEN</Text>
-                    <Text fontSize="xs" color="gray.200">
-                      {hoveredItem.data.details.sourceAnchorName} &rarr; {hoveredItem.data.details.targetAnchorName}
-                    </Text>
-                    <Text fontSize="xs" color="gray.400">{hoveredItem.data.details.label}</Text>
-                  </VStack>
-                  <VStack align="start" spacing={1} width="full">
-                    <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">UNDERLYING PATHS</Text>
-                    {hoveredItem.data.details.connectors.slice(0, 4).map((leaf, index) => (
-                      <Text key={`${leaf.connector.id}-${index}`} fontSize="xs" color="gray.200">
-                        {leaf.source.actualElementName} &rarr; {leaf.target.actualElementName}
-                      </Text>
-                    ))}
-                    {hoveredItem.data.details.connectors.length > 4 && (
-                      <Text fontSize="xs" color="gray.500">
-                        +{hoveredItem.data.details.connectors.length - 4} more
-                      </Text>
                     )}
+                    {mergedProxyDetails && <UnderlyingConnectors details={mergedProxyDetails} />}
                   </VStack>
-                  <Divider borderColor="whiteAlpha.200" />
-                  <VStack align="stretch" spacing={2} width="full">
-                    {hoveredItem.data.details.ownerViewIds.slice(0, MAX_PROXY_HOVER_VIEW_LINKS).map((ownerViewId, index) => (
-                      <Button
-                        key={`${ownerViewId}-${index}`}
-                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                        to={`/views/${ownerViewId}`}
-                        size="xs"
-                        colorScheme="gray"
-                        variant="solid"
-                        width="full"
-                        justifyContent="space-between"
-                        rightIcon={<ExternalLinkIcon />}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {hoveredItem.data.details!.ownerViewNames[index] ?? `Open View ${ownerViewId}`}
-                      </Button>
-                    ))}
-                    {hoveredItem.data.details.ownerViewIds.length > MAX_PROXY_HOVER_VIEW_LINKS && (
-                      <Text fontSize="xs" color="gray.500" textAlign="center">
-                        +{hoveredItem.data.details.ownerViewIds.length - MAX_PROXY_HOVER_VIEW_LINKS} more view{hoveredItem.data.details.ownerViewIds.length - MAX_PROXY_HOVER_VIEW_LINKS === 1 ? '' : 's'}
-                      </Text>
+                </PopoverBody>
+              </>
+            )
+          })()}
+          {hoveredItem?.type === 'group' && (() => {
+            const groupKindLabel = hoveredItem.data.levelLabel?.trim() || ''
+            return (
+              <>
+                <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
+                  <HStack spacing={2} align="center" justify="space-between">
+                    <ConnectorNameButton
+                      label={hoveredItem.data.label}
+                      to={`/views/${hoveredItem.data.diagramId}`}
+                      isDisabled={hoveredItem.data.diagramId < 0}
+                      size="md"
+                    />
+                    {groupKindLabel && (
+                      <Badge colorScheme="purple" variant="subtle" sx={canvasPopoverPillStyles}>
+                        {groupKindLabel}
+                      </Badge>
                     )}
-                  </VStack>
-                  <Divider borderColor="whiteAlpha.200" />
-                  <HStack width="full" spacing={2}>
-                    <Button
-                      as={(hoveredItem.data.details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId) > 0 ? RouterLink : undefined}
-                      isDisabled={(hoveredItem.data.details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId) < 0}
-                      to={`/views/${hoveredItem.data.details!.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`}
-                      size="xs"
-                      colorScheme="gray"
-                      variant="solid"
-                      flex={1}
-                      rightIcon={<ExternalLinkIcon />}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Open Source
-                    </Button>
-                    <Button
-                      as={(hoveredItem.data.details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId) > 0 ? RouterLink : undefined}
-                      isDisabled={(hoveredItem.data.details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId) < 0}
-                      to={`/views/${hoveredItem.data.details!.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`}
-                      size="xs"
-                      colorScheme="teal"
-                      variant="solid"
-                      flex={1}
-                      rightIcon={<ExternalLinkIcon />}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Open Target
-                    </Button>
                   </HStack>
-                </VStack>
-              </PopoverBody>
-            </>
-          )}
-          {hoveredItem?.type === 'edge' && !hoveredItem.data.isProxy && (
-            <>
-              <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.200" px={4} py={3}>
-                <VStack align="start" spacing={0}>
-                  <Text fontWeight="600" fontSize="sm" color="white">
-                    {hoveredItem.data.label}
-                  </Text>
-                  <Badge colorScheme={hoveredItem.data.isPortalConn ? 'purple' : 'orange'} variant="subtle" fontSize="2xs">
-                    {hoveredItem.data.isPortalConn ? 'Portal Connection' : 'Connection'}
-                  </Badge>
-                  {hoveredItem.data.change && (
-                    <Badge
-                      data-testid="zui-edge-change"
-                      bg={EDGE_CHANGE_META[hoveredItem.data.change].color}
-                      color="black"
-                      variant="solid"
-                      fontSize="2xs"
-                    >
-                      {EDGE_CHANGE_META[hoveredItem.data.change].label}
-                    </Badge>
-                  )}
-                </VStack>
-              </PopoverHeader>
-              <PopoverBody px={4} py={3}>
-                <VStack align="start" spacing={3}>
-                  <VStack align="start" spacing={1}>
-                    <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">BETWEEN</Text>
-                    <Text fontSize="xs" color="gray.200">{hoveredItem.data.sourceId} & {hoveredItem.data.targetId}</Text>
+                </PopoverHeader>
+                <PopoverBody px={3.5} py={2.5}>
+                  <VStack align="stretch" spacing={2}>
+                    {hoveredItem.data.description && (
+                      <Text fontSize="11px" color="gray.400" noOfLines={3} lineHeight="1.4">
+                        {hoveredItem.data.description}
+                      </Text>
+                    )}
+                    <Text fontSize="11px" color="gray.300">
+                      {hoveredItem.data.nodes.length} elements · {hoveredItem.data.edges.length} connections
+                    </Text>
                   </VStack>
-                  <Divider borderColor="whiteAlpha.200" />
-
-                  {hoveredItem.data.isPortalConn ? (
-                    <>
-                      <Button
-                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                        to={`/views/${hoveredItem.data.diagramId}`}
-                        size="xs"
-                        colorScheme="gray"
-                        variant="solid"
-                        width="full"
-                        rightIcon={<ExternalLinkIcon />}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Open {hoveredItem.data.sourceId}
-                      </Button>
-                      <Button
-                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                        to={`/views/${hoveredItem.data.targetDiagId}`}
-                        size="xs"
-                        colorScheme="teal"
-                        variant="solid"
-                        width="full"
-                        rightIcon={<ExternalLinkIcon />}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Open {hoveredItem.data.targetId}
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                        to={`/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`}
-                        size="xs"
-                        colorScheme="gray"
-                        variant="solid"
-                        width="full"
-                        rightIcon={<ExternalLinkIcon />}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Go to {hoveredItem.data.sourceId}
-                      </Button>
-                      <Button
-                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                        to={`/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`}
-                        size="xs"
-                        colorScheme="teal"
-                        variant="solid"
-                        width="full"
-                        rightIcon={<ExternalLinkIcon />}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Go to {hoveredItem.data.targetId}
-                      </Button>
-                    </>
-                  )}
-                </VStack>
-              </PopoverBody>
-            </>
-          )}
-          {hoveredItem?.type === 'group' && (
-            <>
-              <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.200" px={4} py={3}>
-                <VStack align="start" spacing={0}>
-                  <Text fontWeight="600" fontSize="sm" color="white">
-                    {hoveredItem.data.label}
-                  </Text>
-                  <Badge colorScheme="purple" variant="subtle" fontSize="2xs">
-                    Diagram Group
-                  </Badge>
-                </VStack>
-              </PopoverHeader>
-              <PopoverBody px={4} py={3}>
-                <VStack align="start" spacing={3}>
-                  {hoveredItem.data.description && (
-                    <Box>
-                      <Text color="gray.400" fontSize="xs" fontWeight="600" mb={0.5} letterSpacing="wider">DESCRIPTION</Text>
-                      <Text fontSize="xs" color="gray.200" noOfLines={4}>{hoveredItem.data.description}</Text>
-                    </Box>
-                  )}
-                  <Text fontSize="xs" color="gray.300">
-                    Root level diagram containing {hoveredItem.data.nodes.length} elements and {hoveredItem.data.edges.length} connections.
-                  </Text>
-                  <Divider borderColor="whiteAlpha.200" />
-                  <Button
-                    as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
-                    isDisabled={hoveredItem.data.diagramId < 0}
-                    to={`/views/${hoveredItem.data.diagramId}`}
-                    size="xs"
-                    colorScheme="teal"
-                    variant="solid"
-                    width="full"
-                    rightIcon={<ExternalLinkIcon />}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    Open Diagram
-                  </Button>
-                </VStack>
-              </PopoverBody>
-            </>
-          )}
+                </PopoverBody>
+              </>
+            )
+          })()}
         </PopoverContent>
       </Portal>
     </Popover>

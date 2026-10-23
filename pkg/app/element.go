@@ -84,7 +84,7 @@ type DependencyElement struct {
 	UpdatedAt            string                `json:"updated_at"`
 }
 
-type PlanElement struct {
+type BatchElement struct {
 	Ref             string                `json:"ref"`
 	Name            string                `json:"name"`
 	Kind            *string               `json:"kind"`

@@ -689,7 +689,7 @@ func (a *APIAdapter) DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, v
 	return a.Store.DeleteDrawing(ctx, workspaceID, viewID, pathID)
 }
 
-func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+func (a *APIAdapter) ApplyBatch(ctx context.Context, _ uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
 	if req.GetDryRun() {
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dry_run is not supported by the local sqlite adapter"))
 	}
@@ -699,8 +699,8 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		return nil, err
 	}
 
-	resp := &diagv1.ApplyPlanResponse{
-		Summary: &diagv1.PlanSummary{
+	resp := &diagv1.ApplyWorkspaceBatchResponse{
+		Summary: &diagv1.BatchSummary{
 			ElementsPlanned:   int32(len(req.GetElements())),
 			ViewsPlanned:      countPlannedViews(req.GetElements()),
 			ConnectorsPlanned: int32(len(req.GetConnectors())),
@@ -716,7 +716,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 
 	for _, planned := range req.GetElements() {
 		if planned.GetRef() == "" {
-			return nil, fmt.Errorf("plan element ref is required")
+			return nil, fmt.Errorf("batch element ref is required")
 		}
 		input := api.ElementInput{
 			Name:            planned.GetName(),
@@ -740,7 +740,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		var element *diagv1.Element
 		if planned.GetId() != 0 {
 			element, err = a.GetElement(ctx, planned.GetId(), uuid.Nil)
-			if err == nil && api.PlanElementChangesMetadata(planned, element) {
+			if err == nil && api.BatchElementChangesMetadata(planned, element) {
 				element, err = a.UpdateElement(ctx, planned.GetId(), uuid.Nil, input)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
@@ -768,7 +768,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			Id:        element.GetId(),
 			UpdatedAt: element.UpdatedAt,
 		}
-		resp.ElementResults = append(resp.ElementResults, &diagv1.ApplyPlanElementResult{
+		resp.ElementResults = append(resp.ElementResults, &diagv1.ApplyBatchElementResult{
 			Ref:          planned.GetRef(),
 			CanonicalRef: planned.GetRef(),
 			Id:           element.GetId(),
@@ -782,7 +782,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			}
 			var view *diagv1.View
 			if planned.GetViewId() != 0 {
-				// The plan has an element name but no view name. Existing views
+				// The batch has an element name but no view name. Existing views
 				// retain their independently chosen names.
 				view, err = a.GetView(ctx, planned.GetViewId(), uuid.Nil)
 				if err == nil && planned.ViewLabel != nil && planned.GetViewLabel() != view.GetLevelLabel() {
@@ -960,7 +960,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			}
 			connector = current
 			err = readErr
-			if readErr == nil && api.PlanConnectorChangesMetadata(planned, current, viewID, sourceID, targetID) {
+			if readErr == nil && api.BatchConnectorChangesMetadata(planned, current, viewID, sourceID, targetID) {
 				connector, err = a.UpdateConnector(ctx, connectorID, uuid.Nil, input)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
@@ -985,7 +985,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 				Id:        connector.GetId(),
 				UpdatedAt: connector.UpdatedAt,
 			}
-			resp.ConnectorResults = append(resp.ConnectorResults, &diagv1.ApplyPlanConnectorResult{
+			resp.ConnectorResults = append(resp.ConnectorResults, &diagv1.ApplyBatchConnectorResult{
 				Ref:          planned.GetRef(),
 				CanonicalRef: planned.GetRef(),
 				Id:           connector.GetId(),
@@ -994,7 +994,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		}
 	}
 
-	layoutPositions, err := a.layoutPlanPlacements(ctx, autoLayoutTargets)
+	layoutPositions, err := a.layoutBatchPlacements(ctx, autoLayoutTargets)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,13 +1010,13 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 	return resp, nil
 }
 
-func (a *APIAdapter) layoutPlanPlacements(ctx context.Context, targets map[int64]map[int64]struct{}) (map[int64]map[int64]layout.Placement, error) {
+func (a *APIAdapter) layoutBatchPlacements(ctx context.Context, targets map[int64]map[int64]struct{}) (map[int64]map[int64]layout.Placement, error) {
 	out := map[int64]map[int64]layout.Placement{}
 	for viewID, elementIDs := range targets {
 		if len(elementIDs) == 0 {
 			continue
 		}
-		positions, err := a.layoutPlanView(ctx, viewID, elementIDs)
+		positions, err := a.layoutBatchView(ctx, viewID, elementIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -1025,12 +1025,12 @@ func (a *APIAdapter) layoutPlanPlacements(ctx context.Context, targets map[int64
 	return out, nil
 }
 
-func (a *APIAdapter) layoutPlanView(ctx context.Context, viewID int64, targets map[int64]struct{}) (map[int64]layout.Placement, error) {
-	placements, err := a.planViewPlacementNodes(ctx, viewID)
+func (a *APIAdapter) layoutBatchView(ctx context.Context, viewID int64, targets map[int64]struct{}) (map[int64]layout.Placement, error) {
+	placements, err := a.batchViewPlacementNodes(ctx, viewID)
 	if err != nil {
 		return nil, err
 	}
-	connectors, err := a.planViewLayoutConnectors(ctx, viewID)
+	connectors, err := a.batchViewLayoutConnectors(ctx, viewID)
 	if err != nil {
 		return nil, err
 	}
@@ -1043,7 +1043,7 @@ func (a *APIAdapter) layoutPlanView(ctx context.Context, viewID int64, targets m
 	return next, nil
 }
 
-func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) ([]layout.Placement, error) {
+func (a *APIAdapter) batchViewPlacementNodes(ctx context.Context, viewID int64) ([]layout.Placement, error) {
 	var rows []placementLayoutModel
 	if err := a.Store.QueryDB().NewSelect().
 		Model(&rows).
@@ -1060,7 +1060,7 @@ func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) (
 	return out, nil
 }
 
-func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64) ([]layout.Connector, error) {
+func (a *APIAdapter) batchViewLayoutConnectors(ctx context.Context, viewID int64) ([]layout.Connector, error) {
 	var rows []connectorLayoutModel
 	if err := a.Store.QueryDB().NewSelect().
 		Model(&rows).
@@ -1384,7 +1384,7 @@ func cloneStrings(values []string) []string {
 	return out
 }
 
-func countPlannedViews(elements []*diagv1.PlanElement) int32 {
+func countPlannedViews(elements []*diagv1.BatchElement) int32 {
 	var count int32
 	for _, element := range elements {
 		if element.GetHasView() {

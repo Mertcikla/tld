@@ -229,15 +229,15 @@ func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
 	}
 }
 
-func TestApplyPlanAutoLayoutsUnpositionedPlacements(t *testing.T) {
+func TestApplyBatchAutoLayoutsUnpositionedPlacements(t *testing.T) {
 	appStore := openAdapterTestStore(t)
 
-	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
-		Elements: []*diagv1.PlanElement{
-			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
-			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
+	resp, err := NewAPIAdapter(appStore).ApplyBatch(context.Background(), uuid.Nil, &diagv1.ApplyWorkspaceBatchRequest{
+		Elements: []*diagv1.BatchElement{
+			{Ref: "api", Name: "API", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
+			{Ref: "db", Name: "DB", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{
+		Connectors: []*diagv1.BatchConnector{{
 			Ref:              "api-db",
 			ViewRef:          "root",
 			SourceElementRef: "api",
@@ -277,16 +277,16 @@ func TestApplyPlanAutoLayoutsUnpositionedPlacements(t *testing.T) {
 	}
 }
 
-func TestApplyPlanCreatesMissingConnectorWithPlannedID(t *testing.T) {
+func TestApplyBatchCreatesMissingConnectorWithPlannedID(t *testing.T) {
 	appStore := openAdapterTestStore(t)
 	connectorID := int32(77)
 
-	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
-		Elements: []*diagv1.PlanElement{
-			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
-			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
+	resp, err := NewAPIAdapter(appStore).ApplyBatch(context.Background(), uuid.Nil, &diagv1.ApplyWorkspaceBatchRequest{
+		Elements: []*diagv1.BatchElement{
+			{Ref: "api", Name: "API", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
+			{Ref: "db", Name: "DB", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{
+		Connectors: []*diagv1.BatchConnector{{
 			Id:               &connectorID,
 			Ref:              "api-db",
 			ViewRef:          "root",
@@ -305,18 +305,18 @@ func TestApplyPlanCreatesMissingConnectorWithPlannedID(t *testing.T) {
 	}
 }
 
-func TestApplyPlanPreservesOmittedCoordinatesAndRouting(t *testing.T) {
+func TestApplyBatchPreservesOmittedCoordinatesAndRouting(t *testing.T) {
 	adapter := NewAPIAdapter(openAdapterTestStore(t))
 	x, y, dbX, dbY := 200.0, 100.0, 400.0, 100.0
 	direction, style := "both", "straight"
-	request := &diagv1.ApplyPlanRequest{
-		Elements: []*diagv1.PlanElement{
-			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &x, PositionY: &y}}},
-			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root", PositionX: &dbX, PositionY: &dbY}}},
+	request := &diagv1.ApplyWorkspaceBatchRequest{
+		Elements: []*diagv1.BatchElement{
+			{Ref: "api", Name: "API", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root", PositionX: &x, PositionY: &y}}},
+			{Ref: "db", Name: "DB", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root", PositionX: &dbX, PositionY: &dbY}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{Ref: "reads", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Direction: &direction, Style: &style}},
+		Connectors: []*diagv1.BatchConnector{{Ref: "reads", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Direction: &direction, Style: &style}},
 	}
-	first, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	first, err := adapter.ApplyBatch(context.Background(), uuid.Nil, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestApplyPlanPreservesOmittedCoordinatesAndRouting(t *testing.T) {
 	}
 	connectorID := first.GetConnectorMetadata()["reads"].GetId()
 	request.Connectors[0].Id, request.Connectors[0].Direction, request.Connectors[0].Style = &connectorID, nil, nil
-	second, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	second, err := adapter.ApplyBatch(context.Background(), uuid.Nil, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestApplyPlanPreservesOmittedCoordinatesAndRouting(t *testing.T) {
 	}
 	zero := 0.0
 	request.Elements[0].Placements[0].PositionX = &zero
-	third, err := adapter.ApplyPlan(context.Background(), uuid.Nil, request)
+	third, err := adapter.ApplyBatch(context.Background(), uuid.Nil, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,15 +356,15 @@ func TestApplyPlanPreservesOmittedCoordinatesAndRouting(t *testing.T) {
 	}
 }
 
-func TestApplyPlanPreservesExplicitPlacementCoordinates(t *testing.T) {
+func TestApplyBatchPreservesExplicitPlacementCoordinates(t *testing.T) {
 	appStore := openAdapterTestStore(t)
 	x, y := 42.0, 84.0
 
-	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
-		Elements: []*diagv1.PlanElement{{
+	resp, err := NewAPIAdapter(appStore).ApplyBatch(context.Background(), uuid.Nil, &diagv1.ApplyWorkspaceBatchRequest{
+		Elements: []*diagv1.BatchElement{{
 			Ref:  "api",
 			Name: "API",
-			Placements: []*diagv1.PlanViewPlacement{{
+			Placements: []*diagv1.BatchViewPlacement{{
 				ParentRef: "root",
 				PositionX: &x,
 				PositionY: &y,
@@ -383,12 +383,12 @@ func TestApplyPlanPreservesExplicitPlacementCoordinates(t *testing.T) {
 	}
 }
 
-func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testing.T) {
+func TestApplyBatchDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testing.T) {
 	appStore := openAdapterTestStore(t)
 	explicitFalse := false
 
-	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
-		Elements: []*diagv1.PlanElement{
+	resp, err := NewAPIAdapter(appStore).ApplyBatch(context.Background(), uuid.Nil, &diagv1.ApplyWorkspaceBatchRequest{
+		Elements: []*diagv1.BatchElement{
 			{Ref: "api", Name: "API"},
 			{Ref: "manual", Name: "Manual", BypassNoiseGate: &explicitFalse},
 		},
@@ -419,8 +419,8 @@ func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testin
 			continue
 		}
 		id := element.GetId()
-		updated, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
-			Elements: []*diagv1.PlanElement{{Ref: "manual", Id: &id, Name: "Manual edited"}},
+		updated, err := NewAPIAdapter(appStore).ApplyBatch(context.Background(), uuid.Nil, &diagv1.ApplyWorkspaceBatchRequest{
+			Elements: []*diagv1.BatchElement{{Ref: "manual", Id: &id, Name: "Manual edited"}},
 		})
 		if err != nil {
 			t.Fatal(err)

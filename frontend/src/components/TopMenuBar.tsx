@@ -27,6 +27,7 @@ import UpdateSettings from "../pages/UpdateSettings"
 import { isWailsApp, isWailsMac, isWailsWindows } from "../config/runtime"
 import WindowsWindowControls from "./WindowsWindowControls"
 import FeedbackButton from "./FeedbackButton"
+import { EditorIcon } from './Icons'
 
 const FolderTreeIcon = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -37,13 +38,6 @@ const FolderTreeIcon = ({ size = 32 }: { size?: number }) => (
     <rect x="1.5" y="14" width="6" height="4.5" rx="1.5" fill="none" />
     <line x1="19.5" y1="11.5" x2="19.5" y2="14" />
     <rect x="16.5" y="14" width="6" height="4.5" rx="1.5" fill="none" />
-  </svg>
-)
-
-const PencilIcon = ({ size = 24 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
   </svg>
 )
 
@@ -77,7 +71,7 @@ type NavItem = {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Editor", path: "/", icon: PencilIcon, shortcutKey: "1" },
+  { label: "Editor", path: "/", icon: EditorIcon, shortcutKey: "1" },
   { label: "Diagrams", path: "/views", icon: FolderTreeIcon, shortcutKey: "2" },
   { label: "Inventory", path: "/inventory", icon: InventoryIcon, shortcutKey: "3" },
   { label: "Repositories", path: "/repositories", icon: RepositoriesIcon, shortcutKey: "4" },

@@ -186,6 +186,21 @@ describe('ElementPanel bypass noise gate', () => {
     vi.useRealTimers()
   })
 
+  it('shows a field spinner for the entire autosave request', async () => {
+    let finish!: (value: LibraryElement) => void
+    apiMocks.updateElement.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<ElementPanel isOpen autoSave element={element()} onSave={vi.fn()} onClose={vi.fn()} />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.onChange({ target: { value: 'Updated API' } }) })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(renderer.root.findByProps({ 'data-testid': 'autosave-field-element-name' }).props.opacity).toBe(1)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'autosave-field-spinner' }).filter((node) => typeof node.type === 'string')).toHaveLength(1)
+    await act(async () => { finish({ ...element(), name: 'Updated API' }) })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'autosave-field-spinner' }).filter((node) => typeof node.type === 'string')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'autosave-field-element-name' }).props.opacity).toBe(1)
+    await act(async () => renderer.unmount())
+  })
+
   it('keeps failed autosave edits available and reports a successful retry', async () => {
     const onSave = vi.fn()
     const onClose = vi.fn()
@@ -203,7 +218,8 @@ describe('ElementPanel bypass noise gate', () => {
     await act(async () => { renderer!.root.findByProps({ 'data-testid': 'panel-save-retry' }).props.onClick(); await Promise.resolve() })
     expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({ name: 'Updated API' }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: 'Updated API' }))
-    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes saved.')
+    expect(renderer!.root.findByProps({ 'data-testid': 'autosave-field-element-name' }).props.opacity).toBe(1)
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'panel-save-status' })).toHaveLength(0)
     await act(async () => { renderer!.unmount() })
   })
 

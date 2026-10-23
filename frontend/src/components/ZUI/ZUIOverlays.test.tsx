@@ -218,6 +218,16 @@ describe('ZUIHoverPopover provenance', () => {
   })
 })
 
+function collectText(node: { children: Array<unknown> }): string {
+  return node.children.map((child) => {
+    if (typeof child === 'string' || typeof child === 'number') return String(child)
+    if (child && typeof child === 'object' && 'children' in child) {
+      return collectText(child as { children: Array<unknown> })
+    }
+    return ''
+  }).join(' ')
+}
+
 describe('ZUIHoverPopover edge change', () => {
   it('badges edges new in the diff', () => {
     const renderer = create(
@@ -252,6 +262,197 @@ describe('ZUIHoverPopover edge change', () => {
       />,
     )
     expect(renderer.root.findAllByProps({ 'data-testid': 'zui-edge-change' })).toHaveLength(0)
+  })
+
+  it('links the connector title to its editor selection, alongside endpoint actions', () => {
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={{
+          type: 'edge',
+          data: {
+            sourceId: 'Auth API',
+            targetId: 'User DB',
+            label: 'queries user records',
+            relationship: 'SQL',
+            direction: 'both',
+            description: 'Reads and updates credentials',
+            id: 42,
+            diagramId: 2,
+            sourceObjId: 10,
+            targetObjId: 20,
+          },
+          absX: 0,
+          absY: 0,
+        }}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    const text = collectText(renderer.root)
+    expect(text).toContain('queries user records')
+    expect(text).not.toContain('SQL')
+    expect(text).toContain('↔')
+    expect(text).toContain('Reads and updates credentials')
+    expect(text).toContain('Auth API')
+    expect(text).toContain('User DB')
+    const buttons = renderer.root.findAllByType('button')
+    expect(buttons.map((button) => button.props.to)).toEqual([
+      '/views/2?connector=42',
+      '/views/2?element=10',
+      '/views/2?element=20',
+    ])
+  })
+
+  it('renders off-view connectors and their underlying paths, including when merged into native edges', () => {
+    const item: Extract<HoveredItem, { type: 'edge' }> = {
+      type: 'edge',
+      data: {
+        sourceId: 'Billing System',
+        targetId: 'Notification System',
+        label: 'emits invoice event',
+        direction: 'forward',
+        diagramId: 3,
+        sourceObjId: 11,
+        targetObjId: 22,
+        isProxy: true,
+        details: {
+          key: 'proxy:11:22',
+          label: 'emits invoice event',
+          count: 2,
+          sourceAnchorId: '11',
+          targetAnchorId: '22',
+          sourceAnchorName: 'Billing System',
+          targetAnchorName: 'Notification System',
+          ownerViewIds: [3],
+          ownerViewNames: ['Commerce Overview'],
+          connectors: [
+            {
+              ownerViewId: 3,
+              ownerViewName: 'Commerce Overview',
+              connector: {
+                id: 101,
+                view_id: 3,
+                source_element_id: 1010,
+                target_element_id: 2020,
+                label: 'invoice.paid',
+                description: null,
+                relationship: 'Kafka',
+                direction: 'forward',
+                style: 'bezier',
+                url: null,
+                source_handle: null,
+                target_handle: null,
+                tags: [],
+                created_at: '',
+                updated_at: '',
+              },
+              source: {
+                actualElementId: 1010,
+                actualElementName: 'Invoice Worker',
+                anchorElementId: 11,
+                anchorElementName: 'Billing System',
+                anchorViewId: 3,
+                anchorViewName: 'Commerce Overview',
+                placementViewId: 4,
+                placementViewName: 'Billing Internals',
+                depth: 1,
+                externalToView: true,
+                currentBranchElementId: 11,
+                commonAncestorViewId: 3,
+                commonAncestorViewName: 'Commerce Overview',
+              },
+              target: {
+                actualElementId: 2020,
+                actualElementName: 'Email Dispatcher',
+                anchorElementId: 22,
+                anchorElementName: 'Notification System',
+                anchorViewId: 3,
+                anchorViewName: 'Commerce Overview',
+                placementViewId: 5,
+                placementViewName: 'Notifications Internals',
+                depth: 1,
+                externalToView: true,
+                currentBranchElementId: 22,
+                commonAncestorViewId: 3,
+                commonAncestorViewName: 'Commerce Overview',
+              },
+            },
+          ],
+        },
+      },
+      absX: 0,
+      absY: 0,
+    }
+    const renderer = create(
+      <ZUIHoverPopover
+        hoveredItem={item}
+        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+        isHoveredItemFullyVisible
+        onHoverLock={() => {}}
+      />,
+    )
+    const text = collectText(renderer.root)
+    expect(text).toContain('Connectors')
+    expect(text).toContain('Kafka')
+    expect(text).toContain('Billing System')
+    expect(text).toContain('Notification System')
+    expect(text).toContain('emits invoice event')
+    expect(text).toContain('Invoice Worker')
+    expect(text).toContain('Email Dispatcher')
+    const buttons = renderer.root.findAllByType('button')
+    expect(buttons.map((button) => button.props.to)).toEqual([
+      '/views/3?element=11',
+      '/views/3?element=22',
+      '/views/4?element=1010',
+      '/views/5?element=2020',
+    ])
+
+    const details = item.data.details!
+    const leaves = Array.from({ length: 6 }, (_, index) => ({
+      ...details.connectors[0],
+      connector: { ...details.connectors[0].connector, id: 200 + index, label: `event ${index}` },
+    }))
+    const mergedDetails = { ...details, count: leaves.length, connectors: leaves }
+    const badge = {
+      key: 'badge:11:22', sourceAnchorElementId: 11, targetAnchorElementId: 22,
+      sourceNodeId: 'billing', targetNodeId: 'notifications',
+      sourceHandle: null, targetHandle: null, count: leaves.length, details: mergedDetails,
+    }
+    for (const reversed of [false, true]) {
+      const native = create(
+        <ZUIHoverPopover
+          hoveredItem={{ ...item, data: {
+            ...item.data, isProxy: false, details: undefined, label: 'Native connector',
+            sourceObjId: reversed ? 22 : 11, targetObjId: reversed ? 11 : 22,
+          } }}
+          hiddenProxyBadges={[badge]}
+          hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+          isHoveredItemFullyVisible
+          onHoverLock={() => {}}
+        />,
+      )
+      const nativeText = collectText(native.root)
+      expect(nativeText).toContain('Native connector')
+      expect(nativeText).toContain('Underlying Connectors')
+      expect(nativeText).toContain('Invoice Worker')
+      expect(nativeText).toContain('Email Dispatcher')
+      expect(nativeText).toContain('event 5')
+      const routes = native.root.findAllByType('button').map((button) => button.props.to)
+      expect(routes).toContain('/views/4?element=1010')
+      expect(routes).toContain('/views/5?element=2020')
+      native.update(
+        <ZUIHoverPopover
+          hoveredItem={{ ...item, data: { ...item.data, isProxy: false, details: undefined, targetObjId: 99 } }}
+          hiddenProxyBadges={[badge]}
+          hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
+          isHoveredItemFullyVisible
+          onHoverLock={() => {}}
+        />,
+      )
+      expect(collectText(native.root)).not.toContain('Underlying Connectors')
+      native.unmount()
+    }
   })
 })
 

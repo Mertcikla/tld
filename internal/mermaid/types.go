@@ -19,8 +19,8 @@ const (
 )
 
 type ParsedDiagram struct {
-	Elements   []*diagv1.PlanElement
-	Connectors []*diagv1.PlanConnector
+	Elements   []*diagv1.BatchElement
+	Connectors []*diagv1.BatchConnector
 	Warnings   []string
 	Direction  Direction
 	Source     string

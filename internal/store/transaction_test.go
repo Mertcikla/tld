@@ -107,17 +107,17 @@ func TestTransactionIsolatesConcurrentRequest(t *testing.T) {
 	}
 }
 
-func TestApplyWorkspacePlanRollsBackPartialWrites(t *testing.T) {
+func TestApplyWorkspaceBatchRollsBackPartialWrites(t *testing.T) {
 	store := openAdapterTestStore(t)
 	adapter := NewAPIAdapter(store)
 	svc := &api.WorkspaceService{Store: adapter}
-	_, err := svc.ApplyWorkspacePlan(context.Background(), connect.NewRequest(&diagv1.ApplyPlanRequest{
+	_, err := svc.ApplyWorkspaceBatch(context.Background(), connect.NewRequest(&diagv1.ApplyWorkspaceBatchRequest{
 		OrgId: uuid.NewString(),
-		Elements: []*diagv1.PlanElement{
+		Elements: []*diagv1.BatchElement{
 			{Ref: "api", Name: "API", HasView: true, Tags: []string{"new-tag"}},
-			{Ref: "db", Name: "Database", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "api"}}},
+			{Ref: "db", Name: "Database", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "api"}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{ViewRef: "root", SourceElementRef: "api", TargetElementRef: "missing"}},
+		Connectors: []*diagv1.BatchConnector{{ViewRef: "root", SourceElementRef: "api", TargetElementRef: "missing"}},
 	}))
 	if err == nil || !strings.Contains(err.Error(), `unknown target element ref "missing"`) {
 		t.Fatalf("expected missing target error after writes, got %v", err)
@@ -140,19 +140,19 @@ func TestApplyWorkspacePlanRollsBackPartialWrites(t *testing.T) {
 	}
 }
 
-func TestApplyWorkspacePlanCommitsGraphAndLayout(t *testing.T) {
+func TestApplyWorkspaceBatchCommitsGraphAndLayout(t *testing.T) {
 	store := openAdapterTestStore(t)
 	adapter := NewAPIAdapter(store)
 	svc := &api.WorkspaceService{Store: adapter}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := svc.ApplyWorkspacePlan(ctx, connect.NewRequest(&diagv1.ApplyPlanRequest{
+	resp, err := svc.ApplyWorkspaceBatch(ctx, connect.NewRequest(&diagv1.ApplyWorkspaceBatchRequest{
 		OrgId: uuid.NewString(),
-		Elements: []*diagv1.PlanElement{
-			{Ref: "api", Name: "API", HasView: true, Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
-			{Ref: "db", Name: "Database", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
+		Elements: []*diagv1.BatchElement{
+			{Ref: "api", Name: "API", HasView: true, Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
+			{Ref: "db", Name: "Database", Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
 		},
-		Connectors: []*diagv1.PlanConnector{{Id: new(int32(999)), Ref: "link", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db"}},
+		Connectors: []*diagv1.BatchConnector{{Id: new(int32(999)), Ref: "link", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db"}},
 	}))
 	if err != nil {
 		t.Fatal(err)

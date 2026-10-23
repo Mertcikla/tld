@@ -43,6 +43,8 @@ import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import PanelSaveStatus from './PanelSaveStatus'
+import AutosaveField from './AutosaveField'
+import { useAutosaveFieldFeedback } from '../hooks/useAutosaveFieldFeedback'
 import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
@@ -401,6 +403,11 @@ function ElementPanel({
   const [bypassNoiseGate, setBypassNoiseGate] = useState(false)
   const [loading, setLoading] = useState(false)
   const { state: saveState, startSaving, saved: reportSaved, failed } = usePanelSaveFeedback(`element-${isOpen ? element?.id ?? 'new' : 'closed'}`)
+  const { capture: captureFieldSave, confirmed: savedFields, saving: savingFields, inlineSave } = useAutosaveFieldFeedback(
+    `element-${isOpen ? element?.id ?? 'new' : 'closed'}`,
+    { name, kind: typeQuery || type, description, url },
+    { name: element?.name ?? '', kind: element?.kind ?? '', description: element?.description ?? '', url: element?.url ?? '' },
+  )
   const [explicitLogoClear, setExplicitLogoClear] = useState(false)
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const typeInputRef = useRef<HTMLInputElement>(null)
@@ -619,15 +626,19 @@ function ElementPanel({
     }
 
     saveState.saving = true
+    let fieldSave: ReturnType<typeof captureFieldSave> | undefined
     try {
       const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
+      fieldSave = captureFieldSave({ name: payload.name, kind: payload.kind, description: payload.description, url: payload.url })
       startSaving()
       const saved = await api.elements.update(element.id, payload)
       lastSavedFingerprintByElementRef.current.set(element.id, fingerprint)
+      fieldSave.saved()
       reportSaved()
       onSave(saved)
     } catch {
+      fieldSave?.failed()
       failed()
     } finally {
       saveState.saving = false
@@ -637,7 +648,7 @@ function ElementPanel({
         void pendingSave.save(pendingSave.overrides)
       }
     }
-  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed])
+  }, [autoSaveEdit, element, draftElementId, name, buildPayloadAndFingerprint, onSave, startSaving, reportSaved, failed, captureFieldSave])
 
   if (element && draftElementId === element.id) {
     // A delayed blur save must use this element's newest draft, even after selection changes.
@@ -1173,65 +1184,69 @@ function ElementPanel({
           <VStack spacing={4} align="stretch">
             <FormControl isRequired isDisabled={isReadOnly}>
               <FormLabel>Name</FormLabel>
-              <Input
-                data-testid="element-panel-name-input"
-                ref={nameInputRef}
-                size="sm"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => scheduleAutoSave()}
-                placeholder="Payment Service"
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.name} saving={savingFields.name} field="element-name">
+                <Input
+                  data-testid="element-panel-name-input"
+                  ref={nameInputRef}
+                  size="sm"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => scheduleAutoSave()}
+                  placeholder="Payment Service"
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Type</FormLabel>
               <VStack align="stretch" spacing={2}>
                 <HStack align="flex-start">
-                  <InputGroup>
-                    <Input
-                      data-testid="element-panel-type-input"
-                      ref={typeInputRef}
-                      size="sm"
-                      value={typeQuery || type}
-                      onFocus={() => {
-                        if (isReadOnly) return
-                        if (type && !typeQuery) setTypeQuery(type)
-                      }}
-                      onChange={(e) => setTypeQuery(e.target.value)}
-                      onBlur={() => {
-                        if (isReadOnly) return
-                        // If the user is clicking a result, the mousedown handler will
-                        // set suppression so we don't prematurely commit the typed query
-                        // (which would happen before the click handler runs).
-                        if (suppressTypeBlurRef.current) {
-                          suppressTypeBlurRef.current = false
-                          return
-                        }
-                        if (typeQuery.trim()) commitTypeFromQuery()
-                        scheduleAutoSave()
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          commitTypeFromQuery()
-                        }
-                      }}
-                      placeholder="type to search or create"
-                      isDisabled={isReadOnly}
-                    />
-                    {!!type && (
-                      <InputRightElement h="full">
-                        <CloseButton
-                          size="sm"
-                          onClick={(e) => {
+                  <AutosaveField enabled={autoSaveEdit} receipt={savedFields.kind} saving={savingFields.kind} field="element-kind" hasTrailingAction={!!type}>
+                    <InputGroup>
+                      <Input
+                        data-testid="element-panel-type-input"
+                        ref={typeInputRef}
+                        size="sm"
+                        value={typeQuery || type}
+                        onFocus={() => {
+                          if (isReadOnly) return
+                          if (type && !typeQuery) setTypeQuery(type)
+                        }}
+                        onChange={(e) => setTypeQuery(e.target.value)}
+                        onBlur={() => {
+                          if (isReadOnly) return
+                          // If the user is clicking a result, the mousedown handler will
+                          // set suppression so we don't prematurely commit the typed query
+                          // (which would happen before the click handler runs).
+                          if (suppressTypeBlurRef.current) {
+                            suppressTypeBlurRef.current = false
+                            return
+                          }
+                          if (typeQuery.trim()) commitTypeFromQuery()
+                          scheduleAutoSave()
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
                             e.preventDefault()
-                            e.stopPropagation()
-                            clearTypeAndFocus()
-                          }}
-                        />
-                      </InputRightElement>
-                    )}
-                  </InputGroup>
+                            commitTypeFromQuery()
+                          }
+                        }}
+                        placeholder="type to search or create"
+                        isDisabled={isReadOnly}
+                      />
+                      {!!type && (
+                        <InputRightElement h="full">
+                          <CloseButton
+                            size="sm"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              clearTypeAndFocus()
+                            }}
+                          />
+                        </InputRightElement>
+                      )}
+                    </InputGroup>
+                  </AutosaveField>
                 </HStack>
 
                 {!isReadOnly && typeQuery.trim() && typeQuery.trim().toLowerCase() !== (type || '').trim().toLowerCase() && (
@@ -1281,15 +1296,17 @@ function ElementPanel({
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Description</FormLabel>
-              <Textarea
-                data-testid="element-panel-description-input"
-                size="sm"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onBlur={() => scheduleAutoSave()}
-                placeholder="What does this element do?"
-                rows={3}
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.description} saving={savingFields.description} field="element-description" multiline>
+                <Textarea
+                  data-testid="element-panel-description-input"
+                  size="sm"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  onBlur={() => scheduleAutoSave()}
+                  placeholder="What does this element do?"
+                  rows={3}
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Technology</FormLabel>
@@ -1689,14 +1706,16 @@ function ElementPanel({
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>URL</FormLabel>
-              <Input
-                data-testid="element-panel-url-input"
-                size="sm"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onBlur={() => scheduleAutoSave()}
-                placeholder="https://…"
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.url} saving={savingFields.url} field="element-url">
+                <Input
+                  data-testid="element-panel-url-input"
+                  size="sm"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onBlur={() => scheduleAutoSave()}
+                  placeholder="https://…"
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Tags</FormLabel>
@@ -1967,7 +1986,7 @@ function ElementPanel({
         </ScrollIndicatorWrapper>
 
         {/* Footer */}
-        {canEdit && <PanelSaveStatus state={saveState} hasFooter={!autoSaveEdit && !isInline} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
+        {canEdit && <PanelSaveStatus state={autoSaveEdit && inlineSave && (saveState === 'saving' || saveState === 'saved') ? 'idle' : saveState} hasFooter={!autoSaveEdit && !isInline} onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         {!autoSaveEdit && !isInline && (
           <HStack px={4} py={3} justify="flex-end" flexShrink={0}>
             <Button variant="ghost" size="sm" onClick={handleClose}>

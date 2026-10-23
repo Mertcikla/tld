@@ -161,7 +161,7 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
     await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
     await expect(page.getByTestId('zui-hover-popover')).toContainText(parent.name)
     await page.getByTestId('zui-hover-popover').hover()
-    const openAction = page.getByRole('link', { name: /Open (in Editor|Diagram)/ })
+    const openAction = page.getByTestId('zui-hover-popover').getByRole('link', { name: parent.name })
     await expect(openAction).toBeVisible()
     await openAction.click()
     await expect(page).toHaveURL(/\/views\/\d+/)
@@ -207,7 +207,15 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
   expect(Math.abs(anchor!.y - pointer.y)).toBeLessThan(2)
 
   await page.getByTestId('zui-hover-popover').hover()
-  await expect(page.getByRole('link', { name: `Go to ${sibling.name}` })).toBeVisible()
+  await expect(page.getByTestId('zui-hover-popover').getByRole('link', { name: sibling.name })).toBeVisible()
+  const title = page.getByTestId('zui-hover-popover').getByRole('link', { name: 'Parent Link', exact: true })
+  const titleHref = await title.getAttribute('href')
+  expect(titleHref).toMatch(new RegExp(`^/views/${root.id}\\?connector=\\d+$`))
+  const connectorId = new URL(titleHref!, 'http://localhost').searchParams.get('connector')!
+  await title.click()
+  await expect(page.getByTestId('connector-panel-label-input')).toHaveValue('Parent Link')
+  await expect(page.getByTestId(`rf__edge-${connectorId}`)).toHaveClass(/selected/)
+  await expect(page).toHaveURL(new RegExp(`/views/${root.id}$`))
 
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${child.id}`)
   await waitForZuiReady(page)
@@ -218,7 +226,11 @@ test('highlights connector hover, anchors its popover near the pointer, and supp
   await page.mouse.move(nested.connector.midPoint.x, nested.connector.midPoint.y)
   await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
   await expect(page.getByTestId('zui-hover-popover')).toContainText('Child Link')
-  await expect(page.getByRole('link', { name: `Go to ${childTarget.name}` })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
+  await expect(page.getByTestId('zui-hover-popover').getByRole('link', { name: childTarget.name })).toHaveAttribute('href', `/views/${child.id}?element=${childTarget.id}`)
+  await page.getByTestId('zui-hover-popover').getByRole('link', { name: 'Child Link', exact: true }).click()
+  await expect(page.getByTestId('connector-panel-label-input')).toHaveValue('Child Link')
+  await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
+  await expect(page).toHaveURL(new RegExp(`/views/${child.id}$`))
 })
 
 test('element popovers keep hover while crossing a connector behind the gap', async ({ page }) => {
@@ -238,7 +250,7 @@ test('element popovers keep hover while crossing a connector behind the gap', as
   await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
   const initialAnchor = await page.getByTestId('zui-hover-anchor').boundingBox()
   const initialPopup = await popover.boundingBox()
-  const action = page.getByRole('link', { name: 'Open in Editor' })
+  const action = popover.getByRole('link', { name: parent.name })
   const button = await action.boundingBox()
   const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
   for (let step = 1; step <= 20; step += 1) {
@@ -254,6 +266,7 @@ test('element popovers keep hover while crossing a connector behind the gap', as
   await expect(popover).toBeHidden()
   await page.mouse.move(start.x, start.y)
   await expect(popover).toContainText(parent.name)
+  await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
   await expect(action).toHaveAttribute('href', `/views/${root.id}?element=${parent.id}`)
   await action.click()
   await expect(page).toHaveURL(new RegExp(`/views/${root.id}(?:\\?|$)`))
@@ -282,7 +295,7 @@ test('connector popovers stay anchored and remain reachable across the safe hove
   expect(await anchor.boundingBox()).toEqual(initialAnchor)
   expect(await popover.boundingBox()).toEqual(initialPopup)
 
-  const action = page.getByRole('link', { name: `Go to ${sibling.name}` })
+  const action = popover.getByRole('link', { name: sibling.name })
   const button = await action.boundingBox()
   const destination = { x: button!.x + button!.width / 2, y: button!.y + button!.height / 2 }
   // Move slowly through the gap, longer than the dismissal grace period.
@@ -355,7 +368,7 @@ test('anchors off-view connector popovers at either hovered end of the route', a
     await page.mouse.move(pointer.x, pointer.y)
     const popover = page.getByTestId('zui-hover-popover')
     await expect(popover).toBeVisible()
-    await expect(popover).toContainText('Off-View Connector')
+    await expect(popover.getByText('Connectors', { exact: true })).toBeVisible()
     await expect.poll(() => popover.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)).toBe(1)
     const anchor = await page.getByTestId('zui-hover-anchor').boundingBox()
     expect(Math.abs(anchor!.x - pointer.x)).toBeLessThan(2)
@@ -398,7 +411,7 @@ test('shows connected unplaced elements inside a synthetic Explore boundary', as
   const node = (await geometry()).node
   await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2)
   await expect(page.getByTestId('zui-hover-popover')).toContainText(target.name)
-  await expect(page.getByTestId('zui-hover-popover').getByRole('button', { name: 'Open in Editor', exact: true })).toBeDisabled()
+  await expect(page.getByTestId('zui-hover-popover').getByRole('button', { name: target.name, exact: true })).toBeDisabled()
 })
 
 test('handles one-finger touch pan, two-finger pinch, and transition back to touch pan', async ({ page }, testInfo) => {

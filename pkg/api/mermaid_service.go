@@ -462,7 +462,7 @@ func connectorPersistenceKey(sourceID, targetID int32, label, relationship strin
 	return fmt.Sprintf("%d:%d:%s:%s", sourceID, targetID, strings.TrimSpace(label), strings.TrimSpace(relationship))
 }
 
-func resolvePlacedElementByImportFingerprint(element *diagv1.PlanElement, existing map[string][]*diagv1.PlacedElement, used map[int32]struct{}) *diagv1.Element {
+func resolvePlacedElementByImportFingerprint(element *diagv1.BatchElement, existing map[string][]*diagv1.PlacedElement, used map[int32]struct{}) *diagv1.Element {
 	if !isExportedTldElementRef(element) {
 		return nil
 	}
@@ -479,7 +479,7 @@ func resolvePlacedElementByImportFingerprint(element *diagv1.PlanElement, existi
 	return placedElementAsElement(placement)
 }
 
-func isExportedTldElementRef(element *diagv1.PlanElement) bool {
+func isExportedTldElementRef(element *diagv1.BatchElement) bool {
 	if mermaidRefElementID(element.GetRef()) == 0 {
 		return false
 	}
@@ -500,7 +500,7 @@ func placedElementImportFingerprints(placements []*diagv1.PlacedElement) map[str
 	return out
 }
 
-func importElementFingerprint(element *diagv1.PlanElement) string {
+func importElementFingerprint(element *diagv1.BatchElement) string {
 	return strings.Join([]string{
 		strings.TrimSpace(element.GetName()),
 		strings.TrimSpace(element.GetKind()),
@@ -561,7 +561,7 @@ func placedElementAsElement(placement *diagv1.PlacedElement) *diagv1.Element {
 	}
 }
 
-func connectorWouldChangeExisting(existing *diagv1.Connector, planned *diagv1.PlanConnector, handles mermaid.ConnectorHandles) bool {
+func connectorWouldChangeExisting(existing *diagv1.Connector, planned *diagv1.BatchConnector, handles mermaid.ConnectorHandles) bool {
 	sourceHandle := handles.Source
 	if planned.GetSourceHandle() != "" {
 		sourceHandle = planned.GetSourceHandle()

@@ -140,17 +140,17 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 	}
 
 	ctx := sess.Context(cmd.Context())
-	plan, err := exec.BuildImportPlan(ctx, runner, ws, doc.Elements, doc.Connectors)
+	batch, err := exec.BuildImportBatch(ctx, runner, ws, doc.Elements, doc.Connectors)
 	if err != nil {
 		return fail(fmt.Errorf("import aborted before any changes were made: %w", err))
 	}
 
-	setImportDiagnostics(plan, ws, doc.Elements)
+	setImportDiagnostics(batch, ws, doc.Elements)
 	if dryRun {
-		return reportImport(cmd, format, compact, "import", "dry-run", plan)
+		return reportImport(cmd, format, compact, "import", "dry-run", batch)
 	}
 
-	resp, err := runner.ApplyPlan(ctx, plan.Request)
+	resp, err := runner.ApplyBatch(ctx, batch.Request)
 	if err != nil {
 		return fail(explainApplyError(err))
 	}
@@ -160,15 +160,15 @@ func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact
 		if err != nil {
 			return fail(sess.CacheError(err))
 		}
-		if err := persistImportCache(sess.Wdir, ws, plan, resp, actual); err != nil {
+		if err := persistImportCache(sess.Wdir, ws, batch, resp, actual); err != nil {
 			return fail(sess.CacheError(err))
 		}
 	}
 
 	if sess.HasWorkspace() {
-		plan.Views = ws.ViewDiagnostics()
+		batch.Views = ws.ViewDiagnostics()
 	}
-	return reportImport(cmd, format, compact, "import", "ok", plan, resp)
+	return reportImport(cmd, format, compact, "import", "ok", batch, resp)
 }
 
 func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
@@ -324,11 +324,11 @@ func explainApplyError(err error) error {
 	return fmt.Errorf("import failed and was rolled back; no changes were committed: %w", wrapped)
 }
 
-// persistImportCache writes the successful plan back into the local YAML cache,
+// persistImportCache writes the successful batch back into the local YAML cache,
 // mirroring the write-through behavior of `add`/`connect`. The target is always
 // the source of truth: if this fails, the caller reports that a `tld pull` is
 // needed rather than treating the import as failed.
-func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportPlan, resp *diagv1.ApplyPlanResponse, exported *diagv1.ExportOrganizationResponse) error {
+func persistImportCache(wdir string, ws *workspace.Workspace, batch *exec.ImportBatch, resp *diagv1.ApplyWorkspaceBatchResponse, exported *diagv1.ExportOrganizationResponse) error {
 	if ws.Elements == nil {
 		ws.Elements = map[string]*workspace.Element{}
 	}
@@ -343,10 +343,10 @@ func persistImportCache(wdir string, ws *workspace.Workspace, plan *exec.ImportP
 		}
 	}
 
-	for ref, spec := range plan.ElementSpecs {
+	for ref, spec := range batch.ElementSpecs {
 		ws.Elements[ref] = mergeImportElement(ws.Elements[ref], spec)
 	}
-	for _, spec := range plan.Connectors {
+	for _, spec := range batch.Connectors {
 		ws.Connectors[workspace.ConnectorKey(spec)] = spec
 	}
 
@@ -527,26 +527,26 @@ func protoMetadata(meta *diagv1.ResourceMetadata) *workspace.ResourceMetadata {
 	return &workspace.ResourceMetadata{ID: workspace.ResourceID(id), UpdatedAt: updatedAt}
 }
 
-func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan, responses ...*diagv1.ApplyPlanResponse) error {
-	elements := plan.ElementsCreated + plan.ElementsUpdated
-	connectors := plan.ConnectorsCreated + plan.ConnectorsUpdated
+func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, batch *exec.ImportBatch, responses ...*diagv1.ApplyWorkspaceBatchResponse) error {
+	elements := batch.ElementsCreated + batch.ElementsUpdated
+	connectors := batch.ConnectorsCreated + batch.ConnectorsUpdated
 	omitted := 0
-	for _, view := range plan.Views {
+	for _, view := range batch.Views {
 		omitted += len(view.OmittedConnectors)
 	}
 
 	if cmdutil.WantsJSON(format) {
-		var response *diagv1.ApplyPlanResponse
+		var response *diagv1.ApplyWorkspaceBatchResponse
 		if len(responses) > 0 {
 			response = responses[0]
 		}
 		items := make([]cmdutil.JSONItem, 0, elements+connectors)
-		for _, el := range plan.Request.GetElements() {
+		for _, el := range batch.Request.GetElements() {
 			id, action := el.GetId(), "add"
 			if id != 0 {
 				action = "update"
 			}
-			if plan.Unchanged["element:"+el.GetRef()] {
+			if batch.Unchanged["element:"+el.GetRef()] {
 				action = "unchanged"
 			}
 			if response != nil {
@@ -558,7 +558,7 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 				if viewID != 0 {
 					viewAction = "update"
 				}
-				if plan.Unchanged["view:"+el.GetRef()] {
+				if batch.Unchanged["view:"+el.GetRef()] {
 					viewAction = "unchanged"
 				}
 				if response != nil {
@@ -567,12 +567,12 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 				items = append(items, cmdutil.JSONItem{Ref: el.GetRef(), ID: viewID, ResourceType: "view", Action: viewAction})
 			}
 		}
-		for _, connector := range plan.Request.GetConnectors() {
+		for _, connector := range batch.Request.GetConnectors() {
 			id, action := connector.GetId(), "add"
 			if id != 0 {
 				action = "update"
 			}
-			if plan.Unchanged["connector:"+connector.GetRef()] {
+			if batch.Unchanged["connector:"+connector.GetRef()] {
 				action = "unchanged"
 			}
 			if response != nil {
@@ -590,60 +590,60 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 			Command: command,
 			Status:  status,
 			Items:   items,
-			Extra:   map[string]any{"views": plan.Views, "preserved_placements": plan.PreservedPlacements},
+			Extra:   map[string]any{"views": batch.Views, "preserved_placements": batch.PreservedPlacements},
 			Summary: map[string]int{
 				"omitted_connectors":   omitted,
-				"elements_created":     plan.ElementsCreated,
-				"elements_updated":     plan.ElementsUpdated,
-				"elements_unchanged":   plan.ElementsUnchanged,
-				"views_created":        plan.ViewsCreated,
-				"connectors_created":   plan.ConnectorsCreated,
-				"connectors_updated":   plan.ConnectorsUpdated,
-				"connectors_unchanged": plan.ConnectorsUnchanged,
+				"elements_created":     batch.ElementsCreated,
+				"elements_updated":     batch.ElementsUpdated,
+				"elements_unchanged":   batch.ElementsUnchanged,
+				"views_created":        batch.ViewsCreated,
+				"connectors_created":   batch.ConnectorsCreated,
+				"connectors_updated":   batch.ConnectorsUpdated,
+				"connectors_unchanged": batch.ConnectorsUnchanged,
 			},
 		})
 	}
 
-	for _, view := range plan.Views {
+	for _, view := range batch.Views {
 		term.Infof(cmd.OutOrStdout(), "view %s: %d elements, %d connectors (%d direct, %d off-view, %d unresolved)", view.View, view.Elements, view.Connectors, view.RenderedConnectors, len(view.OffViewConnectors), len(view.UnresolvedConnectors))
 		if len(view.OffViewConnectors) > 0 {
 			term.Info(cmd.OutOrStdout(), workspace.OffViewHint)
 		}
 	}
-	if len(plan.PreservedPlacements) > 0 {
-		refs := make([]string, 0, len(plan.PreservedPlacements))
-		for ref := range plan.PreservedPlacements {
+	if len(batch.PreservedPlacements) > 0 {
+		refs := make([]string, 0, len(batch.PreservedPlacements))
+		for ref := range batch.PreservedPlacements {
 			refs = append(refs, ref)
 		}
 		sort.Strings(refs)
 		for _, ref := range refs {
-			term.Infof(cmd.OutOrStdout(), "kept existing placements for %s: %s", ref, strings.Join(plan.PreservedPlacements[ref], ", "))
+			term.Infof(cmd.OutOrStdout(), "kept existing placements for %s: %s", ref, strings.Join(batch.PreservedPlacements[ref], ", "))
 		}
 		term.Infof(cmd.OutOrStdout(), "Use 'tld view unplace <view> <element>' to remove a placement.")
 	}
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
 			"dry-run: would %s %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
-			command, elements, plan.ElementsCreated, plan.ElementsUpdated,
-			plan.ElementsUnchanged, connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated, plan.ConnectorsUnchanged)
-		if plan.ViewsCreated > 0 {
-			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", plan.ViewsCreated)
+			command, elements, batch.ElementsCreated, batch.ElementsUpdated,
+			batch.ElementsUnchanged, connectors, batch.ConnectorsCreated, batch.ConnectorsUpdated, batch.ConnectorsUnchanged)
+		if batch.ViewsCreated > 0 {
+			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", batch.ViewsCreated)
 		}
 		return nil
 	}
 
 	term.Successf(cmd.OutOrStdout(),
 		"%s: %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
-		command, elements, plan.ElementsCreated, plan.ElementsUpdated,
-		plan.ElementsUnchanged, connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated, plan.ConnectorsUnchanged)
-	if plan.ViewsCreated > 0 {
-		term.Infof(cmd.OutOrStdout(), "created %d view(s)", plan.ViewsCreated)
+		command, elements, batch.ElementsCreated, batch.ElementsUpdated,
+		batch.ElementsUnchanged, connectors, batch.ConnectorsCreated, batch.ConnectorsUpdated, batch.ConnectorsUnchanged)
+	if batch.ViewsCreated > 0 {
+		term.Infof(cmd.OutOrStdout(), "created %d view(s)", batch.ViewsCreated)
 	}
 	return nil
 }
 
 // Describe the merged state, including placements an upsert deliberately keeps.
-func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declared map[string]*workspace.Element) {
+func setImportDiagnostics(batch *exec.ImportBatch, ws *workspace.Workspace, declared map[string]*workspace.Element) {
 	projected := &workspace.Workspace{Elements: map[string]*workspace.Element{}, Connectors: map[string]*workspace.Connector{}, Meta: ws.Meta}
 	for ref, el := range ws.Elements {
 		projected.Elements[ref] = el
@@ -651,13 +651,13 @@ func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declar
 	for key, c := range ws.Connectors {
 		projected.Connectors[key] = c
 	}
-	plan.PreservedPlacements = map[string][]string{}
-	for ref, el := range plan.ElementSpecs {
+	batch.PreservedPlacements = map[string][]string{}
+	for ref, el := range batch.ElementSpecs {
 		merged := mergeImportElement(ws.Elements[ref], el)
 		copy := *merged
 		projected.Elements[ref] = &copy
 	}
-	for _, el := range plan.Request.Elements {
+	for _, el := range batch.Request.Elements {
 		if el.HasView {
 			projected.Elements[el.Ref].HasView = true
 		}
@@ -671,13 +671,13 @@ func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declar
 			for _, p := range old.Placements {
 				parent := cmdutil.NormalizeParentRef(p.ParentRef)
 				if !parents[parent] {
-					plan.PreservedPlacements[ref] = append(plan.PreservedPlacements[ref], parent)
+					batch.PreservedPlacements[ref] = append(batch.PreservedPlacements[ref], parent)
 				}
 			}
-			sort.Strings(plan.PreservedPlacements[ref])
+			sort.Strings(batch.PreservedPlacements[ref])
 		}
 	}
-	for _, c := range plan.Connectors {
+	for _, c := range batch.Connectors {
 		projected.Connectors[workspace.ConnectorKey(c)] = c
 	}
 	// A newly shared endpoint causes the target to copy existing relationships
@@ -704,5 +704,5 @@ func setImportDiagnostics(plan *exec.ImportPlan, ws *workspace.Workspace, declar
 			}
 		}
 	}
-	plan.Views = projected.ViewDiagnostics()
+	batch.Views = projected.ViewDiagnostics()
 }

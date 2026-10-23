@@ -229,10 +229,10 @@ func (s *WorkspaceService) DeleteElementNavigation(
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("manual navigation deletion is no longer supported"))
 }
 
-func (s *WorkspaceService) ApplyWorkspacePlan(
+func (s *WorkspaceService) ApplyWorkspaceBatch(
 	ctx context.Context,
-	req *connect.Request[diagv1.ApplyPlanRequest],
-) (*connect.Response[diagv1.ApplyPlanResponse], error) {
+	req *connect.Request[diagv1.ApplyWorkspaceBatchRequest],
+) (*connect.Response[diagv1.ApplyWorkspaceBatchResponse], error) {
 	m := req.Msg
 
 	workspaceID, err := ResolveWorkspaceID(ctx, m.GetOrgId())
@@ -278,29 +278,29 @@ func (s *WorkspaceService) ApplyWorkspacePlan(
 		}
 	}
 
-	if err := s.hooks().CheckApplyPlan(ctx, workspaceID, m); err != nil {
+	if err := s.hooks().CheckApplyBatch(ctx, workspaceID, m); err != nil {
 		return nil, err
 	}
 
-	resp, err := s.applyPlan(ctx, workspaceID, req.Msg)
+	resp, err := s.applyBatch(ctx, workspaceID, req.Msg)
 	if err != nil {
-		return nil, storeErr("apply plan", err)
+		return nil, storeErr("apply batch", err)
 	}
 
-	s.hooks().AfterApplyPlan(ctx, workspaceID, m, resp)
+	s.hooks().AfterApplyBatch(ctx, workspaceID, m, resp)
 
 	return connect.NewResponse(resp), nil
 }
 
-// applyPlan runs ApplyPlan inside a store transaction when the store supports
+// applyBatch runs ApplyBatch inside a store transaction when the store supports
 // one, so a failed batch leaves no partial writes behind. Stores without
 // transaction support fall back to a direct apply.
-func (s *WorkspaceService) applyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+func (s *WorkspaceService) applyBatch(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
 	if transactional, ok := s.Store.(TransactionalStore); ok {
-		var resp *diagv1.ApplyPlanResponse
+		var resp *diagv1.ApplyWorkspaceBatchResponse
 		err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
 			var applyErr error
-			resp, applyErr = txStore.ApplyPlan(txCtx, workspaceID, req)
+			resp, applyErr = txStore.ApplyBatch(txCtx, workspaceID, req)
 			return applyErr
 		})
 		switch {
@@ -312,7 +312,7 @@ func (s *WorkspaceService) applyPlan(ctx context.Context, workspaceID uuid.UUID,
 			return nil, err
 		}
 	}
-	return s.Store.ApplyPlan(ctx, workspaceID, req)
+	return s.Store.ApplyBatch(ctx, workspaceID, req)
 }
 
 func (s *WorkspaceService) ExportWorkspace(

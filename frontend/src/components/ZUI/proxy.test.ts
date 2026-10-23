@@ -1,15 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildProxyConnectorRenderState,
   buildProxyConnectorSpatialIndex,
   collectVisibleNodeAnchors,
+  drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
   findHoveredProxyConnector,
   getProxyBezierBadgeGeometry,
   type VisibleNodeAnchor,
 } from './proxy'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
-import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
+import type { ZUIHiddenProxyBadge, ZUIResolvedConnector } from '../../crossBranch/resolve'
 import type { LayoutNode } from './types'
 
 function node(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
@@ -210,6 +211,43 @@ describe('buildProxyConnectorRenderState', () => {
   })
 })
 
+
+describe('off-view connector badge visibility', () => {
+  it.each(['proxy', 'direct'] as const)('hides oversized %s badges without reserving label space, and restores them on zoom in', (kind) => {
+    const details = proxyDetails('proxy')
+    const anchors = new Map([
+      ['source', anchor({ nodeId: 'source', elementId: 1, worldW: 180, worldH: 85 })],
+      ['target', anchor({ nodeId: 'target', elementId: 2, worldX: 400, worldW: 180, worldH: 85 })],
+    ])
+    const connector = proxyConnector({ key: 'proxy', details })
+    const badge: ZUIHiddenProxyBadge = {
+      key: 'badge', sourceAnchorElementId: 1, targetAnchorElementId: 2,
+      sourceNodeId: 'source', targetNodeId: 'target', sourceHandle: null, targetHandle: null,
+      count: details.count, details,
+    }
+    for (const zoom of [0.25, 1]) {
+      const ctx = {
+        save() {}, restore() {}, beginPath() {}, setTransform() {},
+        setLineDash() {}, moveTo() {}, lineTo() {}, roundRect() {}, fill() {},
+        stroke: vi.fn(), fillText: vi.fn(),
+        measureText: (text: string) => ({ width: text.length * 7 }),
+        getTransform: () => ({ a: zoom, b: 0, c: 0, d: zoom, e: 0, f: 0 }),
+      }
+      const occupiedRects: Parameters<typeof drawVisibleProxyConnectors>[7] = []
+      if (kind === 'proxy') {
+        drawVisibleProxyConnectors(ctx as unknown as CanvasRenderingContext2D,
+          buildProxyConnectorRenderState([connector]), anchors, zoom, '#000', '#fff', occupiedRects)
+      } else {
+        drawVisibleDirectProxyBadges(ctx as unknown as CanvasRenderingContext2D,
+          [badge], anchors, zoom, '#000', occupiedRects)
+      }
+      expect(ctx.fillText).toHaveBeenCalledTimes(zoom === 1 ? 1 : 0)
+      expect(occupiedRects).toHaveLength(zoom === 1 ? 1 : 0)
+      // Standalone proxy routes remain visible even when their badge is hidden.
+      if (kind === 'proxy') expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(1)
+    }
+  })
+})
 
 describe('off-view connector hover rendering', () => {
   it.each([

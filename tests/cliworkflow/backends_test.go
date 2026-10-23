@@ -76,7 +76,7 @@ func (h *harness) configureBackend(backend string) {
 		}
 		r = r.WithContext(api.WithWorkspaceID(r.Context(), orgID))
 		export := strings.HasSuffix(r.URL.Path, "/ExportWorkspace")
-		write := strings.Contains(r.URL.Path, "/Create") || strings.Contains(r.URL.Path, "/Update") || strings.Contains(r.URL.Path, "/Delete") || strings.HasSuffix(r.URL.Path, "/ImportResources") || strings.HasSuffix(r.URL.Path, "/ApplyWorkspacePlan")
+		write := strings.Contains(r.URL.Path, "/Create") || strings.Contains(r.URL.Path, "/Update") || strings.Contains(r.URL.Path, "/Delete") || strings.HasSuffix(r.URL.Path, "/ImportResources") || strings.HasSuffix(r.URL.Path, "/ApplyWorkspaceBatch")
 		if (export && h.faults.failExport.Load()) || (write && h.faults.failWrites.Load()) {
 			http.Error(w, "injected RPC failure", http.StatusServiceUnavailable)
 			return
@@ -110,8 +110,8 @@ func (s *interruptStore) RunInTransaction(ctx context.Context, fn func(context.C
 	}
 	return err
 }
-func (s *interruptStore) ApplyPlan(ctx context.Context, id uuid.UUID, input *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
-	el, err := s.Store.ApplyPlan(ctx, id, input)
+func (s *interruptStore) ApplyBatch(ctx context.Context, id uuid.UUID, input *diagv1.ApplyWorkspaceBatchRequest) (*diagv1.ApplyWorkspaceBatchResponse, error) {
+	el, err := s.Store.ApplyBatch(ctx, id, input)
 	if err == nil && s.faults.interrupt.Load() {
 		close(s.faults.entered)
 		<-ctx.Done()

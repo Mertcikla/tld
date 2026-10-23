@@ -15,10 +15,12 @@ import {
 } from '@chakra-ui/react'
 import TagUpsert from '../../../components/TagUpsert'
 import SearchCreateInput from '../../../components/SearchCreateInput'
-import { CopyIcon } from '@chakra-ui/icons'
+import { CheckIcon, CopyIcon } from '@chakra-ui/icons'
 import { FitViewIcon, LayerIcon, MergeIcon, TagsIcon, TrashIcon } from '../../../components/Icons'
 import type { Tag } from '../../../types'
 import type { SelectionAlign, SelectionDistribute } from '../selection'
+import { editorFeedbackStyles, editorToolbarStyles } from '../../../styles/editorInteractions'
+import { useCopyFeedback, type CopyAction } from '../../../hooks/useCopyFeedback'
 
 function AlignIcon({ kind }: { kind: SelectionAlign | SelectionDistribute }) {
   return (
@@ -97,17 +99,20 @@ function ToolbarIconButton({
   children,
   color,
   testId,
+  isLoading,
 }: {
   label: string
   onClick: () => void
   children: React.ReactElement
   color?: string
   testId?: string
+  isLoading?: boolean
 }) {
   return (
     <Tooltip label={label} placement="top" openDelay={200}>
       <IconButton
         data-testid={testId}
+        isLoading={isLoading}
         aria-label={label}
         icon={children}
         variant="ghost"
@@ -145,7 +150,7 @@ export interface SelectionBulkBarProps {
   defaultGroupColor?: string
   isCreatingGroup?: boolean
   onRemoveFromView: () => void
-  onCopyMermaid?: () => void
+  onCopyMermaid?: CopyAction
 }
 
 export default function SelectionBulkBar({
@@ -172,6 +177,7 @@ export default function SelectionBulkBar({
 }: SelectionBulkBarProps) {
   const [isGroupOpen, setIsGroupOpen] = React.useState(false)
   const [groupName, setGroupName] = React.useState('')
+  const { state: copyState, copy: copyMermaid } = useCopyFeedback(onCopyMermaid)
 
   if (count < 2) return null
 
@@ -190,6 +196,7 @@ export default function SelectionBulkBar({
   return (
     <HStack
       data-testid="vieweditor-selection-bulk-bar"
+      sx={editorToolbarStyles}
       position="absolute"
       left="50%"
       top="calc(5rem + env(safe-area-inset-top, 0px))"
@@ -425,8 +432,16 @@ export default function SelectionBulkBar({
       )}
 
       {count > 1 && onCopyMermaid && (
-        <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy as Mermaid" onClick={onCopyMermaid}>
-          <CopyIcon boxSize="14px" />
+        <ToolbarIconButton
+          testId="selection-bulk-copy-mermaid"
+          label={copyState === 'copied' ? 'Copied Mermaid' : 'Copy as Mermaid'}
+          color={copyState === 'copied' ? 'var(--accent)' : undefined}
+          isLoading={copyState === 'copying'}
+          onClick={() => void copyMermaid()}
+        >
+          <Box as="span" key={copyState} display="inline-flex" sx={editorFeedbackStyles}>
+            {copyState === 'copied' ? <CheckIcon boxSize="14px" /> : <CopyIcon boxSize="14px" />}
+          </Box>
         </ToolbarIconButton>
       )}
       <ToolbarIconButton testId="selection-bulk-fit" label="Fit selection" onClick={onFitSelection}>

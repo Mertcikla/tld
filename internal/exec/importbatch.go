@@ -13,19 +13,19 @@ import (
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
-// ImportPlan is a self-contained, idempotent ApplyPlan built from an import
+// ImportBatch is a self-contained, idempotent ApplyBatch built from an import
 // document. Every element referenced by a placement or connector is pulled into
-// the plan, so the server can resolve all refs inside a single transaction.
+// the batch, so the server can resolve all refs inside a single transaction.
 //
 // Re-running the same document is safe: existing elements, views and connectors
 // are matched to their server IDs (from the lockfile cache first, then by
 // name/endpoints) and updated instead of duplicated.
-type ImportPlan struct {
+type ImportBatch struct {
 	Unchanged           map[string]bool // resource type + ":" + ref; dependencies stay in the batch
 	Views               []workspace.ViewDiagnostics
 	PreservedPlacements map[string][]string
 
-	Request *diagv1.ApplyPlanRequest
+	Request *diagv1.ApplyWorkspaceBatchRequest
 
 	// ElementSpecs are the specs to persist to the local YAML cache, keyed by
 	// ref. It includes referenced-but-not-defined elements pulled from the
@@ -50,21 +50,21 @@ func (e *ImportFieldError) Error() string        { return "batch import cannot a
 func (e *ImportFieldError) RecoveryCode() string { return "unsupported_field" }
 func (e *ImportFieldError) RecoveryHint() string { return e.Hint }
 
-// BuildImportPlan validates the import document and resolves existing server
-// IDs so the resulting plan is idempotent. It performs read-only server calls
+// BuildImportBatch validates the import document and resolves existing server
+// IDs so the resulting batch is idempotent. It performs read-only server calls
 // (list elements/views/connectors) and never mutates the target.
-func BuildImportPlan(
+func BuildImportBatch(
 	ctx context.Context,
 	runner Runner,
 	ws *workspace.Workspace,
 	elements map[string]*workspace.Element,
 	connectors []*workspace.Connector,
-) (*ImportPlan, error) {
+) (*ImportBatch, error) {
 	if ws == nil {
 		return nil, errors.New("workspace is required")
 	}
 
-	planElements, err := collectImportElements(ws, elements, connectors)
+	batchElements, err := collectImportElements(ws, elements, connectors)
 	if err != nil {
 		return nil, err
 	}
@@ -91,8 +91,8 @@ func BuildImportPlan(
 		}
 	}
 
-	elementIDs := make(map[string]int32, len(planElements))
-	for ref, el := range planElements {
+	elementIDs := make(map[string]int32, len(batchElements))
+	for ref, el := range batchElements {
 		id, err := resolveImportElementID(ws, ref, el, byName)
 		if err != nil {
 			return nil, err
@@ -140,7 +140,7 @@ func BuildImportPlan(
 	// Recompute which refs need an owned view: every placement parent and every
 	// connector view, plus elements that explicitly request a view.
 	requiredViews := map[string]bool{}
-	for ref, el := range planElements {
+	for ref, el := range batchElements {
 		if viewByOwner[elementIDs[ref]] != nil {
 			requiredViews[ref] = true
 		}
@@ -171,22 +171,22 @@ func BuildImportPlan(
 		viewIDs[ref] = resolveImportViewID(ws, ref, elementIDs[ref], viewByOwner)
 	}
 
-	plan := &ImportPlan{
+	batch := &ImportBatch{
 		Unchanged:    map[string]bool{},
-		Request:      &diagv1.ApplyPlanRequest{},
-		ElementSpecs: planElements,
+		Request:      &diagv1.ApplyWorkspaceBatchRequest{},
+		ElementSpecs: batchElements,
 		Connectors:   append([]*workspace.Connector(nil), connectors...),
 	}
 
-	refs := make([]string, 0, len(planElements))
-	for ref := range planElements {
+	refs := make([]string, 0, len(batchElements))
+	for ref := range batchElements {
 		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
 
 	for _, ref := range refs {
-		el := planElements[ref]
-		pe := &diagv1.PlanElement{
+		el := batchElements[ref]
+		pe := &diagv1.BatchElement{
 			Ref:             ref,
 			Name:            el.Name,
 			Kind:            strOrNil(el.Kind),
@@ -206,7 +206,7 @@ func BuildImportPlan(
 		_, declared := elements[ref]
 		if !declared && id != 0 {
 			// Dependencies included only to resolve refs are not metadata patches.
-			pe = &diagv1.PlanElement{Ref: ref, Name: el.Name}
+			pe = &diagv1.BatchElement{Ref: ref, Name: el.Name}
 			if current := byID[id]; current != nil {
 				pe.Name = current.GetName()
 			}
@@ -228,11 +228,11 @@ func BuildImportPlan(
 		viewChanged, placementsChanged := false, false
 		if requiredViews[ref] {
 			pe.HasView = true
-			plan.ViewsPlanned++
+			batch.ViewsPlanned++
 			if viewID := viewIDs[ref]; viewID != 0 {
 				pe.ViewId = &viewID
 			} else {
-				plan.ViewsCreated++
+				batch.ViewsCreated++
 			}
 			pe.ViewLabel = strOrNil(el.ViewLabel)
 			if !declared {
@@ -254,7 +254,7 @@ func BuildImportPlan(
 					viewChanged = density != int(pe.GetViewDensityLevel())
 				}
 			}
-			plan.Unchanged["view:"+ref] = !viewChanged
+			batch.Unchanged["view:"+ref] = !viewChanged
 		}
 		for _, placement := range el.Placements {
 			if !declared && id != 0 {
@@ -264,7 +264,7 @@ func BuildImportPlan(
 			if parent == "" {
 				parent = workspace.RootRef
 			}
-			pp := &diagv1.PlanViewPlacement{ParentRef: parent}
+			pp := &diagv1.BatchViewPlacement{ParentRef: parent}
 			parentID := viewIDs[parent]
 			if parent == workspace.RootRef {
 				parentID = rootViewID(serverViews)
@@ -306,14 +306,14 @@ func BuildImportPlan(
 				(pp.PositionY != nil && pp.GetPositionY() != current.GetPositionY())
 		}
 		if id == 0 {
-			plan.ElementsCreated++
-		} else if api.PlanElementChangesMetadata(pe, byID[id]) || viewChanged || placementsChanged {
-			plan.ElementsUpdated++
+			batch.ElementsCreated++
+		} else if api.BatchElementChangesMetadata(pe, byID[id]) || viewChanged || placementsChanged {
+			batch.ElementsUpdated++
 		} else {
-			plan.Unchanged["element:"+ref] = true
-			plan.ElementsUnchanged++
+			batch.Unchanged["element:"+ref] = true
+			batch.ElementsUnchanged++
 		}
-		plan.Request.Elements = append(plan.Request.Elements, pe)
+		batch.Request.Elements = append(batch.Request.Elements, pe)
 	}
 
 	serverConnectors, err := runner.ListConnectors(ctx)
@@ -348,7 +348,7 @@ func BuildImportPlan(
 				return nil, &ImportFieldError{Field: "tags", Hint: fmt.Sprintf("Set tags with 'tld update connector %q tags <comma-separated-tags>', then retry sync.", workspace.ConnectorKey(c))}
 			}
 		}
-		pc := &diagv1.PlanConnector{
+		pc := &diagv1.BatchConnector{
 			Ref:              workspace.ConnectorKey(c),
 			ViewRef:          viewRef,
 			SourceElementRef: c.Source,
@@ -388,17 +388,17 @@ func BuildImportPlan(
 			return nil, err
 		}
 		if id == 0 {
-			plan.ConnectorsCreated++
-		} else if api.PlanConnectorChangesMetadata(pc, current, viewID, elementIDs[c.Source], elementIDs[c.Target]) || visibilityChanged {
-			plan.ConnectorsUpdated++
+			batch.ConnectorsCreated++
+		} else if api.BatchConnectorChangesMetadata(pc, current, viewID, elementIDs[c.Source], elementIDs[c.Target]) || visibilityChanged {
+			batch.ConnectorsUpdated++
 		} else {
-			plan.Unchanged["connector:"+pc.Ref] = true
-			plan.ConnectorsUnchanged++
+			batch.Unchanged["connector:"+pc.Ref] = true
+			batch.ConnectorsUnchanged++
 		}
-		plan.Request.Connectors = append(plan.Request.Connectors, pc)
+		batch.Request.Connectors = append(batch.Request.Connectors, pc)
 	}
 
-	return plan, nil
+	return batch, nil
 }
 
 func importVisibilityChanged(ctx context.Context, runner Runner, viewID int32, resource string, id int32, delta *int32) (bool, error) {
@@ -429,7 +429,7 @@ func collectImportElements(
 	elements map[string]*workspace.Element,
 	connectors []*workspace.Connector,
 ) (map[string]*workspace.Element, error) {
-	planElements := make(map[string]*workspace.Element, len(elements))
+	batchElements := make(map[string]*workspace.Element, len(elements))
 	for ref, el := range elements {
 		if el == nil {
 			return nil, fmt.Errorf("elements: %q has no definition", ref)
@@ -441,14 +441,14 @@ func collectImportElements(
 			return nil, fmt.Errorf("element %q: name is required", ref)
 		}
 		copied := *el
-		planElements[ref] = &copied
+		batchElements[ref] = &copied
 	}
 
-	required := make(map[string]bool, len(planElements))
-	for ref := range planElements {
+	required := make(map[string]bool, len(batchElements))
+	for ref := range batchElements {
 		required[ref] = true
 	}
-	for ref, el := range planElements {
+	for ref, el := range batchElements {
 		for _, placement := range el.Placements {
 			parent := placement.ParentRef
 			if parent == "" {
@@ -502,7 +502,7 @@ func collectImportElements(
 		if ref == workspace.RootRef {
 			continue
 		}
-		if _, ok := planElements[ref]; ok {
+		if _, ok := batchElements[ref]; ok {
 			continue
 		}
 		existing := ws.Elements[ref]
@@ -511,7 +511,7 @@ func collectImportElements(
 			continue
 		}
 		copied := *existing
-		planElements[ref] = &copied
+		batchElements[ref] = &copied
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
@@ -521,7 +521,7 @@ func collectImportElements(
 			strings.Join(missing, ", "))
 	}
 
-	return planElements, nil
+	return batchElements, nil
 }
 
 // resolveImportElementID matches a spec to an existing server element. The

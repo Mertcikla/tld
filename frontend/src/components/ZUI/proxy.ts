@@ -8,7 +8,7 @@ import {
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds } from './layoutEngine'
-import { connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
+import { connectorLabelFitsEndpoints, connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import {
@@ -668,6 +668,14 @@ export function drawVisibleProxyConnectors(
     ctx.setLineDash([])
     if (showBadges) {
       const badge = measureProxyBadge(ctx, label, zoom)
+      if (!connectorLabelFitsEndpoints(
+        { width: badge.badgeCssW, height: badge.badgeCssH },
+        { width: source.worldW * zoom, height: source.worldH * zoom },
+        { width: target.worldW * zoom, height: target.worldH * zoom },
+      )) {
+        ctx.restore()
+        continue
+      }
       const labelPos = pickEdgeLabelPosition(
         ctx.getTransform(),
         midX,
@@ -724,10 +732,15 @@ export function drawVisibleDirectProxyBadges(
       targetFallback,
     })
     const label = `+${badge.count}`
+    const badgeMetrics = measureProxyBadge(ctx, label, zoom)
+    if (!connectorLabelFitsEndpoints(
+      { width: badgeMetrics.badgeCssW, height: badgeMetrics.badgeCssH },
+      { width: source.worldW * zoom, height: source.worldH * zoom },
+      { width: target.worldW * zoom, height: target.worldH * zoom },
+    )) continue
 
     ctx.save()
     ctx.globalAlpha = alpha
-    const badgeMetrics = measureProxyBadge(ctx, label, zoom)
     const labelPos = pickEdgeLabelPosition(
       ctx.getTransform(),
       midX,
@@ -806,6 +819,7 @@ export function findHoveredProxyConnector(
       sourceId: connector.details.sourceAnchorName,
       targetId: connector.details.targetAnchorName,
       label: connector.details.label || 'Off-view connector',
+      direction: connector.direction,
       diagramId: connector.details.ownerViewIds[0] ?? 0,
       sourceObjId: connector.sourceAnchorElementId,
       targetObjId: connector.targetAnchorElementId,

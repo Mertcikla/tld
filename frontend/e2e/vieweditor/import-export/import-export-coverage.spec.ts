@@ -56,7 +56,7 @@ test('canvas context menu copies Mermaid directly', async ({ page }) => {
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.15, { button: 'right' })
 
   await page.getByTestId('vieweditor-canvas-context-copy-mermaid').click()
-  await expect(page.getByText('Copied Mermaid').first()).toBeVisible()
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __tldCopiedText?: string }).__tldCopiedText ?? '')).toContain('flowchart LR')
   const content = await page.evaluate(() => (window as typeof window & { __tldCopiedText?: string }).__tldCopiedText ?? '')
   expect(content).toContain('flowchart LR')
   expect(content).toContain(elements[0].name)

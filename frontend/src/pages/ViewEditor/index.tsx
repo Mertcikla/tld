@@ -762,8 +762,10 @@ function ViewEditorInner({
   const handleNodeMouseLeave = useCallback(() => {
     scheduleClearHoveredElement()
   }, [scheduleClearHoveredElement])
-  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: RFEdge) => {
+  const handleEdgeMouseEnter = useCallback((event: React.MouseEvent, edge: RFEdge) => {
     clearHoveredEdge()
+    // Raising the edge moves its label into another SVG layer, replacing a pressed button.
+    if (event.target instanceof globalThis.Element && event.target.closest('button')) return
     setHoveredEdgeId(edge.id)
   }, [clearHoveredEdge])
   const handleEdgeMouseLeave = useCallback(() => {
@@ -2115,6 +2117,7 @@ function ViewEditorInner({
 
 
   useEffect(() => {
+    if (parseNumericId(searchParams.get('connector')) != null) return
     const requestedElementId = parseNumericId(searchParams.get('element'))
     if (requestedElementId == null) return
     const match = viewElements.find((element) => element.element_id === requestedElementId)
@@ -3604,6 +3607,42 @@ function ViewEditorInner({
     maybeFitView()
   }, [crossBranchSettings.enabled, liveContextNodes, maybeFitView, viewId])
 
+  const handledConnectorRequestRef = useRef<string | null>(null)
+  useEffect(() => {
+    const connectorId = parseNumericId(searchParams.get('connector'))
+    if (connectorId == null) {
+      handledConnectorRequestRef.current = null
+      return
+    }
+    const requestKey = `${viewId}:${connectorId}`
+    if (handledConnectorRequestRef.current === requestKey || !initialViewportReady || needsFitView.current || view?.id !== viewId) return
+    const connector = connectors.find((entry) => entry.id === connectorId && entry.view_id === viewId)
+    if (!connector || !rfEdges.some((edge) => edge.id === String(connectorId))) return
+    const endpointIds = new Set([String(connector.source_element_id), String(connector.target_element_id)])
+    const endpoints = rfNodes.filter((node) => endpointIds.has(node.id))
+    if (endpoints.length !== endpointIds.size || endpoints.some((node) => !node.width || !node.height)) return
+    if (!safeFitView({ nodes: endpoints, duration: 300, padding: VIEW_EDITOR_FOCUS_FIT_PADDING, maxZoom: 1 })) return
+
+    // Canvas updates can render before the router consumes the query parameter.
+    handledConnectorRequestRef.current = requestKey
+    setSelectedElement(null)
+    setSelectedProxyConnectorDetails(null)
+    closeElementPanelRef.current()
+    closeProxyConnectorPanelRef.current()
+    setSelectedEdge(connector)
+    setRfNodes((nodes) => nodes.map((node) => node.selected ? { ...node, selected: false } : node))
+    setRfEdges((edges) => edges.map((edge) => {
+      const selected = edge.id === String(connectorId)
+      return edge.selected === selected ? edge : { ...edge, selected }
+    }))
+    setSuppressedSelectedConnectorHandleHighlightId(null)
+    openConnectorPanelRef.current()
+    const next = new URLSearchParams(searchParams)
+    next.delete('connector')
+    next.delete('element')
+    setSearchParams(next, { replace: true })
+  }, [connectors, initialViewportReady, rfEdges, rfNodes, safeFitView, searchParams, setRfEdges, setRfNodes, setSearchParams, view?.id, viewId])
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -3919,26 +3958,28 @@ function ViewEditorInner({
   // ── Export / Import ────────────────────────────────────────────────────────
   const handleCopyMermaidDirect = useCallback(async () => {
     setCanvasMenu(null)
-    if (viewId === null) return
+    if (viewId === null) return false
     try {
       const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
-      if (!exported.markdown) return
+      if (!exported.markdown) return false
       await copyTextToClipboard(exported.markdown)
-      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
+      return true
     } catch {
       toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
+      return false
     }
   }, [setCanvasMenu, toast, viewId])
 
   const handleBulkCopyMermaid = useCallback(async () => {
-    if (viewId === null) return
+    if (viewId === null) return false
     try {
       const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
-      if (!exported.markdown) return
+      if (!exported.markdown) return false
       await copyTextToClipboard(exported.markdown)
-      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
+      return true
     } catch {
       toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
+      return false
     }
   }, [toast, viewId])
 
