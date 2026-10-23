@@ -692,7 +692,8 @@ function visibleEndpointCandidates(
 
   if (visibleIndexes.length === 0) return []
 
-  const actualElementName = firstPlacementForElement(snapshot, actualElementId)?.element.name ?? `Element ${actualElementId}`
+  const actualPlacement = chooseBestPlacement(snapshot, actualElementId, ownerViewId, ownerViewId)
+  const actualElementName = actualPlacement?.element.name ?? `Element ${actualElementId}`
   const deepestVisibleIndex = visibleIndexes[visibleIndexes.length - 1]
   const deepestVisibleAnchorElementId = path[deepestVisibleIndex]
   const candidateIndexes = [deepestVisibleIndex]
@@ -714,8 +715,8 @@ function visibleEndpointCandidates(
       anchorElementName: anchorPlacement?.element.name ?? `Element ${anchorElementId}`,
       anchorViewId: anchorPlacement?.viewId ?? ownerViewId,
       anchorViewName: anchorPlacement?.viewName ?? viewName(snapshot, ownerViewId),
-      placementViewId: ownerViewId,
-      placementViewName: viewName(snapshot, ownerViewId),
+      placementViewId: actualPlacement?.viewId ?? null,
+      placementViewName: actualPlacement?.viewName ?? null,
       depth: Math.max(0, path.length - 1 - pathIndex),
       path,
       pathIndex,
