@@ -197,17 +197,16 @@ export function UnderlyingConnectors({ details, maxHeight = '240px', onNavigate,
       </Text>
       <VStack align="stretch" spacing={1} maxH={maxHeight} overflowY="auto" data-zui-native-wheel="true">
         {details.connectors.map((leaf, index) => {
-          const sourceViewId = leaf.source.placementViewId ?? leaf.source.anchorViewId ?? leaf.ownerViewId
-          const targetViewId = leaf.target.placementViewId ?? leaf.target.anchorViewId ?? leaf.ownerViewId
+          // Anchor and owner views may not contain the actual endpoint element.
+          const sourceViewId = leaf.source.placementViewId
+          const targetViewId = leaf.target.placementViewId
           return (
             <ConnectorRouteCard
               key={`${leaf.ownerViewId}-${leaf.connector.id}-${index}`}
               source={leaf.source.actualElementName}
-              sourceTo={`/views/${sourceViewId}?element=${leaf.source.actualElementId}`}
-              sourceDisabled={sourceViewId < 0}
+              sourceTo={sourceViewId != null && sourceViewId > 0 ? `/views/${sourceViewId}?element=${leaf.source.actualElementId}` : undefined}
               target={leaf.target.actualElementName}
-              targetTo={`/views/${targetViewId}?element=${leaf.target.actualElementId}`}
-              targetDisabled={targetViewId < 0}
+              targetTo={targetViewId != null && targetViewId > 0 ? `/views/${targetViewId}?element=${leaf.target.actualElementId}` : undefined}
               direction={leaf.connector.direction}
               subtitle={Array.from(new Set([leaf.connector.label?.trim(), leaf.connector.relationship?.trim()].filter(Boolean))).join(' · ') || null}
               description={leaf.connector.description}

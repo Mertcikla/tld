@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProxyConnectorDetails, ProxyEndpoint, WorkspaceGraphSnapshot } from '../crossBranch/types'
 import { ConnectorRouteCard, UnderlyingConnectors } from './ConnectorDetails'
 import ProxyConnectorPanel from './ProxyConnectorPanel'
+import { UNPLACED_ELEMENTS_VIEW_ID } from '../crossBranch/unplacedElements'
 
 const context = vi.hoisted(() => ({ canEdit: true, navigate: vi.fn() }))
 vi.mock('react-router-dom', () => ({ Link: () => null, useNavigate: () => context.navigate }))
@@ -43,6 +44,35 @@ const event = { stopPropagation: vi.fn() }
 afterEach(() => { context.canEdit = true; context.navigate.mockReset() })
 
 describe('shared connector details', () => {
+  it.each([
+    { side: 'source', placementViewId: null, anchorViewId: null },
+    { side: 'target', placementViewId: null, anchorViewId: null },
+    { side: 'source', placementViewId: null, anchorViewId: 1 },
+    { side: 'target', placementViewId: null, anchorViewId: 1 },
+    { side: 'source', placementViewId: UNPLACED_ELEMENTS_VIEW_ID, anchorViewId: 1 },
+    { side: 'target', placementViewId: UNPLACED_ELEMENTS_VIEW_ID, anchorViewId: 1 },
+  ] as const)('does not link an unplaced $side endpoint (placement: $placementViewId, anchor: $anchorViewId)', ({ side, placementViewId, anchorViewId }) => {
+    const leaf = details.connectors[0]
+    const unplacedDetails: ProxyConnectorDetails = {
+      ...details,
+      connectors: [{ ...leaf, [side]: { ...leaf[side], placementViewId, anchorViewId } }],
+    }
+    const close = vi.fn()
+    const renderer = create(<UnderlyingConnectors details={unplacedDetails} onNavigate={close} />)
+    const row = renderer.root.findByType(ConnectorRouteCard)
+    expect(row.props[`${side}To`]).toBeUndefined()
+    expect(renderer.root.findAllByType('button').some((button) => button.props.title === leaf[side].actualElementName)).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+
+    // The placed endpoint remains navigable and closes the panel on selection.
+    const other = side === 'source' ? 'target' : 'source'
+    const link = renderer.root.findAllByType('button').find((button) => button.props.title === leaf[other].actualElementName)!
+    expect(link.props.to).toBe(`/views/${leaf[other].placementViewId}?element=${leaf[other].actualElementId}`)
+    act(() => link.props.onClick(event))
+    expect(close).toHaveBeenCalledOnce()
+    renderer.unmount()
+  })
+
   it('uses the same rows in the panel and compact list, with endpoint links and metadata', () => {
     const close = vi.fn()
     const panel = create(<ProxyConnectorPanel isOpen onClose={close} details={details} snapshot={snapshot} />)
