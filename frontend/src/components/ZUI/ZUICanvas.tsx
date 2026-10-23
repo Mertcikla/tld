@@ -385,6 +385,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
       <ZUIHoverPopover
         hoveredItem={hoveredItem}
+        hiddenProxyBadges={proxyState.hiddenProxyBadges}
         hoveredScreenRect={hoveredScreenRect}
         isHoveredItemFullyVisible={isHoveredItemFullyVisible}
         onHoverLock={setHoverLocked}

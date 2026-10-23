@@ -2115,6 +2115,7 @@ function ViewEditorInner({
 
 
   useEffect(() => {
+    if (parseNumericId(searchParams.get('connector')) != null) return
     const requestedElementId = parseNumericId(searchParams.get('element'))
     if (requestedElementId == null) return
     const match = viewElements.find((element) => element.element_id === requestedElementId)
@@ -3603,6 +3604,42 @@ function ViewEditorInner({
     needsFitView.current = true
     maybeFitView()
   }, [crossBranchSettings.enabled, liveContextNodes, maybeFitView, viewId])
+
+  const handledConnectorRequestRef = useRef<string | null>(null)
+  useEffect(() => {
+    const connectorId = parseNumericId(searchParams.get('connector'))
+    if (connectorId == null) {
+      handledConnectorRequestRef.current = null
+      return
+    }
+    const requestKey = `${viewId}:${connectorId}`
+    if (handledConnectorRequestRef.current === requestKey || !initialViewportReady || needsFitView.current || view?.id !== viewId) return
+    const connector = connectors.find((entry) => entry.id === connectorId && entry.view_id === viewId)
+    if (!connector || !rfEdges.some((edge) => edge.id === String(connectorId))) return
+    const endpointIds = new Set([String(connector.source_element_id), String(connector.target_element_id)])
+    const endpoints = rfNodes.filter((node) => endpointIds.has(node.id))
+    if (endpoints.length !== endpointIds.size || endpoints.some((node) => !node.width || !node.height)) return
+    if (!safeFitView({ nodes: endpoints, duration: 300, padding: VIEW_EDITOR_FOCUS_FIT_PADDING, maxZoom: 1 })) return
+
+    // Canvas updates can render before the router consumes the query parameter.
+    handledConnectorRequestRef.current = requestKey
+    setSelectedElement(null)
+    setSelectedProxyConnectorDetails(null)
+    closeElementPanelRef.current()
+    closeProxyConnectorPanelRef.current()
+    setSelectedEdge(connector)
+    setRfNodes((nodes) => nodes.map((node) => node.selected ? { ...node, selected: false } : node))
+    setRfEdges((edges) => edges.map((edge) => {
+      const selected = edge.id === String(connectorId)
+      return edge.selected === selected ? edge : { ...edge, selected }
+    }))
+    setSuppressedSelectedConnectorHandleHighlightId(null)
+    openConnectorPanelRef.current()
+    const next = new URLSearchParams(searchParams)
+    next.delete('connector')
+    next.delete('element')
+    setSearchParams(next, { replace: true })
+  }, [connectors, initialViewportReady, rfEdges, rfNodes, safeFitView, searchParams, setRfEdges, setRfNodes, setSearchParams, view?.id, viewId])
 
   useEffect(() => {
     const el = containerRef.current

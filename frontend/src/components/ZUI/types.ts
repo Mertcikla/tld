@@ -67,6 +67,8 @@ export interface LayoutNode {
   label: string
   /** One of: person | system | container | component | database | queue | api | service | external */
   type: string
+  /** Explicit authored element kind; null/empty when unspecified. */
+  kind?: string | null
   logoUrl: string | null
   description: string | null
   technology: string | null
@@ -102,6 +104,8 @@ export interface LayoutNode {
     /** LayoutNode id of the target. */
     targetId: string
     label: string
+    description?: string | null
+    relationship?: string | null
     direction: 'forward' | 'backward' | 'both' | 'bidirectional' | string
     sourceHandle: string | null
     targetHandle: string | null
@@ -159,6 +163,8 @@ export interface DiagramGroupLayout {
     sourceId: string
     targetId: string
     label: string
+    description?: string | null
+    relationship?: string | null
     direction: string
     sourceHandle: string | null
     targetHandle: string | null
@@ -198,6 +204,9 @@ export type HoveredItem =
       sourceId: string;
       targetId: string;
       label: string;
+      direction?: string;
+      description?: string | null;
+      relationship?: string | null;
       diagramId: number;
       sourceObjId?: number;
       targetObjId?: number;

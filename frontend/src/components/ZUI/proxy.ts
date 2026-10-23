@@ -806,6 +806,7 @@ export function findHoveredProxyConnector(
       sourceId: connector.details.sourceAnchorName,
       targetId: connector.details.targetAnchorName,
       label: connector.details.label || 'Off-view connector',
+      direction: connector.direction,
       diagramId: connector.details.ownerViewIds[0] ?? 0,
       sourceObjId: connector.sourceAnchorElementId,
       targetObjId: connector.targetAnchorElementId,

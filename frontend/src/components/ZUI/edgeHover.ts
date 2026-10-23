@@ -28,6 +28,9 @@ type IndexedEdge = (
     sourceLabel: string
     targetLabel: string
     label: string
+    direction?: string
+    description?: string | null
+    relationship?: string | null
     id: number
     diagramId: number
     sourceObjId: number
@@ -311,7 +314,11 @@ export function buildEdgeSpatialIndex(
         kind: 'edge', x1: first.x, y1: first.y, x2: last.x, y2: last.y,
         midX: offsetX + route.midX * scale, midY: offsetY + route.midY * scale,
         points, sourceLabel: source.label, targetLabel: target.label,
-        label: edge.label || 'Connector', id: edge.id, diagramId: source.diagramId,
+        label: edge.label || 'Connector',
+        direction: edge.direction,
+        description: edge.description ?? null,
+        relationship: edge.relationship ?? null,
+        id: edge.id, diagramId: source.diagramId,
         sourceObjId: source.elementId, targetObjId: target.elementId, change: edge.change, clip,
       })
     }
@@ -409,6 +416,9 @@ export function findHoveredEdge(
       sourceId: bestEdge.sourceLabel,
       targetId: bestEdge.targetLabel,
       label: bestEdge.label,
+      direction: bestEdge.direction,
+      description: bestEdge.description,
+      relationship: bestEdge.relationship,
       id: bestEdge.id,
       diagramId: bestEdge.diagramId,
       sourceObjId: bestEdge.sourceObjId,
