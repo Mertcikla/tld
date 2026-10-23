@@ -88,6 +88,21 @@ describe('ConnectorPanel noise gate', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows a field spinner for the entire autosave request', async () => {
+    let finish!: (value: Connector) => void
+    vi.mocked(api.workspace.connectors.update).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<ConnectorPanel isOpen autoSave connector={connector()} orgId="" onSave={vi.fn()} onClose={vi.fn()} onDelete={vi.fn()} />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'connector-panel-label-input' }).props.onChange({ target: { value: 'Updated label' } }) })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(renderer.root.findByProps({ 'data-testid': 'autosave-field-connector-label' }).props.opacity).toBe(1)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'autosave-field-spinner' }).filter((node) => typeof node.type === 'string')).toHaveLength(1)
+    await act(async () => { finish({ ...connector(), label: 'Updated label' }) })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'autosave-field-spinner' }).filter((node) => typeof node.type === 'string')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'autosave-field-connector-label' }).props.opacity).toBe(1)
+    await act(async () => renderer.unmount())
+  })
+
   it('reports autosave failure and retries the current draft', async () => {
     const onSave = vi.fn()
     const onClose = vi.fn()
@@ -108,7 +123,8 @@ describe('ConnectorPanel noise gate', () => {
     vi.mocked(api.workspace.connectors.update).mockResolvedValueOnce({ ...connector(), label: 'Updated label' })
     await act(async () => { renderer!.root.findByProps({ 'data-testid': 'panel-save-retry' }).props.onClick(); await Promise.resolve() })
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ label: 'Updated label' }))
-    expect(renderer!.root.findByProps({ 'data-testid': 'panel-save-status' }).props.children).toContain('Changes saved.')
+    expect(renderer!.root.findByProps({ 'data-testid': 'autosave-field-connector-label' }).props.opacity).toBe(1)
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'panel-save-status' })).toHaveLength(0)
     expect(onClose).not.toHaveBeenCalled()
     await act(async () => { renderer!.unmount() })
   })

@@ -30,6 +30,8 @@ import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import PanelSaveStatus from './PanelSaveStatus'
+import AutosaveField from './AutosaveField'
+import { useAutosaveFieldFeedback } from '../hooks/useAutosaveFieldFeedback'
 import { usePanelSaveFeedback } from '../hooks/usePanelSaveFeedback'
 import TagUpsert from './TagUpsert'
 
@@ -174,6 +176,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const [loading, setLoading] = useState(false)
   const { state: saveState, startSaving, saved, failed } = usePanelSaveFeedback(`connector-${isOpen ? connector?.id : 'closed'}`)
+  const { capture: captureFieldSave, confirmed: savedFields, saving: savingFields, inlineSave } = useAutosaveFieldFeedback(
+    `connector-${isOpen ? connector?.id : 'closed'}`,
+    { label, description, relationship: relType, url },
+    { label: connector?.label ?? '', description: connector?.description ?? '', relationship: connector?.relationship ?? '', url: connector?.url ?? '' },
+  )
   const confirmDelete = useDisclosure()
 
   useEffect(() => {
@@ -276,6 +283,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     if (fingerprint === lastSavedFingerprintRef.current) return
 
     savingRef.current = true
+    const confirmFields = captureFieldSave({ label: payload.label, description: payload.description, relationship: payload.relationship, url: payload.url })
     startSaving()
     try {
       const updated = await api.workspace.connectors.update(viewId, connector.id, {
@@ -288,9 +296,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         tags: payload.tags,
       })
       lastSavedFingerprintRef.current = fingerprint
+      confirmFields.saved()
       saved()
       onSave(updated)
     } catch {
+      confirmFields.failed()
       failed()
     } finally {
       savingRef.current = false
@@ -301,7 +311,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         }, 0)
       }
     }
-  }, [autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed])
+  }, [autoSaveEdit, connector, viewId, buildPayloadAndFingerprint, onSave, startSaving, saved, failed, captureFieldSave])
 
   const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
@@ -392,19 +402,21 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
           <VStack spacing={4} align="stretch">
             <FormControl isDisabled={isReadOnly} id="connector-label">
               <FormLabel>Label / Name</FormLabel>
-              <Input
-                data-testid="connector-panel-label-input"
-                name="label"
-                size="sm"
-                value={label}
-                onChange={(e) => {
-                  const nextLabel = e.target.value
-                  patchDraft({ label: nextLabel })
-                  setLabel(nextLabel)
-                }}
-                onBlur={scheduleAutoSave}
-                placeholder="uses, calls, sends to…"
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.label} saving={savingFields.label} field="connector-label">
+                <Input
+                  data-testid="connector-panel-label-input"
+                  name="label"
+                  size="sm"
+                  value={label}
+                  onChange={(e) => {
+                    const nextLabel = e.target.value
+                    patchDraft({ label: nextLabel })
+                    setLabel(nextLabel)
+                  }}
+                  onBlur={scheduleAutoSave}
+                  placeholder="uses, calls, sends to…"
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly} id="connector-direction">
               <FormLabel>Direction</FormLabel>
@@ -490,52 +502,58 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
             </FormControl>
             <FormControl isDisabled={isReadOnly} id="connector-rel-type">
               <FormLabel>Relationship Type</FormLabel>
-              <Input
-                data-testid="connector-panel-relationship-input"
-                name="relationship"
-                size="sm"
-                value={relType}
-                onChange={(e) => {
-                  const nextRelationship = e.target.value
-                  patchDraft({ relationship: nextRelationship })
-                  setRelType(nextRelationship)
-                }}
-                onBlur={scheduleAutoSave}
-                placeholder="HTTP, gRPC, async…"
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.relationship} saving={savingFields.relationship} field="connector-relationship">
+                <Input
+                  data-testid="connector-panel-relationship-input"
+                  name="relationship"
+                  size="sm"
+                  value={relType}
+                  onChange={(e) => {
+                    const nextRelationship = e.target.value
+                    patchDraft({ relationship: nextRelationship })
+                    setRelType(nextRelationship)
+                  }}
+                  onBlur={scheduleAutoSave}
+                  placeholder="HTTP, gRPC, async…"
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly} id="connector-url">
               <FormLabel>URL</FormLabel>
-              <Input
-                data-testid="connector-panel-url-input"
-                name="url"
-                size="sm"
-                value={url}
-                onChange={(e) => {
-                  const nextUrl = e.target.value
-                  patchDraft({ url: nextUrl })
-                  setUrl(nextUrl)
-                }}
-                onBlur={scheduleAutoSave}
-                placeholder="https://docs.example.com/…"
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.url} saving={savingFields.url} field="connector-url">
+                <Input
+                  data-testid="connector-panel-url-input"
+                  name="url"
+                  size="sm"
+                  value={url}
+                  onChange={(e) => {
+                    const nextUrl = e.target.value
+                    patchDraft({ url: nextUrl })
+                    setUrl(nextUrl)
+                  }}
+                  onBlur={scheduleAutoSave}
+                  placeholder="https://docs.example.com/…"
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly} id="connector-description">
               <FormLabel>Description</FormLabel>
-              <Textarea
-                data-testid="connector-panel-description-input"
-                name="description"
-                size="sm"
-                value={description}
-                onChange={(e) => {
-                  const nextDescription = e.target.value
-                  patchDraft({ description: nextDescription })
-                  setDescription(nextDescription)
-                }}
-                onBlur={scheduleAutoSave}
-                placeholder="Describe the relationship…"
-                rows={4}
-              />
+              <AutosaveField enabled={autoSaveEdit} receipt={savedFields.description} saving={savingFields.description} field="connector-description" multiline>
+                <Textarea
+                  data-testid="connector-panel-description-input"
+                  name="description"
+                  size="sm"
+                  value={description}
+                  onChange={(e) => {
+                    const nextDescription = e.target.value
+                    patchDraft({ description: nextDescription })
+                    setDescription(nextDescription)
+                  }}
+                  onBlur={scheduleAutoSave}
+                  placeholder="Describe the relationship…"
+                  rows={4}
+                />
+              </AutosaveField>
             </FormControl>
             <FormControl isDisabled={isReadOnly} id="connector-tags">
               <FormLabel>Tags</FormLabel>
@@ -635,7 +653,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         </Box>
 
         {/* Footer */}
-        {canEdit && <PanelSaveStatus state={saveState} hasFooter onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
+        {canEdit && <PanelSaveStatus state={autoSaveEdit && inlineSave && (saveState === 'saving' || saveState === 'saved') ? 'idle' : saveState} hasFooter onRetry={autoSaveEdit ? () => { void saveIfDirty() } : undefined} />}
         <HStack px={4} py={3} justify="space-between" flexShrink={0}>
           {canEdit ? (
             <Button data-testid="connector-panel-delete" variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>
