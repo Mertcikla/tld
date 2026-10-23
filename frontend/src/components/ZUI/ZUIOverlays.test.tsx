@@ -393,7 +393,7 @@ describe('ZUIHoverPopover edge change', () => {
       />,
     )
     const text = collectText(renderer.root)
-    expect(text).toContain('Off-View Connector')
+    expect(text).toContain('Connectors')
     expect(text).toContain('Kafka')
     expect(text).toContain('Billing System')
     expect(text).toContain('Notification System')

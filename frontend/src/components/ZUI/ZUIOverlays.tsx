@@ -4,7 +4,6 @@ import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
-  Button,
   HStack,
   Icon,
   Image as ChakraImage,
@@ -17,161 +16,21 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { EditorIcon } from '../Icons'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { Link as RouterLink } from 'react-router-dom'
 import {
   canvasPopoverContentStyles,
   canvasPopoverInsetCardStyles,
   canvasPopoverKindLabelStyles,
-  canvasPopoverNameButtonStyles,
   canvasPopoverPillStyles,
 } from '../../styles/surfaces'
 import type { HoveredItem } from './types'
-import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import type { ZUIHiddenProxyBadge } from '../../crossBranch/resolve'
 import type { PathItem } from './camera'
 import { EDGE_CHANGE_META } from './edgeChange'
+import { ConnectorNameButton, ConnectorRouteCard, ConnectorSummaryCard, UnderlyingConnectors } from '../ConnectorDetails'
 
 const BREADCRUMB_MAX_LABEL_WIDTH = 200
 const BREADCRUMB_HORIZONTAL_GUTTER = 32
-
-function directionGlyph(direction?: string): string {
-  switch (direction) {
-    case 'backward':
-      return '←'
-    case 'both':
-    case 'bidirectional':
-      return '↔'
-    case 'none':
-      return '—'
-    case 'forward':
-    default:
-      return '→'
-  }
-}
-
-function isDistinctProxySummaryLabel(label: string | undefined, count: number): boolean {
-  const trimmed = label?.trim()
-  if (!trimmed) return false
-  const lower = trimmed.toLowerCase()
-  return (
-    lower !== 'cross-view' &&
-    lower !== 'off-view connector' &&
-    lower !== 'connectors' &&
-    lower !== `${count} connector` &&
-    lower !== `${count} connectors`
-  )
-}
-
-function PopoverNameButton({
-  label,
-  to,
-  isDisabled = false,
-  size = 'sm',
-}: {
-  label: string
-  to?: string
-  isDisabled?: boolean
-  size?: 'sm' | 'md'
-}) {
-  const canNavigate = Boolean(to) && !isDisabled
-  return (
-    <Button
-      as={canNavigate ? RouterLink : undefined}
-      isDisabled={!canNavigate}
-      to={canNavigate ? to : undefined}
-      size="xs"
-      variant="outline"
-      sx={{
-        ...canvasPopoverNameButtonStyles,
-        fontSize: size === 'md' ? '12px' : '11px',
-        fontWeight: size === 'md' ? '700' : '600',
-        minH: size === 'md' ? '24px' : '22px',
-        px: size === 'md' ? 2.5 : 2,
-        '& .chakra-button__icon': { opacity: size === 'md' ? 1 : 0 },
-      }}
-      rightIcon={<EditorIcon size={10} />}
-      onClick={(e) => e.stopPropagation()}
-      title={label}
-    >
-      <Text as="span" isTruncated>
-        {label}
-      </Text>
-    </Button>
-  )
-}
-
-function PopoverEndpointRoute({
-  source,
-  sourceTo,
-  sourceDisabled,
-  target,
-  targetTo,
-  targetDisabled,
-  direction,
-  subtitle,
-  compact = false,
-}: {
-  source: string
-  sourceTo?: string
-  sourceDisabled?: boolean
-  target: string
-  targetTo?: string
-  targetDisabled?: boolean
-  direction?: string
-  subtitle?: string | null
-  compact?: boolean
-}) {
-  return (
-    <Box
-      px={compact ? 2 : 2.5}
-      py={compact ? 1.5 : 2}
-      sx={canvasPopoverInsetCardStyles}
-      borderRadius={compact ? 'md' : 'lg'}
-    >
-      <HStack spacing={1.5} align="center" justify="space-between" minW={0}>
-        <Box flex={1} minW={0} display="flex" justifyContent="flex-start">
-          <PopoverNameButton
-            label={source}
-            to={sourceTo}
-            isDisabled={sourceDisabled}
-            size="sm"
-          />
-        </Box>
-        <Text
-          as="span"
-          fontSize="11px"
-          fontWeight="700"
-          color="var(--accent)"
-          flexShrink={0}
-          lineHeight={1}
-        >
-          {directionGlyph(direction)}
-        </Text>
-        <Box flex={1} minW={0} display="flex" justifyContent="flex-end">
-          <PopoverNameButton
-            label={target}
-            to={targetTo}
-            isDisabled={targetDisabled}
-            size="sm"
-          />
-        </Box>
-      </HStack>
-      {subtitle && (
-        <Text
-          fontSize="10px"
-          color="gray.400"
-          mt={1}
-          noOfLines={1}
-          lineHeight="1.3"
-        >
-          {subtitle}
-        </Text>
-      )}
-    </Box>
-  )
-}
 
 function BreadcrumbItemIcon({ item }: { item: PathItem }) {
   return (
@@ -402,36 +261,6 @@ export function ZUIBreadcrumb({
   )
 }
 
-function UnderlyingConnectors({ details }: { details: ProxyConnectorDetails }) {
-  return (
-    <VStack align="stretch" spacing={1} width="full">
-      <Text color="gray.500" fontSize="9px" fontWeight="700" letterSpacing="0.08em" textTransform="uppercase">
-        Underlying Connectors · {details.connectors.length}
-      </Text>
-      <VStack align="stretch" spacing={1} maxH="240px" overflowY="auto" data-zui-native-wheel="true">
-        {details.connectors.map((leaf, index) => {
-          const sourceViewId = leaf.source.placementViewId ?? leaf.source.anchorViewId ?? leaf.ownerViewId
-          const targetViewId = leaf.target.placementViewId ?? leaf.target.anchorViewId ?? leaf.ownerViewId
-          return (
-            <PopoverEndpointRoute
-              key={`${leaf.ownerViewId}-${leaf.connector.id}-${index}`}
-              source={leaf.source.actualElementName}
-              sourceTo={`/views/${sourceViewId}?element=${leaf.source.actualElementId}`}
-              sourceDisabled={sourceViewId < 0}
-              target={leaf.target.actualElementName}
-              targetTo={`/views/${targetViewId}?element=${leaf.target.actualElementId}`}
-              targetDisabled={targetViewId < 0}
-              direction={leaf.connector.direction}
-              subtitle={leaf.connector.label?.trim() || leaf.connector.relationship?.trim() || null}
-              compact
-            />
-          )
-        })}
-      </VStack>
-    </VStack>
-  )
-}
-
 export function ZUIHoverPopover({
   hoveredItem,
   hiddenProxyBadges = [],
@@ -542,7 +371,7 @@ export function ZUIHoverPopover({
                           <ChakraImage src={hoveredItem.data.logoUrl} boxSize="14px" objectFit="contain" />
                         </Box>
                       )}
-                      <PopoverNameButton
+                      <ConnectorNameButton
                         label={hoveredItem.data.label}
                         to={primaryHref}
                         isDisabled={hoveredItem.data.diagramId < 0}
@@ -602,15 +431,6 @@ export function ZUIHoverPopover({
           })()}
           {hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details && (() => {
             const { details } = hoveredItem.data
-            const summarySubtitle = isDistinctProxySummaryLabel(details.label, details.count)
-              ? details.label
-              : null
-            const relationships = Array.from(new Set(
-              details.connectors
-                .map((leaf) => leaf.connector.relationship?.trim() || '')
-                .filter(Boolean),
-            ))
-            const proxyKindLabel = relationships.length === 1 ? relationships[0] : ''
             const sourceAnchorViewId = details.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId
             const targetAnchorViewId = details.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId
 
@@ -619,26 +439,19 @@ export function ZUIHoverPopover({
                 <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
                   <HStack spacing={2} align="center" justify="space-between">
                     <Text fontWeight="700" fontSize="13px" isTruncated color="gray.50" lineHeight="1.2">
-                      Off-View Connector
+                      Connectors
                     </Text>
-                    {proxyKindLabel && (
-                      <Badge colorScheme="blue" variant="subtle" sx={canvasPopoverPillStyles}>
-                        {proxyKindLabel}
-                      </Badge>
-                    )}
                   </HStack>
                 </PopoverHeader>
                 <PopoverBody px={3.5} py={2.5}>
                   <VStack align="stretch" spacing={2.5}>
-                    <PopoverEndpointRoute
-                      source={details.sourceAnchorName}
+                    <ConnectorSummaryCard
+                      details={details}
                       sourceTo={`/views/${sourceAnchorViewId}?element=${hoveredItem.data.sourceObjId}`}
                       sourceDisabled={sourceAnchorViewId < 0}
-                      target={details.targetAnchorName}
                       targetTo={`/views/${targetAnchorViewId}?element=${hoveredItem.data.targetObjId}`}
                       targetDisabled={targetAnchorViewId < 0}
                       direction={hoveredItem.data.direction}
-                      subtitle={summarySubtitle}
                     />
                     <UnderlyingConnectors details={details} />
                   </VStack>
@@ -663,7 +476,7 @@ export function ZUIHoverPopover({
                 <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
                   <HStack spacing={2} align="center" justify="space-between">
                     {connectorHref ? (
-                      <PopoverNameButton label={connectorTitle} to={connectorHref} size="md" />
+                      <ConnectorNameButton label={connectorTitle} to={connectorHref} size="md" />
                     ) : (
                       <Text fontWeight="700" fontSize="13px" isTruncated flex={1} color="gray.50" lineHeight="1.2">
                         {connectorTitle}
@@ -684,7 +497,7 @@ export function ZUIHoverPopover({
                 </PopoverHeader>
                 <PopoverBody px={3.5} py={2.5}>
                   <VStack align="stretch" spacing={2}>
-                    <PopoverEndpointRoute
+                    <ConnectorRouteCard
                       source={hoveredItem.data.sourceId}
                       sourceTo={sourceHref}
                       sourceDisabled={hoveredItem.data.diagramId < 0}
@@ -710,7 +523,7 @@ export function ZUIHoverPopover({
               <>
                 <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
                   <HStack spacing={2} align="center" justify="space-between">
-                    <PopoverNameButton
+                    <ConnectorNameButton
                       label={hoveredItem.data.label}
                       to={`/views/${hoveredItem.data.diagramId}`}
                       isDisabled={hoveredItem.data.diagramId < 0}
