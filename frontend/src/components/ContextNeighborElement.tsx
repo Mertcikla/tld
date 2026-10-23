@@ -15,7 +15,8 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, EditIcon, ExternalLinkIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from '@chakra-ui/icons'
+import { EditorIcon } from './Icons'
 import type { PlacedElement } from '../types'
 import {
   canvasPopoverContentStyles,
@@ -253,8 +254,9 @@ function ContextNeighborNode({ data }: Props) {
                       fontWeight: '700',
                       minH: '24px',
                       px: 2.5,
+                      '& .chakra-button__icon': { opacity: 1 },
                     }}
-                    rightIcon={data.onSelectElement ? <EditIcon boxSize="10px" /> : <ExternalLinkIcon boxSize="10px" />}
+                    rightIcon={<EditorIcon size={10} />}
                     onClick={(event) => {
                       event.stopPropagation()
                       if (data.onSelectElement) {
@@ -301,7 +303,7 @@ function ContextNeighborNode({ data }: Props) {
                               size="xs"
                               variant="outline"
                               sx={canvasPopoverNameButtonStyles}
-                              rightIcon={<ExternalLinkIcon boxSize="10px" />}
+                              rightIcon={<EditorIcon size={10} />}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 data.onNavigateToView(viewId)

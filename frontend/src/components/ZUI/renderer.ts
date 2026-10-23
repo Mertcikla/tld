@@ -644,6 +644,14 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angl
   ctx.restore()
 }
 
+type LabelSize = { width: number; height: number }
+
+/** All sizes are in screen pixels, including the visible (capped) endpoint bodies. */
+export function connectorLabelFitsEndpoints(label: LabelSize, source: LabelSize, target: LabelSize): boolean {
+  return label.width <= Math.min(source.width, target.width) * 0.75 &&
+    label.height <= Math.min(source.height, target.height) * 0.5
+}
+
 export function shouldDrawConnectorDetailLabel(direction: string | null | undefined, visualSourceScreenW: number, visualTargetScreenW: number): boolean {
   const dir = direction ?? 'forward'
   const sourceVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
@@ -1622,25 +1630,31 @@ function drawEdges(
         const labelW = textW + padX * 2
         const labelH = worldFontSize * 1.2 + padY * 2
 
-        const labelCenter = pickEdgeLabelPosition(
-          ctx.getTransform(),
-          midX, midY,
-          labelW, labelH,
-          tH.x - sH.x,
-          tH.y - sH.y,
-          occupiedLabelRects,
-        )
-        const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
+        if (connectorLabelFitsEndpoints(
+          { width: labelW * zoom, height: labelH * zoom },
+          { width: visualSourceScreenW, height: effHSource * zoom },
+          { width: visualTargetScreenW, height: effHTarget * zoom },
+        )) {
+          const labelCenter = pickEdgeLabelPosition(
+            ctx.getTransform(),
+            midX, midY,
+            labelW, labelH,
+            tH.x - sH.x,
+            tH.y - sH.y,
+            occupiedLabelRects,
+          )
+          const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
 
-        ctx.fillStyle = labelBg
-        ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1)) * layerFactor
-        ctx.beginPath()
-        ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
-        ctx.fill()
+          ctx.fillStyle = labelBg
+          ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1)) * layerFactor
+          ctx.beginPath()
+          ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
+          ctx.fill()
 
-        ctx.globalAlpha = edgeAlpha * layerFactor
-        ctx.fillStyle = '#cbd5e0'
-        ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
+          ctx.globalAlpha = edgeAlpha * layerFactor
+          ctx.fillStyle = '#cbd5e0'
+          ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
+        }
       }
 
       ctx.restore()

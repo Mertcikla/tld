@@ -17,7 +17,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { ExternalLinkIcon } from '@chakra-ui/icons'
+import { EditorIcon } from '../Icons'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import {
@@ -89,8 +89,9 @@ function PopoverNameButton({
         fontWeight: size === 'md' ? '700' : '600',
         minH: size === 'md' ? '24px' : '22px',
         px: size === 'md' ? 2.5 : 2,
+        '& .chakra-button__icon': { opacity: size === 'md' ? 1 : 0 },
       }}
-      rightIcon={<ExternalLinkIcon boxSize="10px" />}
+      rightIcon={<EditorIcon size={10} />}
       onClick={(e) => e.stopPropagation()}
       title={label}
     >

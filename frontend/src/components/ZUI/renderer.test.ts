@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ViewLayer } from '../../types'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
+import { connectorLabelFitsEndpoints, edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
 import { ELEMENT_NAME_INSET_RATIO } from '../../utils/elementName'
 import type { LayoutNode } from './types'
 import { connectorTagHighlightColor, setHighlightColor, setHighlightedTags, setTagColors } from './renderer'
@@ -85,6 +85,24 @@ describe('shouldDrawConnectorDetailLabel', () => {
     expect(shouldDrawConnectorDetailLabel('bidirectional', 121, 80)).toBe(true)
     expect(shouldDrawConnectorDetailLabel('none', 80, 120)).toBe(false)
     expect(shouldDrawConnectorDetailLabel('none', 121, 80)).toBe(true)
+  })
+})
+
+describe('connector label size relative to endpoints', () => {
+  it('hides labels that dominate either endpoint and restores them as elements grow', () => {
+    const badge = { width: 30, height: 24 }
+    const small = { width: 60, height: 28 }
+    const detailed = { width: 180, height: 85 }
+    expect(connectorLabelFitsEndpoints(badge, small, small)).toBe(false)
+    expect(connectorLabelFitsEndpoints(badge, detailed, small)).toBe(false)
+    expect(connectorLabelFitsEndpoints(badge, small, detailed)).toBe(false)
+    expect(connectorLabelFitsEndpoints(badge, detailed, detailed)).toBe(true)
+  })
+
+  it('also hides long labels and large counts that overwhelm element widths', () => {
+    const endpoint = { width: 180, height: 85 }
+    expect(connectorLabelFitsEndpoints({ width: 136, height: 24 }, endpoint, endpoint)).toBe(false)
+    expect(connectorLabelFitsEndpoints({ width: 100, height: 24 }, endpoint, endpoint)).toBe(true)
   })
 })
 
