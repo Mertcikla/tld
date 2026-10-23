@@ -149,15 +149,6 @@ make build
 the binary at `$(go env GOPATH)/bin/tld`. Build the frontend before compiling Go
 directly: the embedded assets come from `frontend/dist`.
 
-Builds and tests use the grammar subset in `.go-build-tags` for the languages
-supported by the code indexer. Add a language's `grammar_subset_<name>` tag there
-when extending indexing support, and extend the grammar parsing smoke test.
-GoReleaser, Make/Task, Air, CI, and Wails builds all read this list. For direct Go commands, pass it explicitly:
-
-```bash
-go build -tags "$(cat .go-build-tags)" ./cmd/tld
-go test -tags "$(cat .go-build-tags)" ./...
-```
 
 For live development, install [Air](https://github.com/air-verse/air)
 
