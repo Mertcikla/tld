@@ -1,12 +1,15 @@
 package pull_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/exec"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -67,6 +70,21 @@ _meta_elements:
 		t.Fatal(err)
 	}
 
+	// The custom alias was previously synced with this exact destination.
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := exec.CacheTarget(ws.Config, "cloud", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := &workspace.LockFile{Version: "v1", ActiveTarget: key}
+	workspace.UpdateLockFile(lock, "previous", "pull", nil, "", nil, ws.Meta)
+	if err := workspace.WriteLockFile(dir, lock); err != nil {
+		t.Fatal(err)
+	}
+
 	// 3. Run pull
 	_, _, err = cmd.RunCmd(t, dir, "pull", "--force")
 	if err != nil {
@@ -85,7 +103,7 @@ _meta_elements:
 	}
 
 	if _, ok := result["my-custom-ref"]; !ok {
-		t.Errorf("elements.yaml lost custom ref 'my-custom-ref'. Keys: %v", getMapKeys(result))
+		t.Fatalf("elements.yaml lost custom ref 'my-custom-ref'. Keys: %v", getMapKeys(result))
 	}
 
 	obj := result["my-custom-ref"].(map[string]any)
@@ -100,7 +118,6 @@ _meta_elements:
 func TestPullCmd_EmptyTargetAbortsAndKeepsCache(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
-	freshDataDir := t.TempDir()
 
 	t.Setenv("TLD_CONFIG_DIR", dir)
 	t.Setenv("TLD_DATA_DIR", dataDir)
@@ -115,10 +132,10 @@ func TestPullCmd_EmptyTargetAbortsAndKeepsCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Pull from a different, empty local database: every tracked element looks
-	// like it was deleted on the target. The pull must abort instead of wiping
-	// the local cache.
-	stdout, stderr, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", freshDataDir)
+	// All resources were deleted on the previously tracked target. A new
+	// destination has its own empty baseline and must not inherit these IDs.
+	emptyPullTarget(t, dir, dataDir)
+	stdout, stderr, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", dataDir)
 	if err == nil {
 		t.Fatalf("expected pull to abort on empty target\nstdout: %s\nstderr: %s", stdout, stderr)
 	}
@@ -138,7 +155,6 @@ func TestPullCmd_EmptyTargetAbortsAndKeepsCache(t *testing.T) {
 func TestPullCmd_DryRunReportsDeletions(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
-	freshDataDir := t.TempDir()
 
 	t.Setenv("TLD_CONFIG_DIR", dir)
 	t.Setenv("TLD_DATA_DIR", dataDir)
@@ -153,7 +169,8 @@ func TestPullCmd_DryRunReportsDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, _, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", freshDataDir, "--dry-run")
+	emptyPullTarget(t, dir, dataDir)
+	stdout, _, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", dataDir, "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run pull: %v\nstdout: %s", err, stdout)
 	}
@@ -172,6 +189,43 @@ func TestPullCmd_DryRunReportsDeletions(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatalf("dry-run modified elements.yaml:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func emptyPullTarget(t *testing.T, dir, dataDir string) {
+	t.Helper()
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := exec.NewRunner(ws.Config, "local", dataDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	for _, meta := range ws.Meta.Elements {
+		if err := runner.DeleteElement(context.Background(), int32(meta.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPullCmd_NewTargetDoesNotInheritDeletions(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	t.Setenv("TLD_DATA_DIR", t.TempDir())
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "custom-api", "--target", "local")
+	cmd.MustRunCmd(t, dir, "pull", "--target", "local", "--data-dir", t.TempDir())
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Elements["custom-api"] == nil {
+		t.Fatal("pull from a new empty target deleted another destination's resource")
+	}
+	if len(ws.Meta.Elements) != 0 {
+		t.Fatal("new empty target inherited previous target's IDs")
 	}
 }
 

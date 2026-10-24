@@ -31,6 +31,12 @@ running app and UI reflect them. Elements, views, placements and connectors are
 matched to their existing target resources. Unchanged values are skipped and
 reported separately from new and updated resources.
 
+The workspace lockfile keeps separate resource IDs and sync history for each
+local database or cloud server/workspace. You can sync the same YAML to both
+targets; switching targets never reuses the other destination's IDs. On first
+use (including older lockfiles), existing resources are matched by name/kind
+and connector endpoints, with ambiguous element matches rejected.
+
 Use --target to choose the destination:
   auto    API key + workspace id present -> remote, otherwise local (default)
   local   the local SQLite/Postgres database
@@ -57,16 +63,18 @@ func runSync(cmd *cobra.Command, wdir, format string, compact bool, target, data
 		return err
 	}
 
-	ws, err := cmdutil.LoadWorkspace(wdir)
-	if err != nil {
-		return fail(err)
-	}
-
 	sess, err := cmdutil.OpenSession(cmd, wdir, target, dataDir)
 	if err != nil {
 		return fail(err)
 	}
 	defer func() { _ = sess.Close() }()
+	if !sess.HasWorkspace() {
+		return fail(fmt.Errorf("no YAML workspace to sync; run 'tld init' or select one with --workspace"))
+	}
+	ws, err := sess.LoadWorkspace()
+	if err != nil {
+		return fail(err)
+	}
 	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)

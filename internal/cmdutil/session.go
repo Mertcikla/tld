@@ -35,10 +35,11 @@ type Session struct {
 	Mode   Mode
 	Config workspace.Config
 
-	command *cobra.Command
-	target  string
-	dataDir string
-	ctx     context.Context
+	command     *cobra.Command
+	target      string
+	dataDir     string
+	cacheTarget string
+	ctx         context.Context
 
 	ws       *workspace.Workspace
 	runner   exec.Runner
@@ -69,6 +70,14 @@ func OpenSession(cmd *cobra.Command, wdir, target, dataDir string) (*Session, er
 		}
 		s.ws = ws
 		s.Config = ws.Config
+		key, err := exec.CacheTarget(s.Config, target, dataDir)
+		if err != nil {
+			return nil, err
+		}
+		s.cacheTarget = key
+		if _, err := workspace.BindTarget(ws, key); err != nil {
+			return nil, err
+		}
 		s.Mode = ModeWorkspace
 		source, err := ReadSource(cmd, true)
 		if err != nil {
@@ -188,6 +197,9 @@ func (s *Session) LoadWorkspace() (*workspace.Workspace, error) {
 		ws, err := workspace.Load(s.Wdir)
 		if err != nil {
 			return nil, WithHint(fmt.Errorf("load workspace: %w", err), "Fix the workspace YAML or omit --yaml/--workspace to work on the local database directly.")
+		}
+		if _, err := workspace.BindTarget(ws, s.cacheTarget); err != nil {
+			return nil, err
 		}
 		s.ws = ws
 		return ws, nil
@@ -428,6 +440,9 @@ func (s *Session) RefreshCache(base *workspace.Workspace) error {
 	if !s.HasWorkspace() {
 		return nil
 	}
+	if _, err := workspace.BindTarget(base, s.cacheTarget); err != nil {
+		return err
+	}
 	runner, err := s.Runner()
 	if err != nil {
 		return err
@@ -452,7 +467,10 @@ func (s *Session) RequireAppliedCache() error {
 	if !s.HasWorkspace() {
 		return nil
 	}
-	return EnsureCacheInSync(s.Wdir)
+	if err := EnsureCacheInSync(s.Wdir); err != nil {
+		return err
+	}
+	return workspace.ActivateTarget(s.Wdir, s.cacheTarget)
 }
 
 func EnsureCacheInSync(dir string) error {

@@ -94,7 +94,6 @@ placed endpoints. Off-view details are reported on stderr in text mode.`,
 				for _, key := range diagnostics.OffViewConnectors {
 					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  "+key+": "+diagnostics.ConnectorVisibility[key].Description())
 				}
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), workspace.OffViewHint)
 			}
 			if len(diagnostics.UnresolvedConnectors) > 0 {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: unresolved connectors have missing endpoint definitions; run 'tld validate' for details.")
@@ -104,9 +103,12 @@ placed endpoints. Off-view details are reported on stderr in text mode.`,
 			}
 			if output == "" {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), content)
-				return nil
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", output)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", output)
+			if len(diagnostics.OffViewConnectors) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", workspace.OffViewHint)
+			}
 			return nil
 		},
 	}

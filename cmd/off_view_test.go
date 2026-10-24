@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
@@ -91,7 +93,7 @@ func TestOffViewRelationshipsPreservePlacementsAndReportVisibility(t *testing.T)
 					t.Fatalf("JSON list: %s", out)
 				}
 				out, stderr := cmd.MustRunCmd(t, dir, "render", "runtime", "--source", source)
-				if strings.Contains(out, "reads") || !strings.Contains(stderr, "off-view") || strings.Contains(stderr, "Warning") || strings.Contains(stderr, "Place missing") {
+				if strings.Contains(out, "reads") || !strings.Contains(stderr, "off-view") || !strings.HasSuffix(strings.TrimSpace(stderr), "Warning: "+workspace.OffViewHint) || strings.Contains(stderr, "Place missing") {
 					t.Fatalf("render: %s\n%s", out, stderr)
 				}
 				out, _ = cmd.MustRunCmd(t, dir, "render", "runtime", "--source", source, "--format", "json")
@@ -112,5 +114,72 @@ func TestOffViewRelationshipsPreservePlacementsAndReportVisibility(t *testing.T)
 			cmd.MustRunCmd(t, dir, "connect", "--view", "runtime", "--from", "api", "--to", "runtime", "--label", "reports")
 			cmd.MustRunCmd(t, dir, "validate", "ARC008", "--strict", "--source", "live")
 		})
+	}
+}
+
+func TestOffViewWarningAppearsOnceAtEndOfCommand(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	file := filepath.Join(t.TempDir(), "diagram.yaml")
+	if err := os.WriteFile(file, []byte(`elements:
+  runtime:
+    name: Runtime
+    has_view: true
+  api:
+    name: API
+    placements:
+      - parent: runtime
+  db:
+    name: Database
+connectors:
+  - view: root
+    source: api
+    target: db
+    label: reads
+  - view: runtime
+    source: api
+    target: db
+    label: reads
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"import", file, "--dry-run"},
+		{"import", file},
+		{"sync", "--dry-run"},
+		{"sync"},
+		{"list", "connectors"},
+		{"inspect", "runtime", "--type", "view"},
+		{"inspect", "runtime/api~db/reads", "--type", "connector"},
+		{"connect", "--view", "runtime", "--from", "api", "--to", "db", "--dry-run"},
+		{"connect", "--view", "runtime", "--from", "api", "--to", "db"},
+		{"render", "runtime"},
+		{"render", "runtime", "--output", filepath.Join(t.TempDir(), "diagram.mmd")},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			// Share the writer to check ordering across stdout and stderr, too.
+			var out bytes.Buffer
+			root := cmd.NewRootCmd()
+			root.SetOut(&out)
+			root.SetErr(&out)
+			if err := cmdutil.Execute(root, append([]string{"--workspace", dir}, args...)); err != nil {
+				t.Fatalf("command failed: %v\n%s", err, out.String())
+			}
+			text := out.String()
+			if strings.Count(text, workspace.OffViewHint) != 1 || !strings.HasSuffix(strings.TrimSpace(text), "Warning: "+workspace.OffViewHint) {
+				t.Fatalf("expected one trailing off-view warning:\n%s", text)
+			}
+			if args[0] == "import" || args[0] == "sync" {
+				for _, view := range []string{"root", "runtime"} {
+					if !strings.Contains(text, "view "+view+":") {
+						t.Fatalf("missing view %s in report:\n%s", view, text)
+					}
+				}
+			}
+		})
+	}
+	out, _ := cmd.MustRunCmd(t, dir, "list", "connectors", "--search", "no-match")
+	if strings.Contains(out, workspace.OffViewHint) {
+		t.Fatalf("unexpected off-view warning for empty results:\n%s", out)
 	}
 }
