@@ -3366,9 +3366,12 @@ function ViewEditorInner({
       const active = isEdgeActive(e)
       const targetZ = active ? Z_CONNECTOR_ACTIVE : Z_CONNECTOR
       const targetLabelZ = active ? Z_CONNECTOR_LABEL_ACTIVE : Z_CONNECTOR_LABEL
+      const isHovered = e.id === hoveredEdgeId
+        || e.source === hoveredElementId
+        || e.target === hoveredElementId
       const currentLabelZ = (e.data as { labelZIndex?: number } | undefined)?.labelZIndex
-      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ) return e
-      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ } }
+      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ && e.data?.isHovered === isHovered) return e
+      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ, isHovered } }
     }
 
     if (!hasNodeSel && !hasEdgeSel) {

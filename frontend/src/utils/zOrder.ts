@@ -18,8 +18,9 @@ export const Z_CONTEXT_NODE = 130
 export const Z_CONTEXT_GROUP_ANCHOR = 140
 
 export const Z_CONNECTOR_ACTIVE = 200
-export const Z_CONNECTOR_LABEL_ACTIVE = 210
 export const Z_ELEMENT_ACTIVE = 300
+// Keep active labels readable even when they overlap active elements.
+export const Z_CONNECTOR_LABEL_ACTIVE = 310
 
 export const Z_ELEMENT_INTERACTION_SOURCE = 1000
 export const Z_CONNECTOR_PREVIEW = 1500

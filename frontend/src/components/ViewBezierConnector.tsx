@@ -18,6 +18,15 @@ function getNodeFlowOrigin(node: RFNode) {
   return ((node as { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position)
 }
 
+function truncateConnectorLabel(text: string) {
+  const characters = Array.from(text)
+  if (characters.length <= 30) return text
+  // Allow the word at the 20-character target to finish within the soft limit.
+  const wordEnd = characters.slice(20, 31).findIndex((character) => /\s/.test(character))
+  const end = wordEnd < 0 ? 20 : 20 + wordEnd
+  return `${characters.slice(0, end).join('').trimEnd()}…`
+}
+
 export function ViewConnectorConnectionLine({
   connectionLineStyle,
   connectionLineType,
@@ -150,7 +159,8 @@ function ViewBezierConnector({
   const fontSize = Number(labelStyle?.fontSize ?? 11)
   const fontWeight = 500
   const fullText = typeof label === 'string' ? label : ''
-  const displayText = (!selected && fullText.length > 30) ? `${fullText.slice(0, 30)}...` : fullText
+  const showFullLabel = selected || data?.isHovered
+  const displayText = showFullLabel ? fullText : truncateConnectorLabel(fullText)
   const textWidth = displayText ? measureEdgeLabel(displayText, `${fontWeight} ${fontSize}px Inter, system-ui, sans-serif`) : 0
   const padding = Array.isArray(labelBgPadding) ? labelBgPadding : [2, 4]
   const proxyBadgeCount = typeof (edge?.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount === 'number'
@@ -245,7 +255,7 @@ function ViewBezierConnector({
                   boxSizing: 'border-box',
                 }}
               >
-                {fullText}
+                {displayText}
               </div>
             )}
             {proxyBadgeText && (
