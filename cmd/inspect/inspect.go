@@ -148,25 +148,28 @@ func printText(out io.Writer, report inspection.Report) error {
 	}
 
 	term.Label(out, 18, "Resource", fmt.Sprintf("%s %s", report.Type, report.Ref))
+	hasOffView := false
 	if report.Element != nil {
 		printElement(out, report.Element)
 		printRelated(out, report.Related)
 	}
 	if report.Connector != nil {
 		printConnector(out, report.Connector)
+		hasOffView = report.Connector.Visibility.Mode == "off-view"
 	}
 	if d := report.ViewDiagnostics; d != nil {
 		term.Label(out, 18, "Connectors", fmt.Sprintf("%d direct, %d off-view, %d unresolved", d.RenderedConnectors, len(d.OffViewConnectors), len(d.UnresolvedConnectors)))
 		for _, key := range d.OffViewConnectors {
 			term.Infof(out, "%s: %s", key, d.ConnectorVisibility[key].Description())
 		}
-		if len(d.OffViewConnectors) > 0 {
-			term.Info(out, workspace.OffViewHint)
-		}
+		hasOffView = hasOffView || len(d.OffViewConnectors) > 0
 	}
 	printSources(out, report.Sources)
 	for _, warning := range report.Warnings {
 		term.Warn(out, warning)
+	}
+	if hasOffView {
+		term.Warnf(out, "Warning: %s", workspace.OffViewHint)
 	}
 	return nil
 }
@@ -202,9 +205,6 @@ func printElement(out io.Writer, element *inspection.ElementReport) {
 
 func printConnector(out io.Writer, connector *inspection.ConnectorReport) {
 	term.Label(out, 18, "Visibility", connector.Visibility.Description())
-	if connector.Visibility.Mode == "off-view" {
-		term.Info(out, workspace.OffViewHint)
-	}
 	term.Label(out, 18, "View", connector.View)
 	term.Label(out, 18, "Source", connector.Source)
 	term.Label(out, 18, "Target", connector.Target)

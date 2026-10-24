@@ -20,7 +20,7 @@ type ViewDiagnostics struct {
 
 // OffViewHint describes UI behavior, not a promise that current filters expose
 // every relationship. Mermaid intentionally exports only direct placements.
-const OffViewHint = "Off-view relationships preserve component placement. The UI can show them through ancestor/context nodes or +N badges, depending on visible hierarchy, off-view filters, and connector budget. Mermaid exports only directly placed endpoints."
+const OffViewHint = "Off-view connectors may appear as UI context or badges; Mermaid omits them."
 
 type ConnectorVisibility struct {
 	UIHint           string              `json:"ui_hint,omitempty"`

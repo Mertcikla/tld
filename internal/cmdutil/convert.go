@@ -11,6 +11,7 @@ import (
 
 func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrganizationResponse) *workspace.Workspace {
 	newWS := &workspace.Workspace{
+		CacheTarget:     baseWS.CacheTarget,
 		Dir:             baseWS.Dir,
 		Config:          baseWS.Config,
 		WorkspaceConfig: baseWS.WorkspaceConfig,
@@ -194,6 +195,45 @@ func allocateExportElementRefs(base *workspace.Workspace, elements []*diagv1.Ele
 				if _, exists := existing[int32(meta.ID)]; !exists {
 					existing[int32(meta.ID)] = ref
 				}
+			}
+		}
+	}
+	// A target seen for the first time has no trusted IDs. Preserve portable
+	// YAML refs only when the name/kind match is unique on both sides.
+	if base.CacheTarget != "" {
+		exportedByName := make(map[string][]*diagv1.Element)
+		localByName := make(map[string][]*workspace.Element)
+		for _, element := range elements {
+			exportedByName[element.Name] = append(exportedByName[element.Name], element)
+		}
+		for _, spec := range base.Elements {
+			if spec != nil {
+				localByName[spec.Name] = append(localByName[spec.Name], spec)
+			}
+		}
+		for ref, spec := range base.Elements {
+			if spec == nil || (base.Meta != nil && base.Meta.Elements[ref] != nil) {
+				continue
+			}
+			var match *diagv1.Element
+			count := 0
+			for _, element := range exportedByName[spec.Name] {
+				if spec.Kind == "" || spec.Kind == element.GetKind() {
+					match = element
+					count++
+				}
+			}
+			if count != 1 {
+				continue
+			}
+			localMatches := 0
+			for _, candidate := range localByName[match.Name] {
+				if candidate.Kind == "" || candidate.Kind == match.GetKind() {
+					localMatches++
+				}
+			}
+			if localMatches == 1 && existing[match.Id] == "" {
+				existing[match.Id] = ref
 			}
 		}
 	}

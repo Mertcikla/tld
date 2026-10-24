@@ -272,7 +272,7 @@ func printVisibility(cmd *cobra.Command, ws *workspace.Workspace, spec *workspac
 	d := ws.DiagnoseConnector(spec)
 	term.Infof(cmd.OutOrStdout(), "visibility: %s", d.Description())
 	if d.Mode == "off-view" {
-		term.Info(cmd.OutOrStdout(), workspace.OffViewHint)
+		term.Warnf(cmd.OutOrStdout(), "Warning: %s", workspace.OffViewHint)
 	}
 }
 
