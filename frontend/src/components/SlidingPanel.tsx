@@ -57,6 +57,7 @@ export default function SlidingPanel({
   const isFlat = context?.sidePanelStyle === 'flat'
 
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const leftOffset = !isMobileLayout && side === 'left' ? (context?.leftPanelOffset ?? 0) : 0
   const rightOffset = (!isMobileLayout && isMarkdownOpen && side === 'right')
     ? `${markdownPaneWidth + 10}px`
     : '0px'
@@ -115,7 +116,7 @@ export default function SlidingPanel({
             transition={{ duration: 0.2, ease: EASE }}
             style={{
               position: isFlat ? 'absolute' : 'fixed',
-              left: side === 'left' ? (isFlat ? 0 : '1rem') : undefined,
+              left: side === 'left' ? (isFlat ? leftOffset : leftOffset ? `calc(1rem + ${leftOffset}px)` : '1rem') : undefined,
               right: side === 'right' ? (isFlat ? rightOffset : `calc(1rem + ${rightOffset})`) : undefined,
               top: 0,
               bottom: 0,
@@ -132,7 +133,7 @@ export default function SlidingPanel({
               pointerEvents="auto"
               w={width}
               minW={minWidth}
-              maxW={isFlat ? '100%' : 'calc(100vw - 24px)'}
+              maxW={isFlat ? (leftOffset ? `calc(100% - ${leftOffset}px)` : '100%') : `calc(100vw - ${leftOffset + 24}px)`}
               h={isFlat ? '100%' : height}
               maxH={isFlat ? '100%' : maxHeight}
               overflow="hidden"

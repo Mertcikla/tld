@@ -38,6 +38,20 @@ func NewAPIStore(store *app.Store) *APIStore {
 // BunDB exposes the underlying Bun database for operations that need raw queries.
 func (a *APIStore) BunDB() *bun.DB { return a.bunDB }
 
+// ─── Flows ───────────────────────────────────────────────────────────────────
+
+func (a *APIStore) ListFlows(ctx context.Context, viewID int64) ([]app.FlowRecord, error) {
+	return a.Store.ListFlows(ctx, viewID)
+}
+
+func (a *APIStore) SaveFlow(ctx context.Context, flow app.FlowRecord) (app.FlowRecord, error) {
+	return a.Store.SaveFlow(ctx, flow)
+}
+
+func (a *APIStore) DeleteFlow(ctx context.Context, id string, viewID int64, revision int32) error {
+	return a.Store.DeleteFlow(ctx, id, viewID, revision)
+}
+
 // ─── Views ───────────────────────────────────────────────────────────────────
 
 func (a *APIStore) ListViews(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.View, error) {

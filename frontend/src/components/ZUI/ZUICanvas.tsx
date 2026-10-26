@@ -1,6 +1,8 @@
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react'
 import { useBreakpointValue } from '@chakra-ui/react'
+import type { FlowFocus } from '../../flows/model'
+import { presentZUIFlow } from '../../flows/presentation'
 import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
 import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import type { ExploreData, ViewLayer } from '../../types'
@@ -53,6 +55,8 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  /** Optional story presentation controlled by the Explore page. */
+  flowFocus?: FlowFocus | null
   breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
   animateUpdates?: boolean
   preserveCameraOnUpdate?: boolean
@@ -74,6 +78,7 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  flowFocus = null,
   breadcrumbBoundaryRef,
   preserveCameraOnUpdate = false,
   animateUpdates = false,
@@ -117,6 +122,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }), [workspaceSnapshot, selectedTags, highlightedTags, hiddenTags])
   const visibleTargetLayout = useMemo(() => filterLayoutByTags(targetLayout, selectedTags, hiddenTags, [], connectorContext), [targetLayout, selectedTags, hiddenTags, connectorContext])
   const visibleLayout = useMemo(() => filterLayoutByTags(layout, selectedTags, hiddenTags, highlightedTags, connectorContext), [layout, selectedTags, hiddenTags, highlightedTags, connectorContext])
+  const presentationLayout = useMemo(() => presentZUIFlow(visibleLayout, flowFocus), [visibleLayout, flowFocus])
   const fittedLayoutRef = useRef(layout)
 
   const proxyResolverRef = useRef<((worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => HoveredItem | null) | null>(null)
@@ -205,7 +211,31 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     focusElement,
     setCameraFrame,
     zoomToPathItem,
+    animateToViewport,
+    cancelTransition,
   } = camera
+
+  const flowViewportRef = useRef<ZUIViewState | null>(null)
+  const flowCameraFocusRef = useRef('')
+  useEffect(() => {
+    const key = flowFocus ? `${flowFocus.viewId}:${flowFocus.elementIds.join(',')}` : ''
+    if (flowCameraFocusRef.current === key) return
+    flowCameraFocusRef.current = key
+    if (flowFocus) {
+      if (!flowViewportRef.current) flowViewportRef.current = { ...viewStateRef.current }
+      const el = containerRef.current
+      if (!el || !flowFocus.elementIds.length) return
+      const next = viewportForElements(visibleLayout.groups, flowFocus.elementIds.map(elementId => ({ viewId: flowFocus.viewId, elementId })), el.offsetWidth, el.offsetHeight, maxZoom)
+      if (next) {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) setViewState(next)
+        else animateToViewport(next)
+      }
+    } else if (flowViewportRef.current) {
+      cancelTransition()
+      setViewState(flowViewportRef.current)
+      flowViewportRef.current = null
+    }
+  }, [flowFocus, visibleLayout.groups, maxZoom, viewStateRef, setViewState, animateToViewport, cancelTransition])
 
   useZUIRenderLoop({
     canvasRef,
@@ -215,7 +245,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     setContainerSize,
     fitInitialView,
     onReady,
-    layout: visibleLayout,
+    layout: presentationLayout,
     viewState,
     viewStateRef,
     crossBranchSettings,

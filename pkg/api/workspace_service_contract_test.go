@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/tech"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestWorkspaceService_ListElementsReturnsPaginationAndChecksRead(t *testing.T) {
@@ -745,6 +746,18 @@ type contractStore struct {
 
 var _ Store = (*contractStore)(nil)
 var _ TransactionalStore = (*contractStore)(nil)
+
+func (*contractStore) ListFlows(context.Context, int64) ([]app.FlowRecord, error) {
+	return nil, nil
+}
+
+func (*contractStore) SaveFlow(context.Context, app.FlowRecord) (app.FlowRecord, error) {
+	return app.FlowRecord{}, nil
+}
+
+func (*contractStore) DeleteFlow(context.Context, string, int64, int32) error {
+	return nil
+}
 
 func (s *contractStore) RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error {
 	if s.runInTransaction != nil {

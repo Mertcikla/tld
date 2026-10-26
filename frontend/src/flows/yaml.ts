@@ -1,0 +1,179 @@
+import { parseDocument, stringify } from 'yaml'
+import type { FlowDiagram, FlowStep, StoryFlow } from './model'
+
+export const FLOW_YAML_MAX_BYTES = 1024 * 1024
+export const FLOW_YAML_SCHEMA_URL = 'https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json'
+
+export interface PortableConnectorHighlight { source: string; target: string; label?: string; reverse?: boolean }
+export interface PortableFlowStep {
+  id?: string
+  title?: string
+  description?: string
+  elements?: string[]
+  connectors?: PortableConnectorHighlight[]
+  metadata?: Record<string, string>
+}
+export interface PortableFlowDocument {
+  format: 'tld-flow'
+  version: 1
+  name: string
+  description?: string
+  steps: PortableFlowStep[]
+}
+/** Local-only overrides for duplicate or renamed objects. */
+export interface FlowYamlBindings {
+  /** Keys are element names used in steps. */
+  elements?: Record<string, number>
+  /** Step ID → zero-based highlight index → local connector ID. */
+  connectors?: Record<string, Record<number, number>>
+}
+
+const byteLength = (value: string) => new TextEncoder().encode(value).length
+const owns = (value: object, key: string | number) => Object.prototype.hasOwnProperty.call(value, key)
+function fail(path: string, message: string): never { throw new Error(`${path}: ${message}`) }
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path, 'expected a mapping')
+  return value as Record<string, unknown>
+}
+function keys(value: Record<string, unknown>, allowed: string[], path: string) {
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${path}.${key}`, 'unknown field')
+}
+function text(value: unknown, path: string, max: number, nonempty = false): string {
+  if (typeof value !== 'string' || (nonempty && !value.trim())) fail(path, nonempty ? 'expected a nonempty string' : 'expected a string')
+  if (byteLength(value) > max) fail(path, `must be at most ${max} UTF-8 bytes`)
+  return value
+}
+function list(value: unknown, path: string): unknown[] {
+  if (!Array.isArray(value)) fail(path, 'expected a sequence')
+  if (value.length > 500) fail(path, 'must contain at most 500 entries')
+  return value
+}
+
+/** Strict, bounded validation shared by parsing and exporting. No document data executes. */
+export function validatePortableFlow(value: unknown): PortableFlowDocument {
+  const doc = record(value, 'flow')
+  keys(doc, ['format', 'version', 'name', 'description', 'steps'], 'flow')
+  if (doc.format !== 'tld-flow') fail('flow.format', 'expected tld-flow')
+  if (doc.version !== 1) fail('flow.version', 'only version 1 is supported')
+  const name = text(doc.name, 'flow.name', 200, true)
+  const description = doc.description === undefined ? undefined : text(doc.description, 'flow.description', 10000)
+  const ids = new Set<string>()
+  const steps = list(doc.steps, 'steps').map((value, index): PortableFlowStep => {
+    const path = `steps[${index}]`, step = record(value, path)
+    keys(step, ['id', 'title', 'description', 'elements', 'connectors', 'metadata'], path)
+    const result: PortableFlowStep = {}
+    if (step.id !== undefined) {
+      result.id = text(step.id, `${path}.id`, 100, true)
+      if (ids.has(result.id)) fail(path, 'duplicate step id')
+      ids.add(result.id)
+    }
+    if (step.title !== undefined) result.title = text(step.title, `${path}.title`, 500)
+    if (step.description !== undefined) result.description = text(step.description, `${path}.description`, 10000)
+    if (step.elements !== undefined) {
+      result.elements = list(step.elements, `${path}.elements`).map((name, index) => text(name, `${path}.elements[${index}]`, 10000, true))
+      if (new Set(result.elements).size !== result.elements.length) fail(path, 'duplicate element highlight')
+    }
+    if (step.connectors !== undefined) {
+      result.connectors = list(step.connectors, `${path}.connectors`).map((value, index) => {
+        const location = `${path}.connectors[${index}]`, connector = record(value, location)
+        keys(connector, ['source', 'target', 'label', 'reverse'], location)
+        if (connector.reverse !== undefined && typeof connector.reverse !== 'boolean') fail(`${location}.reverse`, 'expected a boolean')
+        return {
+          source: text(connector.source, `${location}.source`, 10000, true),
+          target: text(connector.target, `${location}.target`, 10000, true),
+          ...(connector.label !== undefined ? { label: text(connector.label, `${location}.label`, 10000) } : {}),
+          ...(connector.reverse !== undefined ? { reverse: connector.reverse as boolean } : {}),
+        }
+      })
+      const references = result.connectors.map(c => JSON.stringify([c.source, c.target, c.label]))
+      if (new Set(references).size !== references.length) fail(path, 'duplicate connector highlight')
+    }
+    if (step.metadata !== undefined) {
+      const entries = Object.entries(record(step.metadata, `${path}.metadata`))
+      if (entries.length > 50) fail(path, 'at most 50 metadata entries are allowed')
+      result.metadata = Object.fromEntries(entries.map(([key, value]) => [text(key, `${path}.metadata key`, 100, true), text(value, `${path}.metadata.${key}`, 10000)]))
+    }
+    return result
+  })
+  return { format: 'tld-flow', version: 1, name, ...(description !== undefined ? { description } : {}), steps }
+}
+
+export function parseFlowYaml(source: string): PortableFlowDocument {
+  if (byteLength(source) > FLOW_YAML_MAX_BYTES) fail('flow', 'YAML must be at most 1 MiB')
+  const document = parseDocument(source, { version: '1.2', uniqueKeys: true, strict: true })
+  if (document.errors.length || document.warnings.length) throw new Error([...document.errors, ...document.warnings].map(error => error.message).join('\n'))
+  if (document.directives?.yaml.version !== '1.2') fail('flow', 'only YAML 1.2 is supported')
+  return validatePortableFlow(document.toJS({ maxAliasCount: 0 }))
+}
+
+/** Resolve a document into a new unsaved flow; never overwrite a saved flow. */
+export function importFlowYaml(source: string, viewId: number, diagram: FlowDiagram, bindings: FlowYamlBindings = {}): StoryFlow {
+  if (!Number.isSafeInteger(viewId) || viewId <= 0) fail('view', 'choose a valid target diagram')
+  const doc = parseFlowYaml(source)
+  const names = new Set(doc.steps.flatMap(step => [...step.elements ?? [], ...(step.connectors ?? []).flatMap(c => [c.source, c.target])]))
+  const validId = (id: number) => Number.isSafeInteger(id) && id > 0
+  for (const [name, id] of Object.entries(bindings.elements ?? {})) {
+    if (!names.has(name)) fail('bindings.elements', `unknown reference ${JSON.stringify(name)}`)
+    if (!validId(id)) fail('bindings.elements', 'expected a positive local resource ID')
+  }
+  for (const [stepId, indexes] of Object.entries(bindings.connectors ?? {})) {
+    const step = doc.steps.find(step => step.id === stepId)
+    if (!step) fail('bindings.connectors', `unknown step ${JSON.stringify(stepId)}`)
+    for (const [index, id] of Object.entries(indexes)) {
+      if (!/^(0|[1-9][0-9]*)$/.test(index) || !step.connectors?.[Number(index)]) fail('bindings.connectors', 'unknown highlight index')
+      if (!validId(id)) fail('bindings.connectors', 'expected a positive local resource ID')
+    }
+  }
+  function elementId(name: string, location: string): number {
+    const bound = owns(bindings.elements ?? {}, name) ? bindings.elements![name] : undefined
+    const matches = diagram.elements.filter(candidate => bound !== undefined ? candidate.element_id === bound : candidate.name === name)
+    if (matches.length !== 1) fail(location, matches.length ? `ambiguous element ${JSON.stringify(name)}; provide an explicit binding` : `element ${JSON.stringify(name)} is not in the target diagram`)
+    return matches[0].element_id
+  }
+  const steps = doc.steps.map((step, index): FlowStep => {
+    const path = `steps[${index}]`
+    const elementIds = (step.elements ?? []).map(name => elementId(name, `${path}.elements`))
+    const boundConnectors = step.id !== undefined && owns(bindings.connectors ?? {}, step.id) ? bindings.connectors![step.id] : {}
+    const connectors = (step.connectors ?? []).map((highlight, index) => {
+      const location = `${path}.connectors[${index}]`
+      const source = elementId(highlight.source, `${location}.source`), target = elementId(highlight.target, `${location}.target`)
+      const bound = owns(boundConnectors, index) ? boundConnectors[index] : undefined
+      const matches = diagram.connectors.filter(c => c.source_element_id === source && c.target_element_id === target &&
+        (bound !== undefined ? c.id === bound : highlight.label === undefined || (c.label ?? '') === highlight.label))
+      if (matches.length !== 1) fail(location, matches.length ? 'ambiguous connection; specify a unique label or an explicit binding' : 'connection is not in the target diagram (source, target, and any supplied label must match)')
+      return { id: matches[0].id, reverse: highlight.reverse ?? false }
+    })
+    if (new Set(elementIds).size !== elementIds.length || new Set(connectors.map(c => c.id)).size !== connectors.length) fail(path, 'duplicate resolved highlight')
+    return { id: step.id ?? crypto.randomUUID(), title: step.title ?? '', description: step.description ?? '', elementIds, connectors, metadata: step.metadata ?? {} }
+  })
+  return { id: '', viewId, revision: 0, name: doc.name, description: doc.description ?? '', steps }
+}
+
+/** Export only names and labels; database identity stays in the selected diagram. */
+export function exportFlowYaml(flow: StoryFlow, diagram: FlowDiagram): string {
+  function elementName(id: number): string {
+    const element = diagram.elements.find(element => element.element_id === id)
+    if (!element) fail('export', `element ${id} is unavailable; relink the step before exporting`)
+    if (diagram.elements.filter(candidate => candidate.name === element.name).length !== 1) fail('export', `element name ${JSON.stringify(element.name)} is ambiguous; give it a unique name before exporting`)
+    return element.name
+  }
+  const steps: PortableFlowStep[] = flow.steps.map(step => ({
+    id: step.id,
+    ...(step.title ? { title: step.title } : {}),
+    ...(step.description ? { description: step.description } : {}),
+    ...(step.elementIds.length ? { elements: step.elementIds.map(elementName) } : {}),
+    ...(step.connectors.length ? { connectors: step.connectors.map(highlight => {
+      const connector = diagram.connectors.find(c => c.id === highlight.id)
+      if (!connector) fail('export', `connection ${highlight.id} is unavailable; relink the step before exporting`)
+      const label = connector.label ?? ''
+      const between = diagram.connectors.filter(c => c.source_element_id === connector.source_element_id && c.target_element_id === connector.target_element_id)
+      if (between.filter(c => (c.label ?? '') === label).length !== 1) fail('export', 'connections with the same endpoints need distinct labels before exporting')
+      return { source: elementName(connector.source_element_id), target: elementName(connector.target_element_id), ...(label || between.length > 1 ? { label } : {}), ...(highlight.reverse ? { reverse: true } : {}) }
+    }) } : {}),
+    ...(Object.keys(step.metadata).length ? { metadata: step.metadata } : {}),
+  }))
+  const doc = validatePortableFlow({ format: 'tld-flow', version: 1, name: flow.name, ...(flow.description ? { description: flow.description } : {}), steps })
+  const source = `# yaml-language-server: $schema=${FLOW_YAML_SCHEMA_URL}\n${stringify(doc, { lineWidth: 0 })}`
+  if (byteLength(source) > FLOW_YAML_MAX_BYTES) fail('export', 'YAML must be at most 1 MiB')
+  return source
+}

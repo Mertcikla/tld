@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json",
+  "title": "Portable tlDiagram flow v1",
+  "description": "A sequence of steps with zero or more simultaneous highlights and optional metadata. The importer additionally validates unique step IDs, resolved references and UTF-8 byte limits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "name",
+    "steps"
+  ],
+  "properties": {
+    "format": {
+      "const": "tld-flow"
+    },
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 10000
+    },
+    "steps": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "elements": {
+          "type": "array",
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "connectors": {
+          "type": "array",
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/connector"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "maxProperties": 50,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 10000
+          }
+        }
+      }
+    },
+    "connector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 10000,
+          "description": "Optional only when ordered endpoints identify one connector. Empty string explicitly selects an unlabeled connector."
+        },
+        "reverse": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

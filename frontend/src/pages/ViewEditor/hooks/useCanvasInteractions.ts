@@ -17,6 +17,7 @@ import {
   useStoreApi,
 } from 'reactflow'
 import { api } from '../../../api/client'
+import { isFlowPanelTarget } from '../../../flows/canvasInteraction'
 import type {
   Connector,
   PlacedElement,
@@ -423,6 +424,7 @@ export function getConnectorDeletionTarget(
 interface CanvasInteractionOptions {
   viewId: number | null
   canEdit: boolean
+  flowRecording?: boolean
   interactionSourceId: number | null
   setInteractionSourceId: React.Dispatch<React.SetStateAction<number | null>>
   clickConnectMode: ClickConnectModeState | null
@@ -631,6 +633,7 @@ export type ClickConnectCursorPosition = { x: number; y: number }
 export function useCanvasInteractions({
   viewId,
   canEdit,
+  flowRecording = false,
   interactionSourceId,
   setInteractionSourceId,
   clickConnectMode,
@@ -2472,6 +2475,8 @@ export function useCanvasInteractions({
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
+      if (isFlowPanelTarget(target)) return
+      if (flowRecording && !['f', '+', '=', '-'].includes(e.key.toLowerCase())) return
       const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' ||
         target?.tagName === 'SELECT' || target?.isContentEditable
       if (isInput) return
@@ -2724,7 +2729,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
+  }, [flowRecording, canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {

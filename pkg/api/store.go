@@ -101,6 +101,11 @@ type RealtimeDrawingInput struct {
 // Store is the persistence interface for the shared workspace API.
 // Implementations exist for PostgreSQL (backend) and SQLite (tld).
 type Store interface {
+	// Flows
+	ListFlows(ctx context.Context, viewID int64) ([]app.FlowRecord, error)
+	SaveFlow(ctx context.Context, flow app.FlowRecord) (app.FlowRecord, error)
+	DeleteFlow(ctx context.Context, id string, viewID int64, revision int32) error
+
 	// Views
 	ListViews(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.View, error)
 	GetViews(ctx context.Context, workspaceID uuid.UUID, parentViewID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error)
