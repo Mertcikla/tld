@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Badge, Box, Button, Checkbox, FormControl, FormLabel, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { Box, Button, Checkbox, FormControl, FormLabel, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon } from '@chakra-ui/icons'
 import { motion, Reorder } from 'framer-motion'
-import { faBackwardStep, faForwardStep, faPause, faPlay, faRepeat } from '@fortawesome/free-solid-svg-icons'
+import { faBackwardStep, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
 import { SortableFlowStep } from './SortableFlowStep'
 import { ChevronDownIcon, CloseIcon, EditorIcon, EyeIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
@@ -16,6 +16,14 @@ import { saveButtonStyles } from '../styles/saveButton'
 import { panelSurfaceStyles } from '../styles/surfaces'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
+function StepCount({ count, label = `${count} ${count === 1 ? 'step' : 'steps'}`, accent = false }: { count: number; label?: string; accent?: boolean }) {
+  return <Tooltip label={label} openDelay={300} closeOnPointerDown closeOnScroll>
+    <Box as="span" aria-label={label} display="inline-flex" alignItems="center" justifyContent="flex-end" gap={1.5} flexShrink={0} fontSize="sm" fontWeight="medium" color={accent ? 'var(--accent)' : 'text.muted'}>
+      <Box as="span">{count}</Box><FontAwesomeIcon icon={faStairs} size={16} />
+    </Box>
+  </Tooltip>
+}
+
 function FlowOption({ flow, selected, onSelect }: { flow: StoryFlow; selected: boolean; onSelect?: () => void }) {
   const name = flow.name || 'Untitled flow'
   const count = `${flow.steps.length} ${flow.steps.length === 1 ? 'step' : 'steps'}`
@@ -23,8 +31,7 @@ function FlowOption({ flow, selected, onSelect }: { flow: StoryFlow; selected: b
     bg={selected ? 'rgba(var(--accent-rgb), 0.12)' : undefined} color={selected ? 'var(--accent)' : undefined} _disabled={{ opacity: 1, cursor: 'default' }}>
     <HStack w="full" minW={0} spacing={3}>
       <Text flex={1} minW={0} isTruncated>{name}</Text>
-      <Badge flexShrink={0} fontSize="10px" fontWeight="medium" textTransform="none" px={1.5} rounded="md"
-        bg={selected ? 'rgba(var(--accent-rgb), 0.16)' : 'whiteAlpha.100'} color={selected ? 'var(--accent)' : 'text.muted'}>{count}</Badge>
+      <StepCount count={flow.steps.length} accent={selected} />
     </HStack>
   </MenuItem>
 }
@@ -34,7 +41,7 @@ function FlowAction({ label, hint = label, icon, disabled, loading, primary, des
 }) {
   return <Tooltip label={hint} openDelay={200} closeOnPointerDown closeOnScroll>
     <Box as="span" display="inline-flex" ml={modeSwitch ? 1 : undefined}>
-      <IconButton aria-label={label} icon={icon} size={modeSwitch ? 'sm' : 'xs'} w={modeSwitch || primary ? undefined : 7} h={modeSwitch || primary ? undefined : 7} variant={modeSwitch ? 'elevated' : 'ghost'} colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
+      <IconButton aria-label={label} icon={icon} size={modeSwitch ? 'sm' : 'xs'} w={modeSwitch || primary ? undefined : 7} h={modeSwitch || primary ? undefined : 7} variant={modeSwitch ? 'elevated' : 'ghost'} colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : modeSwitch ? { color: 'var(--accent)' } : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
     </Box>
   </Tooltip>
 }
@@ -128,12 +135,12 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
     onChange(next)
   }
   return <VStack align="stretch" spacing={3}>
-    <HStack justify="space-between" flexWrap="wrap" gap={2}>
-      <Text fontSize="sm" fontWeight="semibold" flexShrink={0}>Steps ({steps.length})</Text>
+    <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
       <HStack spacing={2}>
         {actions}
         <Button size="sm" isDisabled={steps.length >= 500} onClick={() => { const step = newStep(diagram, selection); onChange([...steps, step]); onSelect(step.id) }}>+ Step</Button>
       </HStack>
+      <Box ml="auto"><StepCount count={steps.length} /></Box>
     </HStack>
     {!steps.length && <Text fontSize="sm" color="gray.400">Add a step to describe what happens and choose what to highlight.</Text>}
     <Reorder.Group as="div" ref={listRef} axis="y" values={steps} onReorder={onChange} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 26 }}>
@@ -320,11 +327,12 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
         </> : <>
           <Box flex={1} minW={0}>
             <Menu placement="bottom-end" isLazy>
-              <HStack spacing={0} minW={0} rounded="md" bg="whiteAlpha.50" border="1px solid" borderColor="var(--border-main)" overflow="hidden" _focusWithin={{ borderColor: 'var(--accent)' }}>
+              <HStack spacing={0} minW={0} rounded="md" bg="whiteAlpha.50" border="1px solid" borderColor="var(--border-main)" overflow="hidden" _hover={{ borderColor: 'whiteAlpha.300' }} _focusWithin={{ borderColor: 'var(--accent)' }}>
+
                 {editMode && flow ? <>
                   <Input aria-label="Flow name" isDisabled={busy} variant="unstyled" flex={1} minW={0} h="32px" px={2} fontSize="sm" fontWeight="semibold" placeholder="Flow name" value={flow.name} maxLength={200}
                     _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch({ name: e.target.value })} />
-                  <MenuButton as={IconButton} aria-label="Choose flow" icon={<ChevronDownIcon />} size="sm" variant="ghost" isDisabled={busy} flexShrink={0} />
+                  <MenuButton as={IconButton} aria-label="Choose flow" icon={<ChevronDownIcon />} size="sm" variant="ghost" color="var(--accent)" isDisabled={busy} flexShrink={0} />
                 </> : <MenuButton as={Button} aria-label="Choose flow" size="sm" variant="ghost" w="full" minW={0} px={2} textAlign="left" fontWeight="semibold" isDisabled={busy} rightIcon={<ChevronDownIcon />}>
                   <Text as="span" display="block" isTruncated>{flow ? flow.name || 'Untitled flow' : 'Choose a flow'}</Text>
                 </MenuButton>}
@@ -387,7 +395,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" p={3} minH={0} display="flex" flexDirection="column" overflow="hidden">
         {playback.frame && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={2} mb={3} minH={0} maxH="160px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
-          <Text fontSize="xs" color="var(--accent)">Step {playback.index + 1} of {playback.frames.length}</Text>
+          <Box alignSelf="flex-end"><StepCount count={playback.index + 1} label={`Step ${playback.index + 1} of ${playback.frames.length}`} accent /></Box>
           {playback.frame.steps.map(step => <Box key={step.id}>
             <Text fontWeight="semibold" fontSize="sm" overflowWrap="anywhere">{stepLabel(step, currentDiagram)}</Text>
             {step.description && <Text fontSize="sm" whiteSpace="pre-wrap" overflowWrap="anywhere">{step.description}</Text>}
