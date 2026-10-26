@@ -6,7 +6,7 @@ import { parseFlowYaml } from './yaml'
 import type { StoryFlow } from './model'
 
 vi.mock('@chakra-ui/react', () => ({
-  Button: 'button', HStack: 'div', Input: 'input', Textarea: 'textarea', Text: 'p',
+  Button: 'button', IconButton: 'button', Tooltip: ({ children }: { children: React.ReactNode }) => children, HStack: 'div', Input: 'input', Textarea: 'textarea', Text: 'p',
   Modal: ({ isOpen, children, onClose }: { isOpen: boolean; children: React.ReactNode; onClose: () => void }) => isOpen ? createElement('dialog', { onClose }, children) : null,
   ModalBody: 'div', ModalCloseButton: 'span', ModalContent: 'div', ModalFooter: 'div', ModalHeader: 'h2', ModalOverlay: 'div',
 }))
@@ -14,7 +14,7 @@ const flow: StoryFlow = { id: 'saved-id', revision: 6, viewId: 1, name: 'Story',
 const source = 'format: tld-flow\nversion: 1\nname: Imported story\nsteps: []\n'
 let renderer: ReactTestRenderer
 afterEach(() => act(() => renderer?.unmount()))
-const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label)!
+const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label || node.props['aria-label'] === label)!
 
 describe('flow YAML controls', () => {
   it('opens exported YAML for read-only viewers without import controls', () => {

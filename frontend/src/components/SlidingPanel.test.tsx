@@ -73,7 +73,8 @@ describe('SlidingPanel order beside Flows', () => {
     const panel = renderer.root.findAllByType('div').find(node => node.props['data-testid'] === 'inventory')!
     const wrapper = renderer.root.findAllByType('div').find(node => node.props.style?.pointerEvents === 'none')!
     expect(wrapper.props.style.left).toBe(style === 'flat' ? 360 : 'calc(1rem + 360px)')
-    expect(panel.props.maxW).toBe(style === 'flat' ? 'calc(100% - 360px)' : 'calc(100vw - 384px)')
+    expect(wrapper.props.style.right).toBe(style === 'flat' ? 0 : undefined)
+    expect(panel.props.maxW).toBe(style === 'flat' ? '100%' : 'calc(100vw - 384px)')
     act(() => renderer.unmount())
   })
 

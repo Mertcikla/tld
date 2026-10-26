@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { Button, HStack, Input, Modal, ModalBody, ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Text, Textarea } from '@chakra-ui/react'
+import { Button, HStack, IconButton, Input, Modal, ModalBody, ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Text, Textarea, Tooltip } from '@chakra-ui/react'
+import { ImportIcon, ExportIcon } from '../components/Icons'
 import { exportFlowYaml, FLOW_YAML_MAX_BYTES, importFlowYaml } from './yaml'
 import type { FlowDiagram, StoryFlow } from './model'
 
@@ -58,8 +59,12 @@ export function FlowYamlControls({ flow, diagram, viewId, canImport, disabled, o
   }
   return <>
     <HStack spacing={2}>
-      {canImport && viewId && <Button size="xs" variant="ghost" fontWeight="normal" isDisabled={disabled} onClick={() => open('import')}>Import YAML</Button>}
-      {flow && <Button size="xs" variant="ghost" fontWeight="normal" isDisabled={disabled} onClick={() => open('export')}>Export YAML</Button>}
+      {canImport && viewId && <Tooltip label="Import YAML" openDelay={200} closeOnPointerDown closeOnScroll>
+        <span><IconButton size="xs" w={7} h={7} variant="ghost" aria-label="Import YAML" icon={<ImportIcon size={14} />} isDisabled={disabled} onClick={() => open('import')} /></span>
+      </Tooltip>}
+      {flow && <Tooltip label="Export YAML" openDelay={200} closeOnPointerDown closeOnScroll>
+        <span><IconButton size="xs" w={7} h={7} variant="ghost" aria-label="Export YAML" icon={<ExportIcon size={14} />} isDisabled={disabled} onClick={() => open('export')} /></span>
+      </Tooltip>}
     </HStack>
     <Modal isOpen={mode !== null} onClose={close} size="xl">
       <ModalOverlay />
@@ -77,8 +82,8 @@ export function FlowYamlControls({ flow, diagram, viewId, canImport, disabled, o
         <ModalFooter gap={2}>
           <Button size="sm" variant="ghost" onClick={close}>Close</Button>
           {mode === 'import'
-            ? <Button size="sm" colorScheme="blue" isLoading={reading} isDisabled={!source.trim() || disabled || !canImport} onClick={importDraft}>Import as draft</Button>
-            : <Button size="sm" colorScheme="blue" isDisabled={!source || !!error} onClick={download}>Download YAML</Button>}
+            ? <Button size="sm" variant="primary" isLoading={reading} isDisabled={!source.trim() || disabled || !canImport} onClick={importDraft}>Import as draft</Button>
+            : <Button size="sm" variant="primary" isDisabled={!source || !!error} onClick={download}>Download YAML</Button>}
         </ModalFooter>
       </ModalContent>
     </Modal>

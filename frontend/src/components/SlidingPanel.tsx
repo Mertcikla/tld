@@ -117,7 +117,7 @@ export default function SlidingPanel({
             style={{
               position: isFlat ? 'absolute' : 'fixed',
               left: side === 'left' ? (isFlat ? leftOffset : leftOffset ? `calc(1rem + ${leftOffset}px)` : '1rem') : undefined,
-              right: side === 'right' ? (isFlat ? rightOffset : `calc(1rem + ${rightOffset})`) : undefined,
+              right: side === 'right' ? (isFlat ? rightOffset : `calc(1rem + ${rightOffset})`) : isFlat ? 0 : undefined,
               top: 0,
               bottom: 0,
               display: 'flex',
@@ -133,7 +133,8 @@ export default function SlidingPanel({
               pointerEvents="auto"
               w={width}
               minW={minWidth}
-              maxW={isFlat ? (leftOffset ? `calc(100% - ${leftOffset}px)` : '100%') : `calc(100vw - ${leftOffset + 24}px)`}
+              // Flat wrappers already span the space after leftOffset; subtracting it again collapses narrow panels.
+              maxW={isFlat ? '100%' : `calc(100vw - ${leftOffset + 24}px)`}
               h={isFlat ? '100%' : height}
               maxH={isFlat ? '100%' : maxHeight}
               overflow="hidden"
