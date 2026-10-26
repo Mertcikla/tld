@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Box, Button, Checkbox, Collapse, FormControl, FormLabel, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { Box, Button, Checkbox, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon } from '@chakra-ui/icons'
 import { motion, Reorder } from 'framer-motion'
@@ -168,9 +168,12 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
       {missingReference(step, diagram) && <Text px={3} pb={2} fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text>}
       <Collapse in={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} animateOpacity unmountOnExit>
         <VStack align="stretch" spacing={3} p={3} pt={0}>
-          <FormControl><FormLabel fontSize="xs">Step title</FormLabel><Input size="sm" aria-label="Step title" placeholder="What happens in this step?" maxLength={500} value={step.title} onChange={e => patch(step.id, { title: e.target.value })} /></FormControl>
-          <FormControl><FormLabel fontSize="xs">Description (optional)</FormLabel><Textarea size="sm" rows={2} minH="64px" aria-label="Step description" placeholder="Explain this part of the story" maxLength={10000} value={step.description} onChange={e => patch(step.id, { description: e.target.value })} /></FormControl>
-          <Box><Text fontSize="sm" fontWeight="semibold">Highlights</Text><Text fontSize="xs" color="gray.400" mt={1}>Choose elements or connections. Leave empty for a text-only step.</Text></Box>
+          <VStack align="stretch" spacing={0} minW={0}>
+            <Input aria-label="Step title" variant="unstyled" minW={0} h="32px" px={2} rounded="md" fontSize="sm" fontWeight="semibold" placeholder="Step title" maxLength={500} value={step.title}
+              _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch(step.id, { title: e.target.value })} />
+            <Textarea aria-label="Step description" variant="unstyled" minW={0} fontSize="xs" color="gray.400" px={2} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={step.description}
+              _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch(step.id, { description: e.target.value })} />
+          </VStack>
           <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={expanded === step.id ? onPick : undefined} picking={expanded === step.id && picking} />
           {!step.branches && !step.goToFlowId && <Checkbox size="sm" aria-label="Whole flow overview" isChecked={!!step.overview} onChange={event => patch(step.id, { overview: event.target.checked })}>Show an overview of the whole flow</Checkbox>}
           {!step.overview && !step.branches && !step.goToFlowId && <HStack flexWrap="wrap">
