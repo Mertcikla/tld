@@ -175,9 +175,9 @@ describe('flow step editing', () => {
     expect(window.confirm).not.toHaveBeenCalled()
   })
 
-  it('starts playback collapsed during editing and preserves the draft when closing and reopening', () => {
+  it('keeps playback open during editing and preserves the draft when closing and reopening', () => {
     mount()
-    expect(button('Auto-play')).toBeUndefined()
+    expect(button('Auto-play')).toBeDefined()
     const props = renderer.root.findByType(FlowPanel).props
     act(() => renderer.update(<FlowPanel {...props} open={false} />))
     act(() => renderer.update(<FlowPanel {...props} open />))
@@ -191,8 +191,7 @@ describe('flow step editing', () => {
     const dock = renderer.root.findByProps({ 'data-testid': 'flow-playback-dock' })
     expect(renderer.root.findByProps({ 'data-flow-scroll': true }).findAllByProps({ 'data-testid': 'flow-playback-dock' })).toHaveLength(0)
     expect(dock.props.flexShrink).toBe(0)
-    expect(button('Toggle playback controls').props['aria-expanded']).toBe(false)
-    act(() => button('Toggle playback controls').props.onClick())
+    expect(button('Toggle playback controls').props['aria-expanded']).toBe(true)
     act(() => button('Auto-play').props.onClick())
     expect(button('Pause')).toBeDefined()
     act(() => button('Toggle playback controls').props.onClick())
@@ -379,6 +378,9 @@ describe('flow step editing', () => {
     act(() => button('Edit flow').props.onClick())
     expect(button('+ New flow')).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('New flow')
+    expect(button('Toggle playback controls').props['aria-expanded']).toBe(true)
+    act(() => button('Toggle playback controls').props.onClick())
+    expect(button('Auto-play')).toBeUndefined()
     change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Draft flow')
     const actions = renderer.root.findByProps({ 'aria-label': 'Flow actions' }).findAllByType('button')
     expect(actions.at(-1)?.props['aria-label']).toBe('Preview')
@@ -387,6 +389,8 @@ describe('flow step editing', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
     act(() => button('Edit flow').props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Draft flow')
+    expect(button('Toggle playback controls').props['aria-expanded']).toBe(true)
+    expect(button('Auto-play')).toBeDefined()
   })
 
   it('lets the flow chooser handle Escape before the panel handles it', () => {

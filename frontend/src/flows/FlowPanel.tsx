@@ -190,9 +190,9 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [deletePending, setDeletePending] = useState(false)
-  const [editPlaybackOpen, setEditPlaybackOpen] = useState(false)
+  const [editPlaybackOpen, setEditPlaybackOpen] = useState(true)
   const playbackId = useId()
-  useEffect(() => { if (editMode) setEditPlaybackOpen(false) }, [editMode])
+  useEffect(() => { if (editMode) setEditPlaybackOpen(true) }, [editMode])
   const [canvasMode, setCanvasMode] = useState<'record' | 'pick' | null>(null)
   const flows = query.data ?? []
   const flow = draft ?? flows.find(flow => flow.id === selectedId) ?? null
