@@ -2,21 +2,25 @@ import { createClient } from '@connectrpc/connect'
 import { create } from '@bufbuild/protobuf'
 import { FlowSchema, FlowService } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/flow_service_pb'
 import { transport } from '../api/transport'
-import type { StoryFlow } from './model'
+import type { FlowStep, StoryFlow } from './model'
 
 const client = createClient(FlowService, transport)
 
 // Drafts are plain domain data. Copy fields explicitly so protobuf markers from
 // loaded/cached messages cannot bypass conversion of newly added nested objects.
+function stepData(step: FlowStep): FlowStep {
+  return {
+    id: step.id, title: step.title, description: step.description,
+    elementIds: [...step.elementIds], connectors: step.connectors.map(c => ({ id: c.id, reverse: c.reverse })), metadata: { ...step.metadata },
+    ...(step.overview ? { overview: true } : {}),
+    ...(step.goToFlowId ? { goToFlowId: step.goToFlowId } : {}),
+    ...(step.branches ? { branches: { mode: step.branches.mode, paths: step.branches.paths.map(path => ({ id: path.id, name: path.name, steps: path.steps.map(stepData) })) } } : {}),
+  }
+}
 function flowData(flow: StoryFlow): StoryFlow {
   return {
     id: flow.id, viewId: flow.viewId, name: flow.name, description: flow.description, revision: flow.revision,
-    steps: flow.steps.map(step => ({
-      id: step.id, title: step.title, description: step.description,
-      elementIds: [...step.elementIds],
-      connectors: step.connectors.map(connector => ({ id: connector.id, reverse: connector.reverse })),
-      metadata: { ...step.metadata },
-    })),
+    steps: flow.steps.map(stepData),
   }
 }
 

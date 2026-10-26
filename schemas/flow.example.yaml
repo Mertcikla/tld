@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=./flow.schema.json
+format: tld-flow
+version: 1
+name: Checkout
+steps:
+  - title: Checkout overview
+    overview: true
+  - title: Submit the order
+    connectors:
+      - source: Customer
+        target: Checkout API
+  - title: Validate the order
+    elements: [Checkout API]
+  - title: Payment outcome
+    branches:
+      mode: alternate
+      paths:
+        - name: Approved
+          steps:
+            - title: Process payment
+              goToFlow:
+                name: Payment processing
+                view: Payments
+        - name: Declined
+          steps:
+            - title: Explain the decline
+              connectors:
+                - source: Customer
+                  target: Checkout API
+                  reverse: true
+  - title: Notify subscribers
+    branches:
+      mode: parallel
+      paths:
+        - name: Customer notification
+          steps:
+            - elements: [Email service]
+            - title: Confirmation sent
+        - name: Order storage
+          steps:
+            - connectors:
+                - source: Checkout API
+                  target: Order database
+            - title: Order stored
+  - title: Additional context
+    description: This step intentionally has no highlights.
+    metadata:
+      owner: Commerce
+  - title: Checkout complete
+    overview: true

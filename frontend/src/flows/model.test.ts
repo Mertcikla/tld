@@ -101,3 +101,40 @@ describe('flow stories', () => {
     expect(presentZUIFlow(original, null)).toBe(original)
   })
 })
+
+describe('flow control extensions', () => {
+  const a = { ...newStep(diagram), id: 'a', elementIds: [1] }
+  const b = { ...newStep(diagram), id: 'b', elementIds: [2] }
+  const branch = { ...newStep(diagram), id: 'branch', branches: { mode: 'alternate', paths: [{ id: 'pa', name: 'A', steps: [a] }, { id: 'pb', name: 'B', steps: [b] }] } }
+  it('follows only the selected alternate path and rejoins the parent sequence', () => {
+    const after = { ...newStep(diagram), id: 'after' }
+    expect(playbackFrames([branch, after]).map(frame => frame.id)).toEqual(['branch', 'a', 'after'])
+    expect(playbackFrames([branch, after], { branch: 'pb' }).map(frame => frame.id)).toEqual(['branch', 'b', 'after'])
+    expect(playbackFrames([branch], { branch: 'deleted' }).map(frame => frame.id)).toEqual(['branch', 'a'])
+    expect(resolveFocus(makeFlow([branch]), playbackFrames([branch], { branch: 'pb' })[0], diagram).elementIds).toEqual([2])
+  })
+  it('previews first steps of parallel paths together, then follows the selected path', () => {
+    const parallel = { ...branch, branches: { ...branch.branches, mode: 'parallel' } }
+    const flow = makeFlow([parallel])
+    const frames = playbackFrames(flow.steps, { branch: 'pb' })
+    expect(resolveFocus(flow, frames[0], diagram).elementIds).toEqual([1, 2])
+    expect(resolveFocus(flow, frames[1], diagram).elementIds).toEqual([2])
+  })
+  it('respects an alternate choice nested at the start of a parallel path', () => {
+    const parent = { ...newStep(diagram), branches: { mode: 'parallel', paths: [{ id: 'lane', name: 'Lane', steps: [branch] }, { id: 'empty', name: 'Empty', steps: [] }] } }
+    const flow = makeFlow([parent])
+    expect(resolveFocus(flow, playbackFrames(flow.steps, { branch: 'pb' })[0], diagram).elementIds).toEqual([2])
+  })
+  it('derives introduction and conclusion overviews from all nested steps', () => {
+    const overview = { ...newStep(diagram), overview: true }
+    const flow = makeFlow([overview, branch])
+    expect(resolveFocus(flow, playbackFrames(flow.steps)[0], diagram).elementIds).toEqual([1, 2])
+    expect(resolveFocus(flow, undefined, diagram).elementIds).toEqual([1, 2])
+    expect(resolveFocus(flow, { id: 'empty', steps: [newStep(diagram)] }, diagram).elementIds).toEqual([])
+    const [copy] = duplicateSteps([branch])
+    expect(copy.branches!.paths[0].id).not.toBe('pa')
+    expect(copy.branches!.paths[0].steps[0].id).not.toBe('a')
+    copy.branches!.paths[0].steps[0].elementIds.push(2)
+    expect(a.elementIds).toEqual([1])
+  })
+})

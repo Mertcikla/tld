@@ -76,3 +76,33 @@ describe('shared autoplay', () => {
   })
 
 })
+
+describe('branched and linked playback', () => {
+  it('selects ancestor paths when editing a nested step, and restores choices on return', () => {
+    const a = newStep(diagram), b = newStep(diagram)
+    const parent = { ...newStep(diagram), branches: { mode: 'alternate', paths: [{ id: 'a', name: 'A', steps: [a] }, { id: 'b', name: 'B', steps: [b] }] } }
+    const flow = mount([parent])
+    act(() => playback.select(b.id))
+    expect(playback.frame?.id).toBe(b.id)
+    expect(playback.choices[parent.id]).toBe('b')
+    act(() => renderer.update(<Harness flow={{ ...flow, id: 'other' }} />))
+    act(() => renderer.update(<Harness flow={flow} />))
+    act(() => playback.restore(b.id, { [parent.id]: 'b' }))
+    expect(playback.frame?.id).toBe(b.id)
+  })
+  it('autoplays the chosen path and pauses at a linked flow instead of entering cycles', () => {
+    vi.useFakeTimers()
+    const a = newStep(diagram), b = { ...newStep(diagram), goToFlowId: 'other' }, end = newStep(diagram)
+    const parent = { ...newStep(diagram), branches: { mode: 'parallel', paths: [{ id: 'a', name: 'A', steps: [a] }, { id: 'b', name: 'B', steps: [b] }] } }
+    mount([parent, end])
+    act(() => playback.choose(parent.id, 'b'))
+    act(() => playback.toggle())
+    act(() => vi.advanceTimersByTime(3000))
+    expect(playback.frame?.id).toBe(b.id)
+    expect(playback.playing).toBe(false)
+    act(() => vi.advanceTimersByTime(30000))
+    expect(playback.frame?.id).toBe(b.id)
+    act(() => playback.next()) // Explicit skip.
+    expect(playback.frame?.id).toBe(end.id)
+  })
+})

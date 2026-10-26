@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FlowPanel, type FlowPanelProps } from './FlowPanel'
 import { flowApi } from './api'
 import type { Connector } from '../types'
-import type { FlowDiagram, StoryFlow } from './model'
+import { newStep, type FlowDiagram, type StoryFlow } from './model'
 
 vi.mock('@chakra-ui/react', () => ({ Badge: 'badge', FormControl: 'div', FormLabel: 'label', Box: 'div', Button: 'button', Checkbox: 'checkbox', Collapse: ({ in: expanded, children }: { in: boolean; children: React.ReactNode }) => expanded ? children : null, HStack: 'div', IconButton: 'button', Input: 'input', Menu: 'div', MenuButton: 'button', MenuItem: 'menuitem', MenuList: 'div', Select: 'select', Tag: 'tag', TagLabel: 'taglabel', TagCloseButton: 'button', Text: 'p', Textarea: 'textarea', VStack: 'div', Tooltip: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('framer-motion', () => ({ motion: { div: 'div' }, Reorder: { Group: 'reorder-group', Item: 'reorder-item' }, useDragControls: () => ({ start: vi.fn() }) }))
@@ -106,7 +106,7 @@ describe('flow step editing', () => {
   })
   it('shows search results only for a query and preserves highlights when search clears', () => {
     mount()
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(0)
     searchHighlights('api')
     check(checkbox('API'), true)
     searchHighlights('db')
@@ -129,25 +129,25 @@ describe('flow step editing', () => {
     }
     mount(undefined, { diagram: largeDiagram })
     searchHighlights('service')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(5)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(5)
     check(checkbox('Service 0'), true)
     searchHighlights('service 7')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(1)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(1)
     check(checkbox('Service 7'), true)
     act(() => renderer.root.findByProps({ 'aria-label': 'Show connections' }).props.onClick())
     expect(renderer.root.findAllByProps({ 'data-testid': 'highlight-search-results' })).toHaveLength(0)
     searchHighlights('message')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(5)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(5)
     check(checkbox('Message 0'), true)
     act(() => renderer.root.findByProps({ 'aria-label': 'Reverse Service 0 → Service 0 · Message 0' }).props.onClick())
     searchHighlights('message 7')
     check(checkbox('Message 7'), true)
     searchHighlights('')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(0)
     expect(renderer.root.findByProps({ 'aria-label': 'Reverse Service 0 → Service 0 · Message 0' }).props['aria-pressed']).toBe(true)
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection Service 0 → Service 7 · Message 7' })).toBeDefined()
     searchHighlights('no such connection')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
+    expect(renderer.root.findAllByType('checkbox' as never).filter(node => node.props['aria-label'] !== 'Whole flow overview')).toHaveLength(0)
   })
 
   it('shows concise connection labels while keeping endpoint search and selections', () => {
@@ -247,7 +247,7 @@ describe('flow step editing', () => {
     capture({ connectorId: 10 })
     capture({ connectorId: 99 })
     expect(button('Done picking').props['aria-pressed']).toBe(true)
-    const listener = vi.mocked(window.addEventListener).mock.calls.filter(([event]) => event === 'keydown').at(-1)![1] as (event: unknown) => void
+    const listener = vi.mocked(window.addEventListener).mock.calls.filter(([event]) => event === 'keydown').slice(-1)[0]![1] as (event: unknown) => void
     act(() => listener({ key: 'Escape', preventDefault: vi.fn() }))
     expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
     expect(onClose).not.toHaveBeenCalled()
@@ -342,7 +342,7 @@ describe('flow step editing', () => {
     const onCanvasRecorderChange = vi.fn()
     mount(undefined, { onClose, onCanvasRecorderChange })
     act(() => button('Record steps').props.onClick())
-    const listener = vi.mocked(window.addEventListener).mock.calls.filter(([event]) => event === 'keydown').at(-1)![1] as (event: unknown) => void
+    const listener = vi.mocked(window.addEventListener).mock.calls.filter(([event]) => event === 'keydown').slice(-1)[0]![1] as (event: unknown) => void
     act(() => listener({ key: 'Escape', preventDefault: vi.fn() }))
     expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
     expect(onClose).not.toHaveBeenCalled()
@@ -351,7 +351,7 @@ describe('flow step editing', () => {
   it('restores unsaved work after navigating away from a diagram', () => {
     mount()
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Keep this step')
-    const cached = queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-draft').at(-1)![1]
+    const cached = queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-draft').slice(-1)[0]![1]
     act(() => renderer.unmount())
     queryClient.getQueryData.mockReturnValue(cached)
     act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
@@ -428,7 +428,7 @@ describe('flow step editing', () => {
     expect(button('Delete flow').props.isDisabled).toBe(false)
     act(() => button('Duplicate flow').props.onClick())
     expect(onEditModeChange).toHaveBeenLastCalledWith(true)
-    const copied = queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-draft').at(-1)![1] as StoryFlow
+    const copied = queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-draft').slice(-1)[0]![1] as StoryFlow
     expect(copied).toMatchObject({ id: '', name: 'Story copy', steps: [expect.objectContaining({ title: 'API', elementIds: [1] })] })
     expect(copied.steps[0].id).not.toBe(original.steps[0].id)
   })
@@ -476,4 +476,96 @@ describe('flow step editing', () => {
     expect(button('+ New flow')).toBeDefined()
   })
 
+})
+
+describe('flow operation editing and navigation', () => {
+  it('edits steps inside alternate paths using the existing highlight editor', async () => {
+    const onCanvasRecorderChange = vi.fn()
+    mount({ elementId: 2 }, { onCanvasRecorderChange })
+    act(() => button('Add alternate paths').props.onClick())
+    const addButtons = renderer.root.findAllByType('button').filter(node => node.props.children === '+ Step')
+    expect(addButtons).toHaveLength(3)
+    act(() => addButtons[2].props.onClick())
+    const titles = renderer.root.findAllByProps({ 'aria-label': 'Step title' })
+    change(titles[titles.length - 1], 'Failure handling')
+    act(() => button('Pick from canvas').props.onClick())
+    act(() => onCanvasRecorderChange.mock.lastCall![0].capture({ connectorId: 11 }))
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    const step = vi.mocked(flowApi.save).mock.lastCall![0].steps[0]
+    expect(step.branches?.mode).toBe('alternate')
+    expect(step.branches?.paths[0].steps).toEqual([])
+    expect(step.branches?.paths[1].steps[0]).toMatchObject({ title: 'Failure handling', elementIds: [2], connectors: [{ id: 11, reverse: false }] })
+  })
+
+  it('preserves an unsaved caller while previewing a linked flow', async () => {
+    queryState.data = [{ id: 'child', viewId: 1, name: 'Child', description: '', revision: 1, steps: [] }]
+    mount()
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Unsaved caller')
+    change(renderer.root.findByProps({ 'aria-label': 'Go to flow' }), 'child')
+    act(() => button('Go to flow').props.onClick())
+    expect(button('Discard')).toBeUndefined()
+    expect(button('Save flow')).toBeUndefined()
+    act(() => button('Return to previous flow').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Step title' }).props.value).toBe('Unsaved caller')
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ title: 'Unsaved caller', goToFlowId: 'child' })
+  })
+
+  function linkedFlows() {
+    const child: StoryFlow = { id: 'child', viewId: 2, name: 'Child', revision: 1, description: '', steps: [{ ...newStep(diagram), id: 'child-step', elementIds: [2] }] }
+    const parent: StoryFlow = { id: 'parent', viewId: 1, name: 'Parent', revision: 1, description: '', steps: [
+      { ...newStep(diagram), id: 'decision', branches: { mode: 'alternate', paths: [
+        { id: 'a', name: 'A', steps: [] },
+        { id: 'b', name: 'B', steps: [{ ...newStep(diagram), id: 'call', goToFlowId: child.id }] },
+      ] } },
+      { ...newStep(diagram), id: 'end' },
+    ] }
+    return [parent, child]
+  }
+  function selectParentLink() {
+    act(() => renderer.root.findAllByType('menuitem' as never).find(node => node.props['aria-label'] === 'Parent, 3 steps')!.props.onClick())
+    // The editor can select a nested step even before its path has been selected.
+    const group = renderer.root.findAllByProps({ 'aria-label': 'Current flow step' })[0]
+    change(group, 'call')
+  }
+
+  it('opens and returns from a cross-diagram link across editor remounts, restoring the chosen path', () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
+    queryState.data = linkedFlows()
+    const onNavigateView = vi.fn(), onFocus = vi.fn()
+    const render = (viewId: number) => <FlowPanel open viewId={viewId} diagram={diagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={onFocus} />
+    act(() => { renderer = create(render(1)) })
+    selectParentLink()
+    act(() => button('Next flow step').props.onClick())
+    expect(onNavigateView).toHaveBeenLastCalledWith(2)
+    const cachedJourney = () => queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-navigation').slice(-1)[0]![1]
+    let cached = cachedJourney()
+    expect(cached.stack[0]).toMatchObject({ stepId: 'call', choices: { decision: 'b' } })
+    queryClient.getQueryData.mockImplementation(key => key[0] === 'flow-navigation' ? cached : undefined)
+    act(() => renderer.unmount())
+    act(() => { renderer = create(render(2)) })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectors: [] })
+    act(() => button('Return to previous flow').props.onClick())
+    expect(onNavigateView).toHaveBeenLastCalledWith(1)
+    cached = cachedJourney()
+    act(() => renderer.unmount())
+    act(() => { renderer = create(render(1)) })
+    expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('call')
+    act(() => button('Skip flow').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('end')
+  })
+
+  it('changes diagram focus for linked flows in the explorer without changing routes', () => {
+    queryState.data = linkedFlows()
+    const onFocus = vi.fn()
+    act(() => { renderer = create(<FlowPanel open diagrams={{ 1: diagram, 2: diagram }} onClose={vi.fn()} onFocus={onFocus} />) })
+    selectParentLink()
+    act(() => button('Go to flow').props.onClick())
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectors: [] })
+    act(() => button('Return to previous flow').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('call')
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectors: [] })
+  })
 })

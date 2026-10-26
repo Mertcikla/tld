@@ -145,45 +145,86 @@ func validateFlow(flow *diagv1.Flow) error {
 	if (flow.Id == "" && flow.Revision != 0) || (flow.Id != "" && flow.Revision <= 0) {
 		return errors.New("invalid flow revision")
 	}
-	if len(flow.Steps) > 500 {
-		return errors.New("flow may contain at most 500 steps")
-	}
 	ids := map[string]bool{}
-	for _, step := range flow.Steps {
-		if step == nil || strings.TrimSpace(step.Id) == "" || len(step.Id) > 100 || ids[step.Id] {
-			return errors.New("step ids must be unique and nonempty")
+	count := 0
+	var validateSteps func([]*diagv1.FlowStep, int) error
+	validateSteps = func(steps []*diagv1.FlowStep, depth int) error {
+		if depth > 8 {
+			return errors.New("branches may be nested at most eight levels")
 		}
-		ids[step.Id] = true
-		if len(step.Title) > 500 || len(step.Description) > 10000 {
-			return errors.New("step title or description is too long")
-		}
-		if len(step.ElementIds) > 500 || len(step.Connectors) > 500 {
-			return errors.New("step may highlight at most 500 elements and 500 connections")
-		}
-		elements := map[int32]bool{}
-		for _, id := range step.ElementIds {
-			if id <= 0 || elements[id] {
-				return errors.New("element ids must be positive and unique within a step")
+		for _, step := range steps {
+			count++
+			if count > 500 {
+				return errors.New("flow may contain at most 500 steps")
 			}
-			elements[id] = true
-		}
-		connectors := map[int32]bool{}
-		for _, highlight := range step.Connectors {
-			if highlight == nil || highlight.Id <= 0 || connectors[highlight.Id] {
-				return errors.New("connection ids must be positive and unique within a step")
+			if step == nil || strings.TrimSpace(step.Id) == "" || len(step.Id) > 100 || ids[step.Id] {
+				return errors.New("step ids must be unique and nonempty")
 			}
-			connectors[highlight.Id] = true
-		}
-		if len(step.Metadata) > 50 {
-			return errors.New("step may contain at most 50 metadata entries")
-		}
-		for key, value := range step.Metadata {
-			if strings.TrimSpace(key) == "" || len(key) > 100 || len(value) > 10000 {
-				return errors.New("metadata requires nonempty keys up to 100 bytes and values up to 10000 bytes")
+			ids[step.Id] = true
+			controls := 0
+			if step.Overview {
+				controls++
+			}
+			if step.GoToFlowId != "" {
+				controls++
+				if strings.TrimSpace(step.GoToFlowId) == "" || len(step.GoToFlowId) > 100 {
+					return errors.New("invalid linked flow id")
+				}
+			}
+			if branch := step.Branches; branch != nil {
+				controls++
+				if branch.Mode != "alternate" && branch.Mode != "parallel" {
+					return errors.New("branches mode must be alternate or parallel")
+				}
+				if len(branch.Paths) < 2 || len(branch.Paths) > 10 {
+					return errors.New("branches require two to ten paths")
+				}
+				for _, path := range branch.Paths {
+					if path == nil || strings.TrimSpace(path.Id) == "" || len(path.Id) > 100 || ids[path.Id] || strings.TrimSpace(path.Name) == "" || len(path.Name) > 200 {
+						return errors.New("paths require unique ids and nonempty names")
+					}
+					ids[path.Id] = true
+					if err := validateSteps(path.Steps, depth+1); err != nil {
+						return err
+					}
+				}
+			}
+			if controls > 1 {
+				return errors.New("choose only one of overview, branches, or go to flow")
+			}
+
+			if len(step.Title) > 500 || len(step.Description) > 10000 {
+				return errors.New("step title or description is too long")
+			}
+			if len(step.ElementIds) > 500 || len(step.Connectors) > 500 {
+				return errors.New("step may highlight at most 500 elements and 500 connections")
+			}
+			elements := map[int32]bool{}
+			for _, id := range step.ElementIds {
+				if id <= 0 || elements[id] {
+					return errors.New("element ids must be positive and unique within a step")
+				}
+				elements[id] = true
+			}
+			connectors := map[int32]bool{}
+			for _, highlight := range step.Connectors {
+				if highlight == nil || highlight.Id <= 0 || connectors[highlight.Id] {
+					return errors.New("connection ids must be positive and unique within a step")
+				}
+				connectors[highlight.Id] = true
+			}
+			if len(step.Metadata) > 50 {
+				return errors.New("step may contain at most 50 metadata entries")
+			}
+			for key, value := range step.Metadata {
+				if strings.TrimSpace(key) == "" || len(key) > 100 || len(value) > 10000 {
+					return errors.New("metadata requires nonempty keys up to 100 bytes and values up to 10000 bytes")
+				}
 			}
 		}
+		return nil
 	}
-	return nil
+	return validateSteps(flow.Steps, 0)
 }
 
 func flowStoreError(action string, err error) error {
@@ -208,6 +249,40 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 	if _, err := s.Store.GetView(ctx, flow.ViewId, workspaceID); err != nil {
 		return nil, storeErr("get view", err)
 	}
+	links := map[string]bool{}
+	var collectLinks func([]*diagv1.FlowStep)
+	collectLinks = func(steps []*diagv1.FlowStep) {
+		for _, step := range steps {
+			if step.GoToFlowId != "" {
+				links[step.GoToFlowId] = true
+			}
+			if step.Branches != nil {
+				for _, path := range step.Branches.Paths {
+					collectLinks(path.Steps)
+				}
+			}
+		}
+	}
+	collectLinks(flow.Steps)
+	if len(links) > 0 {
+		rows, err := s.Store.ListFlows(ctx, 0)
+		if err != nil {
+			return nil, storeErr("list linked flows", err)
+		}
+		for _, row := range rows {
+			if !links[row.ID] {
+				continue
+			}
+			if _, err := s.Store.GetView(ctx, int32(row.ViewID), workspaceID); err != nil {
+				return nil, storeErr("get linked view", err)
+			}
+			delete(links, row.ID)
+		}
+		if len(links) > 0 {
+			return nil, invalidArg("go_to_flow_id", "linked flow is unavailable")
+		}
+	}
+
 	document, err := protojson.Marshal(flow)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)

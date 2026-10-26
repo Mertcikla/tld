@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/pkg/app"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFlowServiceListsLegacyAndCurrentFlows(t *testing.T) {
@@ -160,5 +162,87 @@ func TestValidateFlow(t *testing.T) {
 		if err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Flow", Steps: steps}); err == nil {
 			t.Error("accepted duplicate IDs or too many steps")
 		}
+	}
+}
+
+func TestFlowControlOperationsRoundTrip(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	ctx := context.Background()
+	parentView, err := store.CreateView(ctx, "Checkout", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childView, err := store.CreateView(ctx, "Payments", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &FlowService{Store: NewAPIStore(store)}
+	child, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: &diagv1.Flow{ViewId: int32(childView.ID), Name: "Payment"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := &diagv1.Flow{ViewId: int32(parentView.ID), Name: "Purchase", Steps: []*diagv1.FlowStep{
+		{Id: "intro", Overview: true},
+		{Id: "decision", Branches: &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{
+			{Id: "yes", Name: "Success", Steps: []*diagv1.FlowStep{{Id: "call", GoToFlowId: child.Msg.Flow.Id}}},
+			{Id: "no", Name: "Failure", Steps: []*diagv1.FlowStep{{Id: "notify", Branches: &diagv1.FlowBranches{Mode: "parallel", Paths: []*diagv1.FlowBranch{
+				{Id: "customer", Name: "Customer", Steps: []*diagv1.FlowStep{{Id: "email", Connectors: []*diagv1.FlowConnectorHighlight{{Id: 10, Reverse: true}}}}},
+				{Id: "ops", Name: "Operations", Steps: []*diagv1.FlowStep{{Id: "log", ElementIds: []int32{1}}}},
+			}}}}},
+		}}},
+		{Id: "outro", Overview: true},
+	}}
+	saved, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: flow}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := svc.ListFlows(ctx, connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: int32(parentView.ID)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Msg.Flows) != 1 || !proto.Equal(listed.Msg.Flows[0], saved.Msg.Flow) {
+		t.Fatalf("nested controls did not round-trip: %v", listed.Msg)
+	}
+	_, err = svc.DeleteFlow(ctx, connect.NewRequest(&diagv1.DeleteFlowRequest{Id: child.Msg.Flow.Id, ViewId: int32(childView.ID), ExpectedRevision: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: saved.Msg.Flow}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("accepted unavailable linked flow: %v", err)
+	}
+}
+
+func TestValidateFlowControls(t *testing.T) {
+	branches := func() *diagv1.FlowBranches {
+		return &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{{Id: "a", Name: "A"}, {Id: "b", Name: "B"}}}
+	}
+	for _, step := range []*diagv1.FlowStep{
+		{Id: "1", Overview: true, GoToFlowId: "other"},
+		{Id: "1", Overview: true, Branches: branches()},
+		{Id: "1", GoToFlowId: "other", Branches: branches()},
+		{Id: "1", Branches: &diagv1.FlowBranches{Mode: "unknown", Paths: branches().Paths}},
+		{Id: "1", Branches: &diagv1.FlowBranches{Mode: "parallel"}},
+		{Id: "a", Branches: branches()},
+		{Id: "1", GoToFlowId: " "},
+		{Id: "1", Branches: &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{nil, {Id: "b", Name: "B"}}}},
+	} {
+		if err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{step}}); err == nil {
+			t.Errorf("accepted invalid controls: %v", step)
+		}
+	}
+	steps := []*diagv1.FlowStep{{Id: "leaf"}}
+	for i := 0; i < 9; i++ {
+		steps = []*diagv1.FlowStep{{Id: fmt.Sprintf("s%d", i), Branches: &diagv1.FlowBranches{Mode: "parallel", Paths: []*diagv1.FlowBranch{{Id: fmt.Sprintf("a%d", i), Name: "A", Steps: steps}, {Id: fmt.Sprintf("b%d", i), Name: "B"}}}}}
+	}
+	if err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Deep", Steps: steps}); err == nil {
+		t.Fatal("accepted excessive nesting")
+	}
+	branch := branches()
+	for i := 0; i < 500; i++ {
+		branch.Paths[i%2].Steps = append(branch.Paths[i%2].Steps, &diagv1.FlowStep{Id: fmt.Sprintf("s%d", i)})
+	}
+	if err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Wide", Steps: []*diagv1.FlowStep{{Id: "root", Branches: branch}}}); err == nil {
+		t.Fatal("accepted more than 500 total steps")
 	}
 }

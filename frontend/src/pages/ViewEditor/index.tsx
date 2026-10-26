@@ -656,7 +656,7 @@ function ViewEditorInner({
   const lastNonFullDensityLevelRef = useRef(0)
 
   const elementPanel = useDisclosure()
-  const [storyOpen, setStoryOpen] = useState(false)
+  const [storyOpen, setStoryOpen] = useState(() => searchParams.get('flow') === '1')
   const [storyEditMode, setStoryEditMode] = useState(false)
   const [storyFocus, setStoryFocus] = useState<FlowFocus | null>(null)
   const [storyCanvasMode, setStoryCanvasMode] = useState<'record' | 'pick' | null>(null)
@@ -4535,6 +4535,7 @@ function ViewEditorInner({
                 diagram={storyDiagram} selection={{ elementId: selectedElement?.id, connectorId: selectedEdge?.id }}
                 onCanvasRecorderChange={handleStoryRecorderChange}
                 onEditModeChange={canEdit ? enabled => { setStoryEditMode(enabled); setStoryExpanded(enabled); if (enabled) setDrawingMode(false) } : undefined}
+                onNavigateView={id => { setStoryOpen(true); setStoryEditMode(false); navigate(`/views/${id}?flow=1`) }}
                 onFocus={setStoryFocus} onClose={() => setStoryOpen(false)} />}
             </Box>
           <Box

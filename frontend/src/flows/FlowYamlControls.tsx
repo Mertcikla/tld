@@ -2,9 +2,10 @@ import { useRef, useState } from 'react'
 import { Button, HStack, IconButton, Input, Modal, ModalBody, ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Text, Textarea, Tooltip } from '@chakra-ui/react'
 import { ImportIcon, ExportIcon } from '../components/Icons'
 import { exportFlowYaml, FLOW_YAML_MAX_BYTES, importFlowYaml } from './yaml'
-import type { FlowDiagram, StoryFlow } from './model'
+import type { FlowCatalog, FlowDiagram, StoryFlow } from './model'
 
 interface Props {
+  catalog?: FlowCatalog
   flow: StoryFlow | null
   diagram: FlowDiagram
   viewId?: number
@@ -14,7 +15,7 @@ interface Props {
 }
 
 /** Import is local and creates a draft; the normal Save flow action persists it. */
-export function FlowYamlControls({ flow, diagram, viewId, canImport, disabled, onImport }: Props) {
+export function FlowYamlControls({ catalog, flow, diagram, viewId, canImport, disabled, onImport }: Props) {
   const [mode, setMode] = useState<'import' | 'export' | null>(null)
   const [source, setSource] = useState('')
   const [error, setError] = useState('')
@@ -24,7 +25,7 @@ export function FlowYamlControls({ flow, diagram, viewId, canImport, disabled, o
   const open = (next: 'import' | 'export') => {
     setError(''); setSource(''); setMode(next)
     if (next === 'export' && flow) {
-      try { setSource(exportFlowYaml(flow, diagram)) }
+      try { setSource(exportFlowYaml(flow, diagram, catalog)) }
       catch (error) { setError(error instanceof Error ? error.message : 'Could not export flow.') }
     }
   }
@@ -43,7 +44,7 @@ export function FlowYamlControls({ flow, diagram, viewId, canImport, disabled, o
   function importDraft() {
     if (!canImport || disabled || !viewId || reading) return
     try {
-      const imported = importFlowYaml(source, viewId, diagram)
+      const imported = importFlowYaml(source, viewId, diagram, {}, catalog)
       if (onImport(imported)) close()
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not import flow.') }
   }

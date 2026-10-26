@@ -170,7 +170,7 @@ export * from './crossBranch/types'
 // ─── Demo ────────────────────────────────────────────────────────────────────
 export { FlowPanel, type FlowPanelProps } from './flows/FlowPanel'
 export { useFlowPlayback } from './flows/useFlowPlayback'
-export type { StoryFlow, FlowStep, FlowConnectorHighlight, FlowFocus, FlowDiagram } from './flows/model'
+export type { StoryFlow, FlowStep, FlowBranches, FlowBranch, FlowCatalog, FlowConnectorHighlight, FlowFocus, FlowDiagram } from './flows/model'
 export { exportFlowYaml, importFlowYaml, parseFlowYaml, validatePortableFlow } from './flows/yaml'
 export type { PortableFlowDocument, PortableFlowStep, PortableConnectorHighlight, FlowYamlBindings } from './flows/yaml'
 

@@ -186,3 +186,52 @@ describe('portable flow YAML', () => {
     expect(() => validatePortableFlow({ ...simple(), name: '界'.repeat(100) })).toThrow(/UTF-8 bytes/)
   })
 })
+
+describe('portable flow control extensions', () => {
+  const linked = { id: 'linked', viewId: 2, revision: 1, name: 'Payment', description: '', steps: [] }
+  const catalog = { flows: [linked], views: [{ id: 1, name: 'Checkout' }, { id: 2, name: 'Payments' }] }
+  const doc: PortableFlowDocument = { ...simple(), steps: [
+    { id: 'intro', overview: true, title: 'Start' },
+    { id: 'branch', branches: { mode: 'alternate', paths: [
+      { id: 'success', name: 'Success', steps: [{ id: 'go', goToFlow: { name: 'Payment', view: 'Payments' } }] },
+      { id: 'failure', name: 'Failure', steps: [{ id: 'notify', branches: { mode: 'parallel', paths: [
+        { name: 'Customer', steps: [{ connectors: [reference] }] },
+        { name: 'Database', steps: [{ elements: ['Order database'] }] },
+      ] } }] },
+    ] } },
+    { id: 'outro', overview: true },
+  ] }
+  it('round-trips nested paths, automatic overviews and cross-diagram links without database IDs', () => {
+    const flow = importFlowYaml(stringify(doc), 1, diagram(), {}, catalog)
+    expect(flow.steps[1].branches?.paths[0].steps[0].goToFlowId).toBe('linked')
+    const yaml = exportFlowYaml(flow, diagram(), catalog)
+    expect(yaml).not.toContain('goToFlowId')
+    const targetCatalog = { flows: [{ ...linked, id: 'target-link', viewId: 202 }], views: [{ id: 202, name: 'Payments' }] }
+    const restored = importFlowYaml(yaml, 101, diagram(1000), {}, targetCatalog)
+    expect(restored.steps[1].branches?.paths[0].steps[0].goToFlowId).toBe('target-link')
+    expect(restored.steps[1].branches?.paths[1].steps[0].branches?.paths[1].steps[0].elementIds).toEqual([1003])
+    expect(exportFlowYaml(restored, diagram(1000), targetCatalog)).toBe(yaml)
+  })
+  it('resolves same-diagram links by name and refuses missing or ambiguous targets', () => {
+    const source = stringify({ ...simple(), steps: [{ goToFlow: { name: 'Payment' } }] })
+    expect(importFlowYaml(source, 2, diagram(), {}, catalog).steps[0].goToFlowId).toBe('linked')
+    expect(() => importFlowYaml(source, 1, diagram(), {}, catalog)).toThrow(/linked flow/)
+    expect(() => importFlowYaml(source, 2, diagram(), {}, { ...catalog, flows: [linked, { ...linked, id: 'duplicate' }] })).toThrow(/ambiguous/)
+    expect(() => importFlowYaml(stringify(doc), 1, diagram(), {}, { ...catalog, views: [...catalog.views, { id: 3, name: 'Payments' }] })).toThrow(/ambiguous/)
+    const flow = importFlowYaml(stringify(doc), 1, diagram(), {}, catalog)
+    expect(() => exportFlowYaml(flow, diagram())).toThrow(/linked flow/)
+  })
+  it('rejects conflicting controls, invalid branches, duplicate nested IDs and excessive nesting/counts', () => {
+    const branches = { mode: 'alternate', paths: [{ id: 'a', name: 'A', steps: [] }, { id: 'b', name: 'B', steps: [] }] }
+    for (const step of [
+      { overview: 'true' }, { overview: true, branches }, { branches, goToFlow: { name: 'Payment' } },
+      { branches: { ...branches, mode: 'condition' } }, { branches: { mode: 'parallel', paths: [] } },
+      { id: 'a', branches }, { goToFlow: { name: '' } }, { goToFlow: { name: 'Payment', id: 2 } },
+      { branches: { mode: 'parallel', paths: [{ name: 'A', steps: [{ id: 'duplicate' }] }, { name: 'B', steps: [{ id: 'duplicate' }] }] } },
+    ]) expect(() => validatePortableFlow({ ...simple(), steps: [step] })).toThrow()
+    let nested: PortableFlowDocument['steps'] = [{}]
+    for (let i = 0; i < 9; i++) nested = [{ branches: { mode: 'alternate', paths: [{ name: 'A', steps: nested }, { name: 'B', steps: [] }] } }]
+    expect(() => validatePortableFlow({ ...simple(), steps: nested })).toThrow(/eight/)
+    expect(() => validatePortableFlow({ ...simple(), steps: [{ branches: { mode: 'parallel', paths: [{ name: 'A', steps: Array.from({ length: 250 }, () => ({})) }, { name: 'B', steps: Array.from({ length: 250 }, () => ({})) }] } }] })).toThrow(/500 total/)
+  })
+})

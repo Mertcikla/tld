@@ -59,3 +59,15 @@ describe('flow API serialization', () => {
     }
   })
 })
+
+it('serializes new nested steps and control fields through the Connect serializer', async () => {
+  const [flow] = await flowApi.list(1)
+  const note = newStep({ elements: [], connectors: [] })
+  flow.steps = [{ ...note, overview: true }, { ...note, id: 'decision', branches: { mode: 'alternate', paths: [
+    { id: 'yes', name: 'Yes', steps: [{ ...note, id: 'link', goToFlowId: 'other-flow' }] },
+    { id: 'no', name: 'No', steps: [] },
+  ] } }]
+  const saved = await flowApi.save(flow)
+  expect(saved.steps).toEqual(flow.steps)
+  expect(saved.steps[1].branches?.paths[0].steps[0]).not.toHaveProperty('$typeName')
+})

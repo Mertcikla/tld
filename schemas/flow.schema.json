@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json",
   "title": "Portable tlDiagram flow v1",
-  "description": "A sequence of steps with zero or more simultaneous highlights and optional metadata. The importer additionally validates unique step IDs, resolved references and UTF-8 byte limits.",
+  "description": "Highlight-based flow steps with optional overview, alternate/parallel branches, and linked-flow navigation. The importer validates total steps, nesting, unique IDs, references and UTF-8 byte limits.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -87,8 +87,69 @@
             "type": "string",
             "maxLength": 10000
           }
+        },
+        "overview": {
+          "type": "boolean"
+        },
+        "branches": {
+          "$ref": "#/$defs/branches"
+        },
+        "goToFlow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "\\S"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10000,
+              "pattern": "\\S"
+            }
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "branches",
+              "goToFlow"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "overview"
+            ],
+            "properties": {
+              "overview": {
+                "const": true
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "branches"
+                ]
+              },
+              {
+                "required": [
+                  "goToFlow"
+                ]
+              }
+            ]
+          }
+        }
+      ]
     },
     "connector": {
       "type": "object",
@@ -117,6 +178,56 @@
         },
         "reverse": {
           "type": "boolean"
+        }
+      }
+    },
+    "branches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "paths"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "alternate",
+            "parallel"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "steps"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "\\S"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "\\S"
+              },
+              "steps": {
+                "type": "array",
+                "maxItems": 500,
+                "items": {
+                  "$ref": "#/$defs/step"
+                }
+              }
+            }
+          }
         }
       }
     }
