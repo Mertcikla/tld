@@ -6,7 +6,7 @@ import { flowApi } from './api'
 import type { Connector } from '../types'
 import type { FlowDiagram, StoryFlow } from './model'
 
-vi.mock('@chakra-ui/react', () => ({ FormControl: 'div', FormLabel: 'label', Box: 'div', Button: 'button', Checkbox: 'checkbox', HStack: 'div', Input: 'input', Select: 'select', Tag: 'tag', TagLabel: 'taglabel', TagCloseButton: 'button', Text: 'p', Textarea: 'textarea', VStack: 'div', Tooltip: ({ children }: { children: React.ReactNode }) => children }))
+vi.mock('@chakra-ui/react', () => ({ FormControl: 'div', FormLabel: 'label', Box: 'div', Button: 'button', Checkbox: 'checkbox', HStack: 'div', IconButton: 'button', Input: 'input', Select: 'select', Tag: 'tag', TagLabel: 'taglabel', TagCloseButton: 'button', Text: 'p', Textarea: 'textarea', VStack: 'div', Tooltip: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./FlowYamlControls', () => ({ FlowYamlControls: () => null }))
 vi.mock('./api', () => ({ flowApi: { list: vi.fn(), save: vi.fn(), remove: vi.fn() } }))
 const { queryClient, queryState } = vi.hoisted(() => ({ queryClient: { setQueryData: vi.fn(), invalidateQueries: vi.fn(), getQueryData: vi.fn(), setQueryDefaults: vi.fn(), removeQueries: vi.fn() }, queryState: { data: [] as StoryFlow[], isLoading: false, error: null as Error | null, refetch: vi.fn() } }))
@@ -19,7 +19,7 @@ const diagram: FlowDiagram = {
   ] as Connector[],
 }
 let renderer: ReactTestRenderer
-const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label)!
+const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label || node.props['aria-label'] === label)!
 const checkbox = (label: string) => renderer.root.findAllByType('checkbox' as never).find(node => node.props.children === label || node.props['aria-label'] === label)!
 const change = (node: ReactTestInstance, value: string) => act(() => node.props.onChange({ target: { value } }))
 const searchHighlights = (value: string) => change(renderer.root.findByProps({ 'aria-label': 'Search highlights' }), value)
@@ -35,7 +35,7 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
 
 describe('flow step editing', () => {
-  it('saves multiple elements and connections with optional metadata and independent directions', async () => {
+  it('saves multiple elements and connections with independent directions', async () => {
     const onFocus = mount()
     expect(renderer.root.findAllByProps({ 'aria-label': 'New step type' })).toHaveLength(0)
     searchHighlights('api')
@@ -48,10 +48,7 @@ describe('flow step editing', () => {
     check(checkbox('API → Worker · Queues'), true)
     act(() => renderer.root.findByProps({ 'aria-label': 'Reverse API → DB · Stores' }).props.onClick())
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Save and queue')
-    change(renderer.root.findByProps({ 'aria-label': 'Metadata key' }), 'owner')
-    act(() => button('Add').props.onClick())
-    change(renderer.root.findByProps({ 'aria-label': 'Metadata owner' }), 'Commerce')
-    const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }], metadata: { owner: 'Commerce' } }
+    const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }], metadata: {} }
     expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2, 3], connectors: expected.connectors })
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
@@ -178,6 +175,62 @@ describe('flow step editing', () => {
     expect(new Set(steps.map(step => step.id)).size).toBe(3)
   })
 
+  it('picks highlights into the existing step, preserving directions and stored metadata', async () => {
+    const onCanvasRecorderChange = vi.fn()
+    const onClose = vi.fn()
+    const step = { id: 'original', title: 'Original title', description: '', elementIds: [1], connectors: [{ id: 10, reverse: true }], metadata: { owner: 'Commerce' } }
+    queryClient.getQueryData.mockReturnValue({ id: 'saved', revision: 1, viewId: 1, name: 'Story', description: '', steps: [step] })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
+    act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onCanvasRecorderChange={onCanvasRecorderChange} onClose={onClose} onFocus={vi.fn()} />) })
+    act(() => renderer.root.findByProps({ 'aria-expanded': false }).props.onClick())
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Metadata key' })).toHaveLength(0)
+    act(() => button('Pick from canvas').props.onClick())
+    expect(onCanvasRecorderChange.mock.lastCall![0].mode).toBe('pick')
+    const capture = (target: { elementId: number } | { connectorId: number }) => act(() => onCanvasRecorderChange.mock.lastCall![0].capture(target))
+    capture({ elementId: 2 })
+    capture({ connectorId: 11 })
+    capture({ elementId: 2 })
+    capture({ connectorId: 10 })
+    capture({ connectorId: 99 })
+    expect(button('Done picking').props['aria-pressed']).toBe(true)
+    const listener = vi.mocked(window.addEventListener).mock.calls.filter(([event]) => event === 'keydown').at(-1)![1] as (event: unknown) => void
+    act(() => listener({ key: 'Escape', preventDefault: vi.fn() }))
+    expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
+    expect(onClose).not.toHaveBeenCalled()
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, revision: 2 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [{ ...step, elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }] }] }))
+  })
+
+  it('switches between picking and recording without mixing their behaviors', async () => {
+    const onCanvasRecorderChange = vi.fn()
+    mount(undefined, { onCanvasRecorderChange })
+    act(() => button('Pick from canvas').props.onClick())
+    act(() => onCanvasRecorderChange.mock.lastCall![0].capture({ elementId: 1 }))
+    act(() => button('Record steps').props.onClick())
+    expect(onCanvasRecorderChange.mock.lastCall![0].mode).toBe('record')
+    act(() => onCanvasRecorderChange.mock.lastCall![0].capture({ elementId: 2 }))
+    act(() => onCanvasRecorderChange.mock.lastCall![0].stop())
+    act(() => button('Pick from canvas').props.onClick())
+    act(() => onCanvasRecorderChange.mock.lastCall![0].capture({ elementId: 3 }))
+    act(() => onCanvasRecorderChange.mock.lastCall![0].stop())
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps.map(step => step.elementIds)).toEqual([[1], [2, 3]])
+  })
+
+  it('stops picking when another step is selected or preview starts', () => {
+    const onCanvasRecorderChange = vi.fn()
+    mount(undefined, { onCanvasRecorderChange })
+    act(() => button('Pick from canvas').props.onClick())
+    act(() => button('+ Step').props.onClick())
+    expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
+    act(() => button('Pick from canvas').props.onClick())
+    const props = renderer.root.findByType(FlowPanel).props
+    act(() => renderer.update(<FlowPanel {...props} editMode={false} />))
+    expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
+  })
+
   it('stops recording when preview starts or the panel closes', () => {
     const onCanvasRecorderChange = vi.fn()
     mount(undefined, { onCanvasRecorderChange })
@@ -204,10 +257,10 @@ describe('flow step editing', () => {
     expect(button('+ Step').props.isDisabled).toBe(true)
   })
 
-  it('shrinks the compact panel while recording and restores its controls after stopping', () => {
+  it.each(['Record steps', 'Pick from canvas'])('shrinks the compact panel during %s and restores its controls after stopping', start => {
     const onCanvasRecorderChange = vi.fn()
     mount(undefined, { compact: true, onCanvasRecorderChange })
-    act(() => button('Record steps').props.onClick())
+    act(() => button(start).props.onClick())
     expect(renderer.root.findByProps({ 'data-flow-scroll': true }).props.display).toBe('none')
     expect(button('Save flow')).toBeUndefined()
     expect(renderer.root.findAllByProps({ 'data-testid': 'flow-yaml-footer' })).toHaveLength(0)
@@ -216,10 +269,10 @@ describe('flow step editing', () => {
     expect(button('Save flow')).toBeDefined()
   })
 
-  it('Escape stops recording before closing and Cmd/Ctrl+S saves from an input', async () => {
+  it.each(['Record steps', 'Pick from canvas'])('Escape stops %s before closing and Cmd/Ctrl+S saves from an input', async start => {
     const onClose = vi.fn()
     mount(undefined, { onCanvasRecorderChange: vi.fn(), onClose })
-    act(() => button('Record steps').props.onClick())
+    act(() => button(start).props.onClick())
     const key = (value: string, ctrlKey = false) => renderer.root.findByProps({ 'data-testid': 'flow-panel' }).props.onKeyDown({ key: value, ctrlKey, target: {}, currentTarget: {}, preventDefault: vi.fn(), stopPropagation: vi.fn() })
     act(() => key('Escape'))
     expect(onClose).not.toHaveBeenCalled()
@@ -264,16 +317,21 @@ describe('flow step editing', () => {
     expect(button('+ New flow')).toBeDefined()
     expect(button('Edit flow')).toBeUndefined()
     expect(button('Edit')).toBeUndefined()
-    expect(button('Preview')).toBeUndefined()
+    expect(button('Cancel edit')).toBeUndefined()
     act(() => button('+ New flow').props.onClick())
     expect(button('Edit flow')).toBeDefined()
     expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
     act(() => button('Edit flow').props.onClick())
     expect(button('+ New flow')).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('New flow')
-    act(() => button('Preview').props.onClick())
+    change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Draft flow')
+    const actions = renderer.root.findByProps({ 'aria-label': 'Flow actions' }).findAllByType('button')
+    expect(actions.at(-1)?.props['aria-label']).toBe('Cancel edit')
+    act(() => button('Cancel edit').props.onClick())
     expect(button('Edit flow')).toBeDefined()
     expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
+    act(() => button('Edit flow').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Draft flow')
   })
 
   it('waits for a selection and previews each flow selected from the chooser', () => {

@@ -1,13 +1,25 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Box, Button, Checkbox, FormControl, FormLabel, HStack, Input, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { Box, Button, Checkbox, FormControl, FormLabel, HStack, IconButton, Input, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CopyIcon } from '@chakra-ui/icons'
+import { CloseIcon, EditorIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
 import { flowApi } from './api'
 import { duplicateSteps, missingReference, newStep, resolveFocus, stepLabel, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
 import { useFlowPlayback } from './useFlowPlayback'
 import { FlowYamlControls } from './FlowYamlControls'
-import { captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
+import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
+function FlowAction({ label, hint = label, icon, disabled, loading, primary, destructive, modeSwitch, onClick }: {
+  label: string; hint?: string; icon: ReactElement; disabled?: boolean; loading?: boolean; primary?: boolean; destructive?: boolean; modeSwitch?: boolean; onClick: () => void
+}) {
+  return <Tooltip label={hint} openDelay={200} closeOnPointerDown closeOnScroll>
+    <Box as="span" display="inline-flex" ml={modeSwitch ? 1 : undefined}>
+      <IconButton aria-label={label} icon={icon} size={modeSwitch ? 'sm' : 'xs'} w={modeSwitch ? undefined : 7} h={modeSwitch ? undefined : 7} variant={modeSwitch ? 'elevated' : primary ? 'solid' : 'ghost'} colorScheme={destructive ? 'red' : primary ? 'blue' : 'gray'} isDisabled={disabled} isLoading={loading} onClick={onClick} />
+    </Box>
+  </Tooltip>
+}
+
 export interface FlowPanelProps {
   open: boolean
   viewId?: number
@@ -25,24 +37,7 @@ export interface FlowPanelProps {
   onFocus: (focus: FlowFocus | null) => void
 }
 
-function StepMetadata({ value, onChange }: { value: Record<string, string>; onChange: (value: Record<string, string>) => void }) {
-  const [key, setKey] = useState('')
-  return <Box as="details">
-    <Box as="summary" fontSize="sm" cursor="pointer">Extra metadata ({Object.keys(value).length})</Box>
-    <VStack align="stretch" spacing={2} mt={2}>
-      {Object.entries(value).map(([name, text]) => <Box key={name}>
-        <HStack justify="space-between"><Text fontSize="xs">{name}</Text><Button size="xs" aria-label={`Remove metadata ${name}`} onClick={() => onChange(Object.fromEntries(Object.entries(value).filter(([key]) => key !== name)))}>×</Button></HStack>
-        <Textarea size="sm" aria-label={`Metadata ${name}`} maxLength={10000} value={text} onChange={e => onChange({ ...value, [name]: e.target.value })} />
-      </Box>)}
-      <HStack>
-        <Input size="sm" aria-label="Metadata key" placeholder="Key" maxLength={100} value={key} onChange={e => setKey(e.target.value)} />
-        <Button size="sm" isDisabled={!key.trim() || Object.prototype.hasOwnProperty.call(value, key) || Object.keys(value).length >= 50} onClick={() => { onChange({ ...value, [key]: '' }); setKey('') }}>Add</Button>
-      </HStack>
-    </VStack>
-  </Box>
-}
-
-function StepHighlights({ step, diagram, onChange }: { step: FlowStep; diagram: FlowDiagram; onChange: (changes: Partial<FlowStep>) => void }) {
+function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?: () => void; picking?: boolean; step: FlowStep; diagram: FlowDiagram; onChange: (changes: Partial<FlowStep>) => void }) {
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState<'elements' | 'connections'>(step.connectors.length && !step.elementIds.length ? 'connections' : 'elements')
   const term = search.trim().toLocaleLowerCase()
@@ -54,6 +49,7 @@ function StepHighlights({ step, diagram, onChange }: { step: FlowStep; diagram: 
   })
   const matchingConnectors = term ? connectors.filter(connector => connector.details.toLocaleLowerCase().includes(term)) : []
   return <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" overflow="hidden">
+    {onPick && <Box px={2} pt={2}><Button size="sm" w="full" variant="solid" colorScheme="blue" aria-pressed={!!picking} onClick={onPick}>{picking ? 'Done picking' : 'Pick from canvas'}</Button></Box>}
     <HStack p={2} spacing={1} aria-label="Highlight type">
       <Button flex={1} size="sm" variant={tab === 'elements' ? 'solid' : 'ghost'} aria-label="Show elements" aria-pressed={tab === 'elements'} onClick={() => { setTab('elements'); setSearch('') }}>Elements ({step.elementIds.length})</Button>
       <Button flex={1} size="sm" variant={tab === 'connections' ? 'solid' : 'ghost'} aria-label="Show connections" aria-pressed={tab === 'connections'} onClick={() => { setTab('connections'); setSearch('') }}>Connections ({step.connectors.length})</Button>
@@ -97,7 +93,7 @@ function StepHighlights({ step, diagram, onChange }: { step: FlowStep; diagram: 
   </Box>
 }
 
-function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions }: { actions?: ReactNode; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
+function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking }: { onPick?: () => void; picking?: boolean; actions?: ReactNode; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
   const activeStepRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const card = activeStepRef.current
@@ -136,8 +132,7 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
         <FormControl><FormLabel fontSize="xs">Step title</FormLabel><Input size="sm" aria-label="Step title" placeholder="What happens in this step?" maxLength={500} value={step.title} onChange={e => patch(step.id, { title: e.target.value })} /></FormControl>
         <FormControl><FormLabel fontSize="xs">Description (optional)</FormLabel><Textarea size="sm" rows={2} minH="64px" aria-label="Step description" placeholder="Explain this part of the story" maxLength={10000} value={step.description} onChange={e => patch(step.id, { description: e.target.value })} /></FormControl>
         <Box><Text fontSize="sm" fontWeight="semibold">Highlights</Text><Text fontSize="xs" color="gray.400" mt={1}>Choose elements or connections. Leave empty for a text-only step.</Text></Box>
-        <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} />
-        <StepMetadata value={step.metadata} onChange={metadata => patch(step.id, { metadata })} />
+        <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={onPick} picking={picking} />
       </VStack>}
     </Box>)}
   </VStack>
@@ -160,7 +155,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [deletePending, setDeletePending] = useState(false)
-  const [recording, setRecording] = useState(false)
+  const [canvasMode, setCanvasMode] = useState<'record' | 'pick' | null>(null)
   const flows = query.data ?? []
   const flow = draft ?? flows.find(flow => flow.id === selectedId) ?? null
   const canEditFlow = !!onEditModeChange || editMode
@@ -171,14 +166,26 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
   useEffect(() => () => onFocus(null), [onFocus])
   const { pause, select: selectStep } = playback
   const activeStep = playback.frame?.steps[0]
-  const recorderActive = recording && open && editMode && !busy && !!flow && flow.steps.length < 500
-  useEffect(() => { setRecording(false) }, [open, editMode, flow?.id])
-  useEffect(() => { if (flow && flow.steps.length >= 500) setRecording(false) }, [flow])
+  const recorderActive = canvasMode === 'record' && open && editMode && !busy && !!flow && flow.steps.length < 500
+  const pickerActive = canvasMode === 'pick' && open && editMode && !busy && !!activeStep
+  const captureActive = recorderActive || pickerActive
+  useEffect(() => { setCanvasMode(null) }, [open, editMode, flow?.id])
+  useEffect(() => { setCanvasMode(mode => mode === 'pick' ? null : mode) }, [activeStep?.id])
+  useEffect(() => { if (flow && flow.steps.length >= 500) setCanvasMode(mode => mode === 'record' ? null : mode) }, [flow])
   useEffect(() => {
     if (!onCanvasRecorderChange) return
-    if (!recorderActive || !flow) { onCanvasRecorderChange(null); return }
+    if (!captureActive || !flow) { onCanvasRecorderChange(null); return }
     onCanvasRecorderChange({
+      mode: pickerActive ? 'pick' : 'record',
       capture: target => {
+        if (pickerActive && activeStep) {
+          setDraft(current => {
+            const base = current ?? flow
+            const steps = base.steps.map(step => step.id === activeStep.id ? addCanvasHighlight(step, target, currentDiagram) : step)
+            return steps.every((step, index) => step === base.steps[index]) ? current : { ...base, steps }
+          })
+          return
+        }
         const step = captureCanvasStep(target, currentDiagram)
         if (!step) return
         setDraft(current => {
@@ -187,18 +194,18 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
         })
         selectStep(step.id)
       },
-      stop: () => setRecording(false),
+      stop: () => setCanvasMode(null),
     })
     return () => onCanvasRecorderChange(null)
-  }, [onCanvasRecorderChange, recorderActive, flow, currentDiagram, selectStep])
+  }, [onCanvasRecorderChange, captureActive, pickerActive, activeStep, flow, currentDiagram, selectStep])
   useEffect(() => {
-    if (!recorderActive) return
+    if (!captureActive) return
     const cancel = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setRecording(false) }
+      if (event.key === 'Escape') { event.preventDefault(); setCanvasMode(null) }
     }
     window.addEventListener('keydown', cancel)
     return () => window.removeEventListener('keydown', cancel)
-  }, [recorderActive])
+  }, [captureActive])
   useEffect(() => { if (!open || editMode) pause() }, [open, editMode, pause])
   useEffect(() => {
     if (playback.frame?.steps.some(step => missingReference(step, currentDiagram))) pause()
@@ -214,7 +221,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
   function patch(changes: Partial<StoryFlow>) { if (flow && editMode && !busy) { playback.pause(); setDraft({ ...flow, ...changes }) } }
   async function save() {
     if (!draft || !editMode || busy) return
-    setBusy(true); setRecording(false); setError('')
+    setBusy(true); setCanvasMode(null); setError('')
     try {
       const saved = await flowApi.save(draft)
       queryClient.setQueryData<StoryFlow[]>(queryKey, old => [...(old ?? []).filter(f => f.id !== saved.id), saved])
@@ -226,7 +233,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
   }
   async function remove() {
     if (!flow || !editMode || busy) return
-    setBusy(true); setRecording(false); setError('')
+    setBusy(true); setCanvasMode(null); setError('')
     try {
       await flowApi.remove(flow)
       queryClient.removeQueries({ queryKey: draftKey, exact: true })
@@ -259,7 +266,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
     display="flex" flexDirection="column" overflow="hidden" bg="var(--bg-main)" border="1px solid" borderColor="whiteAlpha.200" rounded={docked ? 0 : "xl"} boxShadow={docked ? undefined : "xl"}
     onKeyDown={event => {
       event.stopPropagation()
-      if (event.key === 'Escape') { event.preventDefault(); if (recorderActive) setRecording(false); else close(); return }
+      if (event.key === 'Escape') { event.preventDefault(); if (captureActive) setCanvasMode(null); else close(); return }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save(); return }
       if (event.target !== event.currentTarget || editMode) return
       if (event.key === 'ArrowRight') { event.preventDefault(); playback.next() }
@@ -267,14 +274,14 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
       if (event.key === ' ') { event.preventDefault(); playback.toggle() }
     }} onPointerDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()}>
     <HStack justify="space-between" p={3} borderBottom="1px solid" borderColor="whiteAlpha.200" flexShrink={0}>
-      <Box><Text fontWeight="bold">{editMode ? 'Edit flow' : 'Flows'}</Text><Text fontSize="xs" color="gray.400">{recorderActive ? 'Recording canvas clicks' : draft ? 'Unsaved changes' : editMode && flow ? 'All changes saved' : 'Tell a story through your diagram'}</Text></Box>
+      <Box><Text fontWeight="bold">{editMode ? 'Edit flow' : 'Flows'}</Text><Text fontSize="xs" color="gray.400">{pickerActive ? 'Picking step highlights' : recorderActive ? 'Recording canvas clicks' : draft ? 'Unsaved changes' : editMode && flow ? 'All changes saved' : 'Tell a story through your diagram'}</Text></Box>
       <HStack spacing={1}>
-        {compact && recorderActive && <Button size="sm" onClick={() => setRecording(false)}>Stop recording</Button>}
-        {compact && !recorderActive && onExpandedChange && <Button size="sm" aria-label={expanded ? 'Reduce flow editor' : 'Expand flow editor'} onClick={() => onExpandedChange(!expanded)}>{expanded ? '↓' : '↑'}</Button>}
+        {compact && captureActive && <Button size="sm" onClick={() => setCanvasMode(null)}>{pickerActive ? 'Done picking' : 'Stop recording'}</Button>}
+        {compact && !captureActive && onExpandedChange && <Button size="sm" aria-label={expanded ? 'Reduce flow editor' : 'Expand flow editor'} onClick={() => onExpandedChange(!expanded)}>{expanded ? '↓' : '↑'}</Button>}
         <Button size="sm" aria-label="Close flows" isDisabled={busy} onClick={close}>×</Button>
       </HStack>
     </HStack>
-    {!(compact && recorderActive) && <HStack align="start" p={3} flexShrink={0} borderBottom="1px solid" borderColor="whiteAlpha.100">
+    {!(compact && captureActive) && <HStack align="start" p={3} flexShrink={0} borderBottom="1px solid" borderColor="whiteAlpha.100">
         <Select size="sm" aria-label="Choose flow" value={draft?.id === '' ? '__new' : flow?.id ?? ''} isDisabled={busy} onChange={event => selectFlow(event.target.value)}>
           <option value="">Choose a flow</option>
           {draft?.id === '' && <option value="__new">{draft.name || 'New flow'}</option>}
@@ -287,30 +294,36 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
         <Box as="details" mt={2}><Box as="summary" fontSize="xs" cursor="pointer">Technical details</Box><Text fontSize="xs" mt={1} overflowWrap="anywhere">{error || query.error?.message}</Text></Box>
         {query.error && <Button size="sm" mt={2} isLoading={query.isFetching} onClick={() => { void query.refetch() }}>Retry loading</Button>}
       </Box>}
-    <VStack data-flow-scroll align="stretch" spacing={4} p={3} display={compact && recorderActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={1}>
+    <VStack data-flow-scroll align="stretch" spacing={4} p={3} display={compact && captureActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={1}>
       {query.isLoading && <Text role="status" fontSize="sm">Loading flows…</Text>}
 
       {!flow && !query.isLoading && <Text fontSize="sm" color="gray.400">{flows.length ? 'Choose a story to follow through the diagram.' : editMode ? 'Create a flow, then add steps to highlight parts of this diagram.' : onEditModeChange ? 'No flows yet. Choose New flow to create your first story.' : 'No flows in this diagram yet.'}</Text>}
       {flow && <>
-        {!editMode && <HStack justify="space-between" align="start">
-          <Box minW={0}><Text fontSize="sm" fontWeight="semibold" overflowWrap="anywhere">{flow.name}</Text>{flow.description && <Text mt={2} fontSize="sm" whiteSpace="pre-wrap">{flow.description}</Text>}</Box>
-          {onEditModeChange && <Button size="sm" flexShrink={0} isDisabled={busy} onClick={() => { playback.pause(); onEditModeChange(true) }}>Edit flow</Button>}
-        </HStack>}
+        <HStack data-testid="flow-details-header" justify="space-between" align="start" spacing={2}>
+          {editMode ? <VStack flex={1} minW={0} align="stretch" spacing={0}>
+            <Input aria-label="Flow name" isDisabled={busy} variant="unstyled" fontSize="sm" fontWeight="semibold" px={1} py={1} rounded="md" placeholder="Flow name" value={flow.name} maxLength={200}
+              _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'blue.300' }} onChange={e => patch({ name: e.target.value })} />
+            <Textarea aria-label="Flow description" isDisabled={busy} variant="unstyled" fontSize="xs" color="gray.400" px={1} py={1} rounded="md" rows={1} minH="28px" maxH="160px" resize="none" placeholder="Add a description…" maxLength={10000} value={flow.description}
+              _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'blue.300' }} onChange={e => patch({ description: e.target.value })} />
+          </VStack> : <Box flex={1} minW={0}><Text fontSize="sm" fontWeight="semibold" overflowWrap="anywhere">{flow.name}</Text>{flow.description && <Text mt={2} fontSize="sm" whiteSpace="pre-wrap">{flow.description}</Text>}</Box>}
+          {!(compact && captureActive) && <HStack aria-label="Flow actions" spacing={1} flexShrink={0}>
+            {(editMode || draft) && <FlowAction label="Discard" hint="Discard unsaved changes" icon={<ReloadIcon />} disabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }} />}
+            {editMode ? <>
+              <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || flow.steps.length > 500} onClick={() => void save()} />
+              {!draft && <FlowAction label="Duplicate flow" icon={<CopyIcon boxSize="14px" />} disabled={busy} onClick={() => setDraft({ ...flow, id: '', revision: 0, name: `${flow.name.slice(0, 190)} copy`, steps: duplicateSteps(flow.steps) })} />}
+              {flow.id && <FlowAction label="Delete flow" icon={<TrashIcon />} destructive disabled={busy} onClick={() => setDeletePending(true)} />}
+              {onEditModeChange && <FlowAction label="Cancel edit" hint="Exit edit mode" icon={<CloseIcon />} modeSwitch disabled={busy} onClick={() => { playback.pause(); onEditModeChange(false) }} />}
+            </> : onEditModeChange && <FlowAction label="Edit flow" icon={<EditorIcon size={14} />} modeSwitch disabled={busy} onClick={() => { playback.pause(); onEditModeChange(true) }} />}
+          </HStack>}
+        </HStack>
+        {editMode && deletePending && <HStack><Text fontSize="xs">Delete this flow?</Text><Button size="xs" colorScheme="red" isDisabled={busy} onClick={() => void remove()}>Delete</Button><Button size="xs" isDisabled={busy} onClick={() => setDeletePending(false)}>Cancel</Button></HStack>}
         {editMode && <Box as="fieldset" disabled={busy} border={0} minW={0} p={0}>
           <VStack align="stretch" spacing={3}>
-            <VStack align="stretch" spacing={0}>
-              <Input aria-label="Flow name" variant="unstyled" fontSize="sm" fontWeight="semibold" px={1} py={1} rounded="md" placeholder="Flow name" value={flow.name} maxLength={200}
-                _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'blue.300' }} onChange={e => patch({ name: e.target.value })} />
-              <Textarea aria-label="Flow description" variant="unstyled" fontSize="xs" color="gray.400" px={1} py={1} rounded="md" rows={1} minH="28px" maxH="160px" resize="none" placeholder="Add a description…" maxLength={10000} value={flow.description}
-                _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'blue.300' }} onChange={e => patch({ description: e.target.value })} />
-            </VStack>
             {flow.steps.length >= 500 && <Text fontSize="xs" color="gray.400">Maximum of 500 steps reached.</Text>}
             <StepList
-              actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || flow.steps.length >= 500} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setRecording(!recording) }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
+              onPick={onCanvasRecorderChange ? () => { playback.pause(); setCanvasMode(pickerActive ? null : 'pick') } : undefined} picking={pickerActive}
+              actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || flow.steps.length >= 500} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
               expanded={recorderActive ? null : activeStep?.id ?? null} steps={flow.steps} onChange={steps => patch({ steps })} diagram={currentDiagram} selection={selection} onSelect={playback.select} />
-            {!draft && <Button size="sm" variant="ghost" onClick={() => setDraft({ ...flow, id: '', revision: 0, name: `${flow.name.slice(0, 190)} copy`, steps: duplicateSteps(flow.steps) })}>Duplicate flow</Button>}
-            {flow.id && <Button size="xs" variant="ghost" colorScheme="red" onClick={() => setDeletePending(true)}>Delete flow</Button>}
-            {deletePending && <HStack><Text fontSize="xs">Delete this flow?</Text><Button size="xs" colorScheme="red" onClick={() => void remove()}>Delete</Button><Button size="xs" onClick={() => setDeletePending(false)}>Cancel</Button></HStack>}
           </VStack>
         </Box>}
         {!editMode && !flow.steps.length && <Text fontSize="sm" color="gray.400">{onEditModeChange ? 'This flow has no steps yet. Choose Edit flow to add your story.' : 'This flow has no steps yet.'}</Text>}
@@ -342,14 +355,7 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
         </Box>}
       </>}
     </VStack>
-    {flow && (editMode || draft) && !(compact && recorderActive) && <HStack p={3} borderTop="1px solid" borderColor="whiteAlpha.200" flexShrink={0} justify="space-between">
-      <Button size="sm" variant="ghost" isDisabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }}>Discard</Button>
-      {editMode && <HStack spacing={2}>
-        {onEditModeChange && <Button size="sm" variant="ghost" isDisabled={busy} onClick={() => { playback.pause(); onEditModeChange(false) }}>Preview</Button>}
-        <Button size="sm" colorScheme="blue" isLoading={busy} isDisabled={!draft || !flow.name.trim() || flow.steps.length > 500} onClick={() => void save()}>Save flow</Button>
-      </HStack>}
-    </HStack>}
-    {!(compact && recorderActive) && <Box as="footer" data-testid="flow-yaml-footer" px={3} py={2} borderTop="1px solid" borderColor="whiteAlpha.200" flexShrink={0}>
+    {!(compact && captureActive) && <Box as="footer" data-testid="flow-yaml-footer" px={3} py={2} borderTop="1px solid" borderColor="whiteAlpha.200" flexShrink={0}>
         <FlowYamlControls flow={flow} diagram={currentDiagram} viewId={viewId} canImport={canEditFlow} disabled={busy} onImport={imported => {
           if (!canEditFlow || busy || !discardAllowed()) return false
           playback.pause(); setSelectedId(''); setDraft(imported); setError(''); setDeletePending(false)

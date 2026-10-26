@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { canvasHighlightTarget, isFlowPanelTarget, captureCanvasStep } from './canvasInteraction'
-import { type FlowDiagram } from './model'
+import { canvasHighlightTarget, isFlowPanelTarget, captureCanvasStep, addCanvasHighlight } from './canvasInteraction'
+import { newStep, type FlowDiagram } from './model'
 import type { Connector } from '../types'
 
 const diagram: FlowDiagram = { elements: [{ element_id: 1, name: 'API' }], connectors: [{ id: 10 } as Connector] }
@@ -15,6 +15,18 @@ describe('canvas step recording', () => {
     expect(captureCanvasStep({ connectorId: 10 }, diagram)).toEqual(expect.objectContaining({ elementIds: [], connectors: [{ id: 10, reverse: false }] }))
     expect(captureCanvasStep({ elementId: 99 }, diagram)).toBeNull()
     expect(captureCanvasStep({ connectorId: 99 }, diagram)).toBeNull()
+  })
+
+  it('adds highlights idempotently without changing step identity, direction, or metadata', () => {
+    const original = { ...newStep(diagram), title: 'Keep title', connectors: [{ id: 10, reverse: true }], metadata: { owner: 'Team' } }
+    const added = addCanvasHighlight(original, { elementId: 1 }, diagram)
+    expect(added).toEqual({ ...original, elementIds: [1] })
+    expect(original.elementIds).toEqual([])
+    expect(addCanvasHighlight(added, { elementId: 1 }, diagram)).toBe(added)
+    expect(addCanvasHighlight(added, { connectorId: 10 }, diagram)).toBe(added)
+    expect(addCanvasHighlight(added, { elementId: 99 }, diagram)).toBe(added)
+    expect(addCanvasHighlight(added, { connectorId: 99 }, diagram)).toBe(added)
+    expect(addCanvasHighlight(newStep(diagram), { connectorId: 10 }, diagram).connectors).toEqual([{ id: 10, reverse: false }])
   })
 
   it('recognizes node bodies, connection labels and panel controls without accepting synthetic nodes', () => {

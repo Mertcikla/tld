@@ -659,7 +659,8 @@ function ViewEditorInner({
   const [storyOpen, setStoryOpen] = useState(false)
   const [storyEditMode, setStoryEditMode] = useState(false)
   const [storyFocus, setStoryFocus] = useState<FlowFocus | null>(null)
-  const [storyRecording, setStoryRecording] = useState(false)
+  const [storyCanvasMode, setStoryCanvasMode] = useState<'record' | 'pick' | null>(null)
+  const storyRecording = storyCanvasMode !== null
   const [storyExpanded, setStoryExpanded] = useState(false)
   const [storyCanvasSize, setStoryCanvasSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
@@ -3448,7 +3449,7 @@ function ViewEditorInner({
   useFlowCamera({ viewId, open: storyOpen, canvasSize: storyCanvasSize, active: storyOpen && !!activeStoryFocus, recording: storyRecording, focus: activeStoryFocus, getViewport, setViewport, fitView })
   const handleStoryRecorderChange = useCallback((recorder: FlowCanvasRecorder | null) => {
     storyRecorderRef.current = recorder
-    setStoryRecording(!!recorder)
+    setStoryCanvasMode(recorder ? recorder.mode ?? 'record' : null)
     if (recorder) {
       setDrawingMode(false)
       closeElementPanelRef.current()
@@ -4785,11 +4786,11 @@ function ViewEditorInner({
             />
 
             {storyRecording && <HStack role="status" position="absolute" top={3} left={3} right={3} zIndex={2001}
-              bg="var(--bg-panel)" border="1px solid" borderColor="red.400" rounded="lg" p={3} spacing={3} boxShadow="lg">
-              <Box w="8px" h="8px" rounded="full" bg="red.300" flexShrink={0} aria-hidden />
-              <Box flex={1} minW={0}><Text fontSize="sm" fontWeight="semibold">Recording flow steps</Text>
-                <Text fontSize="xs" color="gray.300">Click an element or connection to add a step. Press Esc to stop.</Text></Box>
-              <Button size="sm" flexShrink={0} onClick={() => storyRecorderRef.current?.stop()}>Stop recording</Button>
+              bg="var(--bg-panel)" border="1px solid" borderColor={storyCanvasMode === 'pick' ? 'blue.400' : 'red.400'} rounded="lg" p={3} spacing={3} boxShadow="lg">
+              <Box w="8px" h="8px" rounded="full" bg={storyCanvasMode === 'pick' ? 'blue.300' : 'red.300'} flexShrink={0} aria-hidden />
+              <Box flex={1} minW={0}><Text fontSize="sm" fontWeight="semibold">{storyCanvasMode === 'pick' ? 'Picking step highlights' : 'Recording flow steps'}</Text>
+                <Text fontSize="xs" color="gray.300">{storyCanvasMode === 'pick' ? 'Click elements or connections to add highlights to this step. Press Esc to stop.' : 'Click an element or connection to add a step. Press Esc to stop.'}</Text></Box>
+              <Button size="sm" flexShrink={0} onClick={() => storyRecorderRef.current?.stop()}>{storyCanvasMode === 'pick' ? 'Done picking' : 'Stop recording'}</Button>
             </HStack>}
 
             {/* Reconnect picking banner */}
