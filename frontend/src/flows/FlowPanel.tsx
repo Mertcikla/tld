@@ -6,7 +6,7 @@ import { motion, Reorder } from 'framer-motion'
 import { faBackwardStep, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
 import { SortableFlowStep } from './SortableFlowStep'
-import { ChevronDownIcon, CloseIcon, EditorIcon, EyeIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
+import { ChevronDownIcon, CloseIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
 import { flowApi } from './api'
 import { api } from '../api/client'
 import { enterFlow, returnFromFlow, type FlowJourney, type FlowVisit } from './navigation'
@@ -39,12 +39,12 @@ function FlowOption({ flow, selected, onSelect }: { flow: StoryFlow; selected: b
   </MenuItem>
 }
 
-function FlowAction({ label, hint = label, icon, disabled, loading, primary, destructive, modeSwitch, onClick }: {
-  label: string; hint?: string; icon: ReactElement; disabled?: boolean; loading?: boolean; primary?: boolean; destructive?: boolean; modeSwitch?: boolean; onClick: () => void
+function FlowAction({ label, hint = label, icon, disabled, loading, primary, destructive, onClick }: {
+  label: string; hint?: string; icon: ReactElement; disabled?: boolean; loading?: boolean; primary?: boolean; destructive?: boolean; onClick: () => void
 }) {
   return <Tooltip label={hint} openDelay={200} closeOnPointerDown closeOnScroll>
-    <Box as="span" display="inline-flex" ml={modeSwitch ? 1 : undefined}>
-      <IconButton aria-label={label} icon={icon} size={modeSwitch ? 'sm' : 'xs'} w={modeSwitch || primary ? undefined : 7} h={modeSwitch || primary ? undefined : 7} variant={modeSwitch ? 'elevated' : 'ghost'} colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : modeSwitch ? { color: 'var(--accent)' } : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
+    <Box as="span" display="inline-flex">
+      <IconButton aria-label={label} icon={icon} size="xs" w={primary ? undefined : 7} h={primary ? undefined : 7} variant="ghost" colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
     </Box>
   </Tooltip>
 }
@@ -212,8 +212,13 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   const initial = initialJourney.current?.current && (viewId === undefined || initialJourney.current.current.flow.viewId === viewId) ? initialJourney.current : undefined
   const [journey, setJourney] = useState<FlowJourney | null>(() => initial?.stack.length ? initial : null)
   const pendingRestore = useRef<FlowVisit | null>(initial?.current ?? null)
-  const [selectedId, setSelectedId] = useState(initial?.current.flow.id ?? '')
-  const editMode = requestedEditMode && !journey
+  const selectionStorageKey = `diag:lastFlow:${viewId ?? 'explorer'}`
+  const [selectedId, setSelectedId] = useState(() => {
+    if (initial) return initial.current.flow.id
+    try { return window.localStorage.getItem(selectionStorageKey) ?? '' }
+    catch { return '' }
+  })
+  const editMode = (requestedEditMode || !!onEditModeChange) && !journey
   const catalogQuery = useQuery({ queryKey: ['flows', 0], queryFn: () => flowApi.list(), enabled: open, retry: false })
   const viewsQuery = useQuery({ queryKey: ['flow-link-views'], queryFn: () => api.workspace.views.list(), enabled: open, retry: false })
   const catalogFlows = catalogQuery.data ?? []
@@ -235,7 +240,13 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   useEffect(() => { if (editMode) setEditPlaybackOpen(true) }, [editMode])
   const [canvasMode, setCanvasMode] = useState<'record' | 'pick' | null>(null)
   const flows = query.data ?? []
-  const flow = journey?.current.flow ?? draft ?? flows.find(flow => flow.id === selectedId) ?? null
+  const flow = journey?.current.flow ?? draft ?? flows.find(flow => flow.id === selectedId) ?? flows[0] ?? null
+  useEffect(() => {
+    if (!open || journey || draft || !flow) return
+    setSelectedId(flow.id)
+    try { window.localStorage.setItem(selectionStorageKey, flow.id) }
+    catch { /* Selection still works when browser storage is unavailable. */ }
+  }, [open, journey, draft, flow, selectionStorageKey])
   const canEditFlow = !journey && (!!onEditModeChange || editMode)
   const currentDiagram = diagram ?? (flow ? diagrams?.[flow.viewId] : undefined) ?? emptyDiagram
   const playback = useFlowPlayback(flow)
@@ -334,13 +345,11 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     setSelectedId('')
     setDraft({ id: '', viewId, name: 'New flow', description: '', revision: 0, steps: [] })
     setError(''); setDeletePending(false)
-    onEditModeChange?.(false)
   }
   function selectFlow(id: string) {
     if (busy || !discardAllowed()) return
     playback.pause(); setJourney(null); pendingRestore.current = null; queryClient.removeQueries({ queryKey: navigationKey, exact: true })
     setDraft(null); setSelectedId(id); setError(''); setDeletePending(false)
-    onEditModeChange?.(false)
   }
   function goToFlow() {
     if (!flow || !activeStep?.goToFlowId || busy) return
@@ -401,12 +410,11 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
                   <Input aria-label="Flow name" isDisabled={busy} variant="unstyled" flex={1} minW={0} h="32px" px={2} fontSize="sm" fontWeight="semibold" placeholder="Flow name" value={flow.name} maxLength={200}
                     _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch({ name: e.target.value })} />
                   <MenuButton as={IconButton} aria-label="Choose flow" icon={<ChevronDownIcon />} size="sm" variant="ghost" color="var(--accent)" isDisabled={busy} flexShrink={0} />
-                </> : <MenuButton as={Button} aria-label="Choose flow" size="sm" variant="ghost" w="full" minW={0} px={2} textAlign="left" fontWeight="semibold" isDisabled={busy} rightIcon={<ChevronDownIcon />}>
-                  <Text as="span" display="block" isTruncated>{flow ? flow.name || 'Untitled flow' : 'Choose a flow'}</Text>
+                </> : <MenuButton as={Button} aria-label="Choose flow" size="sm" variant="ghost" w="full" minW={0} px={2} textAlign="left" fontWeight="semibold" isDisabled={busy || !flows.length} rightIcon={<ChevronDownIcon />}>
+                  <Text as="span" display="block" isTruncated>{flow ? flow.name || 'Untitled flow' : 'No flows'}</Text>
                 </MenuButton>}
               </HStack>
               <MenuList minW="240px" maxH="min(320px, 50vh)" overflowY="auto" maxW="calc(100vw - 32px)">
-                <MenuItem onClick={() => selectFlow('')}>Choose a flow</MenuItem>
                 {draft?.id === '' && <FlowOption flow={draft} selected />}
                 {flows.map(candidate => <FlowOption key={candidate.id} flow={candidate.id === flow?.id ? flow : candidate} selected={candidate.id === flow?.id} onSelect={() => selectFlow(candidate.id)} />)}
               </MenuList>
@@ -426,10 +434,8 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <HStack aria-label="Flow actions" spacing={1} flexShrink={0}>
 
             {!journey && (editMode || draft) && <FlowAction label="Discard" hint="Discard unsaved changes" icon={<ReloadIcon />} disabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }} />}
-            {editMode ? <>
-              <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > 500} onClick={() => void save()} />
-              {onEditModeChange && <FlowAction label="Preview" hint="Preview flow" icon={<EyeIcon />} modeSwitch disabled={busy} onClick={() => { playback.pause(); onEditModeChange(false) }} />}
-            </> : onEditModeChange && !journey && <FlowAction label="Edit flow" icon={<EditorIcon size={14} />} modeSwitch disabled={busy} onClick={() => { playback.pause(); onEditModeChange(true) }} />}
+            {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > 500} onClick={() => void save()} />}
+
           </HStack>
       </HStack>}
     </VStack>
@@ -452,7 +458,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
               expanded={recorderActive ? null : activeStep?.id ?? null} steps={flow.steps} onChange={steps => patch({ steps })} diagram={currentDiagram} selection={selection} onSelect={playback.select} />
           </VStack>
         </Box>}
-        {!editMode && !flow.steps.length && <Text fontSize="sm" color="gray.400">{onEditModeChange ? 'This flow has no steps yet. Choose Edit flow to add your story.' : 'This flow has no steps yet.'}</Text>}
+        {!editMode && !flow.steps.length && <Text fontSize="sm" color="gray.400">This flow has no steps yet.</Text>}
 
       </>}
     </VStack>
@@ -516,7 +522,6 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <FlowYamlControls catalog={catalog} flow={flow} diagram={currentDiagram} viewId={viewId} canImport={canEditFlow} disabled={busy} onImport={imported => {
           if (!canEditFlow || busy || !discardAllowed()) return false
           playback.pause(); setSelectedId(''); setDraft(imported); setError(''); setDeletePending(false)
-          onEditModeChange?.(false)
           return true
         }} />
         {canEditFlow && flow && <HStack aria-label="Flow management" spacing={1}>

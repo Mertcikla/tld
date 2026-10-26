@@ -657,13 +657,12 @@ function ViewEditorInner({
 
   const elementPanel = useDisclosure()
   const [storyOpen, setStoryOpen] = useState(() => searchParams.get('flow') === '1')
-  const [storyEditMode, setStoryEditMode] = useState(false)
   const [storyFocus, setStoryFocus] = useState<FlowFocus | null>(null)
   const [storyCanvasMode, setStoryCanvasMode] = useState<'record' | 'pick' | null>(null)
   const storyRecording = storyCanvasMode !== null
   const [storyExpanded, setStoryExpanded] = useState(false)
   useEffect(() => {
-    if (storyOpen) { setStoryEditMode(false); setStoryExpanded(false) }
+    if (storyOpen) { setStoryExpanded(false) }
   }, [storyOpen, viewId])
   const storyRecorderRef = useRef<FlowCanvasRecorder | null>(null)
   const connectorPanel = useDisclosure()
@@ -3441,7 +3440,7 @@ function ViewEditorInner({
 
   const storyDiagram = useMemo(() => ({ elements: viewElements, connectors }), [viewElements, connectors])
   const activeStoryFocus = storyOpen && storyFocus?.viewId === viewId ? storyFocus : null
-  const storyPresentation = useMemo(() => presentEditorFlow(flowNodes, flowEdges, storyRecording ? null : activeStoryFocus, storyEditMode), [flowNodes, flowEdges, activeStoryFocus, storyEditMode, storyRecording])
+  const storyPresentation = useMemo(() => presentEditorFlow(flowNodes, flowEdges, storyRecording ? null : activeStoryFocus, canEdit), [flowNodes, flowEdges, activeStoryFocus, canEdit, storyRecording])
   useFlowCamera({ viewId, active: storyOpen && !!activeStoryFocus, recording: storyRecording, focus: activeStoryFocus, fitView })
   const handleStoryRecorderChange = useCallback((recorder: FlowCanvasRecorder | null) => {
     storyRecorderRef.current = recorder
@@ -4531,11 +4530,11 @@ function ViewEditorInner({
         <Flex ref={editorSplitRef} flex={1} minH={0} overflow="hidden">
           <Flex ref={storyLayoutRef} position="relative" flex={1} minW={0} minH={0}>
             <Box data-testid="flow-panel-overlay" position="absolute" zIndex={30} left={0} bottom={0} w={storyCompact ? '100%' : `${VIEW_EDITOR_FLOW_PANEL_WIDTH}px`} maxW="100%" h={storyOverlayHeight} display={storyOpen ? 'flex' : 'none'} minH={0} minW={0} overflow="hidden">
-              {viewId != null && <FlowPanel key={viewId} open={storyOpen} viewId={viewId} editMode={storyEditMode && canEdit} docked compact={storyCompact} expanded={storyExpanded} onExpandedChange={setStoryExpanded}
+              {viewId != null && <FlowPanel key={viewId} open={storyOpen} viewId={viewId} editMode={canEdit} docked compact={storyCompact} expanded={storyExpanded} onExpandedChange={setStoryExpanded}
                 diagram={storyDiagram} selection={{ elementId: selectedElement?.id, connectorId: selectedEdge?.id }}
                 onCanvasRecorderChange={handleStoryRecorderChange}
-                onEditModeChange={canEdit ? enabled => { setStoryEditMode(enabled); setStoryExpanded(enabled); if (enabled) setDrawingMode(false) } : undefined}
-                onNavigateView={id => { setStoryOpen(true); setStoryEditMode(false); navigate(`/views/${id}?flow=1`) }}
+                onEditModeChange={canEdit ? enabled => { if (enabled) { setStoryExpanded(true); setDrawingMode(false) } } : undefined}
+                onNavigateView={id => { setStoryOpen(true); navigate(`/views/${id}?flow=1`) }}
                 onFocus={setStoryFocus} onClose={() => setStoryOpen(false)} />}
             </Box>
           <Box

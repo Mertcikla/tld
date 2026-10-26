@@ -361,35 +361,20 @@ describe('flow step editing', () => {
     expect(queryClient.removeQueries).toHaveBeenLastCalledWith({ queryKey: ['flow-draft', 1], exact: true })
   })
 
-  it('keeps New flow visible, previews a new draft, and edits only after an explicit action', () => {
+  it('always edits new flows and keeps playback available without a mode toggle', () => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
-    function ControlledPanel() {
-      const [editing, setEditing] = useState(false)
-      return <FlowPanel open viewId={1} editMode={editing} onEditModeChange={setEditing} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />
-    }
-    act(() => { renderer = create(<ControlledPanel />) })
-    expect(button('+ New flow')).toBeDefined()
-    expect(button('Edit flow')).toBeUndefined()
-    expect(button('Edit')).toBeUndefined()
-    expect(button('Preview')).toBeUndefined()
+    act(() => { renderer = create(<FlowPanel open viewId={1} onEditModeChange={vi.fn()} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
     act(() => button('+ New flow').props.onClick())
-    expect(button('Edit flow')).toBeDefined()
-    expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
-    act(() => button('Edit flow').props.onClick())
-    expect(button('+ New flow')).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('New flow')
+    expect(button('Edit flow')).toBeUndefined()
+    expect(button('Preview')).toBeUndefined()
+    expect(button('Save flow')).toBeDefined()
     expect(button('Toggle playback controls').props['aria-expanded']).toBe(true)
     act(() => button('Toggle playback controls').props.onClick())
     expect(button('Auto-play')).toBeUndefined()
     change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Draft flow')
-    const actions = renderer.root.findByProps({ 'aria-label': 'Flow actions' }).findAllByType('button')
-    expect(actions.at(-1)?.props['aria-label']).toBe('Preview')
-    act(() => button('Preview').props.onClick())
-    expect(button('Edit flow')).toBeDefined()
-    expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
-    act(() => button('Edit flow').props.onClick())
+    act(() => button('Toggle playback controls').props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Draft flow')
-    expect(button('Toggle playback controls').props['aria-expanded']).toBe(true)
     expect(button('Auto-play')).toBeDefined()
   })
 
@@ -413,7 +398,7 @@ describe('flow step editing', () => {
     expect(options().find(node => node.props['aria-label'] === 'New flow, 0 steps')).toBeDefined()
   })
 
-  it('shows pinned playback and flow management in preview, and duplicates into editing', () => {
+  it('shows playback and flow management while editing and duplicates into a draft', () => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     const original: StoryFlow = { id: 'saved', viewId: 1, name: 'Story', description: '', revision: 1, steps: [{ id: 's1', title: 'API', description: '', elementIds: [1], connectors: [], metadata: {} }] }
     queryState.data = [original]
@@ -421,7 +406,7 @@ describe('flow step editing', () => {
     act(() => { renderer = create(<FlowPanel open viewId={1} onEditModeChange={onEditModeChange} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
     act(() => renderer.root.findAllByType('menuitem' as never).find(node => node.props['aria-label'] === 'Story, 1 step')!.props.onClick())
     expect(button('Auto-play')).toBeDefined()
-    expect(button('Toggle playback controls')).toBeUndefined()
+    expect(button('Toggle playback controls')).toBeDefined()
     const footer = renderer.root.findByProps({ 'data-testid': 'flow-yaml-footer' })
     expect(footer.findAllByProps({ 'aria-label': 'Duplicate flow' })).not.toHaveLength(0)
     expect(button('Duplicate flow').props.isDisabled).toBe(false)
@@ -452,7 +437,7 @@ describe('flow step editing', () => {
     expect(flowApi.remove).toHaveBeenCalledWith(original)
   })
 
-  it('waits for a selection and previews each flow selected from the chooser', () => {
+  it('defaults to the first flow and previews each flow selected from the chooser', () => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     queryState.data = [
       { id: 'a', viewId: 1, name: 'First story', description: '', revision: 1, steps: [] },
@@ -464,16 +449,43 @@ describe('flow step editing', () => {
     }
     act(() => { renderer = create(<ControlledPanel />) })
     expect(button('Edit flow')).toBeUndefined()
-    act(() => renderer.root.findAllByType('menuitem' as never).find(node => node.props['aria-label'] === 'First story, 0 steps')!.props.onClick())
-    expect(button('Edit flow')).toBeDefined()
-    act(() => button('Edit flow').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'First story, 0 steps' }).props['aria-current']).toBe('true')
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('First story')
     act(() => renderer.root.findAllByType('menuitem' as never).find(node => node.props['aria-label'] === 'Second story, 0 steps')!.props.onClick())
-    expect(renderer.root.findAllByProps({ 'aria-label': 'Flow name' })).toHaveLength(0)
-    expect(button('Edit flow')).toBeDefined()
-    act(() => renderer.root.findAllByType('menuitem' as never).find(node => node.props.children === 'Choose a flow')!.props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Second story')
     expect(button('Edit flow')).toBeUndefined()
+    expect(renderer.root.findAllByType('menuitem' as never).some(node => node.props.children === 'Choose a flow')).toBe(false)
     expect(button('+ New flow')).toBeDefined()
+  })
+
+  it('remembers the selected flow across remounts and falls back when it is removed', () => {
+    const storage = new Map<string, string>()
+    const localStorage = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) }
+    vi.stubGlobal('window', { localStorage, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    queryState.data = [
+      { id: 'a', viewId: 1, name: 'First story', description: '', revision: 1, steps: [] },
+      { id: 'b', viewId: 1, name: 'Second story', description: '', revision: 1, steps: [] },
+    ]
+    const props = { open: true, viewId: 1, onClose: vi.fn(), onFocus: vi.fn() }
+    const selected = (name: string) => renderer.root.findByProps({ 'aria-label': `${name}, 0 steps` }).props['aria-current']
+    act(() => { renderer = create(<FlowPanel {...props} />) })
+    act(() => renderer.root.findByProps({ 'aria-label': 'Second story, 0 steps' }).props.onClick())
+    act(() => renderer.unmount())
+    // A reload can mount before the flow list arrives.
+    const flows = queryState.data
+    queryState.data = []
+    act(() => { renderer = create(<FlowPanel {...props} />) })
+    queryState.data = flows
+    act(() => renderer.update(<FlowPanel {...props} />))
+    expect(selected('Second story')).toBe('true')
+    act(() => renderer.unmount())
+    queryState.data = flows.slice(0, 1)
+    act(() => { renderer = create(<FlowPanel {...props} />) })
+    expect(selected('First story')).toBe('true')
+    act(() => renderer.unmount())
+    queryState.data = flows
+    act(() => { renderer = create(<FlowPanel {...props} viewId={2} />) })
+    expect(selected('First story')).toBe('true')
   })
 
 })
