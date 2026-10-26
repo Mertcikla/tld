@@ -662,7 +662,6 @@ function ViewEditorInner({
   const [storyCanvasMode, setStoryCanvasMode] = useState<'record' | 'pick' | null>(null)
   const storyRecording = storyCanvasMode !== null
   const [storyExpanded, setStoryExpanded] = useState(false)
-  const [storyCanvasSize, setStoryCanvasSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
     if (storyOpen) { setStoryEditMode(false); setStoryExpanded(false) }
   }, [storyOpen, viewId])
@@ -1412,13 +1411,10 @@ function ViewEditorInner({
     if (!host) return
     const update = () => {
       setStoryCompact(host.clientWidth < 900)
-      const canvas = containerRef.current
-      if (canvas) setStoryCanvasSize(previous => previous.width === canvas.clientWidth && previous.height === canvas.clientHeight ? previous : { width: canvas.clientWidth, height: canvas.clientHeight })
     }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(host)
-    if (containerRef.current) observer.observe(containerRef.current)
     return () => observer.disconnect()
   }, [view?.id, isMobileLayout])
   const markdownResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -3446,7 +3442,7 @@ function ViewEditorInner({
   const storyDiagram = useMemo(() => ({ elements: viewElements, connectors }), [viewElements, connectors])
   const activeStoryFocus = storyOpen && storyFocus?.viewId === viewId ? storyFocus : null
   const storyPresentation = useMemo(() => presentEditorFlow(flowNodes, flowEdges, storyRecording ? null : activeStoryFocus, storyEditMode), [flowNodes, flowEdges, activeStoryFocus, storyEditMode, storyRecording])
-  useFlowCamera({ viewId, open: storyOpen, canvasSize: storyCanvasSize, active: storyOpen && !!activeStoryFocus, recording: storyRecording, focus: activeStoryFocus, getViewport, setViewport, fitView })
+  useFlowCamera({ viewId, active: storyOpen && !!activeStoryFocus, recording: storyRecording, focus: activeStoryFocus, fitView })
   const handleStoryRecorderChange = useCallback((recorder: FlowCanvasRecorder | null) => {
     storyRecorderRef.current = recorder
     setStoryCanvasMode(recorder ? recorder.mode ?? 'record' : null)
@@ -4519,18 +4515,22 @@ function ViewEditorInner({
     />
   )
 
+  const storyPanelOffset = storyOpen && !storyCompact ? VIEW_EDITOR_FLOW_PANEL_WIDTH : 0
+  const storyOverlayHeight = storyCompact ? storyRecording ? '72px' : storyExpanded ? '78%' : '55%' : '100%'
+  const canvasSideToggleTop = storyOpen && storyCompact ? storyRecording ? 'calc(50% - 36px)' : storyExpanded ? '11%' : '22.5%' : '50%'
+
   return (
     <ViewEditorContext.Provider value={{
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
-      leftPanelOffset: storyOpen && !storyCompact ? VIEW_EDITOR_FLOW_PANEL_WIDTH : 0,
+      leftPanelOffset: storyPanelOffset,
       isMarkdownOpen, markdownPaneWidth, sidePanelStyle: flatPanels ? 'flat' : undefined
     }}>
       <Box data-testid="vieweditor-page" h="100%" minH={0} position="relative" overflow="hidden" display="flex" flexDir="column">
         <Flex ref={editorSplitRef} flex={1} minH={0} overflow="hidden">
-          <Flex ref={storyLayoutRef} flex={1} minW={0} minH={0} flexDirection={storyCompact ? 'column' : 'row'}>
-            <Box display={storyOpen ? 'flex' : 'none'} flex={`0 0 ${storyCompact ? storyRecording ? '72px' : storyExpanded ? '78%' : '55%' : `${VIEW_EDITOR_FLOW_PANEL_WIDTH}px`}`} minH={0} minW={0} order={storyCompact ? 1 : 0} overflow="hidden">
+          <Flex ref={storyLayoutRef} position="relative" flex={1} minW={0} minH={0}>
+            <Box data-testid="flow-panel-overlay" position="absolute" zIndex={30} left={0} bottom={0} w={storyCompact ? '100%' : `${VIEW_EDITOR_FLOW_PANEL_WIDTH}px`} maxW="100%" h={storyOverlayHeight} display={storyOpen ? 'flex' : 'none'} minH={0} minW={0} overflow="hidden">
               {viewId != null && <FlowPanel key={viewId} open={storyOpen} viewId={viewId} editMode={storyEditMode && canEdit} docked compact={storyCompact} expanded={storyExpanded} onExpandedChange={setStoryExpanded}
                 diagram={storyDiagram} selection={{ elementId: selectedElement?.id, connectorId: selectedEdge?.id }}
                 onCanvasRecorderChange={handleStoryRecorderChange}
@@ -4555,8 +4555,8 @@ function ViewEditorInner({
             {!isMobileLayout && (
               <VStack
                 position="absolute"
-                top="50%"
-                left={libraryOpen ? (flatPanels ? '312px' : '328px') : 3}
+                top={canvasSideToggleTop}
+                left={`${storyPanelOffset + (libraryOpen ? (flatPanels ? 312 : 328) : 12)}px`}
                 transform="translateY(-50%)"
                 spacing={1}
                 zIndex={1200}
@@ -4584,7 +4584,7 @@ function ViewEditorInner({
             {!isMobileLayout && !elementPanel.isOpen && !connectorPanel.isOpen && !viewDetails.isOpen && (
               <VStack
                 position="absolute"
-                top="50%"
+                top={canvasSideToggleTop}
                 right={isExplorerOpen ? (flatPanels ? '312px' : '328px') : 3}
                 transform="translateY(-50%)"
                 spacing={1}
@@ -4785,7 +4785,7 @@ function ViewEditorInner({
               }}
             />
 
-            {storyRecording && <HStack role="status" position="absolute" top={3} left={3} right={3} zIndex={2001}
+            {storyRecording && <HStack role="status" position="absolute" top={3} left={`${storyPanelOffset + 12}px`} right={3} zIndex={2001}
               bg="var(--bg-panel)" border="1px solid" borderColor={storyCanvasMode === 'pick' ? 'blue.400' : 'red.400'} rounded="lg" p={3} spacing={3} boxShadow="lg">
               <Box w="8px" h="8px" rounded="full" bg={storyCanvasMode === 'pick' ? 'blue.300' : 'red.300'} flexShrink={0} aria-hidden />
               <Box flex={1} minW={0}><Text fontSize="sm" fontWeight="semibold">{storyCanvasMode === 'pick' ? 'Picking step highlights' : 'Recording flow steps'}</Text>
@@ -4872,6 +4872,7 @@ function ViewEditorInner({
               onCopyMermaid={handleBulkCopyMermaid}
             />
 
+            <Box position="absolute" inset={0} left={`${storyPanelOffset}px`} bottom={storyOpen && storyCompact ? storyOverlayHeight : 0} pointerEvents="none" zIndex={20}>
             {!storyRecording && <ViewHeaderButton
               name={viewName ?? undefined}
               isOpen={viewDetails.isOpen}
@@ -4929,6 +4930,7 @@ function ViewEditorInner({
               hideFocusView={demoOptions?.hideFocusView}
               hideExpandExtras={demoOptions?.hideExpandExtras}
             />
+            </Box>
           </Box>
           </Flex>
 

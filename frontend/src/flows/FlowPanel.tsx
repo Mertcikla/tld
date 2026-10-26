@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Box, Button, Checkbox, FormControl, FormLabel, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { useEffect, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { Box, Button, Checkbox, Collapse, FormControl, FormLabel, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon } from '@chakra-ui/icons'
 import { motion, Reorder } from 'framer-motion'
@@ -120,12 +120,6 @@ function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?:
 }
 
 function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled }: { disabled: boolean; onPick?: () => void; picking?: boolean; actions?: ReactNode; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
-  const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const card = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-flow-step-id]') ?? []).find(row => row.dataset.flowStepId === expanded)
-    const body = card?.closest<HTMLElement>('[data-flow-scroll]')
-    if (card && body) body.scrollTop += card.getBoundingClientRect().top - body.getBoundingClientRect().top
-  }, [expanded])
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   function move(index: number, delta: number) {
     if (disabled || index + delta < 0 || index + delta >= steps.length) return
@@ -143,7 +137,7 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
       <Box ml="auto"><StepCount count={steps.length} /></Box>
     </HStack>
     {!steps.length && <Text fontSize="sm" color="gray.400">Add a step to describe what happens and choose what to highlight.</Text>}
-    <Reorder.Group as="div" ref={listRef} axis="y" values={steps} onReorder={onChange} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 26 }}>
+    <Reorder.Group as="div" axis="y" values={steps} onReorder={onChange} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 26 }}>
     {steps.map((step, index) => <SortableFlowStep key={step.id} step={step} index={index} disabled={disabled || steps.length < 2} onMove={delta => move(index, delta)}>{handle =>
       <Box role="group" position="relative" border="1px solid" borderColor={expanded === step.id ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: expanded === step.id ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
         '.flow-step-actions': { opacity: 0, pointerEvents: 'none' },
@@ -168,12 +162,14 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
         </HStack>
       </Box>
       {missingReference(step, diagram) && <Text px={3} pb={2} fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text>}
-      {expanded === step.id && <VStack align="stretch" spacing={3} p={3} pt={0}>
-        <FormControl><FormLabel fontSize="xs">Step title</FormLabel><Input size="sm" aria-label="Step title" placeholder="What happens in this step?" maxLength={500} value={step.title} onChange={e => patch(step.id, { title: e.target.value })} /></FormControl>
-        <FormControl><FormLabel fontSize="xs">Description (optional)</FormLabel><Textarea size="sm" rows={2} minH="64px" aria-label="Step description" placeholder="Explain this part of the story" maxLength={10000} value={step.description} onChange={e => patch(step.id, { description: e.target.value })} /></FormControl>
-        <Box><Text fontSize="sm" fontWeight="semibold">Highlights</Text><Text fontSize="xs" color="gray.400" mt={1}>Choose elements or connections. Leave empty for a text-only step.</Text></Box>
-        <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={onPick} picking={picking} />
-      </VStack>}
+      <Collapse in={expanded === step.id} animateOpacity unmountOnExit>
+        <VStack align="stretch" spacing={3} p={3} pt={0}>
+          <FormControl><FormLabel fontSize="xs">Step title</FormLabel><Input size="sm" aria-label="Step title" placeholder="What happens in this step?" maxLength={500} value={step.title} onChange={e => patch(step.id, { title: e.target.value })} /></FormControl>
+          <FormControl><FormLabel fontSize="xs">Description (optional)</FormLabel><Textarea size="sm" rows={2} minH="64px" aria-label="Step description" placeholder="Explain this part of the story" maxLength={10000} value={step.description} onChange={e => patch(step.id, { description: e.target.value })} /></FormControl>
+          <Box><Text fontSize="sm" fontWeight="semibold">Highlights</Text><Text fontSize="xs" color="gray.400" mt={1}>Choose elements or connections. Leave empty for a text-only step.</Text></Box>
+          <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={onPick} picking={picking} />
+        </VStack>
+      </Collapse>
       </Box>
     }</SortableFlowStep>)}
     </Reorder.Group>
@@ -395,9 +391,13 @@ export function FlowPanel({ open, viewId, editMode = false, diagram, diagrams, s
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" p={3} minH={0} display="flex" flexDirection="column" overflow="hidden">
         {playback.frame && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={2} mb={3} minH={0} maxH="160px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
-          <Box alignSelf="flex-end"><StepCount count={playback.index + 1} label={`Step ${playback.index + 1} of ${playback.frames.length}`} accent /></Box>
-          {playback.frame.steps.map(step => <Box key={step.id}>
-            <Text fontWeight="semibold" fontSize="sm" overflowWrap="anywhere">{stepLabel(step, currentDiagram)}</Text>
+          <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={3}>
+            <Tooltip label={playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')} openDelay={300} closeOnPointerDown closeOnScroll>
+              <Text flex={1} minW={0} fontWeight="semibold" fontSize="sm" isTruncated>{playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</Text>
+            </Tooltip>
+            <StepCount count={playback.index + 1} label={`Step ${playback.index + 1} of ${playback.frames.length}`} accent />
+          </HStack>
+          {playback.frame.steps.map(step => (step.description || missingReference(step, currentDiagram) || Object.keys(step.metadata).length > 0) && <Box key={step.id}>
             {step.description && <Text fontSize="sm" whiteSpace="pre-wrap" overflowWrap="anywhere">{step.description}</Text>}
             {missingReference(step, currentDiagram) && <Text color="orange.300" fontSize="xs">Reference unavailable. Use Next to skip this step.</Text>}
             {Object.entries(step.metadata).map(([key, value]) => <Text key={key} fontSize="xs" whiteSpace="pre-wrap" overflowWrap="anywhere"><strong>{key}:</strong> {value}</Text>)}
