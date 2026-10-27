@@ -585,7 +585,6 @@ interface StepListProps {
   depth?: number
   available?: number
   catalog?: FlowCatalog
-  actions?: ReactNode
   onPick?: () => void
   picking?: boolean
   addLabel?: string
@@ -634,18 +633,14 @@ function FlowStepEditor(props: Omit<StepListProps, 'onEditPaths'>) {
     </Box>
     <StepOptions key={`options:${focused.id}`} step={focused} onChange={patch} catalog={props.catalog ?? { flows: [], views: [] }} disabled={props.disabled} depth={depth} />
     <StepPaths key={`paths:${focused.id}`} identifiers={props.identifiers} step={focused} onChange={paths => patch({ branches: { ...focused.branches!, paths } })} disabled={props.disabled} available={props.available ?? FLOW_MAX_STEPS} expanded={props.expanded} onSelect={props.onSelect} renderSteps={path =>
-      <StepList {...props} actions={undefined} steps={path.steps} onChange={steps => patch({ branches: { ...focused.branches!, paths: focused.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} depth={depth + 1} addLabel={`Add step to path ${path.name}`} onEditPaths={setPathStepId} />
+      <StepList {...props} steps={path.steps} onChange={steps => patch({ branches: { ...focused.branches!, paths: focused.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} depth={depth + 1} addLabel={`Add step to path ${path.name}`} onEditPaths={setPathStepId} />
     } />
   </VStack>
 }
 
-function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = FLOW_MAX_STEPS, catalog = { flows: [], views: [] }, addLabel = 'Add step', onEditPaths, identifiers }: StepListProps) {
+function StepList({ steps, onChange, diagram, selection, onSelect, expanded, onPick, picking, disabled, depth = 0, available = FLOW_MAX_STEPS, catalog = { flows: [], views: [] }, addLabel = 'Add step', onEditPaths, identifiers }: StepListProps) {
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   return <VStack align="stretch" spacing={3}>
-    {depth === 0 && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
-      <StepCount count={allSteps(steps).length} alignWithHandles />
-      {actions}
-    </HStack>}
     <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
       <FlowEditorCard index={index} identifier={identifiers.get(step.id)} title={stepLabel(step, diagram)} titleEditor={expanded === step.id ? <InlineStepText label="Step title" value={step.title} fallback={stepLabel(step, diagram)} disabled={disabled} onChange={title => patch(step.id, { title })} /> : undefined} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
         <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
@@ -920,14 +915,16 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         {editMode ? <Textarea aria-label="Flow description" isDisabled={busy} flex={1} minW={0} variant="unstyled" fontSize="xs" color="gray.400" pl={2.5} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={flow.description}
           _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch({ description: e.target.value })} />
           : <Text flex={1} minW={0} fontSize="xs" color="gray.400" pl={2.5} py={1.5} noOfLines={1} title={flow.description || undefined}>{flow.description || 'No description'}</Text>}
-        <HStack aria-label="Flow actions" spacing={1} flexShrink={0}>
-
-            {!journey && (editMode || draft) && <FlowAction label="Discard" hint="Discard unsaved changes" icon={<ReloadIcon />} disabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }} />}
-            {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > FLOW_MAX_STEPS} onClick={() => void save()} />}
-
-          </HStack>
       </HStack>}
     </VStack>
+    {flow && !journey && (editMode || draft) && !(compact && captureActive) && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2} px={3} pt={3} flexShrink={0}>
+      <StepCount count={allSteps(flow.steps).length} alignWithHandles />
+      <HStack aria-label="Flow actions" spacing={1} flexShrink={0}>
+        {editMode && onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || allSteps(flow.steps).length >= FLOW_MAX_STEPS} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
+        <FlowAction label="Discard" hint="Discard unsaved changes" icon={<ReloadIcon />} disabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }} />
+        {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > FLOW_MAX_STEPS} onClick={() => void save()} />}
+      </HStack>
+    </HStack>}
       {(query.error || error) && <Box role="alert" p={3} flexShrink={0} maxH="35%" overflowY="auto" bg="orange.900" rounded="md">
         <Text fontSize="sm">{error ? 'Could not complete the action. Your draft is still available.' : 'Flows could not be loaded. Try again to reconnect.'}</Text>
         <Box as="details" mt={2}><Box as="summary" fontSize="xs" cursor="pointer">Technical details</Box><Text fontSize="xs" mt={1} overflowWrap="anywhere">{error || query.error?.message}</Text></Box>
@@ -943,7 +940,6 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
             {allSteps(flow.steps).length >= FLOW_MAX_STEPS && <Text fontSize="xs" color="gray.400">Maximum of {FLOW_MAX_STEPS.toLocaleString()} steps reached.</Text>}
             <FlowStepEditor key={flow.id || viewId || 'draft'} identifiers={identifiers} disabled={busy} available={FLOW_MAX_STEPS - allSteps(flow.steps).length} catalog={catalog}
               onPick={onCanvasRecorderChange ? () => { playback.pause(); setCanvasMode(pickerActive ? null : 'pick') } : undefined} picking={pickerActive}
-              actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || allSteps(flow.steps).length >= FLOW_MAX_STEPS} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
               expanded={recorderActive ? null : activeStep?.id ?? null} steps={flow.steps} onChange={steps => patch({ steps })} diagram={currentDiagram} selection={selection} onSelect={playback.select} />
           </VStack>
         </Box>}
