@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, useCallback } from 'react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import type { ConnectorPanelSlots } from '../slots'
 import {
   Box,
@@ -246,6 +246,14 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     draftRef.current = nextDraft
   }, [])
 
+  // Native input must update the draft even when React's change tracker already
+  // matches the DOM value, as can happen with browser-filled inputs.
+  const handleUrlInput = (event: FormEvent<HTMLInputElement>) => {
+    const nextUrl = event.currentTarget.value
+    patchDraft({ url: nextUrl })
+    setUrl(nextUrl)
+  }
+
   useEffect(() => {
     if (!isOpen) {
       initializedConnectorIdRef.current = null
@@ -279,13 +287,14 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
       return
     }
 
-    const { payload, fingerprint } = await buildPayloadAndFingerprint()
-    if (fingerprint === lastSavedFingerprintRef.current) return
-
     savingRef.current = true
-    const confirmFields = captureFieldSave({ label: payload.label, description: payload.description, relationship: payload.relationship, url: payload.url })
-    startSaving()
+    let confirmFields: ReturnType<typeof captureFieldSave> | undefined
     try {
+      const { payload, fingerprint } = await buildPayloadAndFingerprint()
+      if (fingerprint === lastSavedFingerprintRef.current) return
+
+      confirmFields = captureFieldSave({ label: payload.label, description: payload.description, relationship: payload.relationship, url: payload.url })
+      startSaving()
       const updated = await api.workspace.connectors.update(viewId, connector.id, {
         label: payload.label,
         description: payload.description,
@@ -300,7 +309,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
       saved()
       onSave(updated)
     } catch {
-      confirmFields.failed()
+      confirmFields?.failed()
       failed()
     } finally {
       savingRef.current = false
@@ -526,11 +535,8 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   name="url"
                   size="sm"
                   value={url}
-                  onChange={(e) => {
-                    const nextUrl = e.target.value
-                    patchDraft({ url: nextUrl })
-                    setUrl(nextUrl)
-                  }}
+                  onInput={handleUrlInput}
+                  onChange={handleUrlInput}
                   onBlur={scheduleAutoSave}
                   placeholder="https://docs.example.com/…"
                 />

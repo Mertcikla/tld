@@ -129,6 +129,40 @@ describe('ConnectorPanel noise gate', () => {
     await act(async () => { renderer!.unmount() })
   })
 
+  it('serializes blur saves and queues the latest URL draft while a request is pending', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+    let finish!: (value: Connector) => void
+    vi.mocked(api.workspace.connectors.update)
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+      .mockResolvedValue({ ...connector(), label: 'Updated label', url: 'https://example.com/connector' })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<ConnectorPanel isOpen autoSave connector={connector()} orgId="" onSave={vi.fn()} onClose={vi.fn()} onDelete={vi.fn()} />) })
+    try {
+      await act(async () => {
+        const label = renderer.root.findByProps({ 'data-testid': 'connector-panel-label-input' })
+        label.props.onChange({ target: { value: 'Updated label' } })
+        label.props.onBlur()
+      })
+      await act(async () => {
+        frames.shift()!(0)
+        const url = renderer.root.findByProps({ 'data-testid': 'connector-panel-url-input' })
+        url.props.onChange({ target: { value: 'https://example.com/connector' }, currentTarget: { value: 'https://example.com/connector' } })
+        url.props.onBlur()
+        frames.shift()!(0)
+      })
+      expect(api.workspace.connectors.update).toHaveBeenCalledTimes(1)
+      expect(api.workspace.connectors.update).toHaveBeenLastCalledWith(1, 10, expect.objectContaining({ url: '' }))
+      await act(async () => { finish({ ...connector(), label: 'Updated label' }) })
+      await act(async () => { vi.advanceTimersByTime(0) })
+      expect(api.workspace.connectors.update).toHaveBeenCalledTimes(2)
+      expect(api.workspace.connectors.update).toHaveBeenLastCalledWith(1, 10, expect.objectContaining({ url: 'https://example.com/connector' }))
+      expect(renderer.root.findByProps({ 'data-testid': 'connector-panel-url-input' }).props.value).toBe('https://example.com/connector')
+    } finally {
+      await act(async () => renderer.unmount())
+    }
+  })
+
   it('maps the slider level to an exact visibility delta', async () => {
     testContext.canEdit = true
     const onVisibilityOverrideDeltaChange = vi.fn()
