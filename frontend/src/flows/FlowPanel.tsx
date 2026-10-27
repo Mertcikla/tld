@@ -914,7 +914,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
 
         {editMode ? <Textarea aria-label="Flow description" isDisabled={busy} flex={1} minW={0} variant="unstyled" fontSize="xs" color="gray.400" pl={2.5} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={flow.description}
           _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch({ description: e.target.value })} />
-          : <Text flex={1} minW={0} fontSize="xs" color="gray.400" pl={2.5} py={1.5} noOfLines={1} title={flow.description || undefined}>{flow.description || 'No description'}</Text>}
+          : <Text flex={1} minW={0} fontSize="xs" color="gray.400" pl={2.5} py={1.5} noOfLines={3} title={flow.description || undefined}>{flow.description || 'No description'}</Text>}
       </HStack>}
     </VStack>
     {flow && !journey && (editMode || draft) && !(compact && captureActive) && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2} px={3} pt={3} flexShrink={0}>

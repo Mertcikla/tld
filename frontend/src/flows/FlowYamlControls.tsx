@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { Button, HStack, IconButton, Input, Modal, ModalBody, ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Text, Textarea, Tooltip } from '@chakra-ui/react'
 import { ImportIcon, ExportIcon } from '../components/Icons'
+import { copyTextToClipboard } from '../utils/clipboard'
+import { toast } from '../utils/toast'
 import { exportFlowYaml, FLOW_YAML_MAX_BYTES, importFlowYaml } from './yaml'
 import type { FlowCatalog, FlowDiagram, StoryFlow } from './model'
 
@@ -58,6 +60,15 @@ export function FlowYamlControls({ catalog, flow, diagram, viewId, canImport, di
     anchor.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
+  async function copyYaml() {
+    if (mode !== 'export' || !source || error) return
+    try {
+      await copyTextToClipboard(source)
+      toast({ status: 'success', title: 'Copied flow YAML' })
+    } catch {
+      toast({ status: 'error', title: 'Copy failed', description: 'Could not copy flow YAML. Select the text and copy it manually.' })
+    }
+  }
   return <>
     <HStack spacing={2}>
       {canImport && viewId && <Tooltip label="Import YAML" openDelay={200} closeOnPointerDown closeOnScroll>
@@ -78,13 +89,18 @@ export function FlowYamlControls({ catalog, flow, diagram, viewId, canImport, di
             <Input type="file" aria-label="Flow YAML file" accept=".yaml,.yml,application/yaml,text/yaml" p={1} mb={3} isDisabled={reading} onChange={event => { void readFile(event.target.files?.[0]); event.target.value = '' }} />
           </>}
           {error && <Text role="alert" color="orange.300" fontSize="sm" mb={2}>{error}</Text>}
-          <Textarea aria-label="Flow YAML" fontFamily="mono" fontSize="xs" minH="300px" spellCheck={false} value={source} isReadOnly={mode === 'export'} isDisabled={reading} onChange={event => { setSource(event.target.value); setError('') }} />
+          <Textarea aria-label="Flow YAML" fontFamily="mono" fontSize="xs" minH="300px" spellCheck={false} value={source} isReadOnly={mode === 'export'} isDisabled={reading}
+            onClick={event => { if (mode === 'export') { event.currentTarget.select(); void copyYaml() } }}
+            onChange={event => { setSource(event.target.value); setError('') }} />
         </ModalBody>
-        <ModalFooter gap={2}>
+        <ModalFooter gap={2} flexWrap="wrap">
           <Button size="sm" variant="ghost" onClick={close}>Close</Button>
           {mode === 'import'
             ? <Button size="sm" variant="primary" isLoading={reading} isDisabled={!source.trim() || disabled || !canImport} onClick={importDraft}>Import as draft</Button>
-            : <Button size="sm" variant="primary" isDisabled={!source || !!error} onClick={download}>Download YAML</Button>}
+            : <>
+              <Button size="sm" isDisabled={!source || !!error} onClick={() => void copyYaml()}>Copy YAML</Button>
+              <Button size="sm" variant="primary" isDisabled={!source || !!error} onClick={download}>Download YAML</Button>
+            </>}
         </ModalFooter>
       </ModalContent>
     </Modal>

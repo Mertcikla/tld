@@ -1,10 +1,14 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { copyTextToClipboard } from '../utils/clipboard'
+import { toast } from '../utils/toast'
 import { FlowYamlControls } from './FlowYamlControls'
 import { parseFlowYaml } from './yaml'
 import type { StoryFlow } from './model'
 
+vi.mock('../utils/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => {}) }))
+vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('@chakra-ui/react', () => ({
   Button: 'button', IconButton: 'button', Tooltip: ({ children }: { children: React.ReactNode }) => children, HStack: 'div', Input: 'input', Textarea: 'textarea', Text: 'p',
   Modal: ({ isOpen, children, onClose }: { isOpen: boolean; children: React.ReactNode; onClose: () => void }) => isOpen ? createElement('dialog', { onClose }, children) : null,
@@ -17,6 +21,11 @@ afterEach(() => act(() => renderer?.unmount()))
 const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label || node.props['aria-label'] === label)!
 
 describe('flow YAML controls', () => {
+  beforeEach(() => {
+    vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(undefined)
+    vi.mocked(toast).mockClear()
+  })
+
   it('opens exported YAML for read-only viewers without import controls', () => {
     act(() => { renderer = create(<FlowYamlControls flow={flow} diagram={{ elements: [], connectors: [] }} canImport={false} disabled={false} onImport={vi.fn()} />) })
     expect(button('Import YAML')).toBeUndefined()
@@ -25,6 +34,44 @@ describe('flow YAML controls', () => {
     expect(field.props.isReadOnly).toBe(true)
     expect(parseFlowYaml(field.props.value).name).toBe('Story')
     expect(field.props.value).not.toContain('saved-id')
+  })
+
+  it('selects and copies the full exported YAML when clicked, and offers a copy button', async () => {
+    act(() => { renderer = create(<FlowYamlControls flow={flow} diagram={{ elements: [], connectors: [] }} canImport={false} disabled={false} onImport={vi.fn()} />) })
+    act(() => button('Export YAML').props.onClick())
+    const field = renderer.root.findByType('textarea')
+    const select = vi.fn()
+    await act(async () => { field.props.onClick({ currentTarget: { select } }) })
+    expect(select).toHaveBeenCalledOnce()
+    expect(copyTextToClipboard).toHaveBeenCalledWith(field.props.value)
+    expect(toast).toHaveBeenCalledWith({ status: 'success', title: 'Copied flow YAML' })
+
+    vi.mocked(copyTextToClipboard).mockClear()
+    await act(async () => { button('Copy YAML').props.onClick() })
+    expect(copyTextToClipboard).toHaveBeenCalledWith(field.props.value)
+  })
+
+  it('reports copy failure while keeping export and retry available', async () => {
+    vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error('Clipboard denied'))
+    act(() => { renderer = create(<FlowYamlControls flow={flow} diagram={{ elements: [], connectors: [] }} canImport={false} disabled={false} onImport={vi.fn()} />) })
+    act(() => button('Export YAML').props.onClick())
+    await act(async () => { button('Copy YAML').props.onClick() })
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ status: 'error', title: 'Copy failed' }))
+    expect(button('Download YAML').props.isDisabled).toBe(false)
+    await act(async () => { button('Copy YAML').props.onClick() })
+    expect(toast).toHaveBeenLastCalledWith({ status: 'success', title: 'Copied flow YAML' })
+  })
+
+  it('keeps import text editable without selecting or copying on click', () => {
+    act(() => { renderer = create(<FlowYamlControls flow={null} viewId={42} diagram={{ elements: [], connectors: [] }} canImport disabled={false} onImport={vi.fn()} />) })
+    act(() => button('Import YAML').props.onClick())
+    const field = renderer.root.findByType('textarea')
+    const select = vi.fn()
+    act(() => field.props.onClick({ currentTarget: { select } }))
+    expect(field.props.isReadOnly).toBe(false)
+    expect(select).not.toHaveBeenCalled()
+    expect(copyTextToClipboard).not.toHaveBeenCalled()
+    expect(button('Copy YAML')).toBeUndefined()
   })
 
   it('validates before importing, creates an unsaved draft in the target view, and closes', () => {
