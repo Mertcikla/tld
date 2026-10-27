@@ -1,3 +1,4 @@
+import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH } from './model'
 import { describe, expect, it } from 'vitest'
 import { stringify } from 'yaml'
 import type { Connector } from '../types'
@@ -180,10 +181,17 @@ describe('portable flow YAML', () => {
 
   it('enforces document size, collection limits and UTF-8 field limits', () => {
     expect(() => parseFlowYaml('#'.repeat(FLOW_YAML_MAX_BYTES + 1))).toThrow(/1 MiB/)
-    expect(() => validatePortableFlow({ ...simple(), steps: Array.from({ length: 501 }, () => ({})) })).toThrow(/500/)
+    expect(() => validatePortableFlow({ ...simple(), steps: Array.from({ length: FLOW_MAX_STEPS + 1 }, () => ({})) })).toThrow(/1000/)
     expect(() => validatePortableFlow({ ...simple(), steps: [{ elements: Array.from({ length: 501 }, (_, i) => String(i)) }] })).toThrow(/500/)
     expect(() => validatePortableFlow({ ...simple(), steps: [{ metadata: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [String(i), 'v'])) }] })).toThrow(/50 metadata/)
     expect(() => validatePortableFlow({ ...simple(), name: '界'.repeat(100) })).toThrow(/UTF-8 bytes/)
+  })
+
+  it('accepts generous step and path bounds and rejects one beyond each', () => {
+    expect(validatePortableFlow({ ...simple(), steps: Array.from({ length: FLOW_MAX_STEPS }, () => ({})) }).steps).toHaveLength(FLOW_MAX_STEPS)
+    const paths = Array.from({ length: FLOW_MAX_PATHS }, (_, i) => ({ name: `Path ${i}`, steps: [] }))
+    expect(validatePortableFlow({ ...simple(), steps: [{ branches: { mode: 'parallel', paths } }] }).steps[0].branches?.paths).toHaveLength(FLOW_MAX_PATHS)
+    expect(() => validatePortableFlow({ ...simple(), steps: [{ branches: { mode: 'parallel', paths: [...paths, { name: 'Too many', steps: [] }] } }] })).toThrow(/26/)
   })
 })
 
@@ -230,8 +238,8 @@ describe('portable flow control extensions', () => {
       { branches: { mode: 'parallel', paths: [{ name: 'A', steps: [{ id: 'duplicate' }] }, { name: 'B', steps: [{ id: 'duplicate' }] }] } },
     ]) expect(() => validatePortableFlow({ ...simple(), steps: [step] })).toThrow()
     let nested: PortableFlowDocument['steps'] = [{}]
-    for (let i = 0; i < 9; i++) nested = [{ branches: { mode: 'alternate', paths: [{ name: 'A', steps: nested }, { name: 'B', steps: [] }] } }]
+    for (let i = 0; i < FLOW_MAX_BRANCH_DEPTH + 1; i++) nested = [{ branches: { mode: 'alternate', paths: [{ name: 'A', steps: nested }, { name: 'B', steps: [] }] } }]
     expect(() => validatePortableFlow({ ...simple(), steps: nested })).toThrow(/eight/)
-    expect(() => validatePortableFlow({ ...simple(), steps: [{ branches: { mode: 'parallel', paths: [{ name: 'A', steps: Array.from({ length: 250 }, () => ({})) }, { name: 'B', steps: Array.from({ length: 250 }, () => ({})) }] } }] })).toThrow(/500 total/)
+    expect(() => validatePortableFlow({ ...simple(), steps: [{ branches: { mode: 'parallel', paths: [{ name: 'A', steps: Array.from({ length: FLOW_MAX_STEPS / 2 }, () => ({})) }, { name: 'B', steps: Array.from({ length: FLOW_MAX_STEPS / 2 }, () => ({})) }] } }] })).toThrow(/1000 total/)
   })
 })

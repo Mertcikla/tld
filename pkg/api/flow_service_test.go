@@ -239,10 +239,54 @@ func TestValidateFlowControls(t *testing.T) {
 		t.Fatal("accepted excessive nesting")
 	}
 	branch := branches()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < maxFlowSteps; i++ {
 		branch.Paths[i%2].Steps = append(branch.Paths[i%2].Steps, &diagv1.FlowStep{Id: fmt.Sprintf("s%d", i)})
 	}
 	if err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Wide", Steps: []*diagv1.FlowStep{{Id: "root", Branches: branch}}}); err == nil {
-		t.Fatal("accepted more than 500 total steps")
+		t.Fatal("accepted more than the total step limit")
 	}
+}
+
+func TestValidateFlowLimits(t *testing.T) {
+	t.Run("total steps across paths", func(t *testing.T) {
+		paths := []*diagv1.FlowBranch{{Id: "a", Name: "A"}, {Id: "b", Name: "B"}}
+		for i := 0; i < maxFlowSteps-1; i++ {
+			paths[i%2].Steps = append(paths[i%2].Steps, &diagv1.FlowStep{Id: fmt.Sprintf("s%d", i)})
+		}
+		flow := &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "root", Branches: &diagv1.FlowBranches{Mode: "parallel", Paths: paths}}}}
+		if err := validateFlow(flow); err != nil {
+			t.Fatalf("rejected exactly %d steps: %v", maxFlowSteps, err)
+		}
+		paths[0].Steps = append(paths[0].Steps, &diagv1.FlowStep{Id: "too-many"})
+		if err := validateFlow(flow); err == nil {
+			t.Fatal("accepted one step beyond the limit")
+		}
+	})
+	t.Run("paths", func(t *testing.T) {
+		branch := &diagv1.FlowBranches{Mode: "alternate"}
+		for i := 0; i < maxFlowPaths; i++ {
+			branch.Paths = append(branch.Paths, &diagv1.FlowBranch{Id: fmt.Sprintf("p%d", i), Name: fmt.Sprintf("Path %d", i)})
+		}
+		flow := &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "root", Branches: branch}}}
+		if err := validateFlow(flow); err != nil {
+			t.Fatalf("rejected exactly %d paths: %v", maxFlowPaths, err)
+		}
+		branch.Paths = append(branch.Paths, &diagv1.FlowBranch{Id: "too-many", Name: "Too many"})
+		if err := validateFlow(flow); err == nil {
+			t.Fatal("accepted one path beyond the limit")
+		}
+	})
+	t.Run("nesting", func(t *testing.T) {
+		steps := []*diagv1.FlowStep{{Id: "leaf"}}
+		for i := 0; i <= maxFlowBranchDepth; i++ {
+			steps = []*diagv1.FlowStep{{Id: fmt.Sprintf("s%d", i), Branches: &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{{Id: fmt.Sprintf("a%d", i), Name: "A", Steps: steps}, {Id: fmt.Sprintf("b%d", i), Name: "B"}}}}}
+			err := validateFlow(&diagv1.Flow{ViewId: 1, Name: "Flow", Steps: steps})
+			if i < maxFlowBranchDepth && err != nil {
+				t.Fatalf("rejected allowed nesting: %v", err)
+			}
+			if i == maxFlowBranchDepth && err == nil {
+				t.Fatal("accepted excessive nesting")
+			}
+		}
+	})
 }

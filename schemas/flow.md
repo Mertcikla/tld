@@ -62,10 +62,10 @@ Files contain names, not database IDs. A linked target must be imported or
 created first. The API also checks that link targets are accessible when saving;
 deleted targets remain skippable during playback.
 
-Each branch has 2–10 paths. A path requires `name` and ordered `steps`; `id` is
+Each branch has 2–26 paths. A path requires `name` and ordered `steps`; `id` is
 optional. Step and path IDs must be unique across the whole flow and are generated
 when omitted. Reordering and duplication use the existing editor controls.
-Limits: eight nested branch levels, 500 total steps across all paths, 500 elements
+Limits: eight nested branch levels, 1,000 total steps across all paths, 500 elements
 and 500 connections per step, 50 metadata entries per step, and 1 MiB per YAML
 file. Existing text limits and strict YAML 1.2 parsing still apply.
 
@@ -84,3 +84,11 @@ links. Existing callers without linked flows need no changes.
 The ConnectRPC contract adds optional fields to `FlowStep`; stored flat documents
 need no migration. Regenerate locally with the parent `make dev-proto` and publish
 and pin generated SDKs through the normal proto release workflow before shipping.
+
+## Display identifiers
+
+The editor derives positional identifiers from the current order: steps use
+1-based numbers and paths use lowercase letters `a`–`z`. For example, `7.b.1`
+means the first step in path b of step 7; `3.a.5.c` identifies path c of the
+fifth step inside path a of step 3. Reordering updates these display labels.
+Persisted UUIDs and YAML references remain unchanged.

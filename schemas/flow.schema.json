@@ -30,7 +30,7 @@
     },
     "steps": {
       "type": "array",
-      "maxItems": 500,
+      "maxItems": 1000,
       "items": {
         "$ref": "#/$defs/step"
       }
@@ -198,7 +198,7 @@
         "paths": {
           "type": "array",
           "minItems": 2,
-          "maxItems": 10,
+          "maxItems": 26,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -221,7 +221,7 @@
               },
               "steps": {
                 "type": "array",
-                "maxItems": 500,
+                "maxItems": 1000,
                 "items": {
                   "$ref": "#/$defs/step"
                 }

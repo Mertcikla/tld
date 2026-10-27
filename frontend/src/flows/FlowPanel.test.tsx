@@ -1,17 +1,18 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FlowPanel, type FlowPanelProps } from './FlowPanel'
 import { flowApi } from './api'
 import type { Connector } from '../types'
-import { newStep, type FlowDiagram, type StoryFlow } from './model'
+import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, newStep, type FlowDiagram, type StoryFlow } from './model'
 
 vi.mock('@chakra-ui/react', () => ({ Badge: 'badge', FormControl: 'div', FormLabel: 'label', Box: 'div', Button: 'button', Checkbox: 'checkbox', Collapse: ({ in: expanded, children }: { in: boolean; children: React.ReactNode }) => expanded ? children : null, HStack: 'div', IconButton: 'button', Input: 'input', Menu: 'div', MenuButton: 'button', MenuItem: 'menuitem', MenuList: 'div', Portal: ({ children }: { children: React.ReactNode }) => children, Select: 'select', Tag: 'tag', TagLabel: 'taglabel', TagCloseButton: 'button', Text: 'p', Textarea: 'textarea', VStack: 'div', Tooltip: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('framer-motion', () => ({ motion: { div: 'div' }, Reorder: { Group: 'reorder-group', Item: 'reorder-item' }, useDragControls: () => ({ start: vi.fn() }) }))
 vi.mock('./FlowYamlControls', () => ({ FlowYamlControls: () => null }))
 vi.mock('./api', () => ({ flowApi: { list: vi.fn(), save: vi.fn(), remove: vi.fn() } }))
 const { queryClient, queryState } = vi.hoisted(() => ({ queryClient: { setQueryData: vi.fn(), invalidateQueries: vi.fn(), getQueryData: vi.fn(), setQueryDefaults: vi.fn(), removeQueries: vi.fn() }, queryState: { data: [] as StoryFlow[], isLoading: false, error: null as Error | null, refetch: vi.fn() } }))
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => queryClient, useQuery: () => queryState }))
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => queryClient, useQuery: vi.fn(() => queryState) }))
 const diagram: FlowDiagram = {
   elements: [{ element_id: 1, name: 'API' }, { element_id: 2, name: 'DB' }, { element_id: 3, name: 'Worker' }],
   connectors: [
@@ -337,7 +338,7 @@ describe('flow step editing', () => {
     queryClient.getQueryData.mockReturnValue({ id: 'saved', revision: 1, viewId: 1, name: 'Story', description: '', steps: [step] })
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onCanvasRecorderChange={onCanvasRecorderChange} onClose={onClose} onFocus={vi.fn()} />) })
-    act(() => renderer.root.findAllByType('button').find(node => node.props['aria-expanded'] === false && !node.props['aria-label'])!.props.onClick())
+    act(() => button('Toggle 1: Original title').props.onClick())
     expect(renderer.root.findAllByProps({ 'aria-label': 'Metadata key' })).toHaveLength(0)
     act(() => button('Pick from canvas').props.onClick())
     expect(onCanvasRecorderChange.mock.lastCall![0].mode).toBe('pick')
@@ -399,9 +400,9 @@ describe('flow step editing', () => {
     expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
   })
 
-  it('stops at the step limit and prevents recording more than 500 steps', () => {
+  it('stops at the step limit and prevents recording beyond the total step limit', () => {
     queryClient.getQueryData.mockReturnValue({ id: '', viewId: 1, name: 'Full story', description: '', revision: 0,
-      steps: Array.from({ length: 499 }, (_, index) => ({ id: String(index), title: '', description: '', elementIds: [1], connectors: [], metadata: {} })) })
+      steps: Array.from({ length: FLOW_MAX_STEPS - 1 }, (_, index) => ({ id: String(index), title: '', description: '', elementIds: [1], connectors: [], metadata: {} })) })
     const onCanvasRecorderChange = vi.fn()
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onCanvasRecorderChange={onCanvasRecorderChange} onClose={vi.fn()} onFocus={vi.fn()} />) })
@@ -586,12 +587,135 @@ describe('flow step editing', () => {
     act(() => renderer.unmount())
     queryState.data = flows
     act(() => { renderer = create(<FlowPanel {...props} viewId={2} />) })
-    expect(selected('First story')).toBe('true')
+    expect(selected('First story')).toBeUndefined()
+    expect(selected('Second story')).toBeUndefined()
+    expect(button('Choose flow').props.isDisabled).toBe(false)
   })
 
 })
 
 describe('flow operation editing and navigation', () => {
+  it('shows a styled hierarchical position beside the playback step selector', () => {
+    queryState.data = linkedFlows()
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
+    const heading = () => renderer.root.findByProps({ 'data-testid': 'flow-playback-heading' })
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), 'decision')
+    expect(heading().findByProps({ 'aria-label': 'Flow position 1.a' })).toBeDefined()
+    change(renderer.root.findByProps({ 'aria-label': 'Choose flow path' }), 'b')
+    expect(heading().findByProps({ 'aria-label': 'Flow position 1.b' })).toBeDefined()
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), 'call')
+    expect(heading().findByProps({ 'aria-label': 'Flow position 1.b.1' })).toBeDefined()
+  })
+
+  it('caps path creation and duplication at the alphabet limit', () => {
+    mount()
+    act(() => menuItem('Add alternate paths').props.onClick())
+    for (let i = 2; i < FLOW_MAX_PATHS; i++) act(() => button('Add path').props.onClick())
+    expect(currentDraft().steps[0].branches?.paths).toHaveLength(FLOW_MAX_PATHS)
+    expect(button('Add path').props.isDisabled).toBe(true)
+    expect(button('Duplicate path Path A').props.isDisabled).toBe(true)
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow position 1.z' })).toBeDefined()
+  })
+
+  it('prevents another branch after the maximum nested depth', () => {
+    let step = { ...newStep(diagram), id: 'leaf' }
+    for (let depth = FLOW_MAX_BRANCH_DEPTH - 1; depth >= 0; depth--) step = {
+      ...newStep(diagram), id: `branch-${depth}`, title: `Branch ${depth}`,
+      branches: { mode: 'alternate', paths: [{ id: `a-${depth}`, name: 'A', steps: [step] }, { id: `b-${depth}`, name: 'B', steps: [] }] },
+    }
+    const draft: StoryFlow = { id: '', viewId: 1, name: 'Deep', revision: 0, description: '', steps: [step] }
+    queryClient.getQueryData.mockImplementation(key => key[0] === 'flow-draft' ? draft : undefined)
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
+    act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
+    for (let depth = 0; depth < FLOW_MAX_BRANCH_DEPTH; depth++) {
+      change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), `branch-${depth}`)
+      act(() => button(`Edit paths for Branch ${depth}`).props.onClick())
+    }
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), 'leaf')
+    expect(menuItem('Add alternate paths').props.isDisabled).toBe(true)
+    expect(menuItem('Add parallel paths').props.isDisabled).toBe(true)
+  })
+
+  it('requests the global flow list and lists flows from other diagrams', async () => {
+    queryState.data = [
+      { id: 'local', viewId: 1, name: 'Local flow', description: '', revision: 1, steps: [] },
+      { id: 'remote', viewId: 2, name: 'Other diagram flow', description: '', revision: 1, steps: [] },
+    ]
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
+    const request = vi.mocked(useQuery).mock.calls.find(([options]) => options.queryKey[0] === 'flows')![0]
+    expect(request.queryKey).toEqual(['flows', 0])
+    await (request.queryFn as () => Promise<StoryFlow[]>)()
+    expect(flowApi.list).toHaveBeenCalledWith()
+    expect(menuItem('Local flow, 0 steps').props['aria-current']).toBe('true')
+    expect(menuItem('Other diagram flow, 0 steps').props.isDisabled).toBe(false)
+    expect(menuItem('Other diagram flow, 0 steps').props['aria-description']).toBe('Diagram #2')
+  })
+
+  it('opens another diagram and restores the selected flow for editing after remounting', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
+    const local: StoryFlow = { id: 'local', viewId: 1, name: 'Local', description: '', revision: 1, steps: [] }
+    const target: StoryFlow = { id: 'chosen', viewId: 2, name: 'Chosen', description: '', revision: 1, steps: [{ ...newStep(diagram), elementIds: [42] }] }
+    queryState.data = [local, { ...target, id: 'other', name: 'Other' }, target]
+    const onNavigateView = vi.fn(), onFocus = vi.fn()
+    act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={onFocus} />) })
+    act(() => menuItem('Chosen, 1 step').props.onClick())
+    expect(onNavigateView).toHaveBeenCalledWith(2)
+    expect(onFocus.mock.calls.some(([focus]) => focus?.viewId === 2)).toBe(false)
+    const visit = queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-navigation').at(-1)![1]
+    queryClient.getQueryData.mockImplementation(key => key[0] === 'flow-navigation' ? visit : undefined)
+    act(() => renderer.unmount())
+    const targetDiagram: FlowDiagram = { elements: [{ element_id: 42, name: 'Remote API' }], connectors: [] }
+    act(() => { renderer = create(<FlowPanel open viewId={2} editMode diagram={targetDiagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={onFocus} />) })
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Chosen')
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), target.steps[0].id)
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [42], connectors: [] })
+    change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Edited remote flow')
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, revision: 2 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'chosen', viewId: 2, name: 'Edited remote flow' }))
+    expect(queryClient.setQueryData).toHaveBeenCalledWith(['flows', 0], expect.any(Function))
+  })
+
+  it('offers global flows in a diagram with no flows without navigating until one is selected', () => {
+    queryState.data = [{ id: 'remote', viewId: 2, name: 'Remote', description: '', revision: 1, steps: [] }]
+    const onNavigateView = vi.fn(), onFocus = vi.fn()
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={onFocus} />) })
+    expect(menuItem('Remote, 0 steps').props.isDisabled).toBe(false)
+    expect(onNavigateView).not.toHaveBeenCalled()
+    expect(onFocus).toHaveBeenLastCalledWith(null)
+    expect(button('Choose flow').findAllByType('p').some(node => node.props.children === 'Choose a flow')).toBe(true)
+    act(() => menuItem('Remote, 0 steps').props.onClick())
+    expect(onNavigateView).toHaveBeenCalledWith(2)
+  })
+
+  it('preserves the current draft when cross-diagram selection is cancelled', () => {
+    queryState.data = [{ id: 'remote', viewId: 2, name: 'Remote', description: '', revision: 1, steps: [] }]
+    const onNavigateView = vi.fn()
+    mount(undefined, { onNavigateView })
+    change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Unsaved local flow')
+    vi.mocked(window.confirm).mockReturnValue(false)
+    act(() => menuItem('Remote, 0 steps').props.onClick())
+    expect(onNavigateView).not.toHaveBeenCalled()
+    expect(currentDraft().name).toBe('Unsaved local flow')
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Unsaved local flow')
+  })
+
+  it('asks before replacing a different draft in the target diagram', () => {
+    queryState.data = [{ id: 'remote', viewId: 2, name: 'Remote', description: '', revision: 1, steps: [] }]
+    const targetDraft = { ...queryState.data[0], id: '', name: 'Unsaved target flow' }
+    queryClient.getQueryData.mockImplementation(key => key[0] === 'flow-draft' && key[1] === 2 ? targetDraft : undefined)
+    const onNavigateView = vi.fn()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => false) })
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={vi.fn()} />) })
+    act(() => menuItem('Remote, 0 steps').props.onClick())
+    expect(onNavigateView).not.toHaveBeenCalled()
+    expect(queryClient.removeQueries).not.toHaveBeenCalledWith({ queryKey: ['flow-draft', 2], exact: true })
+    vi.mocked(window.confirm).mockReturnValue(true)
+    act(() => menuItem('Remote, 0 steps').props.onClick())
+    expect(queryClient.removeQueries).toHaveBeenCalledWith({ queryKey: ['flow-draft', 2], exact: true })
+    expect(onNavigateView).toHaveBeenCalledWith(2)
+  })
+
   it.each(['alternate', 'parallel'] as const)('focuses %s paths with a breadcrumb back to the main steps', mode => {
     mount()
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Decision')
@@ -721,7 +845,7 @@ describe('flow operation editing and navigation', () => {
     const [first, second] = nested.props.values
     act(() => nested.props.onReorder([second, first]))
     expect(title().props.value).toBe('Second')
-    const pathHeader = () => renderer.root.findAllByType('button').find(node => node.props['aria-expanded'] !== undefined && node.findAllByType('p').some(text => text.props.children === 'Path A'))!
+    const pathHeader = () => button('Toggle 1.a: Path A')
     act(() => pathHeader().props.onClick())
     expect(pathHeader().props['aria-expanded']).toBe(false)
     expect(renderer.root.findAllByProps({ 'aria-label': 'Step title' })).toHaveLength(0)

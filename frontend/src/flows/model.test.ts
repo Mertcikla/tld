@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Node, Edge } from 'reactflow'
-import { duplicateSteps, layoutFlowMinimap, missingReference, newStep, playbackFrames, resolveFocus, stepLabel, type FlowDiagram, type StoryFlow } from './model'
+import { flowIdentifiers, FLOW_MAX_PATHS, duplicateSteps, layoutFlowMinimap, missingReference, newStep, playbackFrames, resolveFocus, stepLabel, type FlowDiagram, type StoryFlow } from './model'
 import type { Connector } from '../types'
 import { presentEditorFlow, presentZUIFlow } from './presentation'
 import type { LayoutNode, ZUILayout } from '../components/ZUI/types'
@@ -12,6 +12,32 @@ const diagram: FlowDiagram = {
 const makeFlow = (steps: StoryFlow['steps']): StoryFlow => ({ id: 'flow', viewId: 4, revision: 1, name: 'Checkout', description: '', steps })
 
 describe('flow stories', () => {
+  it('assigns alternating step numbers and path letters without changing UUIDs', () => {
+    const leaf = { ...newStep(diagram), id: 'leaf' }
+    const nested = { ...newStep(diagram), id: 'nested', branches: { mode: 'parallel', paths: Array.from({ length: 3 }, (_, i) => ({ id: `nested-path-${i}`, name: `Path ${i}`, steps: [] })) } }
+    const steps = Array.from({ length: 7 }, (_, i) => ({ ...newStep(diagram), id: `root-${i}` }))
+    steps[2].branches = { mode: 'alternate', paths: [
+      { id: 'a', name: 'A', steps: [...Array.from({ length: 4 }, (_, i) => ({ ...newStep(diagram), id: `filler-${i}` })), nested] },
+      { id: 'b', name: 'B', steps: [] },
+    ] }
+    steps[6].branches = { mode: 'parallel', paths: [{ id: 'seven-a', name: 'A', steps: [] }, { id: 'seven-b', name: 'B', steps: [leaf] }] }
+    const ids = flowIdentifiers(steps)
+    expect(ids.get('leaf')).toBe('7.b.1')
+    expect(ids.get('nested')).toBe('3.a.5')
+    expect(ids.get('nested-path-2')).toBe('3.a.5.c')
+    expect(steps[6].id).toBe('root-6')
+    const moved = [...steps]
+    moved.unshift(moved.pop()!)
+    expect(flowIdentifiers(moved).get('leaf')).toBe('1.b.1')
+    steps[6].branches!.paths.reverse()
+    expect(flowIdentifiers(steps).get('leaf')).toBe('7.a.1')
+  })
+
+  it('labels every supported branch through z', () => {
+    const root = { ...newStep(diagram), branches: { mode: 'alternate', paths: Array.from({ length: FLOW_MAX_PATHS }, (_, i) => ({ id: `path-${i}`, name: `Path ${i}`, steps: [] })) } }
+    expect(flowIdentifiers([root]).get('path-25')).toBe('1.z')
+  })
+
   it('uses current element names and connector labels when a step has no title', () => {
     const step = { ...newStep(diagram), elementIds: [1, 2], connectors: [{ id: 10, reverse: false }] }
     expect(stepLabel(step, diagram)).toBe('API, Database, Reads')

@@ -10,7 +10,7 @@ import { ChevronDownIcon, CloseIcon, ReloadIcon, SaveIcon, TrashIcon } from '../
 import { flowApi } from './api'
 import { api } from '../api/client'
 import { enterFlow, returnFromFlow, type FlowJourney, type FlowVisit } from './navigation'
-import { allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowBranch, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
+import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, flowIdentifiers, allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowBranch, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
 import { useFlowPlayback } from './useFlowPlayback'
 import { FlowYamlControls } from './FlowYamlControls'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
@@ -37,14 +37,17 @@ function StepCount({ count, label = `${count} ${count === 1 ? 'step' : 'steps'}`
   </Tooltip>
 }
 
-function FlowOption({ flow, selected, onSelect }: { flow: StoryFlow; selected: boolean; onSelect?: () => void }) {
+function FlowOption({ flow, viewName, selected, onSelect }: { flow: StoryFlow; viewName?: string; selected: boolean; onSelect?: () => void }) {
   const name = flow.name || 'Untitled flow'
   const total = allSteps(flow.steps).length
   const count = `${total} ${total === 1 ? 'step' : 'steps'}`
-  return <MenuItem aria-label={`${name}, ${count}`} aria-current={selected ? 'true' : undefined} isDisabled={selected} onClick={onSelect}
+  return <MenuItem aria-label={`${name}, ${count}`} aria-description={viewName} aria-current={selected ? 'true' : undefined} isDisabled={selected} onClick={onSelect}
     bg={selected ? 'rgba(var(--accent-rgb), 0.12)' : undefined} color={selected ? 'var(--accent)' : undefined} _disabled={{ opacity: 1, cursor: 'default' }}>
     <HStack w="full" minW={0} spacing={3}>
-      <Text flex={1} minW={0} isTruncated>{name}</Text>
+      <Box flex={1} minW={0}>
+        <Text isTruncated>{name}</Text>
+        {viewName && <Text fontSize="xs" color="text.muted" isTruncated>{viewName}</Text>}
+      </Box>
       <StepCount count={total} accent={selected} />
     </HStack>
   </MenuItem>
@@ -79,6 +82,7 @@ function FlowPlaybackMinimap({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const layout = useMemo(() => layoutFlowMinimap(steps, diagram, choices, activeFrameId), [steps, diagram, choices, activeFrameId])
+  const identifiers = useMemo(() => flowIdentifiers(steps), [steps])
   const stepNodes = layout.nodes.filter(node => node.kind === 'step')
   const waypoints = layout.nodes.filter(node => node.kind === 'waypoint')
   const activeNode = stepNodes.find(node => node.isActive)
@@ -220,7 +224,7 @@ function FlowPlaybackMinimap({
           />
         )}
         {stepNodes.map(node => {
-          const stepTitle = node.frameIndex >= 0 ? `${node.frameIndex + 1}. ${node.label}` : node.label
+          const stepTitle = `${identifiers.get(node.id) ?? ''} · ${node.label}`
           const stroke = node.isActive
             ? '#ffffff'
             : node.hasMissingRef
@@ -317,7 +321,7 @@ function FlowPlaybackMinimap({
                   fill="var(--accent-foreground, #0d121e)"
                   style={{ pointerEvents: 'none', userSelect: 'none' }}
                 >
-                  {node.frameIndex + 1}
+                  {identifiers.get(node.id)?.split('.').pop()}
                 </text>
               ) : (node.isVisited || (node.onActivePath && !node.isBranch)) && (
                 <circle
@@ -468,7 +472,7 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
   return <Menu placement="bottom-end" isLazy>
     <MenuButton as={Button} size="xs" variant="ghost" alignSelf="flex-end" leftIcon={<FontAwesomeIcon icon={faCodeFork} size={12} />} isDisabled={disabled}>Advanced</MenuButton>
     <Portal><MenuList minW="200px" maxW="calc(100vw - 32px)">
-      {(['alternate', 'parallel'] as const).map(mode => <MenuItem key={mode} aria-label={`Add ${mode} paths`} isDisabled={depth >= 8} onClick={() => onChange({ branches: { mode, paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>{mode === 'alternate' ? 'Alternate paths' : 'Parallel paths'}</MenuItem>)}
+      {(['alternate', 'parallel'] as const).map(mode => <MenuItem key={mode} aria-label={`Add ${mode} paths`} isDisabled={depth >= FLOW_MAX_BRANCH_DEPTH} onClick={() => onChange({ branches: { mode, paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>{mode === 'alternate' ? 'Alternate paths' : 'Parallel paths'}</MenuItem>)}
       <MenuItem aria-label="Link to flow" onClick={() => setLinking(true)}>Link to flow</MenuItem>
     </MenuList></Portal>
   </Menu>
@@ -512,8 +516,14 @@ function InlineStepText({ label, value, fallback, multiline = false, disabled, o
   </Button>
 }
 
-function FlowEditorCard({ index, title, titleEditor, summary, handle, active, expanded, onToggle, actions, notice, children }: {
-  index: number; title: string; titleEditor?: ReactNode; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
+function StepIdentifier({ identifier }: { identifier: string }) {
+  return <Box as="span" aria-label={`Flow position ${identifier}`} title={identifier} display="inline-flex" alignItems="center" justifyContent="center" flexShrink={0} minW={6} maxW="104px" h={6} px={1.5} rounded="md" bg="rgba(var(--accent-rgb), 0.12)" border="1px solid" borderColor="rgba(var(--accent-rgb), 0.25)" color="var(--accent)" fontFamily="mono" fontSize="xs" fontWeight="semibold">
+    <Text as="span" isTruncated>{identifier}</Text>
+  </Box>
+}
+
+function FlowEditorCard({ index, identifier = String(index + 1), title, titleEditor, summary, handle, active, expanded, onToggle, actions, notice, children }: {
+  index: number; identifier?: string; title: string; titleEditor?: ReactNode; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
 }) {
   return <Box role="group" position="relative" minW={0} border="1px solid" borderColor={active ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: active ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
     '> [data-flow-step-header] .flow-step-actions': { opacity: 0, pointerEvents: 'none' },
@@ -522,17 +532,18 @@ function FlowEditorCard({ index, title, titleEditor, summary, handle, active, ex
   }}>
     <Box position="relative" data-flow-step-header>
       {handle}
-      <Button variant="unstyled" display="flex" alignItems="center" gap={2} size="sm" w="full" minW={0} h="54px" textAlign="left" p={2} pr="108px" rounded="lg" fontWeight="normal" aria-label={titleEditor ? `Toggle step ${index + 1}: ${title}` : undefined} aria-expanded={expanded} onClick={onToggle}>
-        <Box data-flow-step-number display="flex" w="24px" h="24px" alignItems="center" justifyContent="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" fontSize="10px" fontWeight="bold">{index + 1}</Box>
-        <Box flex={1} minW={0}>
-          <Text fontSize="sm" fontWeight="medium" noOfLines={1} visibility={titleEditor ? 'hidden' : undefined}>{title}</Text>
-          <Text mt={0.5} fontSize="10px" fontWeight="normal" color="gray.400" noOfLines={1}>{summary}</Text>
-        </Box>
+      <Button variant="unstyled" position="absolute" inset={0} w="full" h="54px" rounded="lg" aria-label={`Toggle ${identifier}: ${title}`} aria-expanded={expanded} onClick={onToggle}>
         <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
           <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="transform 150ms ease" sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><ChevronDownIcon /></Box>
         </Box>
       </Button>
-      {titleEditor && <Box position="absolute" left="40px" right="108px" top="8px" minW={0}>{titleEditor}</Box>}
+      <HStack spacing={2} minW={0} h="54px" p={2} pr="108px" pointerEvents="none">
+        <Box data-flow-step-number zIndex={1}><StepIdentifier identifier={identifier} /></Box>
+        <Box flex={1} minW={0} zIndex={1}>
+          {titleEditor ? <Box pointerEvents="auto">{titleEditor}</Box> : <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{title}</Text>}
+          <Text mt={0.5} fontSize="10px" fontWeight="normal" color="gray.400" noOfLines={1}>{summary}</Text>
+        </Box>
+      </HStack>
       <HStack className="flow-step-actions" position="absolute" right={10} top={0} bottom={0} alignItems="center" spacing={1}>{actions}</HStack>
     </Box>
     {notice && <Box px={3} pb={2}>{notice}</Box>}
@@ -540,8 +551,8 @@ function FlowEditorCard({ index, title, titleEditor, summary, handle, active, ex
   </Box>
 }
 
-function StepPaths({ step, onChange, disabled, available, expanded, onSelect, renderSteps }: {
-  step: FlowStep; onChange: (paths: FlowBranch[]) => void; disabled: boolean; available: number; expanded: string | null; onSelect: (id: string | null) => void; renderSteps: (path: FlowBranch) => ReactNode
+function StepPaths({ step, onChange, disabled, available, expanded, onSelect, renderSteps, identifiers }: {
+  step: FlowStep; onChange: (paths: FlowBranch[]) => void; disabled: boolean; available: number; expanded: string | null; onSelect: (id: string | null) => void; renderSteps: (path: FlowBranch) => ReactNode; identifiers: ReadonlyMap<string, string>
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const paths = step.branches!.paths
@@ -550,8 +561,8 @@ function StepPaths({ step, onChange, disabled, available, expanded, onSelect, re
       const count = allSteps(path.steps).length
       const active = allSteps(path.steps).some(child => child.id === expanded)
       const isExpanded = !collapsed[path.id] || active
-      return <FlowEditorCard index={index} title={path.name} summary={`${count} ${count === 1 ? 'step' : 'steps'}`} handle={handle} active={active} expanded={isExpanded} onToggle={() => { setCollapsed(current => ({ ...current, [path.id]: isExpanded })); if (active) onSelect(step.id) }} actions={<>
-        <FlowAction label={`Duplicate path ${path.name}`} hint="Duplicate path" icon={<CopyIcon />} disabled={disabled || paths.length >= 10 || count > available} onClick={() => onChange([...paths.slice(0, index + 1), { ...path, id: crypto.randomUUID(), name: `${path.name.slice(0, 190)} copy`, steps: duplicateSteps(path.steps) }, ...paths.slice(index + 1)])} />
+      return <FlowEditorCard index={index} identifier={identifiers.get(path.id)} title={path.name} summary={`${count} ${count === 1 ? 'step' : 'steps'}`} handle={handle} active={active} expanded={isExpanded} onToggle={() => { setCollapsed(current => ({ ...current, [path.id]: isExpanded })); if (active) onSelect(step.id) }} actions={<>
+        <FlowAction label={`Duplicate path ${path.name}`} hint="Duplicate path" icon={<CopyIcon />} disabled={disabled || paths.length >= FLOW_MAX_PATHS || count > available} onClick={() => onChange([...paths.slice(0, index + 1), { ...path, id: crypto.randomUUID(), name: `${path.name.slice(0, 190)} copy`, steps: duplicateSteps(path.steps) }, ...paths.slice(index + 1)])} />
         <FlowAction label={`Remove path ${path.name}`} hint="Remove path" icon={<TrashIcon />} destructive disabled={disabled || paths.length <= 2} onClick={() => { if (window.confirm('Remove this path and its steps?')) onChange(paths.filter(p => p.id !== path.id)) }} />
       </>}>
         <VStack align="stretch" spacing={3} p={3} pt={0}>
@@ -560,7 +571,7 @@ function StepPaths({ step, onChange, disabled, available, expanded, onSelect, re
         </VStack>
       </FlowEditorCard>
     }}</SortableFlowList>
-    <Button size="sm" variant="ghost" leftIcon={<AddIcon boxSize="10px" />} isDisabled={disabled || paths.length >= 10} onClick={() => onChange([...paths, { id: crypto.randomUUID(), name: `Path ${paths.length + 1}`, steps: [] }])}>Add path</Button>
+    <Button size="sm" variant="ghost" leftIcon={<AddIcon boxSize="10px" />} isDisabled={disabled || paths.length >= FLOW_MAX_PATHS} onClick={() => onChange([...paths, { id: crypto.randomUUID(), name: `Path ${paths.length + 1}`, steps: [] }])}>Add path</Button>
   </VStack>
 }
 
@@ -580,6 +591,7 @@ interface StepListProps {
   picking?: boolean
   addLabel?: string
   onEditPaths: (stepId: string) => void
+  identifiers: ReadonlyMap<string, string>
 }
 
 interface PathEditorLocation { step: FlowStep; index: number; path?: FlowBranch }
@@ -616,19 +628,19 @@ function FlowStepEditor(props: Omit<StepListProps, 'onEditPaths'>) {
           {entry.path && <><Text as="span" color="text.muted" fontSize="xs" aria-hidden>/</Text><Text fontSize="xs" color="text.muted" maxW="100px" isTruncated title={entry.path.name}>{entry.path.name}</Text></>}
           <Text as="span" color="text.muted" fontSize="xs" aria-hidden>/</Text>
           {index === trail.length - 1
-            ? <Text fontSize="xs" fontWeight="semibold" minW={0} isTruncated aria-current="page" title={stepLabel(entry.step, props.diagram)}>{entry.index + 1}. {stepLabel(entry.step, props.diagram)}</Text>
-            : <Button size="xs" variant="ghost" minW={0} maxW="160px" aria-label={`Edit paths for ${stepLabel(entry.step, props.diagram)}`} onClick={() => { setPathStepId(entry.step.id); props.onSelect(entry.step.id) }}><Text isTruncated>{entry.index + 1}. {stepLabel(entry.step, props.diagram)}</Text></Button>}
+            ? <Text fontSize="xs" fontWeight="semibold" minW={0} isTruncated aria-current="page" title={stepLabel(entry.step, props.diagram)}>{props.identifiers.get(entry.step.id)} · {stepLabel(entry.step, props.diagram)}</Text>
+            : <Button size="xs" variant="ghost" minW={0} maxW="160px" aria-label={`Edit paths for ${stepLabel(entry.step, props.diagram)}`} onClick={() => { setPathStepId(entry.step.id); props.onSelect(entry.step.id) }}><Text isTruncated>{props.identifiers.get(entry.step.id)} · {stepLabel(entry.step, props.diagram)}</Text></Button>}
         </HStack>)}
       </HStack>
     </Box>
     <StepOptions key={`options:${focused.id}`} step={focused} onChange={patch} catalog={props.catalog ?? { flows: [], views: [] }} disabled={props.disabled} depth={depth} />
-    <StepPaths key={`paths:${focused.id}`} step={focused} onChange={paths => patch({ branches: { ...focused.branches!, paths } })} disabled={props.disabled} available={props.available ?? 500} expanded={props.expanded} onSelect={props.onSelect} renderSteps={path =>
+    <StepPaths key={`paths:${focused.id}`} identifiers={props.identifiers} step={focused} onChange={paths => patch({ branches: { ...focused.branches!, paths } })} disabled={props.disabled} available={props.available ?? FLOW_MAX_STEPS} expanded={props.expanded} onSelect={props.onSelect} renderSteps={path =>
       <StepList {...props} actions={undefined} steps={path.steps} onChange={steps => patch({ branches: { ...focused.branches!, paths: focused.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} depth={depth + 1} addLabel={`Add step to path ${path.name}`} onEditPaths={setPathStepId} />
     } />
   </VStack>
 }
 
-function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] }, addLabel = 'Add step', onEditPaths }: StepListProps) {
+function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = FLOW_MAX_STEPS, catalog = { flows: [], views: [] }, addLabel = 'Add step', onEditPaths, identifiers }: StepListProps) {
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   return <VStack align="stretch" spacing={3}>
     {depth === 0 && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
@@ -636,7 +648,7 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
       {actions}
     </HStack>}
     <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
-      <FlowEditorCard index={index} title={stepLabel(step, diagram)} titleEditor={expanded === step.id ? <InlineStepText label="Step title" value={step.title} fallback={stepLabel(step, diagram)} disabled={disabled} onChange={title => patch(step.id, { title })} /> : undefined} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
+      <FlowEditorCard index={index} identifier={identifiers.get(step.id)} title={stepLabel(step, diagram)} titleEditor={expanded === step.id ? <InlineStepText label="Step title" value={step.title} fallback={stepLabel(step, diagram)} disabled={disabled} onChange={title => patch(step.id, { title })} /> : undefined} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
         <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
         <FlowAction label={`Remove step ${index + 1}`} hint="Remove step" icon={<TrashIcon />} destructive disabled={disabled} onClick={() => onChange(steps.filter(s => s.id !== step.id))} />
       </>} notice={missingReference(step, diagram) ? <Text fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text> : undefined}>
@@ -662,8 +674,8 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
 
 export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, diagram, diagrams, selection, docked = false, compact = false, expanded = false, onExpandedChange, onCanvasRecorderChange, onEditModeChange, onNavigateView, onClose, onFocus }: FlowPanelProps) {
   const queryClient = useQueryClient()
-  const queryKey = useMemo(() => ['flows', viewId ?? 0], [viewId])
-  const query = useQuery({ queryKey, queryFn: () => flowApi.list(viewId), enabled: open, retry: false })
+  const queryKey = useMemo(() => ['flows', 0], [])
+  const query = useQuery({ queryKey, queryFn: () => flowApi.list(), enabled: open, retry: false })
   const navigationScope = viewId === undefined ? 'explorer' : 'editor'
   const navigationKey = useMemo(() => ['flow-navigation', navigationScope], [navigationScope])
   const initialJourney = useRef(queryClient.getQueryData<FlowJourney>(navigationKey))
@@ -677,9 +689,8 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     catch { return '' }
   })
   const editMode = (requestedEditMode || !!onEditModeChange) && !journey
-  const catalogQuery = useQuery({ queryKey: ['flows', 0], queryFn: () => flowApi.list(), enabled: open, retry: false })
   const viewsQuery = useQuery({ queryKey: ['flow-link-views'], queryFn: () => api.workspace.views.list(), enabled: open, retry: false })
-  const catalogFlows = catalogQuery.data ?? []
+  const catalogFlows = query.data ?? []
   const catalog = { flows: catalogFlows, views: viewsQuery.data ?? [] }
   const draftKey = useMemo(() => ['flow-draft', viewId ?? 0], [viewId])
   const [draft, setDraft] = useState<StoryFlow | null>(() => queryClient.getQueryData<StoryFlow>(draftKey) ?? null)
@@ -698,7 +709,9 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   useEffect(() => { if (editMode) setEditPlaybackOpen(true) }, [editMode])
   const [canvasMode, setCanvasMode] = useState<'record' | 'pick' | null>(null)
   const flows = query.data ?? []
-  const flow = journey?.current.flow ?? draft ?? flows.find(flow => flow.id === selectedId) ?? flows[0] ?? null
+  const flow = journey?.current.flow ?? draft
+    ?? flows.find(flow => flow.id === selectedId && (viewId === undefined || flow.viewId === viewId))
+    ?? flows.find(flow => viewId === undefined || flow.viewId === viewId) ?? null
   useEffect(() => {
     if (!open || journey || draft || !flow) return
     setSelectedId(flow.id)
@@ -707,6 +720,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   }, [open, journey, draft, flow, selectionStorageKey])
   const canEditFlow = !journey && (!!onEditModeChange || editMode)
   const currentDiagram = diagram ?? (flow ? diagrams?.[flow.viewId] : undefined) ?? emptyDiagram
+  const identifiers = useMemo(() => flowIdentifiers(flow?.steps ?? []), [flow?.steps])
   const playback = useFlowPlayback(flow)
   const focus = useMemo(() => open && flow && (!editMode || playback.frame) ? resolveFocus(flow, playback.frame, currentDiagram) : null, [open, flow, editMode, playback.frame, currentDiagram])
   useEffect(() => { onFocus(focus) }, [focus, onFocus])
@@ -720,12 +734,12 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     }
   }, [flow, journey, restore, navigationKey, queryClient])
   const activeStep = playback.frame?.steps[0]
-  const recorderActive = canvasMode === 'record' && open && editMode && !busy && !!flow && allSteps(flow.steps).length < 500
+  const recorderActive = canvasMode === 'record' && open && editMode && !busy && !!flow && allSteps(flow.steps).length < FLOW_MAX_STEPS
   const pickerActive = canvasMode === 'pick' && open && editMode && !busy && !!activeStep
   const captureActive = recorderActive || pickerActive
   useEffect(() => { setCanvasMode(null) }, [open, editMode, flow?.id])
   useEffect(() => { setCanvasMode(mode => mode === 'pick' ? null : mode) }, [activeStep?.id])
-  useEffect(() => { if (flow && allSteps(flow.steps).length >= 500) setCanvasMode(mode => mode === 'record' ? null : mode) }, [flow])
+  useEffect(() => { if (flow && allSteps(flow.steps).length >= FLOW_MAX_STEPS) setCanvasMode(mode => mode === 'record' ? null : mode) }, [flow])
   useEffect(() => {
     if (!onCanvasRecorderChange) return
     if (!captureActive || !flow) { onCanvasRecorderChange(null); return }
@@ -744,7 +758,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         if (!step) return
         setDraft(current => {
           const base = current ?? flow
-          return allSteps(base.steps).length < 500 ? { ...base, steps: [...base.steps, step] } : base
+          return allSteps(base.steps).length < FLOW_MAX_STEPS ? { ...base, steps: [...base.steps, step] } : base
         })
         selectStep(step.id)
       },
@@ -805,9 +819,21 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     setError(''); setDeletePending(false)
   }
   function selectFlow(id: string) {
-    if (busy || !discardAllowed()) return
+    const target = flows.find(candidate => candidate.id === id)
+    if (busy || !target) return
+    const navigate = viewId !== undefined && target.viewId !== viewId
+    if (navigate && !onNavigateView) { setError('Open this flow in its diagram to view or edit it.'); return }
+    const targetDraftKey = ['flow-draft', target.viewId]
+    const targetDraft = navigate ? queryClient.getQueryData<StoryFlow>(targetDraftKey) : undefined
+    const discardTargetDraft = !!targetDraft && targetDraft.id !== target.id
+    if ((draft || discardTargetDraft) && !window.confirm('Discard unsaved flow changes?')) return
+    if (discardTargetDraft) queryClient.removeQueries({ queryKey: targetDraftKey, exact: true })
     playback.pause(); setJourney(null); pendingRestore.current = null; queryClient.removeQueries({ queryKey: navigationKey, exact: true })
     setDraft(null); setSelectedId(id); setError(''); setDeletePending(false)
+    if (navigate) {
+      queryClient.setQueryData<FlowJourney>(navigationKey, { current: { flow: target, stepId: null, choices: {} }, stack: [] })
+      onNavigateView?.(target.viewId)
+    }
   }
   function goToFlow() {
     if (!flow || !activeStep?.goToFlowId || busy) return
@@ -869,12 +895,12 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
                     _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch({ name: e.target.value })} />
                   <MenuButton as={IconButton} aria-label="Choose flow" icon={<ChevronDownIcon />} size="sm" variant="ghost" color="var(--accent)" isDisabled={busy} flexShrink={0} />
                 </> : <MenuButton as={Button} aria-label="Choose flow" size="sm" variant="ghost" w="full" minW={0} px={2} textAlign="left" fontWeight="semibold" isDisabled={busy || !flows.length} rightIcon={<ChevronDownIcon />}>
-                  <Text as="span" display="block" isTruncated>{flow ? flow.name || 'Untitled flow' : 'No flows'}</Text>
+                  <Text as="span" display="block" isTruncated>{flow ? flow.name || 'Untitled flow' : flows.length ? 'Choose a flow' : 'No flows'}</Text>
                 </MenuButton>}
               </HStack>
               <MenuList minW="240px" maxH="min(320px, 50vh)" overflowY="auto" maxW="calc(100vw - 32px)">
-                {draft?.id === '' && <FlowOption flow={draft} selected />}
-                {flows.map(candidate => <FlowOption key={candidate.id} flow={candidate.id === flow?.id ? flow : candidate} selected={candidate.id === flow?.id} onSelect={() => selectFlow(candidate.id)} />)}
+                {draft?.id === '' && <FlowOption flow={draft} viewName={catalog.views.find(view => view.id === draft.viewId)?.name ?? `Diagram #${draft.viewId}`} selected />}
+                {flows.map(candidate => <FlowOption key={candidate.id} flow={candidate.id === flow?.id ? flow : candidate} viewName={catalog.views.find(view => view.id === candidate.viewId)?.name ?? `Diagram #${candidate.viewId}`} selected={candidate.id === flow?.id} onSelect={() => selectFlow(candidate.id)} />)}
               </MenuList>
             </Menu>
           </Box>
@@ -892,7 +918,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <HStack aria-label="Flow actions" spacing={1} flexShrink={0}>
 
             {!journey && (editMode || draft) && <FlowAction label="Discard" hint="Discard unsaved changes" icon={<ReloadIcon />} disabled={busy || !draft} onClick={() => { if (discardAllowed()) { setDraft(null); setError('') } }} />}
-            {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > 500} onClick={() => void save()} />}
+            {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > FLOW_MAX_STEPS} onClick={() => void save()} />}
 
           </HStack>
       </HStack>}
@@ -909,10 +935,10 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
       {flow && <>
         {editMode && <Box as="fieldset" disabled={busy} border={0} minW={0} p={0}>
           <VStack align="stretch" spacing={3}>
-            {allSteps(flow.steps).length >= 500 && <Text fontSize="xs" color="gray.400">Maximum of 500 steps reached.</Text>}
-            <FlowStepEditor key={flow.id || viewId || 'draft'} disabled={busy} available={500 - allSteps(flow.steps).length} catalog={catalog}
+            {allSteps(flow.steps).length >= FLOW_MAX_STEPS && <Text fontSize="xs" color="gray.400">Maximum of {FLOW_MAX_STEPS.toLocaleString()} steps reached.</Text>}
+            <FlowStepEditor key={flow.id || viewId || 'draft'} identifiers={identifiers} disabled={busy} available={FLOW_MAX_STEPS - allSteps(flow.steps).length} catalog={catalog}
               onPick={onCanvasRecorderChange ? () => { playback.pause(); setCanvasMode(pickerActive ? null : 'pick') } : undefined} picking={pickerActive}
-              actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || allSteps(flow.steps).length >= 500} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
+              actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || allSteps(flow.steps).length >= FLOW_MAX_STEPS} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
               expanded={recorderActive ? null : activeStep?.id ?? null} steps={flow.steps} onChange={steps => patch({ steps })} diagram={currentDiagram} selection={selection} onSelect={playback.select} />
           </VStack>
         </Box>}
@@ -928,6 +954,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" px={3} py={2.5} minH={0} display="flex" flexDirection="column" gap={2} overflow="hidden">
         <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2} flexShrink={0}>
+          {playback.frame && <StepIdentifier identifier={identifiers.get(playback.frame.path?.id ?? playback.frame.id) ?? ''} />}
           <Box flex={1} minW={0}>
             <Select size="sm" h={7} rounded="md" aria-label="Current flow step" isDisabled={busy} value={playback.frame?.id ?? ''} onChange={e => playback.select(e.target.value || null)}>
               <option value="">Overview</option>

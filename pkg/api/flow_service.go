@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	diagv1connect "buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
@@ -12,6 +13,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/encoding/protojson"
+)
+
+const (
+	maxFlowSteps       = 1000
+	maxFlowPaths       = 26
+	maxFlowBranchDepth = 8
 )
 
 type FlowService struct {
@@ -149,13 +156,13 @@ func validateFlow(flow *diagv1.Flow) error {
 	count := 0
 	var validateSteps func([]*diagv1.FlowStep, int) error
 	validateSteps = func(steps []*diagv1.FlowStep, depth int) error {
-		if depth > 8 {
+		if depth > maxFlowBranchDepth {
 			return errors.New("branches may be nested at most eight levels")
 		}
 		for _, step := range steps {
 			count++
-			if count > 500 {
-				return errors.New("flow may contain at most 500 steps")
+			if count > maxFlowSteps {
+				return fmt.Errorf("flow may contain at most %d steps", maxFlowSteps)
 			}
 			if step == nil || strings.TrimSpace(step.Id) == "" || len(step.Id) > 100 || ids[step.Id] {
 				return errors.New("step ids must be unique and nonempty")
@@ -176,8 +183,8 @@ func validateFlow(flow *diagv1.Flow) error {
 				if branch.Mode != "alternate" && branch.Mode != "parallel" {
 					return errors.New("branches mode must be alternate or parallel")
 				}
-				if len(branch.Paths) < 2 || len(branch.Paths) > 10 {
-					return errors.New("branches require two to ten paths")
+				if len(branch.Paths) < 2 || len(branch.Paths) > maxFlowPaths {
+					return fmt.Errorf("branches require two to %d paths", maxFlowPaths)
 				}
 				for _, path := range branch.Paths {
 					if path == nil || strings.TrimSpace(path.Id) == "" || len(path.Id) > 100 || ids[path.Id] || strings.TrimSpace(path.Name) == "" || len(path.Name) > 200 {

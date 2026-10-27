@@ -1,5 +1,9 @@
 import type { Connector, PlacedElement } from '../types'
 
+export const FLOW_MAX_STEPS = 1000
+export const FLOW_MAX_PATHS = 26
+export const FLOW_MAX_BRANCH_DEPTH = 8
+
 export interface FlowConnectorHighlight { id: number; reverse: boolean }
 export interface FlowStep {
   id: string
@@ -55,6 +59,24 @@ export function stepLabel(step: FlowStep, diagram: FlowDiagram): string {
 
 export function allSteps(steps: FlowStep[]): FlowStep[] {
   return steps.flatMap(step => [step, ...(step.branches?.paths ?? []).flatMap(path => allSteps(path.steps))])
+}
+
+/** Position labels are derived from order; persisted step/path UUIDs remain stable. */
+export function flowIdentifiers(steps: FlowStep[]): Map<string, string> {
+  const identifiers = new Map<string, string>()
+  function visit(items: FlowStep[], prefix: string) {
+    items.forEach((step, index) => {
+      const identifier = `${prefix}${index + 1}`
+      identifiers.set(step.id, identifier)
+      step.branches?.paths.forEach((path, pathIndex) => {
+        const pathIdentifier = `${identifier}.${String.fromCharCode(97 + pathIndex)}`
+        identifiers.set(path.id, pathIdentifier)
+        visit(path.steps, `${pathIdentifier}.`)
+      })
+    })
+  }
+  visit(steps, '')
+  return identifiers
 }
 
 export function updateStep(steps: FlowStep[], id: string, update: (step: FlowStep) => FlowStep): FlowStep[] {

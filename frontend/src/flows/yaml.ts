@@ -1,5 +1,5 @@
 import { parseDocument, stringify } from 'yaml'
-import type { FlowCatalog, FlowDiagram, FlowStep, StoryFlow } from './model'
+import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, type FlowCatalog, type FlowDiagram, type FlowStep, type StoryFlow } from './model'
 
 export const FLOW_YAML_MAX_BYTES = 1024 * 1024
 export const FLOW_YAML_SCHEMA_URL = 'https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json'
@@ -46,9 +46,9 @@ function text(value: unknown, path: string, max: number, nonempty = false): stri
   if (byteLength(value) > max) fail(path, `must be at most ${max} UTF-8 bytes`)
   return value
 }
-function list(value: unknown, path: string): unknown[] {
+function list(value: unknown, path: string, max = 500): unknown[] {
   if (!Array.isArray(value)) fail(path, 'expected a sequence')
-  if (value.length > 500) fail(path, 'must contain at most 500 entries')
+  if (value.length > max) fail(path, `must contain at most ${max} entries`)
   return value
 }
 
@@ -70,10 +70,10 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
     return id
   }
   function validateSteps(value: unknown, location: string, depth: number): PortableFlowStep[] {
-    if (depth > 8) fail(location, 'branches may be nested at most eight levels')
-    return list(value, location).map((value, index): PortableFlowStep => {
+    if (depth > FLOW_MAX_BRANCH_DEPTH) fail(location, 'branches may be nested at most eight levels')
+    return list(value, location, FLOW_MAX_STEPS).map((value, index): PortableFlowStep => {
       const path = `${location}[${index}]`, step = record(value, path)
-      if (++count > 500) fail(path, 'at most 500 total steps are allowed')
+      if (++count > FLOW_MAX_STEPS) fail(path, `at most ${FLOW_MAX_STEPS} total steps are allowed`)
       keys(step, ['id', 'title', 'description', 'elements', 'connectors', 'metadata', 'overview', 'branches', 'goToFlow'], path)
       const result: PortableFlowStep = {}
       const id = optionalId(step.id, `${path}.id`)
@@ -91,8 +91,8 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
         const branches = record(step.branches, `${path}.branches`)
         keys(branches, ['mode', 'paths'], `${path}.branches`)
         if (branches.mode !== 'alternate' && branches.mode !== 'parallel') fail(path, 'branches mode must be alternate or parallel')
-        const paths = list(branches.paths, `${path}.branches.paths`)
-        if (paths.length < 2 || paths.length > 10) fail(path, 'branches require two to ten paths')
+        const paths = list(branches.paths, `${path}.branches.paths`, FLOW_MAX_PATHS)
+        if (paths.length < 2 || paths.length > FLOW_MAX_PATHS) fail(path, `branches require two to ${FLOW_MAX_PATHS} paths`)
         result.branches = { mode: branches.mode, paths: paths.map((value, index) => {
           const location = `${path}.branches.paths[${index}]`, branch = record(value, location)
           keys(branch, ['id', 'name', 'steps'], location)
@@ -219,7 +219,7 @@ export function exportFlowYaml(flow: StoryFlow, diagram: FlowDiagram, catalog: F
     return { name: target.name, view: view.name }
   }
   const convert = (steps: FlowStep[], depth: number): PortableFlowStep[] => {
-    if (depth > 8) fail('export', 'branches may be nested at most eight levels')
+    if (depth > FLOW_MAX_BRANCH_DEPTH) fail('export', 'branches may be nested at most eight levels')
     return steps.map(step => ({
       id: step.id,
       ...(step.title ? { title: step.title } : {}),
