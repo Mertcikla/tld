@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,27 @@ func flowWorkspaceID(ctx context.Context, requested string) (uuid.UUID, error) {
 		return uuid.Nil, invalidArg("org_id", "does not match the current workspace")
 	}
 	return parsed, nil
+}
+
+// flowRequestContext applies an explicitly requested workspace to both API and
+// store context. This keeps hooks and tenant-filtered storage on the same scope
+// when a core caller selects a workspace without host middleware.
+func flowRequestContext(ctx context.Context, requested string) (context.Context, uuid.UUID, error) {
+	workspaceID, err := flowWorkspaceID(ctx, requested)
+	if err != nil {
+		return ctx, uuid.Nil, err
+	}
+	if workspaceID != uuid.Nil {
+		ctx = WithWorkspaceID(ctx, workspaceID)
+	}
+	return ctx, workspaceID, nil
+}
+
+func flowViewError(action string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: view not found", action))
+	}
+	return storeErr(action, err)
 }
 
 func flowFromRecord(row app.FlowRecord) (*diagv1.Flow, error) {
@@ -112,7 +134,7 @@ func upgradeFlowDocument(document []byte) ([]byte, error) {
 }
 
 func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1.ListFlowsRequest]) (*connect.Response[diagv1.ListFlowsResponse], error) {
-	workspaceID, err := flowWorkspaceID(ctx, req.Msg.GetOrgId())
+	ctx, workspaceID, err := flowRequestContext(ctx, req.Msg.GetOrgId())
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +146,7 @@ func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1
 	}
 	if req.Msg.ViewId != 0 {
 		if _, err := s.Store.GetView(ctx, req.Msg.ViewId, workspaceID); err != nil {
-			return nil, storeErr("get view", err)
+			return nil, flowViewError("get view", err)
 		}
 	}
 	rows, err := s.Store.ListFlows(ctx, int64(req.Msg.ViewId))
@@ -241,8 +263,26 @@ func flowStoreError(action string, err error) error {
 	return storeErr(action, err)
 }
 
+type flowLink struct {
+	stepID string
+	flowID string
+}
+
+func collectFlowLinks(steps []*diagv1.FlowStep, links map[flowLink]bool) {
+	for _, step := range steps {
+		if step.GoToFlowId != "" {
+			links[flowLink{stepID: step.Id, flowID: step.GoToFlowId}] = true
+		}
+		if step.Branches != nil {
+			for _, path := range step.Branches.Paths {
+				collectFlowLinks(path.Steps, links)
+			}
+		}
+	}
+}
+
 func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.SaveFlowRequest]) (*connect.Response[diagv1.SaveFlowResponse], error) {
-	workspaceID, err := flowWorkspaceID(ctx, req.Msg.GetOrgId())
+	ctx, workspaceID, err := flowRequestContext(ctx, req.Msg.GetOrgId())
 	if err != nil {
 		return nil, err
 	}
@@ -254,38 +294,57 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if _, err := s.Store.GetView(ctx, flow.ViewId, workspaceID); err != nil {
-		return nil, storeErr("get view", err)
+		return nil, flowViewError("get view", err)
 	}
-	links := map[string]bool{}
-	var collectLinks func([]*diagv1.FlowStep)
-	collectLinks = func(steps []*diagv1.FlowStep) {
-		for _, step := range steps {
-			if step.GoToFlowId != "" {
-				links[step.GoToFlowId] = true
-			}
-			if step.Branches != nil {
-				for _, path := range step.Branches.Paths {
-					collectLinks(path.Steps)
-				}
-			}
-		}
-	}
-	collectLinks(flow.Steps)
+	links := map[flowLink]bool{}
+	collectFlowLinks(flow.Steps, links)
 	if len(links) > 0 {
 		rows, err := s.Store.ListFlows(ctx, 0)
 		if err != nil {
 			return nil, storeErr("list linked flows", err)
 		}
+		if flow.Id != "" {
+			currentFound := false
+			for _, row := range rows {
+				if row.ID != flow.Id {
+					continue
+				}
+				currentFound = true
+				if row.ViewID != int64(flow.ViewId) || row.Revision != flow.Revision {
+					return nil, flowStoreError("save flow", app.ErrFlowConflict)
+				}
+				break
+			}
+			if !currentFound {
+				return nil, flowStoreError("save flow", app.ErrFlowConflict)
+			}
+		}
+		available := make(map[string]bool, len(rows))
+		linkedTargets := make(map[string]bool, len(links))
+		for link := range links {
+			linkedTargets[link.flowID] = true
+		}
+		var unchangedStaleLinks map[flowLink]bool
 		for _, row := range rows {
-			if !links[row.ID] {
+			available[row.ID] = true
+			if linkedTargets[row.ID] {
+				if _, err := s.Store.GetView(ctx, int32(row.ViewID), workspaceID); err != nil {
+					return nil, flowViewError("get linked view", err)
+				}
+			}
+			if row.ID == flow.Id && row.Revision == flow.Revision {
+				previous, err := flowFromRecord(row)
+				if err != nil {
+					return nil, storeErr("read flow", err)
+				}
+				unchangedStaleLinks = map[flowLink]bool{}
+				collectFlowLinks(previous.Steps, unchangedStaleLinks)
+			}
+		}
+		for link := range links {
+			if available[link.flowID] || unchangedStaleLinks[link] {
 				continue
 			}
-			if _, err := s.Store.GetView(ctx, int32(row.ViewID), workspaceID); err != nil {
-				return nil, storeErr("get linked view", err)
-			}
-			delete(links, row.ID)
-		}
-		if len(links) > 0 {
 			return nil, invalidArg("go_to_flow_id", "linked flow is unavailable")
 		}
 	}
@@ -295,7 +354,7 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if len(document) > 1<<20 {
-		return nil, invalidArg("flow", "must be smaller than 1 MiB")
+		return nil, invalidArg("flow", "must be at most 1 MiB")
 	}
 	row, err := s.Store.SaveFlow(ctx, app.FlowRecord{ID: flow.Id, ViewID: int64(flow.ViewId), Document: string(document), Revision: flow.Revision})
 	if err != nil {
@@ -315,7 +374,7 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 }
 
 func (s *FlowService) DeleteFlow(ctx context.Context, req *connect.Request[diagv1.DeleteFlowRequest]) (*connect.Response[diagv1.DeleteFlowResponse], error) {
-	workspaceID, err := flowWorkspaceID(ctx, req.Msg.GetOrgId())
+	ctx, workspaceID, err := flowRequestContext(ctx, req.Msg.GetOrgId())
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +385,7 @@ func (s *FlowService) DeleteFlow(ctx context.Context, req *connect.Request[diagv
 		return nil, invalidArg("flow", "requires id, view and revision")
 	}
 	if _, err := s.Store.GetView(ctx, req.Msg.ViewId, workspaceID); err != nil {
-		return nil, storeErr("get view", err)
+		return nil, flowViewError("get view", err)
 	}
 	if err := s.Store.DeleteFlow(ctx, req.Msg.Id, int64(req.Msg.ViewId), req.Msg.ExpectedRevision); err != nil {
 		return nil, flowStoreError("delete flow", err)

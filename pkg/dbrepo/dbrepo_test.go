@@ -262,6 +262,83 @@ func TestOpenSQLiteAppliesLocalMigrations(t *testing.T) {
 	}
 }
 
+func TestOpenSQLiteUpgradesFlowPredecessorWithoutLosingDiagramData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "flow-predecessor.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	b := bun.NewDB(db, sqlitedialect.New())
+	t.Cleanup(func() { _ = b.Close() })
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(assets.FS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrator := migrate.NewMigrator(b, migrate.NewMigrations(), migrate.WithUpsert(true))
+	if err := migrator.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	flowMigration := "20261025000100"
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") || entry.Name() >= flowMigration {
+			continue
+		}
+		raw, err := assets.FS.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(raw)); err != nil {
+			t.Fatalf("seed migration %s: %v", entry.Name(), err)
+		}
+		migration := &migrate.Migration{Name: strings.SplitN(entry.Name(), "_", 2)[0], GroupID: 1}
+		if err := migrator.MarkApplied(ctx, migration); err != nil {
+			t.Fatalf("mark migration %s applied: %v", entry.Name(), err)
+		}
+	}
+	for _, query := range []string{
+		`INSERT INTO elements (id, name, kind, created_at, updated_at) VALUES (1, 'API', 'service', '2026-10-01', '2026-10-01'), (2, 'Database', 'database', '2026-10-01', '2026-10-01')`,
+		`INSERT INTO views (id, name, created_at, updated_at) VALUES (17, 'Architecture', '2026-10-01', '2026-10-01')`,
+		`INSERT INTO placements (view_id, element_id, position_x, position_y, created_at, updated_at) VALUES (17, 1, 10, 20, '2026-10-01', '2026-10-01'), (17, 2, 30, 40, '2026-10-01', '2026-10-01')`,
+		`INSERT INTO connectors (id, view_id, source_element_id, target_element_id, label, created_at, updated_at) VALUES (21, 17, 1, 2, 'reads', '2026-10-01', '2026-10-01')`,
+	} {
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{SQLitePath: path, Migrations: assets.FS})
+	if err != nil {
+		t.Fatalf("upgrade SQLite database at flow predecessor: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	var name, source, target, label string
+	var x, y float64
+	if err := handle.DB.QueryRowContext(ctx, `SELECT v.name, source.name, target.name, c.label, p.position_x, p.position_y FROM views v JOIN placements p ON p.view_id = v.id JOIN elements source ON source.id = p.element_id JOIN connectors c ON c.view_id = v.id AND c.source_element_id = source.id JOIN elements target ON target.id = c.target_element_id WHERE v.id = 17`).Scan(&name, &source, &target, &label, &x, &y); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Architecture" || source != "API" || target != "Database" || label != "reads" || x != 10 || y != 20 {
+		t.Fatalf("existing diagram changed across flow migration: view=%q %s -> %s %q position=(%v,%v)", name, source, target, label, x, y)
+	}
+	var flowColumnCount, flowIndexCount int
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('flows')`).Scan(&flowColumnCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_flows_view_id', 'idx_flows_org_id')`).Scan(&flowIndexCount); err != nil {
+		t.Fatal(err)
+	}
+	if flowColumnCount != 5 || flowIndexCount != 2 {
+		t.Fatalf("flow schema after predecessor upgrade: columns=%d indexes=%d, want 5 and 2", flowColumnCount, flowIndexCount)
+	}
+}
+
 func countSQLiteMigrations(t *testing.T) int {
 	t.Helper()
 	entries, err := fs.ReadDir(assets.FS, "migrations")

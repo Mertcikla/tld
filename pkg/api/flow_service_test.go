@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/pkg/app"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -111,14 +113,22 @@ func TestFlowServiceRoundTrip(t *testing.T) {
 	}
 }
 
-type denyFlowWrites struct{ NopWorkspaceHooks }
+type denyFlowWrites struct {
+	NopWorkspaceHooks
+	afterWrites int
+}
 
 func (denyFlowWrites) CheckWrite(context.Context, uuid.UUID, string) error {
 	return connect.NewError(connect.CodePermissionDenied, errors.New("read only"))
 }
 
+func (h *denyFlowWrites) AfterWrite(context.Context, uuid.UUID, string, string, string, map[string]any, any) {
+	h.afterWrites++
+}
+
 func TestFlowServiceReadOnly(t *testing.T) {
-	svc := &FlowService{Hooks: denyFlowWrites{}}
+	hooks := &denyFlowWrites{}
+	svc := &FlowService{Hooks: hooks}
 	_, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: uuid.NewString()}))
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("save: %v", err)
@@ -126,6 +136,9 @@ func TestFlowServiceReadOnly(t *testing.T) {
 	_, err = svc.DeleteFlow(context.Background(), connect.NewRequest(&diagv1.DeleteFlowRequest{OrgId: uuid.NewString()}))
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("delete: %v", err)
+	}
+	if hooks.afterWrites != 0 {
+		t.Fatalf("failed writes called AfterWrite %d times", hooks.afterWrites)
 	}
 }
 
@@ -207,9 +220,454 @@ func TestFlowControlOperationsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: saved.Msg.Flow}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("accepted unavailable linked flow: %v", err)
+	updated := proto.Clone(saved.Msg.Flow).(*diagv1.Flow)
+	updated.Description = "safe unrelated edit"
+	updated, err = func() (*diagv1.Flow, error) {
+		response, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: updated}))
+		if err != nil {
+			return nil, err
+		}
+		return response.Msg.Flow, nil
+	}()
+	if err != nil || updated.Revision != 2 {
+		t.Fatalf("unrelated update to flow with an existing broken link: flow=%v err=%v", updated, err)
+	}
+	if _, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: saved.Msg.Flow})); connect.CodeOf(err) != connect.CodeAborted {
+		t.Fatalf("stale caller containing a broken link status=%v err=%v", connect.CodeOf(err), err)
+	}
+	added := proto.Clone(updated).(*diagv1.Flow)
+	added.Steps = append(added.Steps, &diagv1.FlowStep{Id: "new-link", GoToFlowId: child.Msg.Flow.Id})
+	if _, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: added})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("accepted a newly introduced unavailable link: %v", err)
+	}
+	if _, err := svc.DeleteFlow(ctx, connect.NewRequest(&diagv1.DeleteFlowRequest{Id: updated.Id, ViewId: updated.ViewId, ExpectedRevision: updated.Revision})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{Flow: updated})); connect.CodeOf(err) != connect.CodeAborted {
+		t.Fatalf("missing caller row status=%v err=%v", connect.CodeOf(err), err)
+	}
+}
+
+func TestFlowExplicitWorkspaceScopesStorageAndHooks(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	orgA, orgB := uuid.New(), uuid.New()
+	viewA, err := store.CreateView(app.WithTenantOrgID(context.Background(), orgA), "Scoped view A", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewB, err := store.CreateView(app.WithTenantOrgID(context.Background(), orgB), "Scoped view B", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceHooks := &flowContextHooks{}
+	svc := &FlowService{Store: NewAPIStore(store), Hooks: serviceHooks}
+	var flowBID string
+	for _, target := range []struct {
+		orgID  uuid.UUID
+		viewID int32
+	}{{orgA, int32(viewA.ID)}, {orgB, int32(viewB.ID)}} {
+		serviceHooks.want = target.orgID
+		saved, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{
+			OrgId: target.orgID.String(), Flow: &diagv1.Flow{ViewId: target.viewID, Name: "Scoped " + target.orgID.String()},
+		}))
+		if err != nil {
+			t.Fatalf("save for %s: %v", target.orgID, err)
+		}
+		if target.orgID == orgB {
+			flowBID = saved.Msg.Flow.Id
+		}
+	}
+	for _, test := range []struct {
+		orgID uuid.UUID
+		want  int
+	}{{orgA, 1}, {orgB, 1}} {
+		serviceHooks.want = test.orgID
+		listed, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: test.orgID.String()}))
+		if err != nil || len(listed.Msg.Flows) != test.want || listed.Msg.Flows[0].Name == "" {
+			t.Fatalf("list for %s: got=%v err=%v", test.orgID, listed, err)
+		}
+	}
+	serviceHooks.want = orgA
+	for _, orgID := range []string{"", orgA.String()} {
+		if _, err := svc.ListFlows(WithWorkspaceID(context.Background(), orgA), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: orgID})); err != nil {
+			t.Fatalf("matching host context with org_id %q: %v", orgID, err)
+		}
+	}
+	if _, err := svc.ListFlows(WithWorkspaceID(context.Background(), orgA), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: orgB.String()})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("mismatched host/request scope: %v", err)
+	}
+	if _, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: orgA.String(), Flow: &diagv1.Flow{
+		ViewId: int32(viewA.ID), Name: "Cross-scope link", Steps: []*diagv1.FlowStep{{Id: "link", GoToFlowId: flowBID}},
+	}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("cross-scope link status=%v err=%v", connect.CodeOf(err), err)
+	}
+	for _, malformed := range []func() error{
+		func() error {
+			_, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: "malformed"}))
+			return err
+		},
+		func() error {
+			_, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: "malformed", Flow: &diagv1.Flow{ViewId: int32(viewA.ID), Name: "Bad scope"}}))
+			return err
+		},
+	} {
+		if err := malformed(); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("malformed org_id status=%v err=%v", connect.CodeOf(err), err)
+		}
+	}
+	_, handler := diagv1connect.NewFlowServiceHandler(svc)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := diagv1connect.NewFlowServiceClient(server.Client(), server.URL, connect.WithProtoJSON())
+	if _, err := client.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: "malformed"})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("wire ListFlows malformed org status=%v err=%v", connect.CodeOf(err), err)
+	}
+	if _, err := client.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: "malformed", Flow: &diagv1.Flow{ViewId: int32(viewA.ID), Name: "Bad scope"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("wire SaveFlow malformed org status=%v err=%v", connect.CodeOf(err), err)
+	}
+	if serviceHooks.writeChecks != 3 || serviceHooks.readChecks != 4 || serviceHooks.afterWrites != 2 {
+		t.Fatalf("hook calls: writes=%d reads=%d after=%d", serviceHooks.writeChecks, serviceHooks.readChecks, serviceHooks.afterWrites)
+	}
+}
+
+type flowHookEvent struct {
+	action       string
+	resourceType string
+	resourceID   string
+	details      map[string]any
+	response     any
+}
+
+type flowRecordingHooks struct {
+	NopWorkspaceHooks
+	readErr error
+	events  []flowHookEvent
+}
+
+func (h *flowRecordingHooks) CheckRead(context.Context, uuid.UUID) error { return h.readErr }
+
+func (h *flowRecordingHooks) AfterWrite(_ context.Context, _ uuid.UUID, action, resourceType, resourceID string, details map[string]any, response any) {
+	h.events = append(h.events, flowHookEvent{action: action, resourceType: resourceType, resourceID: resourceID, details: details, response: response})
+}
+
+func TestFlowWriteHookEventContractAndFailureSuppression(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	orgID := uuid.New()
+	view, err := store.CreateView(app.WithTenantOrgID(context.Background(), orgID), "Hook events", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks := &flowRecordingHooks{}
+	svc := &FlowService{Store: NewAPIStore(store), Hooks: hooks}
+	created, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{
+		OrgId: orgID.String(), Flow: &diagv1.Flow{ViewId: int32(view.ID), Name: "Hooked flow"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedInput := proto.Clone(created.Msg.Flow).(*diagv1.Flow)
+	updatedInput.Description = "Updated description"
+	updated, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: orgID.String(), Flow: updatedInput}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DeleteFlow(context.Background(), connect.NewRequest(&diagv1.DeleteFlowRequest{
+		OrgId: orgID.String(), Id: updated.Msg.Flow.Id, ViewId: int32(view.ID), ExpectedRevision: updated.Msg.Flow.Revision,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if len(hooks.events) != 3 {
+		t.Fatalf("got %d success events, want create/update/delete", len(hooks.events))
+	}
+	wantActions := []string{"create", "update", "delete"}
+	wantIDs := []string{created.Msg.Flow.Id, created.Msg.Flow.Id, created.Msg.Flow.Id}
+	wantResponses := []*diagv1.SaveFlowResponse{created.Msg, updated.Msg, nil}
+	for i, event := range hooks.events {
+		if event.action != wantActions[i] || event.resourceType != "flow" || event.resourceID != wantIDs[i] || event.details["view_id"] != int32(view.ID) {
+			t.Errorf("event %d = %+v", i, event)
+		}
+		if i < 2 {
+			response, ok := event.response.(*diagv1.SaveFlowResponse)
+			if !ok || !proto.Equal(response, wantResponses[i]) {
+				t.Errorf("event %d response = %#v, want %#v", i, event.response, wantResponses[i])
+			}
+		} else if event.response != nil {
+			t.Errorf("delete event response = %#v, want nil", event.response)
+		}
+	}
+
+	before := len(hooks.events)
+	failedSaves := []struct {
+		name string
+		flow *diagv1.Flow
+	}{
+		{"invalid", &diagv1.Flow{ViewId: int32(view.ID), Name: " "}},
+		{"stale revision", created.Msg.Flow},
+		{"missing view", &diagv1.Flow{ViewId: int32(view.ID + 1000), Name: "Missing view"}},
+		{"missing update row", &diagv1.Flow{Id: "missing-flow", ViewId: int32(view.ID), Name: "Missing row", Revision: 1}},
+	}
+	wantCodes := []connect.Code{connect.CodeInvalidArgument, connect.CodeAborted, connect.CodeNotFound, connect.CodeAborted}
+	for i, test := range failedSaves {
+		_, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{OrgId: orgID.String(), Flow: test.flow}))
+		if connect.CodeOf(err) != wantCodes[i] {
+			t.Errorf("%s save status=%v err=%v", test.name, connect.CodeOf(err), err)
+		}
+		if len(hooks.events) != before {
+			t.Fatalf("%s save emitted success hook: %+v", test.name, hooks.events[before:])
+		}
+	}
+	_, err = svc.DeleteFlow(context.Background(), connect.NewRequest(&diagv1.DeleteFlowRequest{
+		OrgId: orgID.String(), Id: created.Msg.Flow.Id, ViewId: int32(view.ID), ExpectedRevision: created.Msg.Flow.Revision,
+	}))
+	if connect.CodeOf(err) != connect.CodeAborted || len(hooks.events) != before {
+		t.Fatalf("stale delete status=%v err=%v, events=%+v", connect.CodeOf(err), err, hooks.events[before:])
+	}
+}
+
+func TestFlowReadHookDenialIsPreserved(t *testing.T) {
+	want := connect.NewError(connect.CodePermissionDenied, errors.New("read denied"))
+	hooks := &flowRecordingHooks{readErr: want}
+	svc := &FlowService{Hooks: hooks}
+	_, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{OrgId: uuid.NewString()}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied || len(hooks.events) != 0 {
+		t.Fatalf("read denial status=%v err=%v events=%+v", connect.CodeOf(err), err, hooks.events)
+	}
+}
+
+type flowContextHooks struct {
+	NopWorkspaceHooks
+	want        uuid.UUID
+	writeChecks int
+	readChecks  int
+	afterWrites int
+}
+
+func (h *flowContextHooks) check(ctx context.Context, workspaceID uuid.UUID) error {
+	if workspaceID != h.want || WorkspaceIDFromCtx(ctx) != h.want || app.TenantOrgIDFromCtx(ctx) != h.want {
+		return fmt.Errorf("workspace hook/store context mismatch: arg=%s api=%s store=%s want=%s", workspaceID, WorkspaceIDFromCtx(ctx), app.TenantOrgIDFromCtx(ctx), h.want)
+	}
+	return nil
+}
+
+func (h *flowContextHooks) CheckWrite(ctx context.Context, workspaceID uuid.UUID, _ string) error {
+	h.writeChecks++
+	return h.check(ctx, workspaceID)
+}
+
+func (h *flowContextHooks) CheckRead(ctx context.Context, workspaceID uuid.UUID) error {
+	h.readChecks++
+	return h.check(ctx, workspaceID)
+}
+
+func (h *flowContextHooks) AfterWrite(ctx context.Context, workspaceID uuid.UUID, _, resourceType, _ string, _ map[string]any, _ any) {
+	h.afterWrites++
+	if resourceType != "flow" {
+		panic("flow hook received another resource type")
+	}
+	if err := h.check(ctx, workspaceID); err != nil {
+		panic(err)
+	}
+}
+
+func TestFlowMissingViewReturnsNotFound(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	svc := &FlowService{Store: NewAPIStore(store)}
+	missingView := int32(99999)
+	_, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: missingView}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing list view status = %v, err=%v", connect.CodeOf(err), err)
+	}
+	_, err = svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{Flow: &diagv1.Flow{ViewId: missingView, Name: "Missing"}}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing save view status = %v, err=%v", connect.CodeOf(err), err)
+	}
+	_, err = svc.DeleteFlow(context.Background(), connect.NewRequest(&diagv1.DeleteFlowRequest{Id: "flow", ViewId: missingView, ExpectedRevision: 1}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing delete view status = %v, err=%v", connect.CodeOf(err), err)
+	}
+	if connect.CodeOf(flowViewError("view", sql.ErrNoRows)) != connect.CodeNotFound {
+		t.Fatal("sql.ErrNoRows must map to NOT_FOUND")
+	}
+	if _, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: -1})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("negative view id status=%v err=%v", connect.CodeOf(err), err)
+	}
+	if _, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{Flow: &diagv1.Flow{Name: "Invalid"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("nonpositive save view status=%v err=%v", connect.CodeOf(err), err)
+	}
+}
+
+func TestFlowListFailsClosedOnMixedCorruptRows(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	view, err := store.CreateView(context.Background(), "Corrupt rows", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct{ id, document string }{
+		{"valid", `{"name":"Valid","steps":[]}`},
+		{"corrupt", `{"name":"Corrupt","futureField":true}`},
+	} {
+		if _, err := store.DB().ExecContext(context.Background(), `INSERT INTO flows (id, view_id, document, revision) VALUES (?, ?, ?, 1)`, row.id, view.ID, row.document); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := &FlowService{Store: NewAPIStore(store)}
+	if response, err := svc.ListFlows(context.Background(), connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: int32(view.ID)})); connect.CodeOf(err) != connect.CodeInternal || response != nil {
+		t.Fatalf("mixed corrupt list must fail atomically: response=%v err=%v", response, err)
+	}
+	rows, err := store.ListFlows(context.Background(), view.ID)
+	documents := map[string]string{}
+	for _, row := range rows {
+		documents[row.ID] = row.Document
+	}
+	if err != nil || len(rows) != 2 || documents["valid"] != `{"name":"Valid","steps":[]}` || documents["corrupt"] != `{"name":"Corrupt","futureField":true}` {
+		t.Fatalf("read failure changed stored rows: rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestFlowFromRecordUsesAuthoritativeRowIdentity(t *testing.T) {
+	flow, err := flowFromRecord(app.FlowRecord{ID: "row-id", ViewID: 42, Revision: 7, Document: `{"id":"document-id","viewId":9,"revision":2,"name":"Saved"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.Id != "row-id" || flow.ViewId != 42 || flow.Revision != 7 {
+		t.Fatalf("row identity did not override document fields: %v", flow)
+	}
+}
+
+func TestFlowValidationUsesUTF8ByteLimitsAndSerializedSizeBoundary(t *testing.T) {
+	store, _ := newSQLiteWorkspaceClientWithStore(t)
+	view, err := store.CreateView(context.Background(), "Limit", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewID := int32(view.ID)
+	nameFits := strings.Repeat("界", 66)
+	if err := validateFlow(&diagv1.Flow{ViewId: viewID, Name: nameFits}); err != nil {
+		t.Fatalf("accepted 198-byte name should fit: %v", err)
+	}
+	if err := validateFlow(&diagv1.Flow{ViewId: viewID, Name: strings.Repeat("界", 67)}); err == nil {
+		t.Fatal("accepted a 201-byte name over the 200-byte limit")
+	}
+
+	flow := &diagv1.Flow{ViewId: viewID, Name: "Limit"}
+	for i := 0; i < 104; i++ {
+		flow.Steps = append(flow.Steps, &diagv1.FlowStep{Id: fmt.Sprintf("s%d", i), Description: strings.Repeat("x", 10000)})
+	}
+	flow.Steps = append(flow.Steps, &diagv1.FlowStep{Id: "last"})
+	base, err := protojson.Marshal(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow.Steps[len(flow.Steps)-1].Description = "x"
+	oneChar, err := protojson.Marshal(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fieldCost := len(oneChar) - len(base)
+	lastDescriptionSize := (1 << 20) - len(base) - fieldCost
+	if lastDescriptionSize < 0 || lastDescriptionSize > 10000 {
+		t.Fatalf("fixture cannot reach exact protobuf JSON limit: base=%d field=%d remaining=%d", len(base), fieldCost, lastDescriptionSize)
+	}
+	flow.Steps[len(flow.Steps)-1].Description = strings.Repeat("x", lastDescriptionSize)
+	exact, err := protojson.Marshal(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := (1 << 20) - len(exact)
+	if remaining > 0 {
+		flow.Steps[len(flow.Steps)-1].Description += strings.Repeat("x", remaining)
+	} else if remaining < 0 {
+		flow.Steps[len(flow.Steps)-1].Description = strings.TrimSuffix(flow.Steps[len(flow.Steps)-1].Description, strings.Repeat("x", -remaining))
+	}
+	exact, err = protojson.Marshal(flow)
+	if err != nil || len(exact) != 1<<20 {
+		t.Fatalf("expected exactly 1 MiB protobuf JSON, size=%d err=%v", len(exact), err)
+	}
+	svc := &FlowService{Store: NewAPIStore(store)}
+	if _, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{Flow: proto.Clone(flow).(*diagv1.Flow)})); err != nil {
+		t.Fatalf("rejected exactly 1 MiB flow: %v", err)
+	}
+	over := proto.Clone(flow).(*diagv1.Flow)
+	over.Steps[len(over.Steps)-1].Description += "x"
+	if _, err := svc.SaveFlow(context.Background(), connect.NewRequest(&diagv1.SaveFlowRequest{Flow: over})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("one byte over 1 MiB status=%v err=%v", connect.CodeOf(err), err)
+	}
+}
+
+func TestFlowStringValidationByteBoundaries(t *testing.T) {
+	utf8Bytes := func(size int) string {
+		return strings.Repeat("界", size/3) + strings.Repeat("x", size%3)
+	}
+	fields := []struct {
+		name  string
+		limit int
+		build func(string) *diagv1.Flow
+	}{
+		{"flow name", 200, func(value string) *diagv1.Flow { return &diagv1.Flow{ViewId: 1, Name: value} }},
+		{"flow description", 10000, func(value string) *diagv1.Flow { return &diagv1.Flow{ViewId: 1, Name: "Flow", Description: value} }},
+		{"step id", 100, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: value}}}
+		}},
+		{"step title", 500, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Title: value}}}
+		}},
+		{"step description", 10000, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Description: value}}}
+		}},
+		{"branch id", 100, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Branches: &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{{Id: value, Name: "A"}, {Id: "b", Name: "B"}}}}}}
+		}},
+		{"branch name", 200, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Branches: &diagv1.FlowBranches{Mode: "alternate", Paths: []*diagv1.FlowBranch{{Id: "a", Name: value}, {Id: "b", Name: "B"}}}}}}
+		}},
+		{"linked flow id", 100, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", GoToFlowId: value}}}
+		}},
+		{"metadata key", 100, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Metadata: map[string]string{value: "value"}}}}
+		}},
+		{"metadata value", 10000, func(value string) *diagv1.Flow {
+			return &diagv1.Flow{ViewId: 1, Name: "Flow", Steps: []*diagv1.FlowStep{{Id: "step", Metadata: map[string]string{"key": value}}}}
+		}},
+	}
+	for _, field := range fields {
+		t.Run(field.name, func(t *testing.T) {
+			if err := validateFlow(field.build(utf8Bytes(field.limit))); err != nil {
+				t.Fatalf("rejected exact %d-byte boundary: %v", field.limit, err)
+			}
+			if err := validateFlow(field.build(utf8Bytes(field.limit + 1))); err == nil {
+				t.Fatalf("accepted %d bytes over the %d-byte boundary", field.limit+1, field.limit)
+			}
+		})
+	}
+}
+
+func TestFlowValidationCollectionBoundaries(t *testing.T) {
+	flow := &diagv1.Flow{ViewId: 1, Name: "Collections", Steps: []*diagv1.FlowStep{{Id: "step", Metadata: map[string]string{}}}}
+	step := flow.Steps[0]
+	for i := 1; i <= 500; i++ {
+		step.ElementIds = append(step.ElementIds, int32(i))
+		step.Connectors = append(step.Connectors, &diagv1.FlowConnectorHighlight{Id: int32(i)})
+	}
+	for i := 0; i < 50; i++ {
+		step.Metadata[fmt.Sprintf("key-%d", i)] = fmt.Sprintf("value-%d", i)
+	}
+	if err := validateFlow(flow); err != nil {
+		t.Fatalf("rejected exact valid collection boundaries: %v", err)
+	}
+	step.ElementIds = append(step.ElementIds, 501)
+	if err := validateFlow(flow); err == nil {
+		t.Fatal("accepted 501 element highlights")
+	}
+	step.ElementIds = step.ElementIds[:500]
+	step.Connectors = append(step.Connectors, &diagv1.FlowConnectorHighlight{Id: 501})
+	if err := validateFlow(flow); err == nil {
+		t.Fatal("accepted 501 connector highlights")
+	}
+	step.Connectors = step.Connectors[:500]
+	step.Metadata["key-50"] = "value-50"
+	if err := validateFlow(flow); err == nil {
+		t.Fatal("accepted 51 metadata entries")
 	}
 }
 
