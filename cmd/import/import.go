@@ -244,11 +244,8 @@ func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
 						if field == "visibility_delta" {
 							doc.Connectors[index].VisibilityDeltaSet = true
 						}
-						if field == "tags" || field == "id" || field == "updated_at" {
+						if field == "id" || field == "updated_at" {
 							hint := "Omit cache IDs and timestamps; import resolves existing resources automatically."
-							if field == "tags" {
-								hint = "Omit connector tags from the import; set them with 'tld update connector <key-or-id> tags <comma-separated-tags>'."
-							}
 							return nil, cmdutil.WithCode(fmt.Errorf("connector import does not support %s", field), "unsupported_field", hint)
 						}
 					}

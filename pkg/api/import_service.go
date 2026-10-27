@@ -384,6 +384,7 @@ func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID u
 			URL:          planned.Url,
 			SourceHandle: planned.SourceHandle,
 			TargetHandle: planned.TargetHandle,
+			Tags:         BatchConnectorTags(planned),
 		}
 
 		action := "create"

@@ -921,6 +921,7 @@ func (a *APIAdapter) ApplyBatch(ctx context.Context, _ uuid.UUID, req *diagv1.Ap
 			URL:          planned.Url,
 			SourceHandle: planned.SourceHandle,
 			TargetHandle: planned.TargetHandle,
+			Tags:         api.BatchConnectorTags(planned),
 		}
 
 		// Placement insertion may have copied this exact relationship since the
