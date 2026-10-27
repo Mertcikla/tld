@@ -496,17 +496,13 @@ function StepPaths({ step, onChange, disabled, available, expanded, onSelect, re
   </VStack>
 }
 
-function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] } }: { depth?: number; available?: number; catalog?: FlowCatalog; disabled: boolean; onPick?: () => void; picking?: boolean; actions?: ReactNode; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
+function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] }, addLabel = 'Add step' }: { depth?: number; available?: number; catalog?: FlowCatalog; disabled: boolean; onPick?: () => void; picking?: boolean; actions?: ReactNode; addLabel?: string; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   return <VStack align="stretch" spacing={3}>
-    <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
-      <HStack spacing={2}>
-        {actions}
-        <Button size="sm" isDisabled={disabled || available <= 0} onClick={() => { const step = newStep(diagram, selection); onChange([...steps, step]); onSelect(step.id) }}>+ Step</Button>
-      </HStack>
-      <Box ml="auto"><StepCount count={allSteps(steps).length} /></Box>
-    </HStack>
-    {!steps.length && <Text fontSize={depth ? 'xs' : 'sm'} color="gray.400">{depth ? 'No steps yet.' : 'Add a step to describe what happens and choose what to highlight.'}</Text>}
+    {depth === 0 && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
+      <StepCount count={allSteps(steps).length} />
+      {actions}
+    </HStack>}
     <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
       <FlowEditorCard index={index} title={stepLabel(step, diagram)} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
         <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
@@ -523,11 +519,19 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
           <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={expanded === step.id ? onPick : undefined} picking={expanded === step.id && picking} />
           <StepOptions step={step} onChange={changes => patch(step.id, changes)} catalog={catalog} disabled={disabled} depth={depth} />
           {step.branches && <StepPaths step={step} onChange={paths => patch(step.id, { branches: { ...step.branches!, paths } })} disabled={disabled} available={available} expanded={expanded} onSelect={onSelect} renderSteps={path =>
-            <StepList steps={path.steps} onChange={steps => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} diagram={diagram} selection={selection} onSelect={onSelect} expanded={expanded} onPick={onPick} picking={picking} disabled={disabled} depth={depth + 1} available={available} catalog={catalog} />
+            <StepList steps={path.steps} onChange={steps => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} diagram={diagram} selection={selection} onSelect={onSelect} expanded={expanded} onPick={onPick} picking={picking} disabled={disabled} depth={depth + 1} available={available} catalog={catalog} addLabel={`Add step to path ${path.name}`} />
           } />}
         </VStack>
       </FlowEditorCard>
     }</SortableFlowList>
+    <Box pl="26px">
+      <Button aria-label={addLabel} variant="ghost" w="full" minW={0} h="54px" justifyContent="flex-start" gap={2} p={2} rounded="lg" border="1px dashed" borderColor="whiteAlpha.200" color="text.muted" fontWeight="normal"
+        _hover={{ bg: 'whiteAlpha.50', borderColor: 'var(--accent)', color: 'var(--accent)' }}
+        isDisabled={disabled || available <= 0} onClick={() => { const step = newStep(diagram, selection); onChange([...steps, step]); onSelect(step.id) }}>
+        <Box as="span" display="flex" w="24px" h="24px" alignItems="center" justifyContent="center" flexShrink={0} bg="whiteAlpha.50" rounded="md"><AddIcon boxSize="10px" /></Box>
+        <Text as="span" fontSize="sm">Add step</Text>
+      </Button>
+    </Box>
   </VStack>
 }
 

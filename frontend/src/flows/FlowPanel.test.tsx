@@ -31,7 +31,7 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
   const onFocus = vi.fn()
   act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} selection={selection} onClose={vi.fn()} onFocus={onFocus} {...extra} />) })
   act(() => button('+ New flow').props.onClick())
-  act(() => button('+ Step').props.onClick())
+  act(() => button('Add step').props.onClick())
   return onFocus
 }
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
@@ -60,7 +60,7 @@ describe('flow step editing', () => {
   it('reorders whole steps with the handle keyboard controls and preserves the active editor', async () => {
     mount({ elementId: 2, connectorId: 10 })
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Store data')
-    act(() => button('+ Step').props.onClick())
+    act(() => button('Add step').props.onClick())
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Finish')
     const key = (label: string, value: string) => act(() => button(label).props.onKeyDown({ key: value, preventDefault: vi.fn(), stopPropagation: vi.fn() }))
     key('Reorder step 2', 'ArrowUp')
@@ -77,7 +77,7 @@ describe('flow step editing', () => {
   it('accepts drag order and duplicates or removes a collapsed step without opening it first', async () => {
     mount({ elementId: 1 })
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'First')
-    act(() => button('+ Step').props.onClick())
+    act(() => button('Add step').props.onClick())
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Second')
     const group = renderer.root.findByType('reorder-group' as never)
     const [first, second] = group.props.values
@@ -187,7 +187,7 @@ describe('flow step editing', () => {
 
   it('pins playback outside the editor scroll area and pauses when collapsed', () => {
     mount({ elementId: 1 })
-    act(() => button('+ Step').props.onClick())
+    act(() => button('Add step').props.onClick())
     const dock = renderer.root.findByProps({ 'data-testid': 'flow-playback-dock' })
     expect(renderer.root.findByProps({ 'data-flow-scroll': true }).findAllByProps({ 'data-testid': 'flow-playback-dock' })).toHaveLength(0)
     expect(dock.props.flexShrink).toBe(0)
@@ -277,7 +277,7 @@ describe('flow step editing', () => {
     const onCanvasRecorderChange = vi.fn()
     mount(undefined, { onCanvasRecorderChange })
     act(() => button('Pick from canvas').props.onClick())
-    act(() => button('+ Step').props.onClick())
+    act(() => button('Add step').props.onClick())
     expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
     act(() => button('Pick from canvas').props.onClick())
     const props = renderer.root.findByType(FlowPanel).props
@@ -308,7 +308,7 @@ describe('flow step editing', () => {
     act(() => onCanvasRecorderChange.mock.lastCall![0].capture({ elementId: 1 }))
     expect(onCanvasRecorderChange).toHaveBeenLastCalledWith(null)
     expect(button('Record steps').props.isDisabled).toBe(true)
-    expect(button('+ Step').props.isDisabled).toBe(true)
+    expect(button('Add step').props.isDisabled).toBe(true)
   })
 
   it.each(['Record steps', 'Pick from canvas'])('shrinks the compact panel during %s and restores its controls after stopping', start => {
@@ -391,7 +391,7 @@ describe('flow step editing', () => {
     mount()
     const options = () => renderer.root.findAllByType('menuitem' as never)
     expect(options().find(node => node.props['aria-label'] === 'New flow, 1 step')).toBeDefined()
-    act(() => button('+ Step').props.onClick())
+    act(() => button('Add step').props.onClick())
     expect(options().find(node => node.props['aria-label'] === 'New flow, 2 steps')).toBeDefined()
     act(() => button('Remove step 2').props.onClick())
     act(() => button('Remove step 1').props.onClick())
@@ -507,7 +507,7 @@ describe('flow operation editing and navigation', () => {
   it('preserves path contents when changing branch mode and confirms before removing them', () => {
     mount({ elementId: 2 })
     act(() => menuItem('Add alternate paths').props.onClick())
-    act(() => renderer.root.findAllByType('button').filter(node => node.props.children === '+ Step')[1].props.onClick())
+    act(() => button('Add step to path Path A').props.onClick())
     const titles = renderer.root.findAllByProps({ 'aria-label': 'Step title' })
     change(titles[titles.length - 1], 'Handle the result')
     const parent = () => renderer.root.findAllByType('reorder-group' as never)[0].props.values[0]
@@ -558,7 +558,7 @@ describe('flow operation editing and navigation', () => {
   it('edits and reorders nested steps with the shared editor and can collapse their path', async () => {
     mount({ elementId: 2 })
     act(() => menuItem('Add alternate paths').props.onClick())
-    const addToPath = () => act(() => renderer.root.findAllByType('button').filter(node => node.props.children === '+ Step')[1].props.onClick())
+    const addToPath = () => act(() => button('Add step to path Path A').props.onClick())
     const title = () => renderer.root.findAllByProps({ 'aria-label': 'Step title' }).at(-1)!
     addToPath()
     change(title(), 'First')
@@ -605,9 +605,9 @@ describe('flow operation editing and navigation', () => {
     const onCanvasRecorderChange = vi.fn()
     mount({ elementId: 2 }, { onCanvasRecorderChange })
     act(() => menuItem('Add alternate paths').props.onClick())
-    const addButtons = renderer.root.findAllByType('button').filter(node => node.props.children === '+ Step')
+    const addButtons = renderer.root.findAllByType('button').filter(node => node.props['aria-label']?.startsWith('Add step'))
     expect(addButtons).toHaveLength(3)
-    act(() => addButtons[2].props.onClick())
+    act(() => button('Add step to path Path B').props.onClick())
     const titles = renderer.root.findAllByProps({ 'aria-label': 'Step title' })
     change(titles[titles.length - 1], 'Failure handling')
     act(() => button('Pick from canvas').props.onClick())
