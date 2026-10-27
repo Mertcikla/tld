@@ -798,16 +798,18 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <Box transform={editPlaybackOpen ? 'rotate(180deg)' : undefined}><ChevronDownIcon /></Box>
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" px={3} py={2.5} minH={0} display="flex" flexDirection="column" gap={2} overflow="hidden">
-        {playback.frame && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={1.5} minH={0} maxH="140px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
-          <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2}>
-            <Tooltip label={playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')} openDelay={300} closeOnPointerDown closeOnScroll>
-              <Text flex={1} minW={0} fontWeight="semibold" fontSize="sm" isTruncated>{playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</Text>
-            </Tooltip>
-            {activeStep?.branches && <Select size="xs" h={6} w="auto" maxW="140px" flexShrink={0} aria-label="Choose flow path" value={playback.choices[activeStep.id] ?? activeStep.branches.paths[0]?.id ?? ''} onChange={event => playback.choose(activeStep.id, event.target.value)}>
-              {activeStep.branches.paths.map(path => <option key={path.id} value={path.id}>{path.name}</option>)}
-            </Select>}
-            <StepCount count={playback.index + 1} label={`Step ${playback.index + 1} of ${playback.frames.length}`} accent />
-          </HStack>
+        <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2} flexShrink={0}>
+          <Box flex={1} minW={0}>
+            <Select size="sm" h={7} rounded="md" aria-label="Current flow step" isDisabled={busy} value={playback.frame?.id ?? ''} onChange={e => playback.select(e.target.value || null)}>
+              <option value="">Overview</option>
+              {playback.frames.map(frame => <option key={frame.id} value={frame.id}>{frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</option>)}
+            </Select>
+          </Box>
+          {activeStep?.branches && <Select size="xs" h={6} w="auto" maxW="140px" flexShrink={0} aria-label="Choose flow path" value={playback.choices[activeStep.id] ?? activeStep.branches.paths[0]?.id ?? ''} onChange={event => playback.choose(activeStep.id, event.target.value)}>
+            {activeStep.branches.paths.map(path => <option key={path.id} value={path.id}>{path.name}</option>)}
+          </Select>}
+        </HStack>
+        {playback.frame && (activeStep?.goToFlowId || playback.frame.steps.some(step => step.description || missingReference(step, currentDiagram) || Object.keys(step.metadata).length > 0)) && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={1.5} minH={0} maxH="140px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
           {activeStep?.goToFlowId && <HStack spacing={1.5}><Button size="xs" variant="primary" isDisabled={busy || !catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId)} onClick={goToFlow}>Go to flow</Button><Button size="xs" onClick={playback.next}>Skip flow</Button>
             {!catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId) && <Text fontSize="xs" color="gray.400">Linked flow unavailable.</Text>}
           </HStack>}
@@ -827,33 +829,27 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
             onSelectStep={playback.select}
             onChoosePath={playback.choose}
           />
-          <HStack spacing={1.5} align="center" minW={0}>
+          <Box display="grid" gridTemplateColumns="minmax(0, 1fr) auto minmax(0, 1fr)" alignItems="center" gap={1.5} minW={0}>
+            <Select size="xs" h={7} w="full" maxW="64px" minW={0} rounded="md" aria-label="Autoplay interval" title="Autoplay interval" isDisabled={busy} value={playback.seconds} onChange={e => playback.setSeconds(Number(e.target.value))}>
+              {[1, 2, 3, 5, 8].map(seconds => <option key={seconds} value={seconds}>{seconds}s</option>)}
+            </Select>
             <HStack spacing={1} flexShrink={0}>
               <Tooltip label="Previous flow step" openDelay={200} closeOnPointerDown closeOnScroll>
                 <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Previous flow step" icon={<FontAwesomeIcon icon={faBackwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || playback.index < 0} onClick={playback.previous} /></Box>
               </Tooltip>
               <Tooltip label={playback.playing ? 'Pause' : 'Auto-play'} openDelay={200} closeOnPointerDown closeOnScroll>
-                <Box as="span" display="inline-flex"><IconButton size="xs" w={8} h={7} variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={13} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
+                <Box as="span" display="inline-flex"><IconButton size="xs" w={16} h={7} variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={13} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
               </Tooltip>
               <Tooltip label="Next flow step" openDelay={200} closeOnPointerDown closeOnScroll>
                 <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Next flow step" icon={<FontAwesomeIcon icon={faForwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || !playback.frames.length || (playback.index === playback.frames.length - 1 && !journey && !activeStep?.goToFlowId)} onClick={nextStep} /></Box>
               </Tooltip>
             </HStack>
-            <Box flex={1} minW={0}>
-              <Select size="xs" h={7} rounded="md" aria-label="Current flow step" isDisabled={busy} value={playback.frame?.id ?? ''} onChange={e => playback.select(e.target.value || null)}>
-                <option value="">Overview</option>
-                {playback.frames.map((frame, i) => <option key={frame.id} value={frame.id}>{i + 1}. {frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</option>)}
-              </Select>
-            </Box>
-            <HStack spacing={1} flexShrink={0}>
-              <Select size="xs" h={7} w="64px" rounded="md" aria-label="Autoplay interval" title="Autoplay interval" isDisabled={busy} value={playback.seconds} onChange={e => playback.setSeconds(Number(e.target.value))}>
-                {[1, 2, 3, 5, 8].map(seconds => <option key={seconds} value={seconds}>{seconds}s</option>)}
-              </Select>
+            <Box display="flex" justifyContent="flex-end" minW={0}>
               <Tooltip label={playback.loop ? 'Repeat on' : 'Repeat off'} openDelay={200} closeOnPointerDown closeOnScroll>
                 <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} variant={playback.loop ? 'primary' : 'ghost'} aria-label="Repeat flow" aria-pressed={playback.loop} icon={<FontAwesomeIcon icon={faRepeat} size={12} />} isDisabled={busy} onClick={() => playback.setLoop(!playback.loop)} /></Box>
               </Tooltip>
-            </HStack>
-          </HStack>
+            </Box>
+          </Box>
         </VStack>
       </Box>}
     </Box>}
