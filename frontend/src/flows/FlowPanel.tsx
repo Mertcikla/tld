@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Box, Button, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { Box, Button, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon, DragHandleIcon } from '@chakra-ui/icons'
 import { motion } from 'framer-motion'
@@ -495,7 +495,7 @@ function InlineStepText({ label, value, fallback, multiline = false, maxLength, 
     fontSize: multiline ? 'xs' : 'sm',
     fontWeight: multiline ? 'normal' : 'medium',
     rounded: 'sm',
-    _focusVisible: { boxShadow: '0 1px 0 var(--accent)' },
+    _focusVisible: { boxShadow: multiline ? '0 1px 0 var(--accent)' : 'none' },
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(event.target.value),
     onBlur: () => setEditing(false),
     onKeyDown: (event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -509,8 +509,8 @@ function InlineStepText({ label, value, fallback, multiline = false, maxLength, 
   }
   if (editing) return multiline
     ? <Textarea {...fieldProps} maxLength={10000} rows={2} minH="48px" maxH="120px" resize="vertical" />
-    : <Input {...fieldProps} maxLength={maxLength ?? 500} h="21px" onFocus={event => event.target.select()} />
-  return <Button aria-label={label} data-inline-preview value={value} variant="unstyled" w="full" minW={0} h="auto" minH={multiline ? '28px' : '21px'} fontWeight={multiline ? 'normal' : 'medium'} fontSize={multiline ? 'xs' : 'sm'} textAlign="left" color={multiline ? 'text.muted' : undefined} rounded="sm" isDisabled={disabled} title={`Click to edit ${label.toLowerCase()}`}
+    : <Input {...fieldProps} display="block" maxLength={maxLength ?? 500} h="21px" onFocus={event => event.target.select()} />
+  return <Button aria-label={label} data-inline-preview value={value} variant="unstyled" display={multiline ? undefined : 'block'} w="full" minW={0} h="auto" minH={multiline ? '28px' : '21px'} fontWeight={multiline ? 'normal' : 'medium'} fontSize={multiline ? 'xs' : 'sm'} textAlign="left" color={multiline ? 'text.muted' : undefined} rounded="sm" isDisabled={disabled} title={`Click to edit ${label.toLowerCase()}`}
     _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ boxShadow: '0 0 0 1px var(--accent)' }} onClick={() => { original.current = value; setEditing(true) }}>
     <Text as="span" display="block" isTruncated={!multiline} whiteSpace={multiline ? 'pre-wrap' : 'nowrap'} overflowWrap="anywhere" maxH={multiline ? '120px' : undefined} overflowY={multiline ? 'auto' : undefined}>{value || fallback}</Text>
   </Button>
@@ -534,7 +534,7 @@ function FlowEditorCard({ index, identifier = String(index + 1), title, titleEdi
       {handle}
       <Button variant="unstyled" position="absolute" inset={0} w="full" h="54px" rounded="lg" aria-label={`Toggle ${identifier}: ${title}`} aria-expanded={expanded} onClick={onToggle}>
         <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
-          <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="transform 150ms ease" sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><ChevronDownIcon /></Box>
+          <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="none"><ChevronDownIcon /></Box>
         </Box>
       </Button>
       <HStack spacing={2} minW={0} h="54px" p={2} pr="108px" pointerEvents="none">
@@ -547,7 +547,7 @@ function FlowEditorCard({ index, identifier = String(index + 1), title, titleEdi
       <HStack className="flow-step-actions" position="absolute" right={10} top={0} bottom={0} alignItems="center" spacing={1}>{actions}</HStack>
     </Box>
     {notice && <Box px={3} pb={2}>{notice}</Box>}
-    <Collapse in={expanded} animateOpacity unmountOnExit>{children}</Collapse>
+    {expanded && <Box>{children}</Box>}
   </Box>
 }
 

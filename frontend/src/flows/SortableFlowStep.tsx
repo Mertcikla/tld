@@ -59,7 +59,7 @@ function SortableFlowItem<T extends { id: string }>({ item, label, kind, disable
       </Tooltip>
     </Box>
 
-  return <Reorder.Item as="div" ref={row} value={item} layout="position" dragListener={false} dragControls={controls} dragMomentum={false}
+  return <Reorder.Item as="div" ref={row} value={item} layout="position" transition={{ layout: { duration: 0 } }} dragListener={false} dragControls={controls} dragMomentum={false}
     data-flow-step-id={kind === 'step' ? item.id : undefined} data-flow-path-id={kind === 'path' ? item.id : undefined} style={{ position: 'relative' }}
     onDragStart={(_, info) => { pointerY.current = info.point.y; startScroll() }}
     onDrag={(_, info) => { pointerY.current = info.point.y }} onDragEnd={stopScroll}>
