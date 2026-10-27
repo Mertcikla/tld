@@ -23,11 +23,18 @@ let renderer: ReactTestRenderer
 const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props.children === label || node.props['aria-label'] === label)!
 const menuItem = (label: string) => renderer.root.findAllByType('menuitem' as never).find(node => node.props['aria-label'] === label)!
 const checkbox = (label: string) => renderer.root.findAllByType('checkbox' as never).find(node => node.props.children === label || node.props['aria-label'] === label)!
-const change = (node: ReactTestInstance, value: string) => act(() => node.props.onChange({ target: { value } }))
+const change = (node: ReactTestInstance, value: string) => {
+  if (node.props['data-inline-preview']) {
+    const label = node.props['aria-label']
+    act(() => node.props.onClick())
+    node = renderer.root.findByProps({ 'aria-label': label })
+  }
+  act(() => node.props.onChange({ target: { value } }))
+}
 const searchHighlights = (value: string) => change(renderer.root.findByProps({ 'aria-label': 'Search highlights' }), value)
-const check = (node: ReactTestInstance, checked: boolean) => act(() => node.props.onChange({ target: { checked } }))
+const currentDraft = () => queryClient.setQueryData.mock.calls.filter(([key]) => key[0] === 'flow-draft').at(-1)![1] as StoryFlow
 function mount(selection?: { elementId?: number; connectorId?: number }, extra: Partial<FlowPanelProps> = {}) {
-  vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
+  vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true), location: { protocol: 'http:', hostname: 'localhost', port: '5173' } })
   const onFocus = vi.fn()
   act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} selection={selection} onClose={vi.fn()} onFocus={onFocus} {...extra} />) })
   act(() => button('+ New flow').props.onClick())
@@ -37,17 +44,56 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
 
 describe('flow step editing', () => {
+  it('edits the title in the card header and the description in place', async () => {
+    mount({ elementId: 1 })
+    const header = renderer.root.findByProps({ 'data-flow-step-header': true })
+    expect(header.findByProps({ 'aria-label': 'Step title' }).type).toBe('button')
+    expect(renderer.root.findAllByType('p').some(node => node.props.children === 'Story')).toBe(false)
+    change(header.findByProps({ 'aria-label': 'Step title' }), 'Receive request')
+    const title = renderer.root.findByProps({ 'aria-label': 'Step title' })
+    expect(title.type).toBe('input')
+    act(() => title.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
+    expect(header.findByProps({ 'aria-label': 'Step title' }).type).toBe('button')
+    change(renderer.root.findByProps({ 'aria-label': 'Step description' }), 'First line\nSecond line')
+    const description = renderer.root.findByProps({ 'aria-label': 'Step description' })
+    expect(description.type).toBe('textarea')
+    const preventDefault = vi.fn()
+    act(() => description.props.onKeyDown({ key: 'Enter', preventDefault, stopPropagation: vi.fn() }))
+    expect(preventDefault).not.toHaveBeenCalled()
+    act(() => description.props.onKeyDown({ key: 'Enter', ctrlKey: true, preventDefault, stopPropagation: vi.fn() }))
+    expect(renderer.root.findByProps({ 'aria-label': 'Step description' }).type).toBe('button')
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ title: 'Receive request', description: 'First line\nSecond line', elementIds: [1] })
+  })
+
+  it('cancels inline edits with Escape without closing the panel', () => {
+    const onClose = vi.fn()
+    mount(undefined, { onClose })
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Original')
+    act(() => renderer.root.findByProps({ 'aria-label': 'Step title' }).props.onBlur())
+    for (const label of ['Step title', 'Step description']) {
+      change(renderer.root.findByProps({ 'aria-label': label }), 'Discard this edit')
+      const stopPropagation = vi.fn()
+      act(() => renderer.root.findByProps({ 'aria-label': label }).props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation }))
+      expect(stopPropagation).toHaveBeenCalledOnce()
+      expect(renderer.root.findByProps({ 'aria-label': label }).type).toBe('button')
+    }
+    expect(currentDraft().steps[0]).toMatchObject({ title: 'Original', description: '' })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('saves multiple elements and connections without direction controls', async () => {
     const onFocus = mount()
     expect(renderer.root.findAllByProps({ 'aria-label': 'New step type' })).toHaveLength(0)
     searchHighlights('api')
-    check(checkbox('API'), true)
+    act(() => button('Add element API').props.onClick())
     searchHighlights('db')
-    check(checkbox('DB'), true)
-    act(() => renderer.root.findByProps({ 'aria-label': 'Show connections' }).props.onClick())
+    act(() => button('Add element DB').props.onClick())
     searchHighlights('api')
-    check(checkbox('API → DB · Stores'), true)
-    check(checkbox('API → Worker · Queues'), true)
+    act(() => button('Add connection API → DB · Stores').props.onClick())
+    searchHighlights('api')
+    act(() => button('Add connection API → Worker · Queues').props.onClick())
     expect(renderer.root.findAllByType('button').some(node => node.props['aria-label']?.startsWith('Reverse '))).toBe(false)
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Save and queue')
     const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: false }, { id: 11, reverse: false }], metadata: {} }
@@ -97,7 +143,6 @@ describe('flow step editing', () => {
     const onFocus = mount({ elementId: 2, connectorId: 10 })
     expect(renderer.root.findByProps({ 'aria-label': 'Remove element DB' })).toBeDefined()
     act(() => renderer.root.findByProps({ 'aria-label': 'Remove element DB' }).props.onClick())
-    act(() => renderer.root.findByProps({ 'aria-label': 'Show connections' }).props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' })).toBeDefined()
     act(() => renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' }).props.onClick())
     expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectors: [] })
@@ -105,64 +150,120 @@ describe('flow step editing', () => {
     await act(async () => button('Save flow').props.onClick())
     expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({ elementIds: [], connectors: [], title: '', description: '', metadata: {} })] }))
   })
-  it('shows search results only for a query and preserves highlights when search clears', () => {
+  it('searches both kinds, adds one result at a time and excludes selected highlights', () => {
     mount()
+    expect(renderer.root.findAllByProps({ 'data-testid': 'highlight-search-results' })).toHaveLength(0)
     expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
     searchHighlights('api')
-    check(checkbox('API'), true)
-    searchHighlights('db')
-    expect(checkbox('API')).toBeUndefined()
-    check(checkbox('DB'), true)
-    searchHighlights('  ')
+    expect(button('Add element API')).toBeDefined()
+    expect(button('Add connection API → DB · Stores')).toBeDefined()
+    expect(button('Add connection API → Worker · Queues')).toBeDefined()
+    act(() => button('Add element API').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Search highlights' }).props.value).toBe('')
     expect(renderer.root.findAllByProps({ 'data-testid': 'highlight-search-results' })).toHaveLength(0)
+    searchHighlights('api')
+    expect(button('Add element API')).toBeUndefined()
+    act(() => button('Add connection API → DB · Stores').props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Selected highlights' }).findAllByType('button')).toHaveLength(2)
+    searchHighlights('db')
+    act(() => button('Add element DB').props.onClick())
+    searchHighlights('  ')
     expect(renderer.root.findByProps({ 'aria-label': 'Remove element API' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Remove element DB' })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' })).toBeDefined()
     searchHighlights('api')
-    expect(checkbox('API').props.isChecked).toBe(true)
-    searchHighlights('db')
-    expect(checkbox('DB').props.isChecked).toBe(true)
+    expect(button('Add connection API → DB · Stores')).toBeUndefined()
+    expect(button('Add connection API → Worker · Queues')).toBeDefined()
   })
 
-  it('caps both result lists at five and finds highlights beyond the initial matches', () => {
+  it('caps combined results at five and finds items beyond the first matches', () => {
     const largeDiagram: FlowDiagram = {
       elements: Array.from({ length: 8 }, (_, id) => ({ element_id: id + 1, name: `Service ${id}` })),
       connectors: Array.from({ length: 8 }, (_, id) => ({ id: id + 10, source_element_id: 1, target_element_id: id + 1, label: `Message ${id}` })) as Connector[],
     }
     mount(undefined, { diagram: largeDiagram })
+    const results = () => renderer.root.findByProps({ 'data-testid': 'highlight-search-results' }).findAllByProps({ role: 'option' })
     searchHighlights('service')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(5)
-    check(checkbox('Service 0'), true)
+    expect(results()).toHaveLength(5)
+    act(() => button('Add element Service 0').props.onClick())
     searchHighlights('service 7')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(1)
-    check(checkbox('Service 7'), true)
-    act(() => renderer.root.findByProps({ 'aria-label': 'Show connections' }).props.onClick())
-    expect(renderer.root.findAllByProps({ 'data-testid': 'highlight-search-results' })).toHaveLength(0)
+    expect(results()).toHaveLength(2)
+    act(() => button('Add element Service 7').props.onClick())
     searchHighlights('message')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(5)
-    check(checkbox('Message 0'), true)
+    expect(results()).toHaveLength(5)
+    act(() => button('Add connection Service 0 → Service 0 · Message 0').props.onClick())
     searchHighlights('message 7')
-    check(checkbox('Message 7'), true)
-    searchHighlights('')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
+    act(() => button('Add connection Service 0 → Service 7 · Message 7').props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection Service 0 → Service 0 · Message 0' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection Service 0 → Service 7 · Message 7' })).toBeDefined()
     searchHighlights('no such connection')
-    expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
+    expect(results()).toHaveLength(0)
   })
 
-  it('shows concise connection labels while keeping endpoint search and selections', () => {
+  it('keeps connection labels concise while searching labels and endpoint names', () => {
     mount({ connectorId: 10 })
-    act(() => renderer.root.findByProps({ 'aria-label': 'Show connections' }).props.onClick())
+    const selected = renderer.root.findByProps({ 'aria-label': 'Selected highlights' })
+    expect(selected.findAllByType('p').some(node => node.props.children === 'Stores')).toBe(true)
+    expect(selected.findAllByType('p').some(node => node.props.children === 'API → DB')).toBe(true)
     searchHighlights('api')
-    expect(checkbox('API → DB · Stores').props.children).toBe('Stores')
-    change(renderer.root.findByProps({ 'aria-label': 'Search highlights' }), 'db')
-    expect(checkbox('Stores').props.isChecked).toBe(true)
-    expect(checkbox('Queues')).toBeUndefined()
-    change(renderer.root.findByProps({ 'aria-label': 'Search highlights' }), 'queues')
-    expect(checkbox('Queues')).toBeDefined()
-    change(renderer.root.findByProps({ 'aria-label': 'Search highlights' }), '')
-    expect(checkbox('Stores')).toBeUndefined()
-    expect(renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' })).toBeDefined()
+    expect(button('Add connection API → DB · Stores')).toBeUndefined()
+    expect(button('Add connection API → Worker · Queues')).toBeDefined()
+    searchHighlights('queues')
+    expect(button('Add connection API → Worker · Queues')).toBeDefined()
+    act(() => button('Remove connection API → DB · Stores').props.onClick())
+    searchHighlights('stores')
+    expect(button('Add connection API → DB · Stores')).toBeDefined()
+  })
+
+  it('shows technology icons and connection markers in results and selected highlights', () => {
+    const iconDiagram: FlowDiagram = { ...diagram, elements: [
+      { ...diagram.elements[0], kind: 'api', technology_connectors: [{ type: 'catalog', slug: 'typescript', label: 'TypeScript', is_primary_icon: true }] },
+      ...diagram.elements.slice(1),
+    ] }
+    mount(undefined, { diagram: iconDiagram })
+    searchHighlights('api')
+    const api = button('Add element API')
+    expect(api.findByProps({ as: 'img' }).props.src).toBe('/icons/typescript.svg')
+    const connection = button('Add connection API → DB · Stores')
+    expect(connection.findAllByType('p').some(node => node.props.children === '→')).toBe(true)
+    act(() => api.props.onClick())
+    searchHighlights('stores')
+    act(() => button('Add connection API → DB · Stores').props.onClick())
+    const selected = renderer.root.findByProps({ 'aria-label': 'Selected highlights' })
+    expect(selected.findByProps({ as: 'img' }).props.src).toBe('/icons/typescript.svg')
+    expect(selected.findAllByType('p').some(node => node.props.children === '→')).toBe(true)
+    expect(selected.findAllByType('p').some(node => node.props.children === 'API → DB')).toBe(true)
+  })
+
+  it('adds keyboard-selected results and clears search with Escape without closing the panel', () => {
+    const onClose = vi.fn()
+    mount(undefined, { onClose })
+    const input = () => renderer.root.findByProps({ 'aria-label': 'Search highlights' })
+    const key = (value: string) => act(() => input().props.onKeyDown({ key: value, preventDefault: vi.fn(), stopPropagation: vi.fn() }))
+    searchHighlights('api')
+    key('ArrowDown')
+    key('Enter')
+    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectors: [{ id: 10, reverse: false }] })
+    expect(input().props.value).toBe('')
+    searchHighlights('api')
+    key('Enter')
+    expect(currentDraft().steps[0].elementIds).toEqual([1])
+    searchHighlights('api')
+    expect(button('Add element API')).toBeUndefined()
+    key('Escape')
+    expect(input().props.value).toBe('')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps unavailable highlights removable in the unified selected list', () => {
+    mount({ elementId: 1, connectorId: 10 })
+    const props = renderer.root.findByType(FlowPanel).props
+    act(() => renderer.update(<FlowPanel {...props} diagram={{ elements: [], connectors: [] }} />))
+    expect(button('Remove element Unavailable element #1')).toBeDefined()
+    expect(button('Remove connection Unavailable connection #10')).toBeDefined()
+    act(() => button('Remove element Unavailable element #1').props.onClick())
+    act(() => button('Remove connection Unavailable connection #10').props.onClick())
+    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectors: [] })
   })
 
   it('retries loading without discarding an unsaved draft', () => {
@@ -491,6 +592,58 @@ describe('flow step editing', () => {
 })
 
 describe('flow operation editing and navigation', () => {
+  it.each(['alternate', 'parallel'] as const)('focuses %s paths with a breadcrumb back to the main steps', mode => {
+    mount()
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Decision')
+    act(() => button('Add step').props.onClick())
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'After')
+    const [decision, after] = currentDraft().steps
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), decision.id)
+    act(() => menuItem(`Add ${mode} paths`).props.onClick())
+    expect(renderer.root.findByProps({ 'data-testid': 'flow-path-editor' })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': 'Path editor breadcrumb' })).toBeDefined()
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Reorder step 1' })).toHaveLength(0)
+    expect(button('Add step')).toBeUndefined()
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Path name' })).toHaveLength(2)
+    act(() => button('Back to flow steps').props.onClick())
+    expect(renderer.root.findAllByProps({ 'data-testid': 'flow-path-editor' })).toHaveLength(0)
+    expect(button('Reorder step 2')).toBeDefined()
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Step title' })).toHaveLength(0)
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), decision.id)
+    act(() => button('Edit paths for Decision').props.onClick())
+    expect(renderer.root.findByProps({ 'data-testid': 'flow-path-editor' })).toBeDefined()
+    change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), after.id)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'flow-path-editor' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'aria-label': 'Step title' }).props.value).toBe('After')
+  })
+
+  it('opens nested branches at full width and navigates back through their breadcrumb', async () => {
+    mount({ elementId: 2 })
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Decision')
+    act(() => menuItem('Add alternate paths').props.onClick())
+    act(() => button('Add step to path Path A').props.onClick())
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Concurrent work')
+    act(() => menuItem('Add parallel paths').props.onClick())
+    expect(renderer.root.findAllByProps({ 'data-testid': 'flow-path-editor' })).toHaveLength(1)
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Path name' })).toHaveLength(2)
+    expect(button('Parallel paths').props['aria-pressed']).toBe(true)
+    const breadcrumb = renderer.root.findByProps({ 'aria-label': 'Path editor breadcrumb' })
+    expect(breadcrumb.findAllByType('p').some(node => node.props.children === 'Path A')).toBe(true)
+    act(() => button('Add step to path Path B').props.onClick())
+    change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Background task')
+    act(() => button('Edit paths for Decision').props.onClick())
+    expect(button('Alternate paths').props['aria-pressed']).toBe(true)
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Path name' })).toHaveLength(2)
+    act(() => button('Back to flow steps').props.onClick())
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    const decision = vi.mocked(flowApi.save).mock.lastCall![0].steps[0]
+    expect(decision.elementIds).toEqual([2])
+    const nested = decision.branches?.paths[0].steps[0]
+    expect(nested).toMatchObject({ title: 'Concurrent work', branches: { mode: 'parallel' } })
+    expect(nested?.branches?.paths[1].steps[0].title).toBe('Background task')
+  })
+
   it('offers text-only storytelling with implicit continuation', async () => {
     mount()
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Explain the next phase')
@@ -510,7 +663,7 @@ describe('flow operation editing and navigation', () => {
     act(() => button('Add step to path Path A').props.onClick())
     const titles = renderer.root.findAllByProps({ 'aria-label': 'Step title' })
     change(titles[titles.length - 1], 'Handle the result')
-    const parent = () => renderer.root.findAllByType('reorder-group' as never)[0].props.values[0]
+    const parent = () => currentDraft().steps[0]
     const originalPaths = parent().branches.paths
     act(() => button('Parallel paths').props.onClick())
     expect(parent().branches).toEqual({ mode: 'parallel', paths: originalPaths })
@@ -545,7 +698,7 @@ describe('flow operation editing and navigation', () => {
     expect(paths()).toEqual(['Path B', 'Path A'])
     key('Reorder path 1', 'ArrowUp')
     expect(paths()).toEqual(['Path B', 'Path A'])
-    const pathGroup = renderer.root.findAllByType('reorder-group' as never)[1]
+    const pathGroup = renderer.root.findAllByType('reorder-group' as never).find(node => node.props.values[0]?.name === 'Path B')!
     const [b, a] = pathGroup.props.values
     act(() => pathGroup.props.onReorder([a, b]))
     expect(paths()).toEqual(['Path A', 'Path B'])
@@ -571,7 +724,7 @@ describe('flow operation editing and navigation', () => {
     const pathHeader = () => renderer.root.findAllByType('button').find(node => node.props['aria-expanded'] !== undefined && node.findAllByType('p').some(text => text.props.children === 'Path A'))!
     act(() => pathHeader().props.onClick())
     expect(pathHeader().props['aria-expanded']).toBe(false)
-    expect(renderer.root.findAllByProps({ 'aria-label': 'Step title' })).toHaveLength(1)
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Step title' })).toHaveLength(0)
     act(() => pathHeader().props.onClick())
     expect(pathHeader().props['aria-expanded']).toBe(true)
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
@@ -606,7 +759,7 @@ describe('flow operation editing and navigation', () => {
     mount({ elementId: 2 }, { onCanvasRecorderChange })
     act(() => menuItem('Add alternate paths').props.onClick())
     const addButtons = renderer.root.findAllByType('button').filter(node => node.props['aria-label']?.startsWith('Add step'))
-    expect(addButtons).toHaveLength(3)
+    expect(addButtons).toHaveLength(2)
     act(() => button('Add step to path Path B').props.onClick())
     const titles = renderer.root.findAllByProps({ 'aria-label': 'Step title' })
     change(titles[titles.length - 1], 'Failure handling')

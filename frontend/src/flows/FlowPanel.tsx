@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Box, Button, Checkbox, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { Box, Button, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon } from '@chakra-ui/icons'
 import { motion } from 'framer-motion'
-import { faBackwardStep, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
+import { faBackwardStep, faCodeFork, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
 import { SortableFlowList } from './SortableFlowStep'
 import { ChevronDownIcon, CloseIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
@@ -16,6 +16,8 @@ import { FlowYamlControls } from './FlowYamlControls'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
 import { saveButtonStyles } from '../styles/saveButton'
 import { panelSurfaceStyles } from '../styles/surfaces'
+import { resolveElementIconUrl } from '../utils/elementIcon'
+import { TYPE_COLORS } from '../types'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
 function stepSummary(step: FlowStep): string {
@@ -351,64 +353,91 @@ export interface FlowPanelProps {
   onFocus: (focus: FlowFocus | null) => void
 }
 
-function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?: () => void; picking?: boolean; step: FlowStep; diagram: FlowDiagram; onChange: (changes: Partial<FlowStep>) => void }) {
-  const [search, setSearch] = useState('')
-  const [tab, setTab] = useState<'elements' | 'connections'>(step.connectors.length && !step.elementIds.length ? 'connections' : 'elements')
-  const term = search.trim().toLocaleLowerCase()
-  const elements = term ? diagram.elements.filter(element => element.name.toLocaleLowerCase().includes(term)) : []
-  const connectors = diagram.connectors.map(connector => {
-    const endpoints = `${diagram.elements.find(e => e.element_id === connector.source_element_id)?.name ?? connector.source_element_id} → ${diagram.elements.find(e => e.element_id === connector.target_element_id)?.name ?? connector.target_element_id}`
-    const label = connector.label?.trim()
-    return { ...connector, name: label || endpoints, details: label ? `${endpoints} · ${label}` : endpoints }
-  })
-  const matchingConnectors = term ? connectors.filter(connector => connector.details.toLocaleLowerCase().includes(term)) : []
-  return <VStack align="stretch" spacing={2} minW={0}>
-    <HStack justify="space-between" minW={0} spacing={1} flexWrap="wrap">
-      <Text fontSize="xs" fontWeight="semibold" color="text.muted">What to highlight</Text>
-      {onPick && <Button size="xs" h={7} px={2} variant={picking ? 'primary' : 'ghost'} color={picking ? undefined : 'var(--accent)'} aria-pressed={!!picking} onClick={onPick}>{picking ? 'Done picking' : 'Pick from canvas'}</Button>}
-    </HStack>
-    <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" overflow="hidden">
-    <HStack p={2} spacing={1} flexWrap="wrap" aria-label="Highlight type">
-      <Button flex="1 1 100px" minW={0} px={2} size="sm" variant={tab === 'elements' ? 'solid' : 'ghost'} aria-label="Show elements" aria-pressed={tab === 'elements'} onClick={() => { setTab('elements'); setSearch('') }}>Elements ({step.elementIds.length})</Button>
-      <Button flex="1 1 100px" minW={0} px={2} size="sm" variant={tab === 'connections' ? 'solid' : 'ghost'} aria-label="Show connections" aria-pressed={tab === 'connections'} onClick={() => { setTab('connections'); setSearch('') }}>Connections ({step.connectors.length})</Button>
-    </HStack>
-    <Box px={2} pb={2}><Input size="sm" aria-label="Search highlights" placeholder={tab === 'elements' ? 'Search elements…' : 'Search connections…'} value={search} onChange={event => setSearch(event.target.value)} /></Box>
-    {(tab === 'elements' ? step.elementIds.length > 0 : step.connectors.length > 0) && <HStack px={2} pb={2} spacing={1} gap={1} flexWrap="wrap" aria-label={tab === 'elements' ? 'Selected elements' : 'Selected connections'}>
-      {tab === 'elements' ? step.elementIds.map(id => {
-        const name = diagram.elements.find(element => element.element_id === id)?.name ?? `Unavailable element #${id}`
-        return <Tag key={id} size="sm" maxW="full">
-          <TagLabel isTruncated title={name}>{name}</TagLabel>
-          <TagCloseButton aria-label={`Remove element ${name}`} onClick={() => onChange({ elementIds: step.elementIds.filter(value => value !== id) })} />
-        </Tag>
-      }) : step.connectors.map(highlight => {
-        const connector = connectors.find(connector => connector.id === highlight.id)
-        const name = connector?.name ?? `Unavailable connection #${highlight.id}`
-        return <Tag key={highlight.id} size="sm" maxW="full">
-          <TagLabel isTruncated title={connector?.details ?? name}>{name}</TagLabel>
-          <TagCloseButton aria-label={`Remove connection ${connector?.details ?? name}`} onClick={() => onChange({ connectors: step.connectors.filter(value => value.id !== highlight.id) })} />
-        </Tag>
-      })}
-    </HStack>}
-    {term && <VStack data-testid="highlight-search-results" align="stretch" spacing={0} maxH="240px" overflowY="auto" overscrollBehavior="contain" px={2} pb={2}>
-      {tab === 'elements' ? <>
-        {elements.slice(0, 5).map(element => <Checkbox key={element.element_id} size="sm" py={2} alignItems="flex-start" isChecked={step.elementIds.includes(element.element_id)} onChange={e => onChange({ elementIds: e.target.checked ? [...step.elementIds, element.element_id] : step.elementIds.filter(id => id !== element.element_id) })}>{element.name}</Checkbox>)}
-        {!elements.length && <Text fontSize="sm" color="gray.400" py={2}>No matching elements.</Text>}
-      </> : <>
-        {matchingConnectors.slice(0, 5).map(connector => <Box key={connector.id} py={2}>
-          {/* Checkbox forwards its ref to the hidden input; use a DOM wrapper for pointer exit. */}
-          <Tooltip label={connector.details} openDelay={300} placement="right" hasArrow closeOnPointerDown closeOnScroll>
-            <Box as="span" display="block">
-              <Checkbox size="sm" w="full" aria-label={connector.details} sx={{ '.chakra-checkbox__label': { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }} isChecked={step.connectors.some(highlight => highlight.id === connector.id)} onChange={e => onChange({ connectors: e.target.checked ? [...step.connectors, { id: connector.id, reverse: false }] : step.connectors.filter(c => c.id !== connector.id) })}>{connector.name}</Checkbox>
-            </Box>
-          </Tooltip>
-        </Box>)}
-        {!matchingConnectors.length && <Text fontSize="sm" color="gray.400" py={2}>No matching connections.</Text>}
-      </>}
-      {(tab === 'elements' ? elements.length : matchingConnectors.length) > 5 && <Text fontSize="xs" color="gray.400" pt={1}>Showing 5 matches. Refine your search for more.</Text>}
-    </VStack>}
+interface HighlightOption {
+  kind: 'element' | 'connector'
+  id: number
+  name: string
+  details: string
+  searchText: string
+  element?: FlowDiagram['elements'][number]
+}
 
+function HighlightIcon({ option }: { option: HighlightOption }) {
+  const element = option.element
+  const url = element ? resolveElementIconUrl(element.logo_url, element.technology_connectors) : null
+  const color = option.kind === 'connector' ? 'orange' : TYPE_COLORS[element?.kind?.toLowerCase() ?? ''] ?? 'gray'
+  return <Box display="flex" w={6} h={6} rounded="md" bg={`${color}.900`} color={`${color}.200`} alignItems="center" justifyContent="center" flexShrink={0} aria-hidden="true">
+    {url ? <Box as="img" src={url} alt="" boxSize="18px" objectFit="contain" />
+      : <Text as="span" fontSize="sm">{option.kind === 'connector' ? '→' : (element?.kind || 'E').charAt(0).toUpperCase()}</Text>}
+  </Box>
+}
+
+function HighlightLabel({ option }: { option: HighlightOption }) {
+  return <Box flex={1} minW={0} textAlign="left">
+    <Text fontSize="xs" fontWeight="medium" isTruncated>{option.name}</Text>
+    <Text fontSize="10px" fontWeight="normal" color="text.muted" isTruncated>{option.details}</Text>
+  </Box>
+}
+
+function StepHighlights({ step, diagram, onChange, onPick, picking, disabled }: { onPick?: () => void; picking?: boolean; disabled: boolean; step: FlowStep; diagram: FlowDiagram; onChange: (changes: Partial<FlowStep>) => void }) {
+  const [search, setSearch] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const searchInput = useRef<HTMLInputElement>(null)
+  const resultsId = useId()
+  const term = search.trim().toLocaleLowerCase()
+  const elementsById = new Map(diagram.elements.map(element => [element.element_id, element]))
+  const options: HighlightOption[] = [
+    ...diagram.elements.map(element => ({ kind: 'element' as const, id: element.element_id, name: element.name, details: element.technology || element.kind || 'Element', searchText: `${element.name} ${element.technology ?? ''} ${element.kind ?? ''}`.toLocaleLowerCase(), element })),
+    ...diagram.connectors.map(connector => {
+      const endpoints = `${elementsById.get(connector.source_element_id)?.name ?? connector.source_element_id} → ${elementsById.get(connector.target_element_id)?.name ?? connector.target_element_id}`
+      const label = connector.label?.trim()
+      return { kind: 'connector' as const, id: connector.id, name: label || endpoints, details: label ? endpoints : 'Connection', searchText: `${endpoints} ${label ?? ''}`.toLocaleLowerCase() }
+    }),
+  ]
+  const key = (option: Pick<HighlightOption, 'kind' | 'id'>) => `${option.kind}:${option.id}`
+  const byKey = new Map(options.map(option => [key(option), option]))
+  const selected = [
+    ...step.elementIds.map(id => byKey.get(`element:${id}`) ?? { kind: 'element' as const, id, name: `Unavailable element #${id}`, details: 'Element', searchText: '' }),
+    ...step.connectors.map(({ id }) => byKey.get(`connector:${id}`) ?? { kind: 'connector' as const, id, name: `Unavailable connection #${id}`, details: 'Connection', searchText: '' }),
+  ]
+  const selectedKeys = new Set(selected.map(key))
+  const rank = (option: HighlightOption) => option.name.toLocaleLowerCase() === term ? 0 : option.name.toLocaleLowerCase().startsWith(term) ? 1 : option.name.toLocaleLowerCase().includes(term) ? 2 : 3
+  const matches = term ? options.filter(option => !selectedKeys.has(key(option)) && option.searchText.includes(term)).sort((a, b) => rank(a) - rank(b)) : []
+  const results = matches.slice(0, 5)
+  const active = Math.min(activeIndex, Math.max(0, results.length - 1))
+  const connectionDetails = (option: HighlightOption) => option.details === 'Connection' ? option.name : `${option.details} · ${option.name}`
+  function add(option: HighlightOption) {
+    if (disabled || selectedKeys.has(key(option))) return
+    onChange(option.kind === 'element' ? { elementIds: [...step.elementIds, option.id] } : { connectors: [...step.connectors, { id: option.id, reverse: false }] })
+    setSearch(''); setActiveIndex(0); searchInput.current?.focus()
+  }
+  return <VStack align="stretch" spacing={2} minW={0}>
+    {onPick && <HStack justify="center" minW={0}>
+      <Button size="sm" h={8} px={3} variant="primary" isDisabled={disabled} aria-pressed={!!picking} onClick={onPick}>{picking ? 'Done picking' : 'Pick from canvas'}</Button>
+    </HStack>}
+    <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" p={2}>
+      <Input ref={searchInput} size="sm" aria-label="Search highlights" role="combobox" aria-autocomplete="list" aria-expanded={!!term} aria-controls={term ? resultsId : undefined} aria-activedescendant={term && results.length ? `${resultsId}-${active}` : undefined} placeholder="Search…" value={search} isDisabled={disabled} onChange={event => { setSearch(event.target.value); setActiveIndex(0) }} onKeyDown={event => {
+        if (event.nativeEvent?.isComposing) return
+        if (term && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSearch(''); setActiveIndex(0) }
+        if (!results.length) return
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopPropagation(); setActiveIndex((active + (event.key === 'ArrowDown' ? 1 : results.length - 1)) % results.length) }
+        if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); add(results[active]) }
+      }} />
+      {term && <VStack id={resultsId} role="listbox" aria-label="Matching highlights" data-testid="highlight-search-results" align="stretch" spacing={1} mt={2} maxH="240px" overflowY="auto" overscrollBehavior="contain">
+        {results.map((option, index) => <Button key={key(option)} id={`${resultsId}-${index}`} role="option" aria-selected={index === active} aria-label={`Add ${option.kind === 'element' ? 'element' : 'connection'} ${option.kind === 'element' ? option.name : connectionDetails(option)}`} tabIndex={-1} size="sm" variant="ghost" w="full" h="auto" minH="44px" px={2} py={1.5} gap={2} bg={index === active ? 'whiteAlpha.100' : undefined} isDisabled={disabled} title={`${option.name} · ${option.details}`} onMouseEnter={() => setActiveIndex(index)} onMouseDown={event => event.preventDefault()} onClick={() => add(option)}>
+          <HighlightIcon option={option} /><HighlightLabel option={option} /><AddIcon boxSize="10px" color="text.muted" flexShrink={0} />
+        </Button>)}
+        {!results.length && <Text fontSize="xs" color="text.muted" py={2}>No matching highlights to add.</Text>}
+        {matches.length > 5 && <Text fontSize="xs" color="text.muted" px={2} py={1}>Showing 5 matches. Refine your search for more.</Text>}
+      </VStack>}
     </Box>
-    {!step.elementIds.length && !step.connectors.length && <Text fontSize="xs" color="text.muted">Leave empty for a text-only step.</Text>}
+    {!!selected.length && <VStack align="stretch" spacing={1} aria-label="Selected highlights">
+      {selected.map(option => <HStack key={key(option)} spacing={2} p={1.5} rounded="md" bg="whiteAlpha.50" minW={0} title={`${option.name} · ${option.details}`}>
+        <HighlightIcon option={option} /><HighlightLabel option={option} />
+        <IconButton size="xs" variant="ghost" aria-label={`Remove ${option.kind === 'element' ? 'element' : 'connection'} ${option.kind === 'element' ? option.name : option.searchText ? connectionDetails(option) : option.name}`} icon={<CloseIcon />} flexShrink={0} isDisabled={disabled} onClick={() => onChange(option.kind === 'element' ? { elementIds: step.elementIds.filter(id => id !== option.id) } : { connectors: step.connectors.filter(connector => connector.id !== option.id) })} />
+      </HStack>)}
+    </VStack>}
+    {!selected.length && <Text fontSize="xs" color="text.muted">Leave empty for a text-only step.</Text>}
   </VStack>
 }
 
@@ -437,7 +466,7 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
     {!catalog.flows.length && !step.goToFlowId && <Text fontSize="xs" color="text.muted">Save another flow to link it here.</Text>}
   </VStack>
   return <Menu placement="bottom-end" isLazy>
-    <MenuButton as={Button} size="xs" variant="ghost" alignSelf="flex-start" leftIcon={<AddIcon boxSize="10px" />} isDisabled={disabled}>Add to step</MenuButton>
+    <MenuButton as={Button} size="xs" variant="ghost" alignSelf="flex-end" leftIcon={<FontAwesomeIcon icon={faCodeFork} size={12} />} isDisabled={disabled}>Advanced</MenuButton>
     <Portal><MenuList minW="200px" maxW="calc(100vw - 32px)">
       {(['alternate', 'parallel'] as const).map(mode => <MenuItem key={mode} aria-label={`Add ${mode} paths`} isDisabled={depth >= 8} onClick={() => onChange({ branches: { mode, paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>{mode === 'alternate' ? 'Alternate paths' : 'Parallel paths'}</MenuItem>)}
       <MenuItem aria-label="Link to flow" onClick={() => setLinking(true)}>Link to flow</MenuItem>
@@ -445,8 +474,46 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
   </Menu>
 }
 
-function FlowEditorCard({ index, title, summary, handle, active, expanded, onToggle, actions, notice, children }: {
-  index: number; title: string; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
+function InlineStepText({ label, value, fallback, multiline = false, disabled, onChange }: {
+  label: string; value: string; fallback: string; multiline?: boolean; disabled: boolean; onChange: (value: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const original = useRef(value)
+  const fieldProps = {
+    'aria-label': label,
+    value,
+    placeholder: fallback,
+    isDisabled: disabled,
+    autoFocus: true,
+    variant: 'unstyled',
+    minW: 0,
+    px: 0,
+    fontSize: multiline ? 'xs' : 'sm',
+    fontWeight: multiline ? 'normal' : 'medium',
+    rounded: 'sm',
+    _focusVisible: { boxShadow: '0 1px 0 var(--accent)' },
+    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(event.target.value),
+    onBlur: () => setEditing(false),
+    onKeyDown: (event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (event.nativeEvent?.isComposing) return
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation(); onChange(original.current); setEditing(false)
+      } else if (event.key === 'Enter' && (!multiline || event.ctrlKey || event.metaKey)) {
+        event.preventDefault(); event.stopPropagation(); setEditing(false)
+      }
+    },
+  }
+  if (editing) return multiline
+    ? <Textarea {...fieldProps} maxLength={10000} rows={2} minH="48px" maxH="120px" resize="vertical" />
+    : <Input {...fieldProps} maxLength={500} h="21px" onFocus={event => event.target.select()} />
+  return <Button aria-label={label} data-inline-preview value={value} variant="unstyled" w="full" minW={0} h="auto" minH={multiline ? '28px' : '21px'} fontWeight={multiline ? 'normal' : 'medium'} fontSize={multiline ? 'xs' : 'sm'} textAlign="left" color={multiline ? 'text.muted' : undefined} rounded="sm" isDisabled={disabled} title={`Click to edit ${label.toLowerCase()}`}
+    _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ boxShadow: '0 0 0 1px var(--accent)' }} onClick={() => { original.current = value; setEditing(true) }}>
+    <Text as="span" display="block" isTruncated={!multiline} whiteSpace={multiline ? 'pre-wrap' : 'nowrap'} overflowWrap="anywhere" maxH={multiline ? '120px' : undefined} overflowY={multiline ? 'auto' : undefined}>{value || fallback}</Text>
+  </Button>
+}
+
+function FlowEditorCard({ index, title, titleEditor, summary, handle, active, expanded, onToggle, actions, notice, children }: {
+  index: number; title: string; titleEditor?: ReactNode; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
 }) {
   return <Box role="group" position="relative" minW={0} border="1px solid" borderColor={active ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: active ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
     '> [data-flow-step-header] .flow-step-actions': { opacity: 0, pointerEvents: 'none' },
@@ -455,16 +522,17 @@ function FlowEditorCard({ index, title, summary, handle, active, expanded, onTog
   }}>
     <Box position="relative" data-flow-step-header>
       {handle}
-      <Button variant="unstyled" display="flex" alignItems="center" gap={2} size="sm" w="full" minW={0} h="54px" textAlign="left" p={2} pr="108px" rounded="lg" fontWeight="normal" aria-expanded={expanded} onClick={onToggle}>
+      <Button variant="unstyled" display="flex" alignItems="center" gap={2} size="sm" w="full" minW={0} h="54px" textAlign="left" p={2} pr="108px" rounded="lg" fontWeight="normal" aria-label={titleEditor ? `Toggle step ${index + 1}: ${title}` : undefined} aria-expanded={expanded} onClick={onToggle}>
         <Box data-flow-step-number display="flex" w="24px" h="24px" alignItems="center" justifyContent="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" fontSize="10px" fontWeight="bold">{index + 1}</Box>
         <Box flex={1} minW={0}>
-          <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{title}</Text>
+          <Text fontSize="sm" fontWeight="medium" noOfLines={1} visibility={titleEditor ? 'hidden' : undefined}>{title}</Text>
           <Text mt={0.5} fontSize="10px" fontWeight="normal" color="gray.400" noOfLines={1}>{summary}</Text>
         </Box>
         <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
           <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="transform 150ms ease" sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><ChevronDownIcon /></Box>
         </Box>
       </Button>
+      {titleEditor && <Box position="absolute" left="40px" right="108px" top="8px" minW={0}>{titleEditor}</Box>}
       <HStack className="flow-step-actions" position="absolute" right={10} top={0} bottom={0} alignItems="center" spacing={1}>{actions}</HStack>
     </Box>
     {notice && <Box px={3} pb={2}>{notice}</Box>}
@@ -496,7 +564,71 @@ function StepPaths({ step, onChange, disabled, available, expanded, onSelect, re
   </VStack>
 }
 
-function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] }, addLabel = 'Add step' }: { depth?: number; available?: number; catalog?: FlowCatalog; disabled: boolean; onPick?: () => void; picking?: boolean; actions?: ReactNode; addLabel?: string; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
+interface StepListProps {
+  steps: FlowStep[]
+  onChange: (steps: FlowStep[]) => void
+  diagram: FlowDiagram
+  selection?: FlowPanelProps['selection']
+  onSelect: (id: string | null) => void
+  expanded: string | null
+  disabled: boolean
+  depth?: number
+  available?: number
+  catalog?: FlowCatalog
+  actions?: ReactNode
+  onPick?: () => void
+  picking?: boolean
+  addLabel?: string
+  onEditPaths: (stepId: string) => void
+}
+
+interface PathEditorLocation { step: FlowStep; index: number; path?: FlowBranch }
+function pathEditorTrail(steps: FlowStep[], id: string, path?: FlowBranch): PathEditorLocation[] | undefined {
+  for (const [index, step] of steps.entries()) {
+    if (step.id === id) return [{ step, index, path }]
+    for (const branch of step.branches?.paths ?? []) {
+      const trail = pathEditorTrail(branch.steps, id, branch)
+      if (trail) return [{ step, index, path }, ...trail]
+    }
+  }
+}
+
+function FlowStepEditor(props: Omit<StepListProps, 'onEditPaths'>) {
+  const [pathStepId, setPathStepId] = useState<string | null>(null)
+  const editor = useRef<HTMLDivElement>(null)
+  const trail = pathStepId ? pathEditorTrail(props.steps, pathStepId) : undefined
+  const focused = trail ? trail[trail.length - 1].step : undefined
+  useEffect(() => {
+    const scroll = editor.current?.closest('[data-flow-scroll]')
+    if (scroll) scroll.scrollTop = 0
+  }, [pathStepId])
+  useEffect(() => {
+    if (focused && props.expanded && !allSteps([focused]).some(step => step.id === props.expanded)) setPathStepId(null)
+  }, [focused, props.expanded])
+  if (!focused?.branches || !trail) return <Box ref={editor} minW={0}><StepList {...props} onEditPaths={setPathStepId} /></Box>
+  const depth = trail.length - 1
+  const patch = (changes: Partial<FlowStep>) => props.onChange(updateStep(props.steps, focused.id, step => ({ ...step, ...changes })))
+  return <VStack ref={editor} data-testid="flow-path-editor" align="stretch" spacing={3} minW={0}>
+    <Box as="nav" aria-label="Path editor breadcrumb">
+      <HStack spacing={1} flexWrap="wrap" minW={0}>
+        <Button size="xs" variant="ghost" aria-label="Back to flow steps" onClick={() => { setPathStepId(null); props.onSelect(null) }}>Steps</Button>
+        {trail.map((entry, index) => <HStack key={entry.step.id} spacing={1} minW={0} maxW="full">
+          {entry.path && <><Text as="span" color="text.muted" fontSize="xs" aria-hidden>/</Text><Text fontSize="xs" color="text.muted" maxW="100px" isTruncated title={entry.path.name}>{entry.path.name}</Text></>}
+          <Text as="span" color="text.muted" fontSize="xs" aria-hidden>/</Text>
+          {index === trail.length - 1
+            ? <Text fontSize="xs" fontWeight="semibold" minW={0} isTruncated aria-current="page" title={stepLabel(entry.step, props.diagram)}>{entry.index + 1}. {stepLabel(entry.step, props.diagram)}</Text>
+            : <Button size="xs" variant="ghost" minW={0} maxW="160px" aria-label={`Edit paths for ${stepLabel(entry.step, props.diagram)}`} onClick={() => { setPathStepId(entry.step.id); props.onSelect(entry.step.id) }}><Text isTruncated>{entry.index + 1}. {stepLabel(entry.step, props.diagram)}</Text></Button>}
+        </HStack>)}
+      </HStack>
+    </Box>
+    <StepOptions key={`options:${focused.id}`} step={focused} onChange={patch} catalog={props.catalog ?? { flows: [], views: [] }} disabled={props.disabled} depth={depth} />
+    <StepPaths key={`paths:${focused.id}`} step={focused} onChange={paths => patch({ branches: { ...focused.branches!, paths } })} disabled={props.disabled} available={props.available ?? 500} expanded={props.expanded} onSelect={props.onSelect} renderSteps={path =>
+      <StepList {...props} actions={undefined} steps={path.steps} onChange={steps => patch({ branches: { ...focused.branches!, paths: focused.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} depth={depth + 1} addLabel={`Add step to path ${path.name}`} onEditPaths={setPathStepId} />
+    } />
+  </VStack>
+}
+
+function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] }, addLabel = 'Add step', onEditPaths }: StepListProps) {
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   return <VStack align="stretch" spacing={3}>
     {depth === 0 && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
@@ -504,23 +636,16 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
       {actions}
     </HStack>}
     <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
-      <FlowEditorCard index={index} title={stepLabel(step, diagram)} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
+      <FlowEditorCard index={index} title={stepLabel(step, diagram)} titleEditor={expanded === step.id ? <InlineStepText label="Step title" value={step.title} fallback={stepLabel(step, diagram)} disabled={disabled} onChange={title => patch(step.id, { title })} /> : undefined} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
         <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
         <FlowAction label={`Remove step ${index + 1}`} hint="Remove step" icon={<TrashIcon />} destructive disabled={disabled} onClick={() => onChange(steps.filter(s => s.id !== step.id))} />
       </>} notice={missingReference(step, diagram) ? <Text fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text> : undefined}>
         <VStack align="stretch" spacing={3} p={3} pt={0}>
-          <VStack align="stretch" spacing={0} minW={0}>
-            <Text fontSize="xs" fontWeight="semibold" color="text.muted" mb={1}>Story</Text>
-            <Input aria-label="Step title" variant="unstyled" minW={0} h="32px" px={2} rounded="md" fontSize="sm" fontWeight="semibold" placeholder="Step title" maxLength={500} value={step.title}
-              _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch(step.id, { title: e.target.value })} />
-            <Textarea aria-label="Step description" variant="unstyled" minW={0} fontSize="xs" color="gray.400" px={2} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={step.description}
-              _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch(step.id, { description: e.target.value })} />
-          </VStack>
-          <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={expanded === step.id ? onPick : undefined} picking={expanded === step.id && picking} />
-          <StepOptions step={step} onChange={changes => patch(step.id, changes)} catalog={catalog} disabled={disabled} depth={depth} />
-          {step.branches && <StepPaths step={step} onChange={paths => patch(step.id, { branches: { ...step.branches!, paths } })} disabled={disabled} available={available} expanded={expanded} onSelect={onSelect} renderSteps={path =>
-            <StepList steps={path.steps} onChange={steps => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} diagram={diagram} selection={selection} onSelect={onSelect} expanded={expanded} onPick={onPick} picking={picking} disabled={disabled} depth={depth + 1} available={available} catalog={catalog} addLabel={`Add step to path ${path.name}`} />
-          } />}
+          <InlineStepText label="Step description" value={step.description} fallback="Add a description…" multiline disabled={disabled} onChange={description => patch(step.id, { description })} />
+          <StepHighlights step={step} diagram={diagram} disabled={disabled} onChange={changes => patch(step.id, changes)} onPick={expanded === step.id ? onPick : undefined} picking={expanded === step.id && picking} />
+          {step.branches
+            ? <Button size="sm" variant="ghost" justifyContent="space-between" aria-label={`Edit paths for ${stepLabel(step, diagram)}`} onClick={() => onEditPaths(step.id)}><Text fontSize="sm">Edit {step.branches.mode === 'parallel' ? 'parallel' : 'alternate'} paths</Text><Text fontSize="xs" color="text.muted">{step.branches.paths.length} paths</Text></Button>
+            : <StepOptions step={step} onChange={changes => { patch(step.id, changes); if (changes.branches) onEditPaths(step.id) }} catalog={catalog} disabled={disabled} depth={depth} />}
         </VStack>
       </FlowEditorCard>
     }</SortableFlowList>
@@ -785,7 +910,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         {editMode && <Box as="fieldset" disabled={busy} border={0} minW={0} p={0}>
           <VStack align="stretch" spacing={3}>
             {allSteps(flow.steps).length >= 500 && <Text fontSize="xs" color="gray.400">Maximum of 500 steps reached.</Text>}
-            <StepList disabled={busy} available={500 - allSteps(flow.steps).length} catalog={catalog}
+            <FlowStepEditor key={flow.id || viewId || 'draft'} disabled={busy} available={500 - allSteps(flow.steps).length} catalog={catalog}
               onPick={onCanvasRecorderChange ? () => { playback.pause(); setCanvasMode(pickerActive ? null : 'pick') } : undefined} picking={pickerActive}
               actions={onCanvasRecorderChange && <Button size="sm" leftIcon={<Box as="span" w="8px" h="8px" rounded="full" bg={recorderActive ? 'red.300' : 'currentColor'} />} aria-pressed={recorderActive} isDisabled={busy || allSteps(flow.steps).length >= 500} colorScheme={recorderActive ? 'red' : 'gray'} onClick={() => { playback.pause(); setCanvasMode(recorderActive ? null : 'record') }}>{recorderActive ? 'Stop recording' : 'Record steps'}</Button>}
               expanded={recorderActive ? null : activeStep?.id ?? null} steps={flow.steps} onChange={steps => patch({ steps })} diagram={currentDiagram} selection={selection} onSelect={playback.select} />
