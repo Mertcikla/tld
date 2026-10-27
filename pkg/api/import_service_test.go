@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestImportResourcesDefaultsElementBypassNoiseGateFalse(t *testing.T) {
@@ -73,7 +75,7 @@ func TestImportResourcesSyncWithAutoLayout(t *testing.T) {
 			{Ref: "db", Name: "DB", Kind: ptr("database"), Placements: []*diagv1.BatchViewPlacement{{ParentRef: "root"}}},
 		},
 		Connectors: []*diagv1.BatchConnector{
-			{Ref: "api:db", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Label: ptr(label)},
+			{Ref: "api:db", ViewRef: "root", SourceElementRef: "api", TargetElementRef: "db", Label: ptr(label), Tags: []string{"feat"}},
 		},
 	}))
 	if err != nil {
@@ -93,12 +95,72 @@ func TestImportResourcesSyncWithAutoLayout(t *testing.T) {
 	if len(content.GetConnectors()) != 1 {
 		t.Fatalf("connectors = %d, want 1", len(content.GetConnectors()))
 	}
+	if tags := content.GetConnectors()[0].GetTags(); !slices.Equal(tags, []string{"feat"}) {
+		t.Fatalf("connector tags = %v, want [feat]", tags)
+	}
 	positions := map[string]bool{}
 	for _, placement := range content.GetPlacements() {
 		positions[fmt.Sprintf("%.0f:%.0f", placement.GetPositionX(), placement.GetPositionY())] = true
 	}
 	if len(positions) != 2 {
 		t.Fatalf("auto-layout positions not distinct: %v", positions)
+	}
+}
+
+func TestImportResourcesConnectorTagPatches(t *testing.T) {
+	for _, id := range []int32{0, 42} {
+		for _, tc := range []struct {
+			name    string
+			planned *diagv1.BatchConnector
+			want    []string
+		}{
+			{"omitted", &diagv1.BatchConnector{}, nil},
+			{"replace", &diagv1.BatchConnector{Tags: []string{"feat"}}, []string{"feat"}},
+			{"clear", &diagv1.BatchConnector{ReplaceTags: true}, []string{}},
+		} {
+			t.Run(fmt.Sprintf("id=%d/%s", id, tc.name), func(t *testing.T) {
+				planned := tc.planned
+				planned.Id, planned.ViewRef = &id, "root"
+				planned.SourceElementRef, planned.TargetElementRef = "api", "db"
+				data, err := proto.Marshal(planned)
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded := &diagv1.BatchConnector{}
+				if err := proto.Unmarshal(data, decoded); err != nil {
+					t.Fatal(err)
+				}
+				called := false
+				check := func(input ConnectorInput) (*diagv1.Connector, error) {
+					called = true
+					if (input.Tags == nil) != (tc.want == nil) || !slices.Equal(input.Tags, tc.want) {
+						t.Fatalf("tags = %#v, want %#v", input.Tags, tc.want)
+					}
+					return &diagv1.Connector{Id: 42}, nil
+				}
+				service := &ImportService{Store: &contractStore{
+					createConnector: func(_ context.Context, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+						if id != 0 {
+							t.Fatal("created instead of updating")
+						}
+						return check(input)
+					},
+					updateConnector: func(_ context.Context, _ int32, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+						if id == 0 {
+							t.Fatal("updated instead of creating")
+						}
+						return check(input)
+					},
+				}}
+				var writes []pendingWrite
+				if err := service.addImportedConnectors(context.Background(), uuid.Nil, []*diagv1.BatchConnector{decoded}, map[string]int32{"api": 1, "db": 2}, map[string]int32{"root": 1}, &writes); err != nil {
+					t.Fatal(err)
+				}
+				if !called {
+					t.Fatal("connector mutation was not called")
+				}
+			})
+		}
 	}
 }
 

@@ -292,6 +292,7 @@ func TestApplyBatchCreatesMissingConnectorWithPlannedID(t *testing.T) {
 			ViewRef:          "root",
 			SourceElementRef: "api",
 			TargetElementRef: "db",
+			Tags:             []string{"feat"},
 		}},
 	})
 	if err != nil {
@@ -300,8 +301,12 @@ func TestApplyBatchCreatesMissingConnectorWithPlannedID(t *testing.T) {
 	if got := resp.GetConnectorResults()[0].GetId(); got != 77 {
 		t.Fatalf("connector result id = %d, want 77", got)
 	}
-	if _, err := NewAPIAdapter(appStore).GetConnector(context.Background(), 77, uuid.Nil); err != nil {
+	connector, err := NewAPIAdapter(appStore).GetConnector(context.Background(), 77, uuid.Nil)
+	if err != nil {
 		t.Fatalf("connector 77 was not created: %v", err)
+	}
+	if tags := connector.GetTags(); len(tags) != 1 || tags[0] != "feat" {
+		t.Fatalf("connector tags = %v, want [feat]", tags)
 	}
 }
 
