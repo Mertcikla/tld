@@ -284,7 +284,8 @@ export function ExploreToolbar({
               onClick={() => { if (!flowsDisabledHint) onFlowsOpenChange(!flowsOpen) }}
             >
               <HStack spacing={1.5}>
-                <FontAwesomeIcon icon={faArrowsSplitUpAndLeft} size={15} />
+                {/* The icon's arrowhead extends above its declared 512×512 bounds. */}
+                <FontAwesomeIcon icon={faArrowsSplitUpAndLeft} size={15} viewBox="0 -32 512 544" />
                 <Text fontSize="11px" fontWeight="normal">Flows</Text>
               </HStack>
             </Button>

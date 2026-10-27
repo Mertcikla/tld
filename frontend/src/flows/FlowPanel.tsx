@@ -559,9 +559,11 @@ function FlowEditorCard({ index, identifier = String(index + 1), title, titleEdi
   index: number; identifier?: string; title: string; titleEditor?: ReactNode; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
 }) {
   return <Box role="group" position="relative" minW={0} border="1px solid" borderColor={active ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: active ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
+    '--flow-step-header-padding': '44px',
+    '&:hover, &:has(:focus-visible)': { '--flow-step-header-padding': '108px' },
     '> [data-flow-step-header] .flow-step-actions': { opacity: 0, pointerEvents: 'none' },
-    '&:hover > [data-flow-step-header] .flow-step-actions, &:focus-within > [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' },
-    '@media (hover: none), (pointer: coarse)': { '> [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' } },
+    '&:hover > [data-flow-step-header] .flow-step-actions, &:has(:focus-visible) > [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' },
+    '@media (hover: none), (pointer: coarse)': { '--flow-step-header-padding': '108px', '> [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' } },
   }}>
     <Box position="relative" data-flow-step-header>
       {handle}
@@ -570,7 +572,7 @@ function FlowEditorCard({ index, identifier = String(index + 1), title, titleEdi
           <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="none"><ChevronDownIcon /></Box>
         </Box>
       </Button>
-      <HStack spacing={2} minW={0} h="54px" p={2} pr="108px" pointerEvents="none">
+      <HStack spacing={2} minW={0} h="54px" p={2} pr="var(--flow-step-header-padding)" pointerEvents="none">
         <Box data-flow-step-number zIndex={1}><StepIdentifier identifier={identifier} /></Box>
         <Box flex={1} minW={0} zIndex={1}>
           {titleEditor ? <Box pointerEvents="auto">{titleEditor}</Box> : <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{title}</Text>}
@@ -978,8 +980,8 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     {flow && !captureActive && <Box data-testid="flow-playback-dock" role="region" aria-label="Flow playback" borderTop={editMode || !flow.steps.length || query.isLoading ? "1px solid" : undefined} borderColor="var(--border-main)" flexShrink={0} minH={0} maxH={editMode ? "55%" : undefined} display="flex" flexDirection="column" overflow="hidden">
       {editMode && <Button size="xs" h={7} variant="ghost" w="full" flexShrink={0} justifyContent="space-between" px={3} rounded={0} aria-label="Toggle playback controls" aria-expanded={editPlaybackOpen} aria-controls={playbackId}
         onClick={() => { if (editPlaybackOpen) playback.pause(); setEditPlaybackOpen(!editPlaybackOpen) }}>
-        <Text fontSize="xs" fontWeight="semibold">Preview playback</Text>
-        <Box transform={editPlaybackOpen ? 'rotate(180deg)' : undefined}><ChevronDownIcon /></Box>
+        <Text fontSize="xs" fontWeight="semibold">Preview</Text>
+        <Box transform={editPlaybackOpen ? undefined : 'rotate(180deg)'}><ChevronDownIcon /></Box>
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" px={3} py={2.5} minH={0} display="flex" flexDirection="column" gap={2} overflow="hidden">
         <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2} flexShrink={0}>
