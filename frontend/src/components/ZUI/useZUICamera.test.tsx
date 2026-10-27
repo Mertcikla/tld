@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useZUICamera, type ZUICameraController } from './useZUICamera'
 import type { DiagramGroupLayout, LayoutNode } from './types'
 
@@ -56,6 +56,57 @@ afterEach(() => {
   act(() => renderer?.unmount())
   renderer = undefined
   setViewState.mockClear()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe('ZUI camera transition timing', () => {
+  let frames: Map<number, FrameRequestCallback>
+  beforeEach(() => {
+    frames = new Map()
+    let nextId = 0
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++nextId, callback); return nextId })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    act(() => { renderer = create(<Consumer />) })
+  })
+  function advance(time: number) {
+    const [id, callback] = frames.entries().next().value!
+    frames.delete(id)
+    act(() => callback(time))
+  }
+
+  it('completes a flow transition at 1.5 seconds', () => {
+    const target = { x: 100, y: 200, zoom: 4 }
+    act(() => camera.animateToViewport(target, 1500))
+    advance(750)
+    expect(setViewState.mock.lastCall![0].zoom).toBeGreaterThan(1)
+    expect(setViewState.mock.lastCall![0].zoom).toBeLessThan(4)
+    advance(1499)
+    expect(frames.size).toBe(1)
+    advance(1500)
+    expect(setViewState.mock.lastCall![0]).toEqual(target)
+    expect(frames.size).toBe(0)
+  })
+
+  it('retains the existing duration for other camera navigation', () => {
+    const target = { x: 100, y: 200, zoom: 4 }
+    act(() => camera.animateToViewport(target))
+    advance(519)
+    expect(frames.size).toBe(1)
+    advance(520)
+    expect(setViewState.mock.lastCall![0]).toEqual(target)
+    expect(frames.size).toBe(0)
+  })
+
+  it('honors reduced motion with an immediate update', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) })
+    const target = { x: 100, y: 200, zoom: 4 }
+    act(() => camera.animateToViewport(target, 1500))
+    expect(setViewState.mock.lastCall![0]).toEqual(target)
+    expect(frames.size).toBe(0)
+  })
 })
 
 describe('scripted ZUI camera target', () => {

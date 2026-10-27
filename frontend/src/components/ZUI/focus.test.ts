@@ -623,3 +623,37 @@ describe('explicit multi-resource history focus', () => {
     expect(viewportForElements(groups, refs, 0, 700, 20)).toBeNull()
   })
 })
+
+describe('flow element card framing', () => {
+  it.each([[1280, 800], [393, 700]])('keeps a nested expandable element at card zoom on a %ipx canvas', (width, height) => {
+    const groups = computeLayout(nestedExploreData()).groups
+    const refs = [{ viewId: 2, elementId: 201 }]
+    const target = findElementFocusTarget(groups, 2, 201)!
+    expect(target.node?.children.length).toBeGreaterThan(0)
+    const viewport = viewportForElements(groups, refs, width, height, 1000, { keepSingleElementCard: true })!
+    const rect = screenRect(target, viewport)
+    expect(rect.width).toBeLessThanOrEqual(getExpandThresholds(width).start)
+    expect(rect.width).toBeGreaterThan(0)
+    expect((rect.left + rect.right) / 2).toBeCloseTo(width / 2)
+    expect((rect.top + rect.bottom) / 2).toBeCloseTo(height / 2)
+    expectScreenRectVisible(rect, width, height, 'flow card')
+  })
+
+  it('caps a single leaf at a readable card size without changing explicit navigation', () => {
+    const groups = [testGroup([testNode('leaf1')])]
+    const refs = [{ viewId: 1, elementId: 1 }]
+    const target = findElementFocusTarget(groups, 1, 1)!
+    const normal = viewportForElements(groups, refs, 1280, 800, 100)!
+    const flow = viewportForElements(groups, refs, 1280, 800, 100, { keepSingleElementCard: true })!
+    expect(target.absW * flow.zoom).toBeCloseTo(360)
+    expect(normal.zoom).toBeGreaterThan(flow.zoom)
+  })
+
+  it('continues to fit all targets for multi-element and connector steps', () => {
+    const groups = [testGroup([testNode('parent1', [testNode('child2')]), { ...testNode('leaf3'), worldX: 400 }])]
+    const refs = [{ viewId: 1, elementId: 1 }, { viewId: 1, elementId: 3 }]
+    const normal = viewportForElements(groups, refs, 1280, 800, 100)
+    const flow = viewportForElements(groups, refs, 1280, 800, 100, { keepSingleElementCard: true })
+    expect(flow).toEqual(normal)
+  })
+})

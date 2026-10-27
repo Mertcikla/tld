@@ -225,10 +225,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       if (!flowViewportRef.current) flowViewportRef.current = { ...viewStateRef.current }
       const el = containerRef.current
       if (!el || !flowFocus.elementIds.length) return
-      const next = viewportForElements(visibleLayout.groups, flowFocus.elementIds.map(elementId => ({ viewId: flowFocus.viewId, elementId })), el.offsetWidth, el.offsetHeight, maxZoom)
+      const next = viewportForElements(visibleLayout.groups, flowFocus.elementIds.map(elementId => ({ viewId: flowFocus.viewId, elementId })), el.offsetWidth, el.offsetHeight, maxZoom, { keepSingleElementCard: true })
       if (next) {
         if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) setViewState(next)
-        else animateToViewport(next)
+        else animateToViewport(next, 1000)
       }
     } else if (flowViewportRef.current) {
       cancelTransition()
