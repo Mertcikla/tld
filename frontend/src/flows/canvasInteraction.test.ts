@@ -10,15 +10,15 @@ describe('canvas step recording', () => {
     const first = captureCanvasStep({ elementId: 1 }, diagram)!
     const repeat = captureCanvasStep({ elementId: 1 }, diagram)!
     expect(first.elementIds).toEqual([1])
-    expect(first.connectors).toEqual([])
+    expect(first.connectorIds).toEqual([])
     expect(repeat.id).not.toBe(first.id)
-    expect(captureCanvasStep({ connectorId: 10 }, diagram)).toEqual(expect.objectContaining({ elementIds: [], connectors: [{ id: 10, reverse: false }] }))
+    expect(captureCanvasStep({ connectorId: 10 }, diagram)).toEqual(expect.objectContaining({ elementIds: [], connectorIds: [10] }))
     expect(captureCanvasStep({ elementId: 99 }, diagram)).toBeNull()
     expect(captureCanvasStep({ connectorId: 99 }, diagram)).toBeNull()
   })
 
-  it('adds highlights idempotently without changing step identity, direction, or metadata', () => {
-    const original = { ...newStep(diagram), title: 'Keep title', connectors: [{ id: 10, reverse: true }], metadata: { owner: 'Team' } }
+  it('adds highlights idempotently without changing step identity or existing highlights', () => {
+    const original = { ...newStep(diagram), title: 'Keep title', connectorIds: [10] }
     const added = addCanvasHighlight(original, { elementId: 1 }, diagram)
     expect(added).toEqual({ ...original, elementIds: [1] })
     expect(original.elementIds).toEqual([])
@@ -26,7 +26,7 @@ describe('canvas step recording', () => {
     expect(addCanvasHighlight(added, { connectorId: 10 }, diagram)).toBe(added)
     expect(addCanvasHighlight(added, { elementId: 99 }, diagram)).toBe(added)
     expect(addCanvasHighlight(added, { connectorId: 99 }, diagram)).toBe(added)
-    expect(addCanvasHighlight(newStep(diagram), { connectorId: 10 }, diagram).connectors).toEqual([{ id: 10, reverse: false }])
+    expect(addCanvasHighlight(newStep(diagram), { connectorId: 10 }, diagram).connectorIds).toEqual([10])
   })
 
   it('recognizes node bodies, connection labels and panel controls without accepting synthetic nodes', () => {

@@ -22,10 +22,10 @@ import { TYPE_COLORS } from '../types'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
 function stepSummary(step: FlowStep): string {
-  const behavior = step.branches ? `${step.branches.mode === 'parallel' ? 'Parallel' : 'Alternate'} paths` : step.goToFlowId ? 'Linked flow' : step.overview ? 'Overview' : ''
+  const behavior = step.branches ? `${step.branches.mode === 'parallel' ? 'Parallel' : 'Alternate'} paths` : step.goToFlowId ? 'Linked flow' : ''
   const highlights = [
     step.elementIds.length ? `${step.elementIds.length} ${step.elementIds.length === 1 ? 'element' : 'elements'}` : '',
-    step.connectors.length ? `${step.connectors.length} ${step.connectors.length === 1 ? 'connection' : 'connections'}` : '',
+    step.connectorIds.length ? `${step.connectorIds.length} ${step.connectorIds.length === 1 ? 'connection' : 'connections'}` : '',
   ]
   return [behavior, ...highlights].filter(Boolean).join(' · ') || 'Text only'
 }
@@ -436,7 +436,7 @@ function StepHighlights({ step, diagram, onChange, onPick, picking, disabled }: 
   const byKey = new Map(options.map(option => [key(option), option]))
   const selected = [
     ...step.elementIds.map(id => byKey.get(`element:${id}`) ?? { kind: 'element' as const, id, name: `Unavailable element #${id}`, details: 'Element', searchText: '' }),
-    ...step.connectors.map(({ id }) => byKey.get(`connector:${id}`) ?? { kind: 'connector' as const, id, name: `Unavailable connection #${id}`, details: 'Connection', searchText: '' }),
+    ...step.connectorIds.map(id => byKey.get(`connector:${id}`) ?? { kind: 'connector' as const, id, name: `Unavailable connection #${id}`, details: 'Connection', searchText: '' }),
   ]
   const selectedKeys = new Set(selected.map(key))
   const rank = (option: HighlightOption) => option.name.toLocaleLowerCase() === term ? 0 : option.name.toLocaleLowerCase().startsWith(term) ? 1 : option.name.toLocaleLowerCase().includes(term) ? 2 : 3
@@ -446,7 +446,7 @@ function StepHighlights({ step, diagram, onChange, onPick, picking, disabled }: 
   const connectionDetails = (option: HighlightOption) => option.details === 'Connection' ? option.name : `${option.details} · ${option.name}`
   function add(option: HighlightOption) {
     if (disabled || selectedKeys.has(key(option))) return
-    onChange(option.kind === 'element' ? { elementIds: [...step.elementIds, option.id] } : { connectors: [...step.connectors, { id: option.id, reverse: false }] })
+    onChange(option.kind === 'element' ? { elementIds: [...step.elementIds, option.id] } : { connectorIds: [...step.connectorIds, option.id] })
     setSearch(''); setActiveIndex(0); searchInput.current?.focus()
   }
   return <VStack align="stretch" spacing={2} minW={0}>
@@ -472,7 +472,7 @@ function StepHighlights({ step, diagram, onChange, onPick, picking, disabled }: 
     {!!selected.length && <VStack align="stretch" spacing={1} aria-label="Selected highlights">
       {selected.map(option => <HStack key={key(option)} spacing={2} p={1.5} rounded="md" bg="whiteAlpha.50" minW={0} title={`${option.name} · ${option.details}`}>
         <HighlightIcon option={option} /><HighlightLabel option={option} />
-        <IconButton size="xs" variant="ghost" aria-label={`Remove ${option.kind === 'element' ? 'element' : 'connection'} ${option.kind === 'element' ? option.name : option.searchText ? connectionDetails(option) : option.name}`} icon={<CloseIcon />} flexShrink={0} isDisabled={disabled} onClick={() => onChange(option.kind === 'element' ? { elementIds: step.elementIds.filter(id => id !== option.id) } : { connectors: step.connectors.filter(connector => connector.id !== option.id) })} />
+        <IconButton size="xs" variant="ghost" aria-label={`Remove ${option.kind === 'element' ? 'element' : 'connection'} ${option.kind === 'element' ? option.name : option.searchText ? connectionDetails(option) : option.name}`} icon={<CloseIcon />} flexShrink={0} isDisabled={disabled} onClick={() => onChange(option.kind === 'element' ? { elementIds: step.elementIds.filter(id => id !== option.id) } : { connectorIds: step.connectorIds.filter(id => id !== option.id) })} />
       </HStack>)}
     </VStack>}
     {!selected.length && <Text fontSize="xs" color="text.muted">Leave empty for a text-only step.</Text>}
@@ -483,7 +483,6 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
   step: FlowStep; onChange: (changes: Partial<FlowStep>) => void; catalog: FlowCatalog; disabled: boolean; depth: number
 }) {
   const [linking, setLinking] = useState(!!step.goToFlowId)
-  if (step.overview) return null
   if (step.branches) return <VStack align="stretch" spacing={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={3}>
     <HStack spacing={1}>
       {(['alternate', 'parallel'] as const).map(mode => <Button key={mode} size="xs" h={7} flex={1} minW={0} px={1} variant={step.branches!.mode === mode ? 'solid' : 'ghost'} aria-label={`${mode === 'alternate' ? 'Alternate' : 'Parallel'} paths`} aria-pressed={step.branches!.mode === mode} isDisabled={disabled} onClick={() => onChange({ branches: { ...step.branches!, mode } })}>{mode === 'alternate' ? 'Alternate' : 'Parallel'}</Button>)}
@@ -996,14 +995,13 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
             {activeStep.branches.paths.map(path => <option key={path.id} value={path.id}>{path.name}</option>)}
           </Select>}
         </HStack>
-        {playback.frame && (activeStep?.goToFlowId || playback.frame.steps.some(step => step.description || missingReference(step, currentDiagram) || Object.keys(step.metadata).length > 0)) && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={1.5} minH={0} maxH="140px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
+        {playback.frame && (activeStep?.goToFlowId || playback.frame.steps.some(step => step.description || missingReference(step, currentDiagram))) && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={1.5} minH={0} maxH="140px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
           {activeStep?.goToFlowId && <HStack spacing={1.5}><Button size="xs" variant="primary" isDisabled={busy || !catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId)} onClick={goToFlow}>Go to flow</Button><Button size="xs" onClick={playback.next}>Skip flow</Button>
             {!catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId) && <Text fontSize="xs" color="gray.400">Linked flow unavailable.</Text>}
           </HStack>}
-          {playback.frame.steps.map(step => (step.description || missingReference(step, currentDiagram) || Object.keys(step.metadata).length > 0) && <Box key={step.id}>
+          {playback.frame.steps.map(step => (step.description || missingReference(step, currentDiagram)) && <Box key={step.id}>
             {step.description && <Text fontSize="xs" color="gray.300" whiteSpace="pre-wrap" overflowWrap="anywhere">{step.description}</Text>}
             {missingReference(step, currentDiagram) && <Text color="orange.300" fontSize="xs">Reference unavailable. Use Next to skip this step.</Text>}
-            {Object.entries(step.metadata).map(([key, value]) => <Text key={key} fontSize="xs" color="gray.400" whiteSpace="pre-wrap" overflowWrap="anywhere"><strong>{key}:</strong> {value}</Text>)}
           </Box>)}
         </VStack>}
         <VStack data-testid="flow-playback-navigation" align="stretch" spacing={2} flexShrink={0}>

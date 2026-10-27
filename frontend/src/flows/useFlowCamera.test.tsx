@@ -7,7 +7,7 @@ let renderer: ReactTestRenderer
 const pending = new Map<number, FrameRequestCallback>()
 let nextFrame = 0
 const fitView = vi.fn()
-const base: Options = { viewId: 1, active: false, focus: { viewId: 1, elementIds: [1, 2], connectors: [] }, fitView }
+const base: Options = { viewId: 1, active: false, focus: { viewId: 1, elementIds: [1, 2], connectorIds: [] }, fitView }
 function Harness(props: Options) { useFlowCamera(props); return null }
 function render(options: Partial<Options> = {}) {
   act(() => {
@@ -27,7 +27,7 @@ describe('flow camera ownership', () => {
     render({ active: true }); flush()
     expect(fitView).toHaveBeenCalledOnce()
     fitView.mockClear()
-    render({ active: true, recording: true, focus: { viewId: 1, elementIds: [3], connectors: [] } }); flush()
+    render({ active: true, recording: true, focus: { viewId: 1, elementIds: [3], connectorIds: [] } }); flush()
     render({ active: true, recording: true, focus: base.focus }); flush()
     expect(fitView).not.toHaveBeenCalled()
     render({ active: true, recording: false }); flush()
@@ -40,9 +40,9 @@ describe('flow camera ownership', () => {
     render({ active: false, focus: null }); flush()
     render({ active: true }); flush()
     expect(fitView).toHaveBeenCalledOnce()
-    render({ active: true, focus: { ...base.focus!, connectors: [{ id: 10, reverse: true }] } }); flush()
+    render({ active: true, focus: { ...base.focus!, connectorIds: [10] } }); flush()
     expect(fitView).toHaveBeenCalledOnce()
-    render({ active: true, focus: { viewId: 1, elementIds: [3], connectors: [] } }); flush()
+    render({ active: true, focus: { viewId: 1, elementIds: [3], connectorIds: [] } }); flush()
     expect(fitView).toHaveBeenCalledTimes(2)
   })
 
@@ -51,13 +51,13 @@ describe('flow camera ownership', () => {
     render({ viewId: 2, active: false, focus: null }); flush()
     render({ viewId: 2, active: true }); flush()
     expect(fitView).toHaveBeenCalledOnce()
-    render({ viewId: 2, active: true, focus: { viewId: 2, elementIds: [1, 2], connectors: [] } }); flush()
+    render({ viewId: 2, active: true, focus: { viewId: 2, elementIds: [1, 2], connectorIds: [] } }); flush()
     expect(fitView).toHaveBeenCalledTimes(2)
   })
 
   it('leaves the camera alone for empty and text-only selections', () => {
     render({ focus: null }); flush()
-    render({ active: true, focus: { viewId: 1, elementIds: [], connectors: [] } }); flush()
+    render({ active: true, focus: { viewId: 1, elementIds: [], connectorIds: [] } }); flush()
     expect(fitView).not.toHaveBeenCalled()
     render({ active: true }); flush()
     expect(fitView).toHaveBeenCalledOnce()

@@ -26,7 +26,7 @@ vi.mock('./explore/useExploreTags', () => ({ useExploreTags: () => ({ allTags: [
 vi.mock('../crossBranch/settings', () => ({ useCrossBranchContextSettings: () => ({ settings: {}, setEnabled: vi.fn(), setConnectorBudget: vi.fn(), setConnectorPriority: vi.fn() }) }))
 
 const flow: StoryFlow = { id: 'flow', viewId: 1, name: 'Checkout', description: '', revision: 1, steps: [] }
-const data: ExploreData = { tree: [{ id: 1, parent_view_id: null }] as ExploreData['tree'], views: { '1': { placements: [], connectors: [] } }, navigations: [] }
+const data: ExploreData = { tree: [{ id: 1, parent_view_id: null }] as ExploreData['tree'], views: { '1': { placements: [], connectorIds: [] } }, navigations: [] }
 const dataState = { data, loading: false, error: null, hasPlacements: true, reload: vi.fn() }
 let renderer: ReactTestRenderer
 function mount(sharedToken?: string) {
@@ -54,7 +54,7 @@ describe('Explore flow controls', () => {
     act(() => flowButton().props.onClick())
     expect(flowButton().props['aria-expanded']).toBe(true)
     expect(renderer.root.findByType(FlowPanel).props.open).toBe(true)
-    const focus: FlowFocus = { viewId: 1, elementIds: [1], connectors: [] }
+    const focus: FlowFocus = { viewId: 1, elementIds: [1], connectorIds: [] }
     act(() => renderer.root.findByType(FlowPanel).props.onFocus(focus))
     expect(renderer.root.findByType('canvas').props.flowFocus).toBe(focus)
     act(() => renderer.root.findByType(FlowPanel).props.onClose())

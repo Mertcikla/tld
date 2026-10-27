@@ -37,7 +37,7 @@ describe('shared autoplay', () => {
   it('plays text-only and multi-highlight steps in sequence and loops when enabled', () => {
     vi.useFakeTimers()
     const empty = newStep(diagram)
-    const highlighted = { ...newStep(diagram), elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }] }
+    const highlighted = { ...newStep(diagram), elementIds: [1, 2], connectorIds: [10, 11] }
     mount([empty, highlighted])
     act(() => playback.setLoop(true))
     act(() => playback.setSeconds(1))

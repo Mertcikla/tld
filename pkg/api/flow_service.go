@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -73,64 +72,11 @@ func flowViewError(action string, err error) error {
 }
 
 func flowFromRecord(row app.FlowRecord) (*diagv1.Flow, error) {
-	flow := &diagv1.Flow{}
-	document, err := upgradeFlowDocument([]byte(row.Document))
-	if err != nil {
+	content := &diagv1.FlowContent{}
+	if err := protojson.Unmarshal([]byte(row.Document), content); err != nil {
 		return nil, err
 	}
-	if err := protojson.Unmarshal(document, flow); err != nil {
-		return nil, err
-	}
-	flow.Id, flow.ViewId, flow.Revision = row.ID, int32(row.ViewID), row.Revision
-	return flow, nil
-}
-
-// Early flow documents used a single element/connector per step. Convert those
-// references on read, without changing stored data or discarding unknown fields.
-// The next explicit save persists the current representation.
-func upgradeFlowDocument(document []byte) ([]byte, error) {
-	var flow map[string]json.RawMessage
-	if err := json.Unmarshal(document, &flow); err != nil {
-		return nil, err
-	}
-	var steps []map[string]json.RawMessage
-	if raw, ok := flow["steps"]; ok {
-		if err := json.Unmarshal(raw, &steps); err != nil {
-			return nil, err
-		}
-	} else {
-		return document, nil
-	}
-	for _, step := range steps {
-		delete(step, "kind")
-		for _, field := range []struct{ old, current string }{{"elementId", "elementIds"}, {"element_id", "element_ids"}, {"connectorId", "connectors"}, {"connector_id", "connectors"}} {
-			id, exists := step[field.old]
-			if !exists {
-				continue
-			}
-			var values []json.RawMessage
-			if raw, ok := step[field.current]; ok {
-				if err := json.Unmarshal(raw, &values); err != nil {
-					return nil, err
-				}
-			}
-			if string(id) != "0" && string(id) != "null" {
-				if field.current == "connectors" {
-					highlight := map[string]json.RawMessage{"id": id}
-					if reverse, ok := step["reverse"]; ok {
-						highlight["reverse"] = reverse
-					}
-					id, _ = json.Marshal(highlight)
-				}
-				values = append(values, id)
-			}
-			step[field.current], _ = json.Marshal(values)
-			delete(step, field.old)
-		}
-		delete(step, "reverse")
-	}
-	flow["steps"], _ = json.Marshal(steps)
-	return json.Marshal(flow)
+	return &diagv1.Flow{Id: row.ID, ViewId: int32(row.ViewID), Revision: row.Revision, Content: content}, nil
 }
 
 func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1.ListFlowsRequest]) (*connect.Response[diagv1.ListFlowsResponse], error) {
@@ -164,14 +110,15 @@ func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1
 	return connect.NewResponse(response), nil
 }
 
-func validateFlow(flow *diagv1.Flow) error {
-	if flow == nil || flow.ViewId <= 0 || strings.TrimSpace(flow.Name) == "" {
+func validateFlow(req *diagv1.SaveFlowRequest) error {
+	content := req.GetContent()
+	if req.ViewId <= 0 || content == nil || strings.TrimSpace(content.Name) == "" {
 		return errors.New("flow requires a view and a name")
 	}
-	if len(flow.Name) > 200 || len(flow.Description) > 10000 {
+	if len(content.Name) > 200 || len(content.Description) > 10000 {
 		return errors.New("flow name or description is too long")
 	}
-	if (flow.Id == "" && flow.Revision != 0) || (flow.Id != "" && flow.Revision <= 0) {
+	if (req.Id == "" && req.ExpectedRevision != 0) || (req.Id != "" && req.ExpectedRevision <= 0) {
 		return errors.New("invalid flow revision")
 	}
 	ids := map[string]bool{}
@@ -190,19 +137,14 @@ func validateFlow(flow *diagv1.Flow) error {
 				return errors.New("step ids must be unique and nonempty")
 			}
 			ids[step.Id] = true
-			controls := 0
-			if step.Overview {
-				controls++
-			}
-			if step.GoToFlowId != "" {
-				controls++
-				if strings.TrimSpace(step.GoToFlowId) == "" || len(step.GoToFlowId) > 100 {
+			switch control := step.Control.(type) {
+			case *diagv1.FlowStep_GoToFlowId:
+				if strings.TrimSpace(control.GoToFlowId) == "" || len(control.GoToFlowId) > 100 {
 					return errors.New("invalid linked flow id")
 				}
-			}
-			if branch := step.Branches; branch != nil {
-				controls++
-				if branch.Mode != "alternate" && branch.Mode != "parallel" {
+			case *diagv1.FlowStep_Branches:
+				branch := control.Branches
+				if branch == nil || (branch.Mode != diagv1.FlowBranchMode_FLOW_BRANCH_MODE_ALTERNATE && branch.Mode != diagv1.FlowBranchMode_FLOW_BRANCH_MODE_PARALLEL) {
 					return errors.New("branches mode must be alternate or parallel")
 				}
 				if len(branch.Paths) < 2 || len(branch.Paths) > maxFlowPaths {
@@ -218,42 +160,25 @@ func validateFlow(flow *diagv1.Flow) error {
 					}
 				}
 			}
-			if controls > 1 {
-				return errors.New("choose only one of overview, branches, or go to flow")
-			}
-
 			if len(step.Title) > 500 || len(step.Description) > 10000 {
 				return errors.New("step title or description is too long")
 			}
-			if len(step.ElementIds) > 500 || len(step.Connectors) > 500 {
-				return errors.New("step may highlight at most 500 elements and 500 connections")
-			}
-			elements := map[int32]bool{}
-			for _, id := range step.ElementIds {
-				if id <= 0 || elements[id] {
-					return errors.New("element ids must be positive and unique within a step")
+			for _, highlights := range [][]int32{step.ElementIds, step.ConnectorIds} {
+				if len(highlights) > 500 {
+					return errors.New("step may highlight at most 500 elements and 500 connections")
 				}
-				elements[id] = true
-			}
-			connectors := map[int32]bool{}
-			for _, highlight := range step.Connectors {
-				if highlight == nil || highlight.Id <= 0 || connectors[highlight.Id] {
-					return errors.New("connection ids must be positive and unique within a step")
-				}
-				connectors[highlight.Id] = true
-			}
-			if len(step.Metadata) > 50 {
-				return errors.New("step may contain at most 50 metadata entries")
-			}
-			for key, value := range step.Metadata {
-				if strings.TrimSpace(key) == "" || len(key) > 100 || len(value) > 10000 {
-					return errors.New("metadata requires nonempty keys up to 100 bytes and values up to 10000 bytes")
+				seen := map[int32]bool{}
+				for _, id := range highlights {
+					if id <= 0 || seen[id] {
+						return errors.New("highlight ids must be positive and unique within a step")
+					}
+					seen[id] = true
 				}
 			}
 		}
 		return nil
 	}
-	return validateSteps(flow.Steps, 0)
+	return validateSteps(content.Steps, 0)
 }
 
 func flowStoreError(action string, err error) error {
@@ -261,24 +186,6 @@ func flowStoreError(action string, err error) error {
 		return connect.NewError(connect.CodeAborted, err)
 	}
 	return storeErr(action, err)
-}
-
-type flowLink struct {
-	stepID string
-	flowID string
-}
-
-func collectFlowLinks(steps []*diagv1.FlowStep, links map[flowLink]bool) {
-	for _, step := range steps {
-		if step.GoToFlowId != "" {
-			links[flowLink{stepID: step.Id, flowID: step.GoToFlowId}] = true
-		}
-		if step.Branches != nil {
-			for _, path := range step.Branches.Paths {
-				collectFlowLinks(path.Steps, links)
-			}
-		}
-	}
 }
 
 func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.SaveFlowRequest]) (*connect.Response[diagv1.SaveFlowResponse], error) {
@@ -289,74 +196,22 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 	if err := s.hooks().CheckWrite(ctx, workspaceID, "flows"); err != nil {
 		return nil, err
 	}
-	flow := req.Msg.Flow
+	flow := req.Msg
 	if err := validateFlow(flow); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if _, err := s.Store.GetView(ctx, flow.ViewId, workspaceID); err != nil {
 		return nil, flowViewError("get view", err)
 	}
-	links := map[flowLink]bool{}
-	collectFlowLinks(flow.Steps, links)
-	if len(links) > 0 {
-		rows, err := s.Store.ListFlows(ctx, 0)
-		if err != nil {
-			return nil, storeErr("list linked flows", err)
-		}
-		if flow.Id != "" {
-			currentFound := false
-			for _, row := range rows {
-				if row.ID != flow.Id {
-					continue
-				}
-				currentFound = true
-				if row.ViewID != int64(flow.ViewId) || row.Revision != flow.Revision {
-					return nil, flowStoreError("save flow", app.ErrFlowConflict)
-				}
-				break
-			}
-			if !currentFound {
-				return nil, flowStoreError("save flow", app.ErrFlowConflict)
-			}
-		}
-		available := make(map[string]bool, len(rows))
-		linkedTargets := make(map[string]bool, len(links))
-		for link := range links {
-			linkedTargets[link.flowID] = true
-		}
-		var unchangedStaleLinks map[flowLink]bool
-		for _, row := range rows {
-			available[row.ID] = true
-			if linkedTargets[row.ID] {
-				if _, err := s.Store.GetView(ctx, int32(row.ViewID), workspaceID); err != nil {
-					return nil, flowViewError("get linked view", err)
-				}
-			}
-			if row.ID == flow.Id && row.Revision == flow.Revision {
-				previous, err := flowFromRecord(row)
-				if err != nil {
-					return nil, storeErr("read flow", err)
-				}
-				unchangedStaleLinks = map[flowLink]bool{}
-				collectFlowLinks(previous.Steps, unchangedStaleLinks)
-			}
-		}
-		for link := range links {
-			if available[link.flowID] || unchangedStaleLinks[link] {
-				continue
-			}
-			return nil, invalidArg("go_to_flow_id", "linked flow is unavailable")
-		}
-	}
 
-	document, err := protojson.Marshal(flow)
+	document, err := protojson.Marshal(flow.Content)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if len(document) > 1<<20 {
 		return nil, invalidArg("flow", "must be at most 1 MiB")
 	}
-	row, err := s.Store.SaveFlow(ctx, app.FlowRecord{ID: flow.Id, ViewID: int64(flow.ViewId), Document: string(document), Revision: flow.Revision})
+	row, err := s.Store.SaveFlow(ctx, app.FlowRecord{ID: flow.Id, ViewID: int64(flow.ViewId), Document: string(document), Revision: flow.ExpectedRevision})
 	if err != nil {
 		return nil, flowStoreError("save flow", err)
 	}

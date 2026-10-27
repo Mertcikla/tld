@@ -158,8 +158,8 @@ describe('flow step editing', () => {
     act(() => button('Add connection API → Worker · Queues').props.onClick())
     expect(renderer.root.findAllByType('button').some(node => node.props['aria-label']?.startsWith('Reverse '))).toBe(false)
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Save and queue')
-    const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: false }, { id: 11, reverse: false }], metadata: {} }
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2, 3], connectors: expected.connectors })
+    const expected = { title: 'Save and queue', elementIds: [1, 2], connectorIds: [10, 11] }
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2, 3], connectorIds: expected.connectorIds })
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
     expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining(expected)] }))
@@ -179,7 +179,7 @@ describe('flow step editing', () => {
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
     expect(vi.mocked(flowApi.save).mock.lastCall![0].steps.map(step => step.title)).toEqual(['Finish', 'Store data'])
-    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[1]).toMatchObject({ elementIds: [2], connectors: [{ id: 10, reverse: false }] })
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[1]).toMatchObject({ elementIds: [2], connectorIds: [10] })
   })
 
   it('accepts drag order and duplicates or removes a collapsed step without opening it first', async () => {
@@ -207,10 +207,10 @@ describe('flow step editing', () => {
     act(() => renderer.root.findByProps({ 'aria-label': 'Remove element DB' }).props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' })).toBeDefined()
     act(() => renderer.root.findByProps({ 'aria-label': 'Remove connection API → DB · Stores' }).props.onClick())
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectors: [] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectorIds: [] })
     vi.mocked(flowApi.save).mockImplementation(async (flow: StoryFlow) => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
-    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({ elementIds: [], connectors: [], title: '', description: '', metadata: {} })] }))
+    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({ elementIds: [], connectorIds: [], title: '', description: '' })] }))
   })
   it('searches both kinds, adds one result at a time and excludes selected highlights', () => {
     mount()
@@ -305,7 +305,7 @@ describe('flow step editing', () => {
     searchHighlights('api')
     key('ArrowDown')
     key('Enter')
-    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectors: [{ id: 10, reverse: false }] })
+    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectorIds: [10] })
     expect(input().props.value).toBe('')
     searchHighlights('api')
     key('Enter')
@@ -325,7 +325,7 @@ describe('flow step editing', () => {
     expect(button('Remove connection Unavailable connection #10')).toBeDefined()
     act(() => button('Remove element Unavailable element #1').props.onClick())
     act(() => button('Remove connection Unavailable connection #10').props.onClick())
-    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectors: [] })
+    expect(currentDraft().steps[0]).toMatchObject({ elementIds: [], connectorIds: [] })
   })
 
   it('retries loading without discarding an unsaved draft', () => {
@@ -375,7 +375,7 @@ describe('flow step editing', () => {
     const capture = (target: { elementId: number } | { connectorId: number }) => act(() => onCanvasRecorderChange.mock.lastCall![0].capture(target))
     capture({ elementId: 1 })
     capture({ connectorId: 10 })
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2], connectors: [{ id: 10, reverse: false }] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2], connectorIds: [10] })
     capture({ elementId: 1 })
     capture({ elementId: 99 })
     expect(button('Stop recording').props['aria-pressed']).toBe(true)
@@ -385,17 +385,17 @@ describe('flow step editing', () => {
     await act(async () => button('Save flow').props.onClick())
     const steps = vi.mocked(flowApi.save).mock.lastCall![0].steps
     expect(steps).toEqual([
-      expect.objectContaining({ elementIds: [1], connectors: [] }),
-      expect.objectContaining({ elementIds: [], connectors: [{ id: 10, reverse: false }] }),
-      expect.objectContaining({ elementIds: [1], connectors: [] }),
+      expect.objectContaining({ elementIds: [1], connectorIds: [] }),
+      expect.objectContaining({ elementIds: [], connectorIds: [10] }),
+      expect.objectContaining({ elementIds: [1], connectorIds: [] }),
     ])
     expect(new Set(steps.map(step => step.id)).size).toBe(3)
   })
 
-  it('picks highlights into the existing step, preserving directions and stored metadata', async () => {
+  it('picks highlights into the existing step without replacing its highlights', async () => {
     const onCanvasRecorderChange = vi.fn()
     const onClose = vi.fn()
-    const step = { id: 'original', title: 'Original title', description: '', elementIds: [1], connectors: [{ id: 10, reverse: true }], metadata: { owner: 'Commerce' } }
+    const step = { id: 'original', title: 'Original title', description: '', elementIds: [1], connectorIds: [10] }
     queryClient.getQueryData.mockReturnValue({ id: 'saved', revision: 1, viewId: 1, name: 'Story', description: '', steps: [step] })
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onCanvasRecorderChange={onCanvasRecorderChange} onClose={onClose} onFocus={vi.fn()} />) })
@@ -416,7 +416,7 @@ describe('flow step editing', () => {
     expect(onClose).not.toHaveBeenCalled()
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, revision: 2 }))
     await act(async () => button('Save flow').props.onClick())
-    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [{ ...step, elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }] }] }))
+    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ steps: [{ ...step, elementIds: [1, 2], connectorIds: [10, 11] }] }))
   })
 
   it('switches between picking and recording without mixing their behaviors', async () => {
@@ -463,7 +463,7 @@ describe('flow step editing', () => {
 
   it('stops at the step limit and prevents recording beyond the total step limit', () => {
     queryClient.getQueryData.mockReturnValue({ id: '', viewId: 1, name: 'Full story', description: '', revision: 0,
-      steps: Array.from({ length: FLOW_MAX_STEPS - 1 }, (_, index) => ({ id: String(index), title: '', description: '', elementIds: [1], connectors: [], metadata: {} })) })
+      steps: Array.from({ length: FLOW_MAX_STEPS - 1 }, (_, index) => ({ id: String(index), title: '', description: '', elementIds: [1], connectorIds: [] })) })
     const onCanvasRecorderChange = vi.fn()
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
     act(() => { renderer = create(<FlowPanel open viewId={1} editMode diagram={diagram} onCanvasRecorderChange={onCanvasRecorderChange} onClose={vi.fn()} onFocus={vi.fn()} />) })
@@ -563,7 +563,7 @@ describe('flow step editing', () => {
 
   it('shows playback and flow management while editing and duplicates into a draft', () => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true) })
-    const original: StoryFlow = { id: 'saved', viewId: 1, name: 'Story', description: '', revision: 1, steps: [{ id: 's1', title: 'API', description: '', elementIds: [1], connectors: [], metadata: {} }] }
+    const original: StoryFlow = { id: 'saved', viewId: 1, name: 'Story', description: '', revision: 1, steps: [{ id: 's1', title: 'API', description: '', elementIds: [1], connectorIds: [] }] }
     queryState.data = [original]
     const onEditModeChange = vi.fn()
     act(() => { renderer = create(<FlowPanel open viewId={1} onEditModeChange={onEditModeChange} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
@@ -729,7 +729,7 @@ describe('flow operation editing and navigation', () => {
     act(() => { renderer = create(<FlowPanel open viewId={2} editMode diagram={targetDiagram} onNavigateView={onNavigateView} onClose={vi.fn()} onFocus={onFocus} />) })
     expect(renderer.root.findByProps({ 'aria-label': 'Flow name' }).props.value).toBe('Chosen')
     change(renderer.root.findByProps({ 'aria-label': 'Current flow step' }), target.steps[0].id)
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [42], connectors: [] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [42], connectorIds: [] })
     change(renderer.root.findByProps({ 'aria-label': 'Flow name' }), 'Edited remote flow')
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, revision: 2 }))
     await act(async () => button('Save flow').props.onClick())
@@ -839,7 +839,7 @@ describe('flow operation editing and navigation', () => {
     act(() => button('Remove flow link').props.onClick())
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
-    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ title: 'Explain the next phase', elementIds: [], connectors: [], goToFlowId: undefined })
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ title: 'Explain the next phase', elementIds: [], connectorIds: [], goToFlowId: undefined })
   })
 
   it('preserves path contents when changing branch mode without a remove-all action', () => {
@@ -896,7 +896,7 @@ describe('flow operation editing and navigation', () => {
     act(() => menuItem('Add alternate paths').props.onClick())
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
-    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ elementIds: [2], connectors: [{ id: 10, reverse: false }], goToFlowId: undefined, branches: { mode: 'alternate' } })
+    expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ elementIds: [2], connectorIds: [10], goToFlowId: undefined, branches: { mode: 'alternate' } })
   })
 
   it('reuses the sortable cards for path reordering, duplication and removal', () => {
@@ -959,7 +959,7 @@ describe('flow operation editing and navigation', () => {
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
     const step = vi.mocked(flowApi.save).mock.lastCall![0].steps[0]
-    expect(step).toMatchObject({ elementIds: [2], connectors: [{ id: 10, reverse: false }], branches: { mode } })
+    expect(step).toMatchObject({ elementIds: [2], connectorIds: [10], branches: { mode } })
     expect(step.branches?.paths.map(path => ({ name: path.name, steps: path.steps }))).toEqual([
       { name: 'Path A', steps: [] }, { name: 'Path B', steps: [] },
     ])
@@ -981,7 +981,7 @@ describe('flow operation editing and navigation', () => {
     const step = vi.mocked(flowApi.save).mock.lastCall![0].steps[0]
     expect(step.branches?.mode).toBe('alternate')
     expect(step.branches?.paths[0].steps).toEqual([])
-    expect(step.branches?.paths[1].steps[0]).toMatchObject({ title: 'Failure handling', elementIds: [2], connectors: [{ id: 11, reverse: false }] })
+    expect(step.branches?.paths[1].steps[0]).toMatchObject({ title: 'Failure handling', elementIds: [2], connectorIds: [11] })
   })
 
   it('preserves an unsaved caller while previewing a linked flow', async () => {
@@ -1034,7 +1034,7 @@ describe('flow operation editing and navigation', () => {
     queryClient.getQueryData.mockImplementation(key => key[0] === 'flow-navigation' ? cached : undefined)
     act(() => renderer.unmount())
     act(() => { renderer = create(render(2)) })
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectors: [] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectorIds: [] })
     act(() => button('Return to previous flow').props.onClick())
     expect(onNavigateView).toHaveBeenLastCalledWith(1)
     cached = cachedJourney()
@@ -1051,10 +1051,10 @@ describe('flow operation editing and navigation', () => {
     act(() => { renderer = create(<FlowPanel open diagrams={{ 1: diagram, 2: diagram }} onClose={vi.fn()} onFocus={onFocus} />) })
     selectParentLink()
     act(() => button('Go to flow').props.onClick())
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectors: [] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 2, elementIds: [2], connectorIds: [] })
     act(() => button('Return to previous flow').props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('call')
-    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectors: [] })
+    expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectorIds: [] })
   })
 
   it('renders a left-to-right SVG minimap in playback navigation, highlights the active step, and selects steps on click', () => {

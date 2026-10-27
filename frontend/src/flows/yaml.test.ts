@@ -22,9 +22,6 @@ steps:
       - source: Checkout API
         target: Order database
         label: Stores orders
-    metadata:
-      owner: Commerce
-      ticket: ORD-42
   - id: process
     title: Process order
     elements: [Checkout API]
@@ -34,7 +31,6 @@ steps:
       - source: Customer
         target: Checkout API
         label: Submits orders
-        reverse: true
 `
 function diagram(offset = 0): FlowDiagram {
   return {
@@ -49,16 +45,16 @@ function simple(): PortableFlowDocument { return { format: 'tld-flow', version: 
 const reference = { source: 'Customer', target: 'Checkout API' }
 
 describe('portable flow YAML', () => {
-  it('round-trips empty, multiple and mixed highlights, metadata and reverse directions across database IDs', () => {
+  it('round-trips empty, multiple and mixed highlights across database IDs', () => {
     const original = importFlowYaml(example, 7, diagram())
     original.id = 'saved-flow-id'; original.revision = 22
     const yaml = exportFlowYaml(original, diagram())
     const imported = importFlowYaml(yaml, 987, diagram(1000))
     expect(imported).toMatchObject({ id: '', revision: 0, viewId: 987, name: original.name, description: original.description })
     expect(imported.steps.map(step => step.id)).toEqual(original.steps.map(step => step.id))
-    expect(imported.steps[0]).toMatchObject({ elementIds: [], connectors: [] })
-    expect(imported.steps[1]).toMatchObject({ elementIds: [1002, 1003], connectors: [{ id: 1010, reverse: false }, { id: 1011, reverse: false }], metadata: { owner: 'Commerce', ticket: 'ORD-42' } })
-    expect(imported.steps[3].connectors).toEqual([{ id: 1010, reverse: true }])
+    expect(imported.steps[0]).toMatchObject({ elementIds: [], connectorIds: [] })
+    expect(imported.steps[1]).toMatchObject({ elementIds: [1002, 1003], connectorIds: [1010, 1011] })
+    expect(imported.steps[3].connectorIds).toEqual([1010])
     expect(yaml).not.toMatch(/saved-flow-id|viewId|view_id|revision|connectorId|connector_id|elementId|element_id|kind:|paths:/)
     expect(parseFlowYaml(yaml)).not.toHaveProperty('elements')
     expect(parseFlowYaml(yaml)).not.toHaveProperty('connectors')
@@ -70,8 +66,8 @@ describe('portable flow YAML', () => {
     const first = importFlowYaml(stringify(value), 1, diagram())
     const second = importFlowYaml(stringify(value), 1, diagram())
     expect(first.steps[0].id).not.toBe(second.steps[0].id)
-    expect(first.steps[0]).toMatchObject({ title: '', description: '', elementIds: [], connectors: [], metadata: {} })
-    value.steps = [{ id: 'kept', elements: [], connectors: [], metadata: {} }]
+    expect(first.steps[0]).toMatchObject({ title: '', description: '', elementIds: [], connectorIds: [] })
+    value.steps = [{ id: 'kept', elements: [], connectors: [] }]
     expect(importFlowYaml(stringify(value), 1, diagram()).steps[0].id).toBe('kept')
     value.steps = []
     expect(importFlowYaml(stringify(value), 1, diagram()).steps).toEqual([])
@@ -84,7 +80,6 @@ describe('portable flow YAML', () => {
     target.connectors[0].label = ''; target.connectors[1].label = ''
     flow.name = 'true'; flow.steps[0].title = 'null'
     flow.steps[0].description = 'First: "yes"\n# not a comment\nTürkçe → 日本語\n'
-    flow.steps[0].metadata = { count: '001', enabled: 'true', note: 'a\nb' }
     const exported = exportFlowYaml(flow, target)
     expect(parseFlowYaml(exported).steps[1].connectors?.[0]).toEqual({ source: 'A / B', target: 'A + B' })
     expect(exported).toContain('日本語')
@@ -104,7 +99,7 @@ describe('portable flow YAML', () => {
     const target = diagram()
     target.elements[0].name = 'Buyer'; target.connectors[0].label = 'Posts basket'
     const bindings = { elements: { Customer: 1 }, connectors: { submit: { 0: 10 }, confirm: { 0: 10 } } }
-    expect(importFlowYaml(example, 1, target, bindings).steps[1].connectors.map(c => c.id)).toEqual([10, 11])
+    expect(importFlowYaml(example, 1, target, bindings).steps[1].connectorIds).toEqual([10, 11])
     expect(() => importFlowYaml(example, 1, target, { ...bindings, elements: { Customer: 99 } })).toThrow(/not in the target/)
     expect(() => importFlowYaml(example, 1, target, { ...bindings, connectors: { submit: { 0: 11 } } })).toThrow(/connection is not/)
     expect(() => importFlowYaml(example, 1, target, { elements: { typo: 1 } })).toThrow(/unknown reference/)
@@ -119,17 +114,17 @@ describe('portable flow YAML', () => {
     expect(() => exportFlowYaml(flow, { elements: diagram().elements, connectors: [] })).toThrow(/unavailable/)
     expect(() => exportFlowYaml(flow, { ...diagram(), elements: [...diagram().elements, { element_id: 99, name: 'Customer' }] })).toThrow(/ambiguous/)
     expect(() => exportFlowYaml(flow, { ...diagram(), connectors: [...diagram().connectors, { ...diagram().connectors[0], id: 99 }] })).toThrow(/distinct labels/)
-    flow.steps[1].connectors.push(flow.steps[1].connectors[0])
+    flow.steps[1].connectorIds.push(flow.steps[1].connectorIds[0])
     expect(() => exportFlowYaml(flow, diagram())).toThrow(/duplicate/)
   })
 
   it('allows an omitted label only for unique ordered endpoints and never ignores a supplied label', () => {
     const value: PortableFlowDocument = { ...simple(), steps: [{ connectors: [reference] }] }
-    expect(importFlowYaml(stringify(value), 1, diagram()).steps[0].connectors[0].id).toBe(10)
+    expect(importFlowYaml(stringify(value), 1, diagram()).steps[0].connectorIds[0]).toBe(10)
     const parallel = { ...diagram(), connectors: [...diagram().connectors, { ...diagram().connectors[0], id: 99, label: 'Alternative' }] }
     expect(() => importFlowYaml(stringify(value), 1, parallel)).toThrow(/ambiguous connection/)
     value.steps = [{ connectors: [{ ...reference, label: 'Alternative' }] }]
-    expect(importFlowYaml(stringify(value), 1, parallel).steps[0].connectors[0].id).toBe(99)
+    expect(importFlowYaml(stringify(value), 1, parallel).steps[0].connectorIds[0]).toBe(99)
     value.steps = [{ connectors: [{ ...reference, label: 'Does not exist' }] }]
     expect(() => importFlowYaml(stringify(value), 1, diagram())).toThrow(/connection is not/)
   })
@@ -138,11 +133,11 @@ describe('portable flow YAML', () => {
     const target = diagram()
     target.connectors[0].label = null
     target.connectors.push({ ...target.connectors[0], id: 99, label: 'Named connection' })
-    const value: PortableFlowDocument = { ...simple(), steps: [{ connectors: [{ ...reference, label: '', reverse: true }] }] }
+    const value: PortableFlowDocument = { ...simple(), steps: [{ connectors: [{ ...reference, label: '' }] }] }
     const flow = importFlowYaml(stringify(value), 1, target)
-    expect(flow.steps[0].connectors).toEqual([{ id: 10, reverse: true }])
+    expect(flow.steps[0].connectorIds).toEqual([10])
     const exported = exportFlowYaml(flow, target)
-    expect(parseFlowYaml(exported).steps[0].connectors?.[0]).toEqual({ ...reference, label: '', reverse: true })
+    expect(parseFlowYaml(exported).steps[0].connectors?.[0]).toEqual({ ...reference, label: '' })
     expect(importFlowYaml(exported, 1, target)).toEqual(flow)
     expect(() => importFlowYaml(stringify(value), 1, diagram())).toThrow(/connection is not/)
   })
@@ -166,7 +161,7 @@ describe('portable flow YAML', () => {
 
   it('rejects kinds, paths, definition tables, wrong types, duplicates and malformed highlights', () => {
     for (const step of [
-      { kind: 'message' }, { paths: [] }, { source: 'Customer' }, { elements: [''] },
+      { kind: 'message' }, { paths: [] }, { overview: true }, { metadata: {} }, { connectors: [{ ...reference, reverse: true }] }, { source: 'Customer' }, { elements: [''] },
       { elements: ['Customer', 'Customer'] }, { connectors: [reference, { ...reference, reverse: true }] },
       { connectors: [{ source: 'Customer', target: ' ' }] }, { connectors: [{ ...reference, label: 1 }] },
       { connectors: [{ ...reference, reverse: 'true' }] }, { connectors: ['label'] },
@@ -183,7 +178,6 @@ describe('portable flow YAML', () => {
     expect(() => parseFlowYaml('#'.repeat(FLOW_YAML_MAX_BYTES + 1))).toThrow(/1 MiB/)
     expect(() => validatePortableFlow({ ...simple(), steps: Array.from({ length: FLOW_MAX_STEPS + 1 }, () => ({})) })).toThrow(/1000/)
     expect(() => validatePortableFlow({ ...simple(), steps: [{ elements: Array.from({ length: 501 }, (_, i) => String(i)) }] })).toThrow(/500/)
-    expect(() => validatePortableFlow({ ...simple(), steps: [{ metadata: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [String(i), 'v'])) }] })).toThrow(/50 metadata/)
     expect(() => validatePortableFlow({ ...simple(), name: '界'.repeat(100) })).toThrow(/UTF-8 bytes/)
   })
 
@@ -199,7 +193,7 @@ describe('portable flow control extensions', () => {
   const linked = { id: 'linked', viewId: 2, revision: 1, name: 'Payment', description: '', steps: [] }
   const catalog = { flows: [linked], views: [{ id: 1, name: 'Checkout' }, { id: 2, name: 'Payments' }] }
   const doc: PortableFlowDocument = { ...simple(), steps: [
-    { id: 'intro', overview: true, title: 'Start' },
+    { id: 'intro', title: 'Start' },
     { id: 'branch', branches: { mode: 'alternate', paths: [
       { id: 'success', name: 'Success', steps: [{ id: 'go', goToFlow: { name: 'Payment', view: 'Payments' } }] },
       { id: 'failure', name: 'Failure', steps: [{ id: 'notify', branches: { mode: 'parallel', paths: [
@@ -207,9 +201,9 @@ describe('portable flow control extensions', () => {
         { name: 'Database', steps: [{ elements: ['Order database'] }] },
       ] } }] },
     ] } },
-    { id: 'outro', overview: true },
+    { id: 'outro' },
   ] }
-  it('round-trips nested paths, automatic overviews and cross-diagram links without database IDs', () => {
+  it('round-trips nested paths, cross-diagram links without database IDs', () => {
     const flow = importFlowYaml(stringify(doc), 1, diagram(), {}, catalog)
     expect(flow.steps[1].branches?.paths[0].steps[0].goToFlowId).toBe('linked')
     const yaml = exportFlowYaml(flow, diagram(), catalog)

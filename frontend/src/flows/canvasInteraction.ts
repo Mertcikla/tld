@@ -10,7 +10,7 @@ export interface FlowCanvasRecorder {
 /** A canvas click records one step, only for objects belonging to this view. */
 export function captureCanvasStep(target: FlowCanvasTarget, diagram: FlowDiagram): FlowStep | null {
   const step = newStep(diagram, target)
-  return step.elementIds.length || step.connectors.length ? step : null
+  return step.elementIds.length || step.connectorIds.length ? step : null
 }
 
 /** Picking adds to the existing step without duplicating or replacing its highlights. */
@@ -18,8 +18,8 @@ export function addCanvasHighlight(step: FlowStep, target: FlowCanvasTarget, dia
   if (target.elementId !== undefined && diagram.elements.some(element => element.element_id === target.elementId) && !step.elementIds.includes(target.elementId)) {
     return { ...step, elementIds: [...step.elementIds, target.elementId] }
   }
-  if (target.connectorId !== undefined && diagram.connectors.some(connector => connector.id === target.connectorId) && !step.connectors.some(connector => connector.id === target.connectorId)) {
-    return { ...step, connectors: [...step.connectors, { id: target.connectorId, reverse: false }] }
+  if (target.connectorId !== undefined && diagram.connectors.some(connector => connector.id === target.connectorId) && !step.connectorIds.includes(target.connectorId)) {
+    return { ...step, connectorIds: [...step.connectorIds, target.connectorId] }
   }
   return step
 }

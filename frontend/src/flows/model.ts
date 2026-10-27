@@ -4,15 +4,12 @@ export const FLOW_MAX_STEPS = 1000
 export const FLOW_MAX_PATHS = 26
 export const FLOW_MAX_BRANCH_DEPTH = 8
 
-export interface FlowConnectorHighlight { id: number; reverse: boolean }
 export interface FlowStep {
   id: string
   title: string
   description: string
   elementIds: number[]
-  connectors: FlowConnectorHighlight[]
-  metadata: Record<string, string>
-  overview?: boolean
+  connectorIds: number[]
   branches?: FlowBranches
   goToFlowId?: string
 }
@@ -28,14 +25,14 @@ export interface FlowFrame { id: string; steps: FlowStep[]; path?: FlowBranch; c
 export interface FlowFocus {
   viewId: number
   elementIds: number[]
-  connectors: FlowConnectorHighlight[]
+  connectorIds: number[]
 }
 
 export function newStep(diagram: FlowDiagram, selected?: { elementId?: number; connectorId?: number }): FlowStep {
   return {
-    id: crypto.randomUUID(), title: '', description: '', metadata: {},
+    id: crypto.randomUUID(), title: '', description: '',
     elementIds: diagram.elements.filter(e => e.element_id === selected?.elementId).map(e => e.element_id),
-    connectors: diagram.connectors.filter(c => c.id === selected?.connectorId).map(c => ({ id: c.id, reverse: false })),
+    connectorIds: diagram.connectors.filter(c => c.id === selected?.connectorId).map(c => c.id),
   }
 }
 
@@ -45,16 +42,16 @@ export function stepLabel(step: FlowStep, diagram: FlowDiagram): string {
   const elementName = (id: number) => diagram.elements.find(element => element.element_id === id)?.name.trim() || `Element #${id}`
   const labels = [
     ...step.elementIds.map(elementName),
-    ...step.connectors.map(highlight => {
-      const connector = diagram.connectors.find(connector => connector.id === highlight.id)
-      if (!connector) return `Connection #${highlight.id}`
+    ...step.connectorIds.map(id => {
+      const connector = diagram.connectors.find(connector => connector.id === id)
+      if (!connector) return `Connection #${id}`
       if (connector.label?.trim()) return connector.label.trim()
       const source = elementName(connector.source_element_id)
       const target = elementName(connector.target_element_id)
-      return highlight.reverse ? `${target} → ${source}` : `${source} → ${target}`
+      return `${source} → ${target}`
     }),
   ]
-  return labels.join(', ') || (step.overview ? 'Flow overview' : step.branches ? step.branches.mode === 'parallel' ? 'Parallel paths' : 'Alternate paths' : step.goToFlowId ? 'Go to flow' : 'Text-only step')
+  return labels.join(', ') || (step.branches ? step.branches.mode === 'parallel' ? 'Parallel paths' : 'Alternate paths' : step.goToFlowId ? 'Go to flow' : 'Text-only step')
 }
 
 export function allSteps(steps: FlowStep[]): FlowStep[] {
@@ -92,7 +89,7 @@ export function updateStep(steps: FlowStep[], id: string, update: (step: FlowSte
 }
 
 export function duplicateSteps(steps: FlowStep[]): FlowStep[] {
-  return steps.map(step => ({ ...step, id: crypto.randomUUID(), elementIds: [...step.elementIds], connectors: step.connectors.map(c => ({ ...c })), metadata: { ...step.metadata },
+  return steps.map(step => ({ ...step, id: crypto.randomUUID(), elementIds: [...step.elementIds], connectorIds: [...step.connectorIds],
     ...(step.branches ? { branches: { ...step.branches, paths: step.branches.paths.map(path => ({ ...path, id: crypto.randomUUID(), steps: duplicateSteps(path.steps) })) } } : {}),
   }))
 }
@@ -125,27 +122,27 @@ function initialHighlights(step: FlowStep, choices: Record<string, string> = {})
 
 export function resolveFocus(flow: StoryFlow, frame: FlowFrame | undefined, diagram: FlowDiagram): FlowFocus {
   const elements = new Set<number>()
-  const connectors = new Map<number, FlowConnectorHighlight>()
-  const steps = !frame || frame.steps.some(step => step.overview)
+  const connectorIds = new Set<number>()
+  const steps = !frame
     ? allSteps(flow.steps)
     : frame.steps.flatMap(step => step.branches?.mode === 'parallel' ? initialHighlights(step, frame.choices) : step.branches?.mode === 'alternate' ? [step, ...allSteps(frame.path?.steps ?? step.branches.paths[0]?.steps ?? [])] : [step])
   for (const step of steps) {
     for (const id of step.elementIds) if (diagram.elements.some(e => e.element_id === id)) elements.add(id)
-    for (const highlight of step.connectors) {
-      const connector = diagram.connectors.find(c => c.id === highlight.id)
+    for (const id of step.connectorIds) {
+      const connector = diagram.connectors.find(c => c.id === id)
       if (connector && [connector.source_element_id, connector.target_element_id].every(id => diagram.elements.some(e => e.element_id === id))) {
         elements.add(connector.source_element_id)
         elements.add(connector.target_element_id)
-        connectors.set(connector.id, highlight)
+        connectorIds.add(connector.id)
       }
     }
   }
-  return { viewId: flow.viewId, elementIds: [...elements], connectors: [...connectors.values()] }
+  return { viewId: flow.viewId, elementIds: [...elements], connectorIds: [...connectorIds] }
 }
 
 export function missingReference(step: FlowStep, diagram: FlowDiagram): boolean {
-  return step.elementIds.some(id => !diagram.elements.some(e => e.element_id === id)) || step.connectors.some(highlight => {
-    const connector = diagram.connectors.find(c => c.id === highlight.id)
+  return step.elementIds.some(id => !diagram.elements.some(e => e.element_id === id)) || step.connectorIds.some(id => {
+    const connector = diagram.connectors.find(c => c.id === id)
     return !connector || ![connector.source_element_id, connector.target_element_id].every(id => diagram.elements.some(e => e.element_id === id))
   })
 }
@@ -165,7 +162,6 @@ export interface FlowMinimapNode {
   isVisited: boolean
   isBranch: boolean
   branchMode?: string
-  isOverview: boolean
   hasLink: boolean
   hasMissingRef: boolean
   choicePathId?: string
@@ -301,7 +297,6 @@ export function layoutFlowMinimap(
         isVisited,
         isBranch: item.paths.length > 0,
         branchMode: step.branches?.mode,
-        isOverview: !!step.overview,
         hasLink: !!step.goToFlowId,
         hasMissingRef: missingReference(step, diagram),
       }
@@ -356,7 +351,6 @@ export function layoutFlowMinimap(
             isActive: false,
             isVisited: isChosenPath && node.isVisited,
             isBranch: false,
-            isOverview: false,
             hasLink: false,
             hasMissingRef: false,
             choicePathId: path.branch.id,

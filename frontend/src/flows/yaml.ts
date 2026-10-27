@@ -4,15 +4,13 @@ import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, type FlowCatalog
 export const FLOW_YAML_MAX_BYTES = 1024 * 1024
 export const FLOW_YAML_SCHEMA_URL = 'https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json'
 
-export interface PortableConnectorHighlight { source: string; target: string; label?: string; reverse?: boolean }
+export interface PortableConnectorHighlight { source: string; target: string; label?: string }
 export interface PortableFlowStep {
   id?: string
   title?: string
   description?: string
   elements?: string[]
   connectors?: PortableConnectorHighlight[]
-  metadata?: Record<string, string>
-  overview?: boolean
   branches?: { mode: 'alternate' | 'parallel'; paths: { id?: string; name: string; steps: PortableFlowStep[] }[] }
   goToFlow?: { name: string; view?: string }
 }
@@ -74,14 +72,10 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
     return list(value, location, FLOW_MAX_STEPS).map((value, index): PortableFlowStep => {
       const path = `${location}[${index}]`, step = record(value, path)
       if (++count > FLOW_MAX_STEPS) fail(path, `at most ${FLOW_MAX_STEPS} total steps are allowed`)
-      keys(step, ['id', 'title', 'description', 'elements', 'connectors', 'metadata', 'overview', 'branches', 'goToFlow'], path)
+      keys(step, ['id', 'title', 'description', 'elements', 'connectors', 'branches', 'goToFlow'], path)
       const result: PortableFlowStep = {}
       const id = optionalId(step.id, `${path}.id`)
       if (id !== undefined) result.id = id
-      if (step.overview !== undefined) {
-        if (typeof step.overview !== 'boolean') fail(`${path}.overview`, 'expected a boolean')
-        result.overview = step.overview
-      }
       if (step.goToFlow !== undefined) {
         const target = record(step.goToFlow, `${path}.goToFlow`)
         keys(target, ['name', 'view'], `${path}.goToFlow`)
@@ -100,7 +94,7 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
           return { ...(id !== undefined ? { id } : {}), name: text(branch.name, `${location}.name`, 200, true), steps: validateSteps(branch.steps, `${location}.steps`, depth + 1) }
         }) }
       }
-      if ([result.overview, result.branches, result.goToFlow].filter(Boolean).length > 1) fail(path, 'choose only one of overview, branches, or goToFlow')
+      if (result.branches && result.goToFlow) fail(path, 'choose only one of branches or goToFlow')
       if (step.title !== undefined) result.title = text(step.title, `${path}.title`, 500)
       if (step.description !== undefined) result.description = text(step.description, `${path}.description`, 10000)
       if (step.elements !== undefined) {
@@ -110,22 +104,15 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
       if (step.connectors !== undefined) {
         result.connectors = list(step.connectors, `${path}.connectors`).map((value, index) => {
           const location = `${path}.connectors[${index}]`, connector = record(value, location)
-          keys(connector, ['source', 'target', 'label', 'reverse'], location)
-          if (connector.reverse !== undefined && typeof connector.reverse !== 'boolean') fail(`${location}.reverse`, 'expected a boolean')
+          keys(connector, ['source', 'target', 'label'], location)
           return {
             source: text(connector.source, `${location}.source`, 10000, true),
             target: text(connector.target, `${location}.target`, 10000, true),
             ...(connector.label !== undefined ? { label: text(connector.label, `${location}.label`, 10000) } : {}),
-            ...(connector.reverse !== undefined ? { reverse: connector.reverse as boolean } : {}),
           }
         })
         const references = result.connectors.map(c => JSON.stringify([c.source, c.target, c.label]))
         if (new Set(references).size !== references.length) fail(path, 'duplicate connector highlight')
-      }
-      if (step.metadata !== undefined) {
-        const entries = Object.entries(record(step.metadata, `${path}.metadata`))
-        if (entries.length > 50) fail(path, 'at most 50 metadata entries are allowed')
-        result.metadata = Object.fromEntries(entries.map(([key, value]) => [text(key, `${path}.metadata key`, 100, true), text(value, `${path}.metadata.${key}`, 10000)]))
       }
       return result
     })
@@ -171,16 +158,16 @@ export function importFlowYaml(source: string, viewId: number, diagram: FlowDiag
     const path = `${location}[${index}]`
     const elementIds = (step.elements ?? []).map(name => elementId(name, `${path}.elements`))
     const boundConnectors = step.id !== undefined && owns(bindings.connectors ?? {}, step.id) ? bindings.connectors![step.id] : {}
-    const connectors = (step.connectors ?? []).map((highlight, index) => {
+    const connectorIds = (step.connectors ?? []).map((highlight, index) => {
       const location = `${path}.connectors[${index}]`
       const source = elementId(highlight.source, `${location}.source`), target = elementId(highlight.target, `${location}.target`)
       const bound = owns(boundConnectors, index) ? boundConnectors[index] : undefined
       const matches = diagram.connectors.filter(c => c.source_element_id === source && c.target_element_id === target &&
         (bound !== undefined ? c.id === bound : highlight.label === undefined || (c.label ?? '') === highlight.label))
       if (matches.length !== 1) fail(location, matches.length ? 'ambiguous connection; specify a unique label or an explicit binding' : 'connection is not in the target diagram (source, target, and any supplied label must match)')
-      return { id: matches[0].id, reverse: highlight.reverse ?? false }
+      return matches[0].id
     })
-    if (new Set(elementIds).size !== elementIds.length || new Set(connectors.map(c => c.id)).size !== connectors.length) fail(path, 'duplicate resolved highlight')
+    if (new Set(elementIds).size !== elementIds.length || new Set(connectorIds).size !== connectorIds.length) fail(path, 'duplicate resolved highlight')
     let goToFlowId: string | undefined
     if (step.goToFlow) {
       let targetViewId = viewId
@@ -193,8 +180,8 @@ export function importFlowYaml(source: string, viewId: number, diagram: FlowDiag
       if (targets.length !== 1) fail(path, 'linked flow is missing or ambiguous')
       goToFlowId = targets[0].id
     }
-    return { id: step.id ?? crypto.randomUUID(), title: step.title ?? '', description: step.description ?? '', elementIds, connectors, metadata: step.metadata ?? {},
-      ...(step.overview ? { overview: true } : {}), ...(goToFlowId ? { goToFlowId } : {}),
+    return { id: step.id ?? crypto.randomUUID(), title: step.title ?? '', description: step.description ?? '', elementIds, connectorIds,
+      ...(goToFlowId ? { goToFlowId } : {}),
       ...(step.branches ? { branches: { mode: step.branches.mode, paths: step.branches.paths.map((branch, index) => ({ id: branch.id ?? crypto.randomUUID(), name: branch.name, steps: convert(branch.steps, `${path}.branches.paths[${index}].steps`) })) } } : {}),
     }
   })
@@ -225,16 +212,14 @@ export function exportFlowYaml(flow: StoryFlow, diagram: FlowDiagram, catalog: F
       ...(step.title ? { title: step.title } : {}),
       ...(step.description ? { description: step.description } : {}),
       ...(step.elementIds.length ? { elements: step.elementIds.map(elementName) } : {}),
-      ...(step.connectors.length ? { connectors: step.connectors.map(highlight => {
-        const connector = diagram.connectors.find(c => c.id === highlight.id)
-        if (!connector) fail('export', `connection ${highlight.id} is unavailable; relink the step before exporting`)
+      ...(step.connectorIds.length ? { connectors: step.connectorIds.map(id => {
+        const connector = diagram.connectors.find(c => c.id === id)
+        if (!connector) fail('export', `connection ${id} is unavailable; relink the step before exporting`)
         const label = connector.label ?? ''
         const between = diagram.connectors.filter(c => c.source_element_id === connector.source_element_id && c.target_element_id === connector.target_element_id)
         if (between.filter(c => (c.label ?? '') === label).length !== 1) fail('export', 'connections with the same endpoints need distinct labels before exporting')
-        return { source: elementName(connector.source_element_id), target: elementName(connector.target_element_id), ...(label || between.length > 1 ? { label } : {}), ...(highlight.reverse ? { reverse: true } : {}) }
+        return { source: elementName(connector.source_element_id), target: elementName(connector.target_element_id), ...(label || between.length > 1 ? { label } : {}) }
       }) } : {}),
-      ...(Object.keys(step.metadata).length ? { metadata: step.metadata } : {}),
-      ...(step.overview ? { overview: true } : {}),
       ...(step.goToFlowId ? { goToFlow: flowReference(step.goToFlowId) } : {}),
       ...(step.branches ? { branches: { mode: step.branches.mode as 'alternate' | 'parallel', paths: step.branches.paths.map(path => ({ id: path.id, name: path.name, steps: convert(path.steps, depth + 1) })) } } : {}),
     }))

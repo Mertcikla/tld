@@ -11,8 +11,8 @@ import (
 // ErrFlowConflict means another writer changed or deleted the story.
 var ErrFlowConflict = errors.New("flow changed; reload before saving")
 
-// FlowRecord stores the versioned protobuf JSON document without coupling the
-// persistence layer to a particular generated API revision.
+// FlowRecord stores content-only JSON. Identity, view ownership, and revision
+// live exclusively in the row columns.
 type FlowRecord struct {
 	bun.BaseModel `bun:"table:flows,alias:flow"`
 	ID            string     `bun:"id,pk"`
@@ -38,15 +38,15 @@ func (s *Store) ListFlows(ctx context.Context, viewID int64) ([]FlowRecord, erro
 // SaveFlow uses a compare-and-swap update so stale clients cannot silently
 // replace a collaborator's steps. A flow's home view cannot be reassigned.
 func (s *Store) SaveFlow(ctx context.Context, row FlowRecord) (FlowRecord, error) {
-	if _, err := s.ViewByID(ctx, row.ViewID); err != nil {
+	var view viewModel
+	if err := s.bun.NewSelect().Model(&view).Where("id = ?", row.ViewID).Scan(ctx); err != nil {
 		return FlowRecord{}, err
 	}
 	if row.ID == "" {
 		row.ID = uuid.NewString()
 		row.Revision = 1
-		if orgID := TenantOrgIDFromCtx(ctx); orgID != uuid.Nil {
-			row.OrgID = &orgID
-		}
+		// The home view owns the flow's scope, including unscoped local views.
+		row.OrgID = view.OrgID
 		_, err := s.bun.NewInsert().Model(&row).Exec(ctx)
 		return row, err
 	}
