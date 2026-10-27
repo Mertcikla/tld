@@ -118,9 +118,19 @@ function findHandleIdFromEventTarget(target: EventTarget | null) {
 
 function elementsFromClientPoint(clientX: number, clientY: number) {
   if (typeof document === 'undefined') return null
-  if (document.elementsFromPoint) return document.elementsFromPoint(clientX, clientY)
-  const element = document.elementFromPoint?.(clientX, clientY)
-  return element ? [element] : []
+  let elements: Element[]
+  if (typeof document.elementsFromPoint === 'function') elements = document.elementsFromPoint(clientX, clientY)
+  else {
+    const element = document.elementFromPoint?.(clientX, clientY)
+    elements = element ? [element] : []
+  }
+  // elementsFromPoint includes covered canvas objects, not just the visible hit.
+  return elements.some(isFlowPanelTarget) ? [] : elements
+}
+
+export function getHandleReconnectZoneAtPoint(clientX: number, clientY: number): Element | null {
+  return elementsFromClientPoint(clientX, clientY)
+    ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone')) ?? null
 }
 
 export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, nodes: RFNode[]): ConnectorDropTarget | null {
@@ -312,7 +322,7 @@ function findNearestHandleTargetInCache(targets: HandleTarget[], clientX: number
 
 function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNodeId: string) {
   const targets = elementsFromClientPoint(clientX, clientY)
-  if (!targets) return null
+  if (!targets?.length) return null
 
   for (const target of targets) {
     if (!isDomElement(target)) continue
@@ -2087,10 +2097,9 @@ export function useCanvasInteractions({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return
-      const target = elementsFromClientPoint(event.clientX, event.clientY)
-        ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone'))
-      if (!isDomElement(target)) return
+      if (event.button !== 0 || isFlowPanelTarget(event.target)) return
+      const target = getHandleReconnectZoneAtPoint(event.clientX, event.clientY)
+      if (!target) return
 
       const edgeId = target.getAttribute('data-edge-id')
       const endpoint = target.getAttribute('data-endpoint')
