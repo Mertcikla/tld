@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { Box, Button, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon, DragHandleIcon } from '@chakra-ui/icons'
@@ -62,6 +62,39 @@ function FlowAction({ label, hint = label, icon, disabled, loading, primary, des
       <IconButton aria-label={label} icon={icon} size="xs" w={primary ? undefined : 7} h={primary ? undefined : 7} variant="ghost" colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
     </Box>
   </Tooltip>
+}
+
+  function FlowDescription({ value, editing, disabled, onChange }: { value: string; editing: boolean; disabled: boolean; onChange: (value: string) => void }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const id = useId()
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const field = ref.current
+    if (!field || collapsed) return
+    function fit() {
+      field!.style.height = 'auto'
+      field!.style.height = `${Math.max(32, field!.scrollHeight + field!.offsetHeight - field!.clientHeight)}px`
+    }
+    fit()
+    let width = field.clientWidth
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      if (field.clientWidth !== width) { width = field.clientWidth; fit() }
+    })
+    observer?.observe(field)
+    return () => observer?.disconnect()
+  }, [value, editing, collapsed])
+  const maxHeight = 'min(240px, 25dvh)'
+  const label = collapsed ? 'Expand flow description' : 'Compact flow description'
+  return <HStack data-testid="flow-details-header" spacing={1} align="start" minH="32px">
+    {collapsed ? <Button id={id} aria-label="Flow description" aria-expanded={false} title={value || undefined} isDisabled={disabled} flex={1} minW={0} h="32px" px={2.5} py={1.5} variant="unstyled" display="block" textAlign="left" fontSize="xs" fontWeight="normal" lineHeight="20px" color="gray.400" rounded="md" _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ outline: '1px solid', outlineColor: 'var(--accent)' }} onClick={() => setCollapsed(false)}>
+      <Text as="span" display="block" isTruncated>{value || (editing ? 'Add a description…' : 'No description')}</Text>
+    </Button> : editing ? <Textarea ref={ref} id={id} aria-label="Flow description" isDisabled={disabled} flex={1} minW={0} variant="unstyled" fontSize="xs" color="gray.400" px={2.5} py={1.5} rounded="md" rows={1} minH="32px" maxH={maxHeight} overflowY="auto" resize="none" placeholder="Add a description…" maxLength={10000} value={value}
+      _hover={{ bg: 'whiteAlpha.50' }} _focus={{ bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onFocus={() => setCollapsed(false)} onChange={event => onChange(event.target.value)} />
+      : <Text id={id} aria-label="Flow description" flex={1} minW={0} fontSize="xs" color="gray.400" px={2.5} py={1.5} minH="32px" maxH={maxHeight} overflowY="auto" whiteSpace="pre-wrap" overflowWrap="anywhere">{value || 'No description'}</Text>}
+    <Tooltip label={label} openDelay={300} closeOnPointerDown>
+      <IconButton aria-label={label} aria-expanded={!collapsed} aria-controls={id} size="xs" variant="ghost" mt={1} flexShrink={0} icon={<Box transform={collapsed ? undefined : 'rotate(180deg)'}><ChevronDownIcon /></Box>} onClick={() => setCollapsed(!collapsed)} />
+    </Tooltip>
+  </HStack>
 }
 
 function FlowPlaybackMinimap({
@@ -495,7 +528,7 @@ function InlineStepText({ label, value, fallback, multiline = false, maxLength, 
     fontSize: multiline ? 'xs' : 'sm',
     fontWeight: multiline ? 'normal' : 'medium',
     rounded: 'sm',
-    _focusVisible: { boxShadow: multiline ? '0 1px 0 var(--accent)' : 'none' },
+    _focusVisible: { boxShadow: 'none' },
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(event.target.value),
     onBlur: () => setEditing(false),
     onKeyDown: (event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -532,8 +565,8 @@ function FlowEditorCard({ index, identifier = String(index + 1), title, titleEdi
   }}>
     <Box position="relative" data-flow-step-header>
       {handle}
-      <Button variant="unstyled" position="absolute" inset={0} w="full" h="54px" rounded="lg" aria-label={`Toggle ${identifier}: ${title}`} aria-expanded={expanded} onClick={onToggle}>
-        <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
+      <Button variant="unstyled" position="absolute" inset={0} w="full" h="54px" rounded="lg" aria-label={`Toggle ${identifier}: ${title}`} aria-expanded={expanded} onClick={onToggle} _hover={{ '& .flow-step-toggle': { bg: 'whiteAlpha.200' } }} _active={{ '& .flow-step-toggle': { bg: 'whiteAlpha.300' } }} _focusVisible={{ '& .flow-step-toggle': { bg: 'whiteAlpha.200' } }}>
+        <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} rounded="md" display="flex" alignItems="center" justifyContent="center" aria-hidden>
           <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="none"><ChevronDownIcon /></Box>
         </Box>
       </Button>
@@ -910,12 +943,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <IconButton size="sm" aria-label="Close flows" icon={<CloseIcon />} isDisabled={busy} onClick={close} flexShrink={0} />
       </HStack>
       {journey && <Button size="sm" aria-label="Return to previous flow" onClick={returnToFlow}>Return to {journey.stack[journey.stack.length - 1]?.flow.name}</Button>}
-      {!(compact && captureActive) && flow && <HStack data-testid="flow-details-header" spacing={2} align="start" minH="32px">
-
-        {editMode ? <Textarea aria-label="Flow description" isDisabled={busy} flex={1} minW={0} variant="unstyled" fontSize="xs" color="gray.400" pl={2.5} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={flow.description}
-          _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch({ description: e.target.value })} />
-          : <Text flex={1} minW={0} fontSize="xs" color="gray.400" pl={2.5} py={1.5} noOfLines={3} title={flow.description || undefined}>{flow.description || 'No description'}</Text>}
-      </HStack>}
+      {!(compact && captureActive) && flow && <FlowDescription value={flow.description} editing={editMode} disabled={busy} onChange={description => patch({ description })} />}
     </VStack>
     {flow && !journey && (editMode || draft) && !(compact && captureActive) && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2} px={3} pt={3} flexShrink={0}>
       <StepCount count={allSteps(flow.steps).length} alignWithHandles />

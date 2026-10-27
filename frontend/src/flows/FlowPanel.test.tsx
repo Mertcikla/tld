@@ -45,6 +45,67 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
 
 describe('flow step editing', () => {
+  it('compacts and expands the flow description without changing the saved text', async () => {
+    mount()
+    const value = 'Request overview\n\nDetails about the round trip.'
+    change(renderer.root.findByProps({ 'aria-label': 'Flow description' }), value)
+    act(() => button('Compact flow description').props.onClick())
+    expect(button('Expand flow description').props['aria-expanded']).toBe(false)
+    const preview = renderer.root.findByProps({ 'aria-label': 'Flow description' })
+    expect(preview.type).toBe('button')
+    expect(preview.findByProps({ isTruncated: true }).props.children).toBe(value)
+    expect(renderer.root.findAllByType('textarea').some(node => node.props['aria-label'] === 'Flow description')).toBe(false)
+    act(() => button('Expand flow description').props.onClick())
+    expect(button('Compact flow description').props['aria-expanded']).toBe(true)
+    act(() => button('Compact flow description').props.onClick())
+    act(() => button('Flow description').props.onClick())
+    expect(button('Compact flow description').props['aria-expanded']).toBe(true)
+    expect(renderer.root.findByProps({ 'aria-label': 'Flow description' }).props.value).toBe(value)
+    vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
+    await act(async () => button('Save flow').props.onClick())
+    expect(flowApi.save).toHaveBeenCalledWith(expect.objectContaining({ description: value }))
+  })
+
+  it('fits the description to its content and refits when the panel width changes', () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    let resize = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe = vi.fn()
+      disconnect = disconnect
+    })
+    const field = { style: { height: '' }, scrollHeight: 110, offsetHeight: 34, clientHeight: 32, clientWidth: 280 }
+    queryState.data = [{ id: 'saved', viewId: 1, name: 'Story', description: 'Long description', revision: 1, steps: [] }]
+    act(() => { renderer = create(<FlowPanel open docked editMode viewId={1} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />, {
+      createNodeMock: element => element.type === 'textarea' ? field : null,
+    }) })
+    expect(field.style.height).toBe('112px')
+    field.clientWidth = 180
+    field.scrollHeight = 170
+    act(() => resize())
+    expect(field.style.height).toBe('172px')
+    field.scrollHeight = 30
+    change(renderer.root.findByProps({ 'aria-label': 'Flow description' }), 'Short')
+    expect(field.style.height).toBe('32px')
+    expect(disconnect).toHaveBeenCalled()
+  })
+
+  it('can compact and expand multiline descriptions during playback', () => {
+    const value = 'Overview\n\nMore details'
+    queryState.data = [{ id: 'saved', viewId: 1, name: 'Story', description: value, revision: 1, steps: [] }]
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onClose={vi.fn()} onFocus={vi.fn()} />) })
+    const description = () => renderer.root.findByProps({ 'aria-label': 'Flow description' })
+    expect(description().props.children).toBe(value)
+    expect(description().props.whiteSpace).toBe('pre-wrap')
+    act(() => button('Compact flow description').props.onClick())
+    expect(description().type).toBe('button')
+    expect(description().findByProps({ isTruncated: true }).props.children).toBe(value)
+    act(() => button('Expand flow description').props.onClick())
+    expect(description().props.whiteSpace).toBe('pre-wrap')
+    expect(queryClient.setQueryData).not.toHaveBeenCalled()
+  })
+
   it('edits the title in the card header and the description in place', async () => {
     mount({ elementId: 1 })
     const header = renderer.root.findByProps({ 'data-flow-step-header': true })
