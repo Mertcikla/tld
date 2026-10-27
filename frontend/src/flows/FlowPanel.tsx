@@ -385,7 +385,6 @@ function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?:
         const name = connector?.name ?? `Unavailable connection #${highlight.id}`
         return <Tag key={highlight.id} size="sm" maxW="full">
           <TagLabel isTruncated title={connector?.details ?? name}>{name}</TagLabel>
-          <Button size="xs" variant="ghost" minW="24px" px={1} h="24px" aria-label={`Reverse ${connector?.details ?? name}`} aria-pressed={highlight.reverse} title="Reverse direction" onClick={() => onChange({ connectors: step.connectors.map(c => c.id === highlight.id ? { ...c, reverse: !c.reverse } : c) })}>{highlight.reverse ? '←' : '→'}</Button>
           <TagCloseButton aria-label={`Remove connection ${connector?.details ?? name}`} onClick={() => onChange({ connectors: step.connectors.filter(value => value.id !== highlight.id) })} />
         </Tag>
       })}

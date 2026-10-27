@@ -37,7 +37,7 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
 
 describe('flow step editing', () => {
-  it('saves multiple elements and connections with independent directions', async () => {
+  it('saves multiple elements and connections without direction controls', async () => {
     const onFocus = mount()
     expect(renderer.root.findAllByProps({ 'aria-label': 'New step type' })).toHaveLength(0)
     searchHighlights('api')
@@ -48,9 +48,9 @@ describe('flow step editing', () => {
     searchHighlights('api')
     check(checkbox('API → DB · Stores'), true)
     check(checkbox('API → Worker · Queues'), true)
-    act(() => renderer.root.findByProps({ 'aria-label': 'Reverse API → DB · Stores' }).props.onClick())
+    expect(renderer.root.findAllByType('button').some(node => node.props['aria-label']?.startsWith('Reverse '))).toBe(false)
     change(renderer.root.findByProps({ 'aria-label': 'Step title' }), 'Save and queue')
-    const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: true }, { id: 11, reverse: false }], metadata: {} }
+    const expected = { title: 'Save and queue', elementIds: [1, 2], connectors: [{ id: 10, reverse: false }, { id: 11, reverse: false }], metadata: {} }
     expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [1, 2, 3], connectors: expected.connectors })
     vi.mocked(flowApi.save).mockImplementation(async flow => ({ ...flow, id: 'saved', revision: 1 }))
     await act(async () => button('Save flow').props.onClick())
@@ -140,12 +140,11 @@ describe('flow step editing', () => {
     searchHighlights('message')
     expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(5)
     check(checkbox('Message 0'), true)
-    act(() => renderer.root.findByProps({ 'aria-label': 'Reverse Service 0 → Service 0 · Message 0' }).props.onClick())
     searchHighlights('message 7')
     check(checkbox('Message 7'), true)
     searchHighlights('')
     expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
-    expect(renderer.root.findByProps({ 'aria-label': 'Reverse Service 0 → Service 0 · Message 0' }).props['aria-pressed']).toBe(true)
+    expect(renderer.root.findByProps({ 'aria-label': 'Remove connection Service 0 → Service 0 · Message 0' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': 'Remove connection Service 0 → Service 7 · Message 7' })).toBeDefined()
     searchHighlights('no such connection')
     expect(renderer.root.findAllByType('checkbox' as never)).toHaveLength(0)
