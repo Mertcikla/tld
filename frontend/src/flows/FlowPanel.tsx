@@ -1,16 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { Box, Button, Checkbox, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
+import { Box, Button, Checkbox, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Tag, TagCloseButton, TagLabel, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddIcon, CopyIcon } from '@chakra-ui/icons'
-import { motion, Reorder } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { faBackwardStep, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
-import { SortableFlowStep } from './SortableFlowStep'
+import { SortableFlowList } from './SortableFlowStep'
 import { ChevronDownIcon, CloseIcon, ReloadIcon, SaveIcon, TrashIcon } from '../components/Icons'
 import { flowApi } from './api'
 import { api } from '../api/client'
 import { enterFlow, returnFromFlow, type FlowJourney, type FlowVisit } from './navigation'
-import { allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
+import { allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowBranch, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
 import { useFlowPlayback } from './useFlowPlayback'
 import { FlowYamlControls } from './FlowYamlControls'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
@@ -18,6 +18,15 @@ import { saveButtonStyles } from '../styles/saveButton'
 import { panelSurfaceStyles } from '../styles/surfaces'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
+function stepSummary(step: FlowStep): string {
+  const behavior = step.branches ? `${step.branches.mode === 'parallel' ? 'Parallel' : 'Alternate'} paths` : step.goToFlowId ? 'Linked flow' : step.overview ? 'Overview' : ''
+  const highlights = [
+    step.elementIds.length ? `${step.elementIds.length} ${step.elementIds.length === 1 ? 'element' : 'elements'}` : '',
+    step.connectors.length ? `${step.connectors.length} ${step.connectors.length === 1 ? 'connection' : 'connections'}` : '',
+  ]
+  return [behavior, ...highlights].filter(Boolean).join(' · ') || 'Text only'
+}
+
 function StepCount({ count, label = `${count} ${count === 1 ? 'step' : 'steps'}`, accent = false }: { count: number; label?: string; accent?: boolean }) {
   return <Tooltip label={label} openDelay={300} closeOnPointerDown closeOnScroll>
     <Box as="span" aria-label={label} display="inline-flex" alignItems="center" justifyContent="flex-end" gap={1.5} flexShrink={0} fontSize="sm" fontWeight="medium" color={accent ? 'var(--accent)' : 'text.muted'}>
@@ -353,11 +362,15 @@ function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?:
     return { ...connector, name: label || endpoints, details: label ? `${endpoints} · ${label}` : endpoints }
   })
   const matchingConnectors = term ? connectors.filter(connector => connector.details.toLocaleLowerCase().includes(term)) : []
-  return <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" overflow="hidden">
-    {onPick && <Box px={2} pt={2}><Button size="sm" w="full" variant="primary" aria-pressed={!!picking} onClick={onPick}>{picking ? 'Done picking' : 'Pick from canvas'}</Button></Box>}
-    <HStack p={2} spacing={1} aria-label="Highlight type">
-      <Button flex={1} size="sm" variant={tab === 'elements' ? 'solid' : 'ghost'} aria-label="Show elements" aria-pressed={tab === 'elements'} onClick={() => { setTab('elements'); setSearch('') }}>Elements ({step.elementIds.length})</Button>
-      <Button flex={1} size="sm" variant={tab === 'connections' ? 'solid' : 'ghost'} aria-label="Show connections" aria-pressed={tab === 'connections'} onClick={() => { setTab('connections'); setSearch('') }}>Connections ({step.connectors.length})</Button>
+  return <VStack align="stretch" spacing={2} minW={0}>
+    <HStack justify="space-between" minW={0} spacing={1} flexWrap="wrap">
+      <Text fontSize="xs" fontWeight="semibold" color="text.muted">What to highlight</Text>
+      {onPick && <Button size="xs" h={7} px={2} variant={picking ? 'primary' : 'ghost'} color={picking ? undefined : 'var(--accent)'} aria-pressed={!!picking} onClick={onPick}>{picking ? 'Done picking' : 'Pick from canvas'}</Button>}
+    </HStack>
+    <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" overflow="hidden">
+    <HStack p={2} spacing={1} flexWrap="wrap" aria-label="Highlight type">
+      <Button flex="1 1 100px" minW={0} px={2} size="sm" variant={tab === 'elements' ? 'solid' : 'ghost'} aria-label="Show elements" aria-pressed={tab === 'elements'} onClick={() => { setTab('elements'); setSearch('') }}>Elements ({step.elementIds.length})</Button>
+      <Button flex="1 1 100px" minW={0} px={2} size="sm" variant={tab === 'connections' ? 'solid' : 'ghost'} aria-label="Show connections" aria-pressed={tab === 'connections'} onClick={() => { setTab('connections'); setSearch('') }}>Connections ({step.connectors.length})</Button>
     </HStack>
     <Box px={2} pb={2}><Input size="sm" aria-label="Search highlights" placeholder={tab === 'elements' ? 'Search elements…' : 'Search connections…'} value={search} onChange={event => setSearch(event.target.value)} /></Box>
     {(tab === 'elements' ? step.elementIds.length > 0 : step.connectors.length > 0) && <HStack px={2} pb={2} spacing={1} gap={1} flexWrap="wrap" aria-label={tab === 'elements' ? 'Selected elements' : 'Selected connections'}>
@@ -395,18 +408,97 @@ function StepHighlights({ step, diagram, onChange, onPick, picking }: { onPick?:
       {(tab === 'elements' ? elements.length : matchingConnectors.length) > 5 && <Text fontSize="xs" color="gray.400" pt={1}>Showing 5 matches. Refine your search for more.</Text>}
     </VStack>}
 
+    </Box>
+    {!step.elementIds.length && !step.connectors.length && <Text fontSize="xs" color="text.muted">Leave empty for a text-only step.</Text>}
+  </VStack>
+}
+
+function StepOptions({ step, onChange, catalog, disabled, depth }: {
+  step: FlowStep; onChange: (changes: Partial<FlowStep>) => void; catalog: FlowCatalog; disabled: boolean; depth: number
+}) {
+  const [linking, setLinking] = useState(!!step.goToFlowId)
+  if (step.overview) return null
+  if (step.branches) return <VStack align="stretch" spacing={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={3}>
+    <HStack spacing={1}>
+      {(['alternate', 'parallel'] as const).map(mode => <Button key={mode} size="xs" h={7} flex={1} minW={0} px={1} variant={step.branches!.mode === mode ? 'solid' : 'ghost'} aria-label={`${mode === 'alternate' ? 'Alternate' : 'Parallel'} paths`} aria-pressed={step.branches!.mode === mode} isDisabled={disabled} onClick={() => onChange({ branches: { ...step.branches!, mode } })}>{mode === 'alternate' ? 'Alternate' : 'Parallel'}</Button>)}
+      <FlowAction label="Remove paths" icon={<CloseIcon />} disabled={disabled} onClick={() => { if (!step.branches!.paths.some(path => path.steps.length) || window.confirm('Remove these paths and their steps?')) onChange({ branches: undefined }) }} />
+    </HStack>
+    <Text fontSize="xs" color="text.muted">{step.branches.mode === 'alternate' ? 'Choose one path.' : 'Concurrent paths. Preview one at a time.'}</Text>
+  </VStack>
+  if (step.goToFlowId || linking) return <VStack align="stretch" spacing={2}>
+    <HStack justify="space-between">
+      <Text fontSize="xs" fontWeight="semibold" color="text.muted">Linked flow</Text>
+      <FlowAction label="Remove flow link" icon={<CloseIcon />} disabled={disabled} onClick={() => { setLinking(false); onChange({ goToFlowId: undefined }) }} />
+    </HStack>
+    <Select size="sm" aria-label="Go to flow" isDisabled={disabled} value={step.goToFlowId ?? ''} onChange={event => onChange({ goToFlowId: event.target.value || undefined })}>
+      <option value="">Choose a flow…</option>
+      {step.goToFlowId && !catalog.flows.some(flow => flow.id === step.goToFlowId) && <option value={step.goToFlowId}>Unavailable linked flow</option>}
+      {catalog.flows.map(flow => <option key={flow.id} value={flow.id}>{flow.name} · {catalog.views.find(view => view.id === flow.viewId)?.name ?? 'Diagram unavailable'}</option>)}
+    </Select>
+    {!catalog.flows.length && !step.goToFlowId && <Text fontSize="xs" color="text.muted">Save another flow to link it here.</Text>}
+  </VStack>
+  return <Menu placement="bottom-end" isLazy>
+    <MenuButton as={Button} size="xs" variant="ghost" alignSelf="flex-start" leftIcon={<AddIcon boxSize="10px" />} isDisabled={disabled}>Add to step</MenuButton>
+    <Portal><MenuList minW="200px" maxW="calc(100vw - 32px)">
+      {(['alternate', 'parallel'] as const).map(mode => <MenuItem key={mode} aria-label={`Add ${mode} paths`} isDisabled={depth >= 8} onClick={() => onChange({ branches: { mode, paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>{mode === 'alternate' ? 'Alternate paths' : 'Parallel paths'}</MenuItem>)}
+      <MenuItem aria-label="Link to flow" onClick={() => setLinking(true)}>Link to flow</MenuItem>
+    </MenuList></Portal>
+  </Menu>
+}
+
+function FlowEditorCard({ index, title, summary, handle, active, expanded, onToggle, actions, notice, children }: {
+  index: number; title: string; summary: string; handle: ReactNode; active: boolean; expanded: boolean; onToggle: () => void; actions: ReactNode; notice?: ReactNode; children: ReactNode
+}) {
+  return <Box role="group" position="relative" minW={0} border="1px solid" borderColor={active ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: active ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
+    '> [data-flow-step-header] .flow-step-actions': { opacity: 0, pointerEvents: 'none' },
+    '&:hover > [data-flow-step-header] .flow-step-actions, &:focus-within > [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' },
+    '@media (hover: none), (pointer: coarse)': { '> [data-flow-step-header] .flow-step-actions': { opacity: 1, pointerEvents: 'auto' } },
+  }}>
+    <Box position="relative" data-flow-step-header>
+      {handle}
+      <Button variant="unstyled" display="flex" alignItems="center" gap={2} size="sm" w="full" minW={0} h="54px" textAlign="left" p={2} pr="108px" rounded="lg" fontWeight="normal" aria-expanded={expanded} onClick={onToggle}>
+        <Box data-flow-step-number display="flex" w="24px" h="24px" alignItems="center" justifyContent="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" fontSize="10px" fontWeight="bold">{index + 1}</Box>
+        <Box flex={1} minW={0}>
+          <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{title}</Text>
+          <Text mt={0.5} fontSize="10px" fontWeight="normal" color="gray.400" noOfLines={1}>{summary}</Text>
+        </Box>
+        <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
+          <Box display="flex" transform={expanded ? 'rotate(180deg)' : undefined} transition="transform 150ms ease" sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><ChevronDownIcon /></Box>
+        </Box>
+      </Button>
+      <HStack className="flow-step-actions" position="absolute" right={10} top={0} bottom={0} alignItems="center" spacing={1}>{actions}</HStack>
+    </Box>
+    {notice && <Box px={3} pb={2}>{notice}</Box>}
+    <Collapse in={expanded} animateOpacity unmountOnExit>{children}</Collapse>
   </Box>
+}
+
+function StepPaths({ step, onChange, disabled, available, expanded, onSelect, renderSteps }: {
+  step: FlowStep; onChange: (paths: FlowBranch[]) => void; disabled: boolean; available: number; expanded: string | null; onSelect: (id: string | null) => void; renderSteps: (path: FlowBranch) => ReactNode
+}) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const paths = step.branches!.paths
+  return <VStack align="stretch" spacing={3}>
+    <SortableFlowList items={paths} onChange={onChange} disabled={disabled} kind="path">{(path, index, handle) => {
+      const count = allSteps(path.steps).length
+      const active = allSteps(path.steps).some(child => child.id === expanded)
+      const isExpanded = !collapsed[path.id] || active
+      return <FlowEditorCard index={index} title={path.name} summary={`${count} ${count === 1 ? 'step' : 'steps'}`} handle={handle} active={active} expanded={isExpanded} onToggle={() => { setCollapsed(current => ({ ...current, [path.id]: isExpanded })); if (active) onSelect(step.id) }} actions={<>
+        <FlowAction label={`Duplicate path ${path.name}`} hint="Duplicate path" icon={<CopyIcon />} disabled={disabled || paths.length >= 10 || count > available} onClick={() => onChange([...paths.slice(0, index + 1), { ...path, id: crypto.randomUUID(), name: `${path.name.slice(0, 190)} copy`, steps: duplicateSteps(path.steps) }, ...paths.slice(index + 1)])} />
+        <FlowAction label={`Remove path ${path.name}`} hint="Remove path" icon={<TrashIcon />} destructive disabled={disabled || paths.length <= 2} onClick={() => { if (window.confirm('Remove this path and its steps?')) onChange(paths.filter(p => p.id !== path.id)) }} />
+      </>}>
+        <VStack align="stretch" spacing={3} p={3} pt={0}>
+          <Input aria-label="Path name" size="sm" minW={0} isDisabled={disabled} maxLength={200} value={path.name} onChange={event => onChange(paths.map(p => p.id === path.id ? { ...p, name: event.target.value } : p))} />
+          {renderSteps(path)}
+        </VStack>
+      </FlowEditorCard>
+    }}</SortableFlowList>
+    <Button size="sm" variant="ghost" leftIcon={<AddIcon boxSize="10px" />} isDisabled={disabled || paths.length >= 10} onClick={() => onChange([...paths, { id: crypto.randomUUID(), name: `Path ${paths.length + 1}`, steps: [] }])}>Add path</Button>
+  </VStack>
 }
 
 function StepList({ steps, onChange, diagram, selection, onSelect, expanded, actions, onPick, picking, disabled, depth = 0, available = 500, catalog = { flows: [], views: [] } }: { depth?: number; available?: number; catalog?: FlowCatalog; disabled: boolean; onPick?: () => void; picking?: boolean; actions?: ReactNode; steps: FlowStep[]; onChange: (steps: FlowStep[]) => void; diagram: FlowDiagram; selection?: FlowPanelProps['selection']; onSelect: (id: string | null) => void; expanded: string | null }) {
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
-  function move(index: number, delta: number) {
-    if (disabled || index + delta < 0 || index + delta >= steps.length) return
-    const next = [...steps]
-    const [step] = next.splice(index, 1)
-    next.splice(index + delta, 0, step)
-    onChange(next)
-  }
   return <VStack align="stretch" spacing={3}>
     <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
       <HStack spacing={2}>
@@ -415,68 +507,28 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
       </HStack>
       <Box ml="auto"><StepCount count={allSteps(steps).length} /></Box>
     </HStack>
-    {!steps.length && <Text fontSize="sm" color="gray.400">Add a step to describe what happens and choose what to highlight.</Text>}
-    <Reorder.Group as="div" axis="y" values={steps} onReorder={onChange} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 26 }}>
-    {steps.map((step, index) => <SortableFlowStep key={step.id} step={step} index={index} disabled={disabled || steps.length < 2} onMove={delta => move(index, delta)}>{handle =>
-      <Box role="group" position="relative" border="1px solid" borderColor={expanded === step.id ? 'var(--accent)' : 'whiteAlpha.100'} bg="whiteAlpha.50" borderRadius="lg" _hover={{ bg: 'whiteAlpha.100', borderColor: expanded === step.id ? 'var(--accent)' : 'whiteAlpha.300' }} sx={{
-        '.flow-step-actions': { opacity: 0, pointerEvents: 'none' },
-        '&:hover .flow-step-actions, &:focus-within .flow-step-actions': { opacity: 1, pointerEvents: 'auto' },
-        '@media (hover: none), (pointer: coarse)': { '.flow-step-actions': { opacity: 1, pointerEvents: 'auto' } },
-      }}>
-      <Box position="relative" data-flow-step-header>
-        {handle}
-        <Button variant="unstyled" display="flex" alignItems="center" gap={2} size="sm" w="full" minW={0} h="54px" textAlign="left" p={2} pr="108px" rounded="lg" fontWeight="normal" aria-expanded={expanded === step.id} onClick={() => { onSelect(expanded === step.id ? null : step.id) }}>
-          <Box data-flow-step-number display="flex" w="24px" h="24px" alignItems="center" justifyContent="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" fontSize="10px" fontWeight="bold">{index + 1}</Box>
-          <Box flex={1} minW={0}>
-            <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{stepLabel(step, diagram)}</Text>
-            <Text mt={0.5} fontSize="10px" fontWeight="normal" color="gray.400" noOfLines={1}>{step.elementIds.length + step.connectors.length === 0 ? 'Text only' : `${step.elementIds.length} elements · ${step.connectors.length} connections`}</Text>
-          </Box>
-          <Box className="flow-step-toggle" position="absolute" right={2} top="50%" transform="translateY(-50%)" w={7} h={7} display="flex" alignItems="center" justifyContent="center" aria-hidden>
-            <Box display="flex" transform={expanded === step.id ? 'rotate(180deg)' : undefined} transition="transform 150ms ease" sx={{ '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><ChevronDownIcon /></Box>
-          </Box>
-        </Button>
-        <HStack className="flow-step-actions" position="absolute" right={10} top={0} bottom={0} alignItems="center" spacing={1}>
-          <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
-          <FlowAction label={`Remove step ${index + 1}`} hint="Remove step" icon={<TrashIcon />} destructive disabled={disabled} onClick={() => onChange(steps.filter(s => s.id !== step.id))} />
-        </HStack>
-      </Box>
-      {missingReference(step, diagram) && <Text px={3} pb={2} fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text>}
-      <Collapse in={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} animateOpacity unmountOnExit>
+    {!steps.length && <Text fontSize={depth ? 'xs' : 'sm'} color="gray.400">{depth ? 'No steps yet.' : 'Add a step to describe what happens and choose what to highlight.'}</Text>}
+    <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
+      <FlowEditorCard index={index} title={stepLabel(step, diagram)} summary={stepSummary(step)} handle={handle} active={expanded === step.id} expanded={expanded === step.id || allSteps((step.branches?.paths ?? []).flatMap(path => path.steps)).some(child => child.id === expanded)} onToggle={() => onSelect(expanded === step.id ? null : step.id)} actions={<>
+        <FlowAction label={`Duplicate step ${index + 1}`} hint="Duplicate step" icon={<CopyIcon />} disabled={disabled || allSteps([step]).length > available} onClick={() => { const [copy] = duplicateSteps([step]); onChange([...steps.slice(0, index + 1), copy, ...steps.slice(index + 1)]); onSelect(copy.id) }} />
+        <FlowAction label={`Remove step ${index + 1}`} hint="Remove step" icon={<TrashIcon />} destructive disabled={disabled} onClick={() => onChange(steps.filter(s => s.id !== step.id))} />
+      </>} notice={missingReference(step, diagram) ? <Text fontSize="xs" color="orange.300">A highlight is unavailable. Remove it or select a replacement.</Text> : undefined}>
         <VStack align="stretch" spacing={3} p={3} pt={0}>
           <VStack align="stretch" spacing={0} minW={0}>
+            <Text fontSize="xs" fontWeight="semibold" color="text.muted" mb={1}>Story</Text>
             <Input aria-label="Step title" variant="unstyled" minW={0} h="32px" px={2} rounded="md" fontSize="sm" fontWeight="semibold" placeholder="Step title" maxLength={500} value={step.title}
               _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ bg: 'whiteAlpha.50', boxShadow: 'inset 0 0 0 1px var(--accent)' }} onChange={e => patch(step.id, { title: e.target.value })} />
             <Textarea aria-label="Step description" variant="unstyled" minW={0} fontSize="xs" color="gray.400" px={2} py={1.5} rounded="md" rows={1} minH="32px" maxH="120px" resize="none" placeholder="Add a description…" maxLength={10000} value={step.description}
               _hover={{ bg: 'whiteAlpha.50' }} _focus={{ minH: '64px', bg: 'whiteAlpha.50', outline: '1px solid', outlineColor: 'var(--accent)' }} onChange={e => patch(step.id, { description: e.target.value })} />
           </VStack>
           <StepHighlights step={step} diagram={diagram} onChange={changes => patch(step.id, changes)} onPick={expanded === step.id ? onPick : undefined} picking={expanded === step.id && picking} />
-          {!step.branches && !step.goToFlowId && <Checkbox size="sm" aria-label="Whole flow overview" isChecked={!!step.overview} onChange={event => patch(step.id, { overview: event.target.checked })}>Show an overview of the whole flow</Checkbox>}
-          {!step.overview && !step.branches && !step.goToFlowId && <HStack flexWrap="wrap">
-            {depth < 8 && <><Button size="xs" onClick={() => patch(step.id, { branches: { mode: 'alternate', paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>Add alternate paths</Button>
-            <Button size="xs" onClick={() => patch(step.id, { branches: { mode: 'parallel', paths: ['Path A', 'Path B'].map(name => ({ id: crypto.randomUUID(), name, steps: [] })) } })}>Add parallel paths</Button></>}
-          </HStack>}
-          {!step.overview && !step.branches && <Select size="sm" aria-label="Go to flow" value={step.goToFlowId ?? ''} onChange={event => patch(step.id, { goToFlowId: event.target.value || undefined })}>
-            <option value="">Continue to next step</option>
-            {step.goToFlowId && !catalog.flows.some(flow => flow.id === step.goToFlowId) && <option value={step.goToFlowId}>Unavailable linked flow</option>}
-            {catalog.flows.map(flow => <option key={flow.id} value={flow.id}>Go to {flow.name} · {catalog.views.find(view => view.id === flow.viewId)?.name ?? 'Diagram unavailable'}</option>)}
-          </Select>}
-          {step.branches && <VStack align="stretch" spacing={3}>
-            <HStack><Text fontSize="sm" flex={1}>{step.branches.mode === 'alternate' ? 'Alternate paths (OR)' : 'Parallel paths (AND)'}</Text><Button size="xs" onClick={() => { if (window.confirm('Remove these paths and their steps?')) patch(step.id, { branches: undefined }) }}>Remove paths</Button></HStack>
-            {step.branches.paths.map((path, pathIndex) => <Box key={path.id} borderLeft="2px solid" borderColor="var(--accent)" pl={2}>
-              <HStack mb={2}><Input size="sm" aria-label="Path name" maxLength={200} value={path.name} onChange={event => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, name: event.target.value } : p) } })} />
-                <Button size="xs" aria-label={`Move path ${path.name} up`} isDisabled={pathIndex === 0} onClick={() => { const paths = [...step.branches!.paths]; [paths[pathIndex - 1], paths[pathIndex]] = [paths[pathIndex], paths[pathIndex - 1]]; patch(step.id, { branches: { ...step.branches!, paths } }) }}>↑</Button>
-                <Button size="xs" aria-label={`Duplicate path ${path.name}`} isDisabled={step.branches!.paths.length >= 10 || allSteps(path.steps).length > available} onClick={() => patch(step.id, { branches: { ...step.branches!, paths: [...step.branches!.paths, { ...path, id: crypto.randomUUID(), name: `${path.name.slice(0, 190)} copy`, steps: duplicateSteps(path.steps) }] } })}>Copy</Button>
-                <Button size="xs" aria-label={`Remove path ${path.name}`} isDisabled={step.branches!.paths.length <= 2} onClick={() => { if (window.confirm('Remove this path and its steps?')) patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.filter(p => p.id !== path.id) } }) }}>×</Button>
-              </HStack>
-              <StepList steps={path.steps} onChange={steps => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} diagram={diagram} selection={selection} onSelect={onSelect} expanded={expanded} onPick={onPick} picking={picking} disabled={disabled} depth={depth + 1} available={available} catalog={catalog} />
-            </Box>)}
-            <Button size="xs" isDisabled={step.branches.paths.length >= 10} onClick={() => patch(step.id, { branches: { ...step.branches!, paths: [...step.branches!.paths, { id: crypto.randomUUID(), name: `Path ${step.branches!.paths.length + 1}`, steps: [] }] } })}>Add path</Button>
-          </VStack>}
+          <StepOptions step={step} onChange={changes => patch(step.id, changes)} catalog={catalog} disabled={disabled} depth={depth} />
+          {step.branches && <StepPaths step={step} onChange={paths => patch(step.id, { branches: { ...step.branches!, paths } })} disabled={disabled} available={available} expanded={expanded} onSelect={onSelect} renderSteps={path =>
+            <StepList steps={path.steps} onChange={steps => patch(step.id, { branches: { ...step.branches!, paths: step.branches!.paths.map(p => p.id === path.id ? { ...p, steps } : p) } })} diagram={diagram} selection={selection} onSelect={onSelect} expanded={expanded} onPick={onPick} picking={picking} disabled={disabled} depth={depth + 1} available={available} catalog={catalog} />
+          } />}
         </VStack>
-      </Collapse>
-      </Box>
-    }</SortableFlowStep>)}
-    </Reorder.Group>
+      </FlowEditorCard>
+    }</SortableFlowList>
   </VStack>
 }
 
