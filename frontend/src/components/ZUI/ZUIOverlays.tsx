@@ -145,6 +145,7 @@ export function ZUIBreadcrumb({
       <Box
         ref={containerRef}
         data-testid="zui-breadcrumb"
+        data-canvas-overlay="top"
         position="absolute"
         top={isMobileLayout ? '66px' : 4}
         left={4}
@@ -191,6 +192,7 @@ export function ZUIBreadcrumb({
           <Box position="absolute" top="100%" left={0} pt={2} minW="220px" maxW="340px" zIndex={20}>
             <Box
               data-testid="zui-breadcrumb-menu"
+              data-canvas-overlay=""
               className="glass"
               border="1px solid"
               borderColor="whiteAlpha.100"

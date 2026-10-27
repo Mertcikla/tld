@@ -130,6 +130,7 @@ export function ExploreToolbar({
 }) {
   return (
     <Box
+      data-canvas-overlay="bottom"
       position="absolute"
       bottom={4}
       left="50%"
@@ -199,6 +200,7 @@ export function ExploreToolbar({
               <Portal>
                 <PopoverContent
                   data-testid="zui-tags-panel"
+                  data-canvas-overlay=""
                   data-zui-native-wheel="true"
                   bg="glass.bg"
                   backdropFilter="blur(16px)"

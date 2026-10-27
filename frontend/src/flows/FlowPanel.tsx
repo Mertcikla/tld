@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { Box, Button, Collapse, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { AddIcon, CopyIcon } from '@chakra-ui/icons'
+import { AddIcon, CopyIcon, DragHandleIcon } from '@chakra-ui/icons'
 import { motion } from 'framer-motion'
 import { faBackwardStep, faCodeFork, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
@@ -12,6 +12,7 @@ import { api } from '../api/client'
 import { enterFlow, returnFromFlow, type FlowJourney, type FlowVisit } from './navigation'
 import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, flowIdentifiers, allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowBranch, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
 import { useFlowPlayback } from './useFlowPlayback'
+import { useFloatingFlowPanel } from './useFloatingFlowPanel'
 import { FlowYamlControls } from './FlowYamlControls'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
 import { saveButtonStyles } from '../styles/saveButton'
@@ -29,10 +30,10 @@ function stepSummary(step: FlowStep): string {
   return [behavior, ...highlights].filter(Boolean).join(' · ') || 'Text only'
 }
 
-function StepCount({ count, label = `${count} ${count === 1 ? 'step' : 'steps'}`, accent = false }: { count: number; label?: string; accent?: boolean }) {
+function StepCount({ count, label = `${count} ${count === 1 ? 'step' : 'steps'}`, accent = false, alignWithHandles = false }: { count: number; label?: string; accent?: boolean; alignWithHandles?: boolean }) {
   return <Tooltip label={label} openDelay={300} closeOnPointerDown closeOnScroll>
-    <Box as="span" aria-label={label} display="inline-flex" alignItems="center" justifyContent="flex-end" gap={1.5} flexShrink={0} fontSize="sm" fontWeight="medium" color={accent ? 'var(--accent)' : 'text.muted'}>
-      <Box as="span">{count}</Box><FontAwesomeIcon icon={faStairs} size={16} />
+    <Box as="span" aria-label={label} display="inline-flex" alignItems="center" justifyContent="flex-end" gap={alignWithHandles ? 0 : 1.5} flexShrink={0} fontSize="sm" fontWeight="medium" color={accent ? 'var(--accent)' : 'text.muted'}>
+      <Box as="span" minW={alignWithHandles ? '24px' : undefined} textAlign={alignWithHandles ? 'center' : undefined}>{count}</Box><FontAwesomeIcon icon={faStairs} size={16} />
     </Box>
   </Tooltip>
 }
@@ -644,7 +645,7 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
   const patch = (id: string, changes: Partial<FlowStep>) => onChange(steps.map(step => step.id === id ? { ...step, ...changes } : step))
   return <VStack align="stretch" spacing={3}>
     {depth === 0 && <HStack aria-label="Flow steps" justify="space-between" flexWrap="wrap" gap={2}>
-      <StepCount count={allSteps(steps).length} />
+      <StepCount count={allSteps(steps).length} alignWithHandles />
       {actions}
     </HStack>}
     <SortableFlowList items={steps} onChange={onChange} disabled={disabled}>{(step, index, handle) =>
@@ -673,6 +674,7 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, act
 }
 
 export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, diagram, diagrams, selection, docked = false, compact = false, expanded = false, onExpandedChange, onCanvasRecorderChange, onEditModeChange, onNavigateView, onClose, onFocus }: FlowPanelProps) {
+  const floating = useFloatingFlowPanel(open && !docked)
   const queryClient = useQueryClient()
   const queryKey = useMemo(() => ['flows', 0], [])
   const query = useQuery({ queryKey, queryFn: () => flowApi.list(), enabled: open, retry: false })
@@ -865,11 +867,11 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   }
   function close() { if (!busy) { playback.pause(); onClose() } }
   if (!open) return null
-  return <Box data-testid="flow-panel" role="region" aria-label="Flows" tabIndex={0} position={docked ? "relative" : "absolute"} zIndex={30}
+  return <Box ref={floating.ref} style={floating.style} data-testid="flow-panel" role="region" aria-label="Flows" tabIndex={0} position={docked ? "relative" : "absolute"} zIndex={30}
     left={docked ? undefined : { base: 2, md: '64px' }} top={docked ? undefined : { base: 'auto', md: '64px' }} bottom={docked ? undefined : { base: '96px', md: 'auto' }}
     w={docked ? '100%' : { base: 'calc(100% - 16px)', md: 'min(400px, calc(100% - 80px))' }} h={docked ? '100%' : undefined} minH={0}
     maxH={docked ? '100%' : { base: 'min(65%, 760px)', md: 'min(760px, calc(100% - 168px))' }}
-    display="flex" flexDirection="column" overflow="hidden" border="1px solid" sx={panelSurfaceStyles} rounded={docked ? 0 : "xl"} boxShadow={docked ? undefined : "panel"}
+    display="flex" flexDirection="column" overflow="hidden" overflowY={docked ? 'hidden' : 'auto'} border="1px solid" sx={{ ...panelSurfaceStyles, bg: 'var(--bg-main)' }} rounded={docked ? 0 : "xl"} boxShadow={docked ? undefined : "panel"}
     onKeyDown={event => {
       event.stopPropagation()
       if (event.defaultPrevented) return
@@ -880,7 +882,12 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
       if (event.key === 'ArrowLeft') { event.preventDefault(); playback.previous() }
       if (event.key === ' ') { event.preventDefault(); playback.toggle() }
     }} onPointerDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()}>
-    <VStack as="header" data-testid="flow-header" align="stretch" spacing={2} p={3} borderBottom="1px solid" borderColor="var(--border-main)" flexShrink={0}>
+    {!docked && <Tooltip label="Drag to move · Arrow keys to reposition" openDelay={300} closeOnPointerDown>
+      <Button aria-label="Move Flows panel" variant="unstyled" position="sticky" top={0} zIndex={1} bg="var(--bg-main)" w="full" h={5} minH={5} flexShrink={0} display="flex" alignItems="center" justifyContent="center" cursor={floating.dragging ? 'grabbing' : 'grab'} color="text.muted" _hover={{ color: 'var(--accent)' }} sx={{ touchAction: 'none', userSelect: 'none' }} {...floating.handleProps}>
+        <DragHandleIcon boxSize={3} transform="rotate(90deg)" />
+      </Button>
+    </Tooltip>}
+    <VStack as="header" data-testid="flow-header" align="stretch" spacing={2} p={3} pt={docked ? 3 : 1} borderBottom="1px solid" borderColor="var(--border-main)" flexShrink={0}>
       <HStack spacing={2} minW={0}>
         {compact && captureActive ? <>
           <Text flex={1} minW={0} fontSize="sm" fontWeight="semibold">{pickerActive ? 'Picking highlights' : 'Recording steps'}</Text>

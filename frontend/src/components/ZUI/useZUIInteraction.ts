@@ -553,8 +553,19 @@ export function useZUIInteraction(
         return
       }
 
-      const hovered = hoveredItemRef.current
       const popover = hoverPopoverRef.current
+      // Window-level tracking also receives moves over panels covering the canvas.
+      // Keep the canvas's own popover interactive without hit-testing behind other UI.
+      if (e.target !== el) {
+        if (popover && e.target instanceof Node && popover.contains(e.target)) {
+          clearHoverTimeout()
+          return
+        }
+        setHoveredItem(null, true)
+        return
+      }
+
+      const hovered = hoveredItemRef.current
       let safeAnchor: { x: number; y: number } | null = null
       if (hovered?.type === 'edge') {
         safeAnchor = {
