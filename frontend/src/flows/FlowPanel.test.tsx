@@ -781,7 +781,7 @@ describe('flow operation editing and navigation', () => {
     expect(vi.mocked(flowApi.save).mock.lastCall![0].steps[0]).toMatchObject({ title: 'Explain the next phase', elementIds: [], connectors: [], goToFlowId: undefined })
   })
 
-  it('preserves path contents when changing branch mode and confirms before removing them', () => {
+  it('preserves path contents when changing branch mode without a remove-all action', () => {
     mount({ elementId: 2 })
     act(() => menuItem('Add alternate paths').props.onClick())
     act(() => button('Add step to path Path A').props.onClick())
@@ -792,13 +792,39 @@ describe('flow operation editing and navigation', () => {
     act(() => button('Parallel paths').props.onClick())
     expect(parent().branches).toEqual({ mode: 'parallel', paths: originalPaths })
     expect(window.confirm).not.toHaveBeenCalled()
-    vi.mocked(window.confirm).mockReturnValue(false)
-    act(() => button('Remove paths').props.onClick())
-    expect(parent().branches.paths).toEqual(originalPaths)
-    vi.mocked(window.confirm).mockReturnValue(true)
-    act(() => button('Remove paths').props.onClick())
-    expect(parent()).toMatchObject({ elementIds: [2], branches: undefined })
-    expect(renderer.root.findAllByProps({ 'aria-label': 'Path name' })).toHaveLength(0)
+    expect(button('Remove paths')).toBeUndefined()
+    expect(parent().elementIds).toEqual([2])
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Path name' })).toHaveLength(2)
+  })
+
+  it('renames paths inline in their card headers and supports committing and cancelling edits', () => {
+    mount()
+    act(() => menuItem('Add alternate paths').props.onClick())
+    act(() => button('Add step to path Path A').props.onClick())
+    const original = currentDraft().steps[0].branches.paths[0]
+    const name = () => renderer.root.findAllByProps({ 'aria-label': 'Path name' })[0]
+    const editName = (value: string) => {
+      act(() => name().props.onClick())
+      act(() => name().props.onChange({ target: { value } }))
+    }
+    expect(name().type).toBe('button')
+    const header = renderer.root.findByProps({ 'data-flow-path-id': original.id }).findAllByProps({ 'data-flow-step-header': true })[0]
+    expect(header.findByProps({ 'aria-label': 'Path name' })).toBe(name())
+    expect(renderer.root.findAllByType('input').filter(node => node.props['aria-label'] === 'Path name')).toHaveLength(0)
+    editName('Success')
+    expect(name().type).toBe('input')
+    expect(name().props.maxLength).toBe(200)
+    act(() => name().props.onKeyDown({ key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
+    expect(name().type).toBe('button')
+    expect(currentDraft().steps[0].branches.paths[0]).toEqual({ ...original, name: 'Success' })
+    editName('Discard this')
+    act(() => name().props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
+    expect(name().type).toBe('button')
+    expect(currentDraft().steps[0].branches.paths[0].name).toBe('Success')
+    editName('Completed')
+    act(() => name().props.onBlur())
+    expect(name().type).toBe('button')
+    expect(currentDraft().steps[0].branches.paths[0]).toEqual({ ...original, name: 'Completed' })
   })
 
   it('switches a linked step to paths without losing its highlights', async () => {

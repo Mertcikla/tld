@@ -454,7 +454,6 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
   if (step.branches) return <VStack align="stretch" spacing={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={3}>
     <HStack spacing={1}>
       {(['alternate', 'parallel'] as const).map(mode => <Button key={mode} size="xs" h={7} flex={1} minW={0} px={1} variant={step.branches!.mode === mode ? 'solid' : 'ghost'} aria-label={`${mode === 'alternate' ? 'Alternate' : 'Parallel'} paths`} aria-pressed={step.branches!.mode === mode} isDisabled={disabled} onClick={() => onChange({ branches: { ...step.branches!, mode } })}>{mode === 'alternate' ? 'Alternate' : 'Parallel'}</Button>)}
-      <FlowAction label="Remove paths" icon={<CloseIcon />} disabled={disabled} onClick={() => { if (!step.branches!.paths.some(path => path.steps.length) || window.confirm('Remove these paths and their steps?')) onChange({ branches: undefined }) }} />
     </HStack>
     <Text fontSize="xs" color="text.muted">{step.branches.mode === 'alternate' ? 'Choose one path.' : 'Concurrent paths. Preview one at a time.'}</Text>
   </VStack>
@@ -479,8 +478,8 @@ function StepOptions({ step, onChange, catalog, disabled, depth }: {
   </Menu>
 }
 
-function InlineStepText({ label, value, fallback, multiline = false, disabled, onChange }: {
-  label: string; value: string; fallback: string; multiline?: boolean; disabled: boolean; onChange: (value: string) => void
+function InlineStepText({ label, value, fallback, multiline = false, maxLength, disabled, onChange }: {
+  label: string; value: string; fallback: string; multiline?: boolean; maxLength?: number; disabled: boolean; onChange: (value: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const original = useRef(value)
@@ -510,7 +509,7 @@ function InlineStepText({ label, value, fallback, multiline = false, disabled, o
   }
   if (editing) return multiline
     ? <Textarea {...fieldProps} maxLength={10000} rows={2} minH="48px" maxH="120px" resize="vertical" />
-    : <Input {...fieldProps} maxLength={500} h="21px" onFocus={event => event.target.select()} />
+    : <Input {...fieldProps} maxLength={maxLength ?? 500} h="21px" onFocus={event => event.target.select()} />
   return <Button aria-label={label} data-inline-preview value={value} variant="unstyled" w="full" minW={0} h="auto" minH={multiline ? '28px' : '21px'} fontWeight={multiline ? 'normal' : 'medium'} fontSize={multiline ? 'xs' : 'sm'} textAlign="left" color={multiline ? 'text.muted' : undefined} rounded="sm" isDisabled={disabled} title={`Click to edit ${label.toLowerCase()}`}
     _hover={{ bg: 'whiteAlpha.50' }} _focusVisible={{ boxShadow: '0 0 0 1px var(--accent)' }} onClick={() => { original.current = value; setEditing(true) }}>
     <Text as="span" display="block" isTruncated={!multiline} whiteSpace={multiline ? 'pre-wrap' : 'nowrap'} overflowWrap="anywhere" maxH={multiline ? '120px' : undefined} overflowY={multiline ? 'auto' : undefined}>{value || fallback}</Text>
@@ -562,12 +561,11 @@ function StepPaths({ step, onChange, disabled, available, expanded, onSelect, re
       const count = allSteps(path.steps).length
       const active = allSteps(path.steps).some(child => child.id === expanded)
       const isExpanded = !collapsed[path.id] || active
-      return <FlowEditorCard index={index} identifier={identifiers.get(path.id)} title={path.name} summary={`${count} ${count === 1 ? 'step' : 'steps'}`} handle={handle} active={active} expanded={isExpanded} onToggle={() => { setCollapsed(current => ({ ...current, [path.id]: isExpanded })); if (active) onSelect(step.id) }} actions={<>
+      return <FlowEditorCard index={index} identifier={identifiers.get(path.id)} title={path.name} titleEditor={isExpanded ? <InlineStepText label="Path name" value={path.name} fallback={`Path ${index + 1}`} maxLength={200} disabled={disabled} onChange={name => onChange(paths.map(p => p.id === path.id ? { ...p, name } : p))} /> : undefined} summary={`${count} ${count === 1 ? 'step' : 'steps'}`} handle={handle} active={active} expanded={isExpanded} onToggle={() => { setCollapsed(current => ({ ...current, [path.id]: isExpanded })); if (active) onSelect(step.id) }} actions={<>
         <FlowAction label={`Duplicate path ${path.name}`} hint="Duplicate path" icon={<CopyIcon />} disabled={disabled || paths.length >= FLOW_MAX_PATHS || count > available} onClick={() => onChange([...paths.slice(0, index + 1), { ...path, id: crypto.randomUUID(), name: `${path.name.slice(0, 190)} copy`, steps: duplicateSteps(path.steps) }, ...paths.slice(index + 1)])} />
         <FlowAction label={`Remove path ${path.name}`} hint="Remove path" icon={<TrashIcon />} destructive disabled={disabled || paths.length <= 2} onClick={() => { if (window.confirm('Remove this path and its steps?')) onChange(paths.filter(p => p.id !== path.id)) }} />
       </>}>
         <VStack align="stretch" spacing={3} p={3} pt={0}>
-          <Input aria-label="Path name" size="sm" minW={0} isDisabled={disabled} maxLength={200} value={path.name} onChange={event => onChange(paths.map(p => p.id === path.id ? { ...p, name: event.target.value } : p))} />
           {renderSteps(path)}
         </VStack>
       </FlowEditorCard>
