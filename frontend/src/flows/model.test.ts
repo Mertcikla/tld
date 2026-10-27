@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Node, Edge } from 'reactflow'
-import { duplicateSteps, missingReference, newStep, playbackFrames, resolveFocus, stepLabel, type FlowDiagram, type StoryFlow } from './model'
+import { duplicateSteps, layoutFlowMinimap, missingReference, newStep, playbackFrames, resolveFocus, stepLabel, type FlowDiagram, type StoryFlow } from './model'
 import type { Connector } from '../types'
 import { presentEditorFlow, presentZUIFlow } from './presentation'
 import type { LayoutNode, ZUILayout } from '../components/ZUI/types'
@@ -136,5 +136,27 @@ describe('flow control extensions', () => {
     expect(copy.branches!.paths[0].steps[0].id).not.toBe('a')
     copy.branches!.paths[0].steps[0].elementIds.push(2)
     expect(a.elementIds).toEqual([1])
+  })
+
+  it('lays out linear and branched steps left-to-right and marks visited and active steps', () => {
+    const after = { ...newStep(diagram), id: 'after', title: 'Done' }
+    const empty = layoutFlowMinimap([], diagram)
+    expect(empty.nodes).toEqual([])
+    expect(empty.edges).toEqual([])
+
+    const layout = layoutFlowMinimap([branch, after], diagram, { branch: 'pb' }, 'b')
+    const byId = Object.fromEntries(layout.nodes.map(node => [node.id, node]))
+    expect(byId.branch.x).toBeLessThan(byId.a.x)
+    expect(byId.branch.x).toBeLessThan(byId.b.x)
+    expect(byId.b.x).toBeLessThan(byId.after.x)
+    expect(byId.a.y).toBeLessThan(byId.branch.y)
+    expect(byId.branch.y).toBeLessThan(byId.b.y)
+    expect(byId.branch).toMatchObject({ isVisited: true, isActive: false, onActivePath: true, isBranch: true })
+    expect(byId.b).toMatchObject({ isVisited: false, isActive: true, onActivePath: true })
+    expect(byId.a).toMatchObject({ isVisited: false, isActive: false, onActivePath: false })
+    expect(byId.after).toMatchObject({ isVisited: false, isActive: false, onActivePath: true })
+    expect(layout.edges.find(edge => edge.id === 'branch->b')).toMatchObject({ onActivePath: true, isVisited: true, isActiveEdge: true })
+    expect(layout.edges.find(edge => edge.id === 'b->after')).toMatchObject({ onActivePath: true, isVisited: false })
+    expect(layout.edges.find(edge => edge.id === 'branch->a')).toMatchObject({ onActivePath: false, isVisited: false })
   })
 })

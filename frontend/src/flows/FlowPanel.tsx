@@ -10,7 +10,7 @@ import { ChevronDownIcon, CloseIcon, ReloadIcon, SaveIcon, TrashIcon } from '../
 import { flowApi } from './api'
 import { api } from '../api/client'
 import { enterFlow, returnFromFlow, type FlowJourney, type FlowVisit } from './navigation'
-import { allSteps, updateStep, duplicateSteps, missingReference, newStep, resolveFocus, stepLabel, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
+import { allSteps, updateStep, duplicateSteps, layoutFlowMinimap, missingReference, newStep, resolveFocus, stepLabel, type FlowCatalog, type FlowDiagram, type FlowFocus, type FlowStep, type StoryFlow } from './model'
 import { useFlowPlayback } from './useFlowPlayback'
 import { FlowYamlControls } from './FlowYamlControls'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
@@ -47,6 +47,281 @@ function FlowAction({ label, hint = label, icon, disabled, loading, primary, des
       <IconButton aria-label={label} icon={icon} size="xs" w={primary ? undefined : 7} h={primary ? undefined : 7} variant="ghost" colorScheme={destructive ? 'red' : 'gray'} sx={primary ? saveButtonStyles : undefined} isDisabled={disabled} isLoading={loading} onClick={onClick} />
     </Box>
   </Tooltip>
+}
+
+function FlowPlaybackMinimap({
+  steps,
+  choices,
+  activeFrameId,
+  diagram,
+  disabled,
+  onSelectStep,
+  onChoosePath,
+}: {
+  steps: FlowStep[]
+  choices: Record<string, string>
+  activeFrameId: string | null
+  diagram: FlowDiagram
+  disabled: boolean
+  onSelectStep: (stepId: string | null) => void
+  onChoosePath: (stepId: string, pathId: string) => void
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const layout = useMemo(() => layoutFlowMinimap(steps, diagram, choices, activeFrameId), [steps, diagram, choices, activeFrameId])
+  const stepNodes = layout.nodes.filter(node => node.kind === 'step')
+  const waypoints = layout.nodes.filter(node => node.kind === 'waypoint')
+  const activeNode = stepNodes.find(node => node.isActive)
+  const overviewActive = !activeFrameId && stepNodes.length > 0
+  const centerY = Math.round((layout.height / 2) * 10) / 10
+  const firstX = stepNodes[0]?.x ?? 18
+  const lastX = stepNodes[stepNodes.length - 1]?.x ?? layout.width - 18
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !activeNode || el.scrollWidth <= el.clientWidth) return
+    const targetLeft = Math.max(0, activeNode.x - el.clientWidth / 2)
+    el.scrollLeft = targetLeft
+  }, [activeNode])
+
+  return (
+    <Box
+      ref={scrollRef}
+      data-testid="flow-playback-minimap-container"
+      bg="whiteAlpha.50"
+      border="1px solid"
+      borderColor="whiteAlpha.100"
+      rounded="lg"
+      px={2}
+      py={1}
+      maxH="84px"
+      overflowX="auto"
+      overflowY="auto"
+      sx={{
+        scrollbarWidth: 'thin',
+        '&::-webkit-scrollbar': { height: '4px', width: '4px' },
+        '&::-webkit-scrollbar-thumb': { background: 'rgba(255, 255, 255, 0.16)', borderRadius: '999px' },
+      }}
+    >
+      <svg
+        data-testid="flow-playback-minimap"
+        role="img"
+        aria-label="Flow minimap"
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        width={layout.width > 304 ? layout.width : '100%'}
+        height={layout.height}
+        style={{ display: 'block', minWidth: layout.width > 304 ? `${layout.width}px` : '100%' }}
+      >
+        <line
+          x1={10}
+          y1={centerY}
+          x2={stepNodes.length ? firstX : layout.width - 10}
+          y2={centerY}
+          stroke="rgba(255, 255, 255, 0.08)"
+          strokeWidth={1}
+          strokeDasharray={stepNodes.length ? undefined : '3 3'}
+        />
+        {stepNodes.length > 0 && (
+          <line
+            x1={lastX}
+            y1={centerY}
+            x2={layout.width - 10}
+            y2={centerY}
+            stroke="rgba(255, 255, 255, 0.08)"
+            strokeWidth={1}
+          />
+        )}
+        {layout.edges.filter(edge => !edge.onActivePath).map(edge => (
+          <path
+            key={edge.id}
+            data-testid="flow-minimap-edge"
+            data-active-path="false"
+            d={edge.d}
+            fill="none"
+            stroke="rgba(255, 255, 255, 0.16)"
+            strokeWidth={1.25}
+            strokeDasharray="3 3"
+            strokeLinecap="round"
+          />
+        ))}
+        {layout.edges.filter(edge => edge.onActivePath && !edge.isVisited).map(edge => (
+          <path
+            key={edge.id}
+            data-testid="flow-minimap-edge"
+            data-active-path="true"
+            d={edge.d}
+            fill="none"
+            stroke={overviewActive ? 'rgba(var(--accent-rgb, 99, 179, 237), 0.55)' : 'rgba(255, 255, 255, 0.3)'}
+            strokeWidth={1.75}
+            strokeLinecap="round"
+          />
+        ))}
+        {layout.edges.filter(edge => edge.isVisited).map(edge => (
+          <g key={edge.id}>
+            <path
+              d={edge.d}
+              fill="none"
+              stroke="rgba(var(--accent-rgb, 99, 179, 237), 0.22)"
+              strokeWidth={4.5}
+              strokeLinecap="round"
+            />
+            <path
+              data-testid="flow-minimap-edge"
+              data-active-path="true"
+              data-visited="true"
+              d={edge.d}
+              fill="none"
+              stroke="var(--accent, #63B3ED)"
+              strokeWidth={2.25}
+              strokeLinecap="round"
+            />
+          </g>
+        ))}
+        {waypoints.map(wp => (
+          <g
+            key={wp.id}
+            data-testid="flow-minimap-waypoint"
+            aria-label={wp.label}
+            style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+            onClick={() => {
+              if (!disabled && wp.branchStepId && wp.choicePathId) {
+                onSelectStep(wp.branchStepId)
+                onChoosePath(wp.branchStepId, wp.choicePathId)
+              }
+            }}
+          >
+            <title>{wp.label}</title>
+            <circle
+              cx={wp.x}
+              cy={wp.y}
+              r={2.5}
+              fill={wp.onActivePath ? 'var(--accent, #63B3ED)' : 'rgba(255, 255, 255, 0.22)'}
+            />
+          </g>
+        ))}
+        {!stepNodes.length && (
+          <circle
+            cx={layout.width / 2}
+            cy={centerY}
+            r={4}
+            fill="var(--bg-main, #0d121e)"
+            stroke="rgba(255, 255, 255, 0.2)"
+            strokeWidth={1.25}
+          />
+        )}
+        {stepNodes.map(node => {
+          const stepTitle = node.frameIndex >= 0 ? `${node.frameIndex + 1}. ${node.label}` : node.label
+          const stroke = node.isActive
+            ? '#ffffff'
+            : node.hasMissingRef
+              ? '#F6AD55'
+              : node.isVisited || overviewActive
+                ? 'var(--accent, #63B3ED)'
+                : node.onActivePath
+                  ? 'rgba(255, 255, 255, 0.48)'
+                  : 'rgba(255, 255, 255, 0.22)'
+          const fill = node.isActive
+            ? 'var(--accent, #63B3ED)'
+            : node.isVisited
+              ? 'rgba(var(--accent-rgb, 99, 179, 237), 0.3)'
+              : overviewActive && node.onActivePath
+                ? 'rgba(var(--accent-rgb, 99, 179, 237), 0.2)'
+                : 'var(--bg-main, #0d121e)'
+          const radius = node.isActive ? 7.5 : node.isVisited ? 5.5 : node.onActivePath ? 5 : 4.25
+          return (
+            <g
+              key={node.id}
+              data-testid="flow-minimap-step"
+              data-step-id={node.id}
+              data-active={node.isActive ? 'true' : undefined}
+              data-visited={node.isVisited ? 'true' : undefined}
+              data-on-active-path={node.onActivePath ? 'true' : undefined}
+              aria-label={stepTitle}
+              aria-current={node.isActive ? 'step' : undefined}
+              style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+              onClick={() => { if (!disabled) onSelectStep(node.id) }}
+            >
+              <title>{stepTitle}</title>
+              {node.isActive && (
+                <>
+                  <circle
+                    data-testid="flow-minimap-active-halo"
+                    cx={node.x}
+                    cy={node.y}
+                    r={11.5}
+                    fill="rgba(var(--accent-rgb, 99, 179, 237), 0.18)"
+                    stroke="rgba(var(--accent-rgb, 99, 179, 237), 0.45)"
+                    strokeWidth={1}
+                  />
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={9.25}
+                    fill="none"
+                    stroke="var(--accent, #63B3ED)"
+                    strokeWidth={1}
+                  />
+                </>
+              )}
+              {node.hasLink && !node.isActive && (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={radius + 2.25}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                />
+              )}
+              {node.isBranch ? (
+                <rect
+                  x={node.x - radius * 0.85}
+                  y={node.y - radius * 0.85}
+                  width={radius * 1.7}
+                  height={radius * 1.7}
+                  rx={2}
+                  transform={`rotate(45 ${node.x} ${node.y})`}
+                  fill={fill}
+                  stroke={stroke}
+                  strokeWidth={node.isActive ? 1.5 : 1.35}
+                />
+              ) : (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={radius}
+                  fill={fill}
+                  stroke={stroke}
+                  strokeWidth={node.isActive ? 1.5 : 1.35}
+                />
+              )}
+              {node.isActive && node.frameIndex >= 0 ? (
+                <text
+                  x={node.x}
+                  y={node.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize="8.5"
+                  fontWeight="700"
+                  fill="var(--accent-foreground, #0d121e)"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {node.frameIndex + 1}
+                </text>
+              ) : (node.isVisited || (node.onActivePath && !node.isBranch)) && (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={node.isVisited ? 2 : 1.5}
+                  fill={node.isVisited || overviewActive ? 'var(--accent, #63B3ED)' : 'rgba(255, 255, 255, 0.45)'}
+                />
+              )}
+            </g>
+          )
+        })}
+      </svg>
+    </Box>
+  )
 }
 
 export interface FlowPanelProps {
@@ -447,7 +722,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         <Box as="details" mt={2}><Box as="summary" fontSize="xs" cursor="pointer">Technical details</Box><Text fontSize="xs" mt={1} overflowWrap="anywhere">{error || query.error?.message}</Text></Box>
         {query.error && <Button size="sm" mt={2} isLoading={query.isFetching} onClick={() => { void query.refetch() }}>Retry loading</Button>}
       </Box>}
-    <VStack as={motion.div} layoutScroll data-flow-scroll align="stretch" spacing={4} p={3} display={compact && captureActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={1}>
+    <VStack as={motion.div} layoutScroll data-flow-scroll align="stretch" spacing={4} p={query.isLoading || !flow || editMode || !flow.steps.length ? 3 : 0} display={compact && captureActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={query.isLoading || !flow || editMode || !flow.steps.length ? 1 : 0}>
       {query.isLoading && <Text role="status" fontSize="sm">Loading flows…</Text>}
 
       {!flow && !query.isLoading && <Text fontSize="sm" color="gray.400">{flows.length ? 'Choose a story to follow through the diagram.' : editMode ? 'Create a flow, then add steps to highlight parts of this diagram.' : onEditModeChange ? 'No flows yet. Choose New flow to create your first story.' : 'No flows in this diagram yet.'}</Text>}
@@ -465,58 +740,70 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
 
       </>}
     </VStack>
-    {flow && !captureActive && <Box data-testid="flow-playback-dock" role="region" aria-label="Flow playback" borderTop="1px solid" borderColor="var(--border-main)" flexShrink={0} minH={0} maxH="50%" display="flex" flexDirection="column" overflow="hidden">
-      {editMode && <Button size="sm" variant="ghost" w="full" flexShrink={0} justifyContent="space-between" px={3} rounded={0} aria-label="Toggle playback controls" aria-expanded={editPlaybackOpen} aria-controls={playbackId}
+    {flow && !captureActive && <Box data-testid="flow-playback-dock" role="region" aria-label="Flow playback" borderTop={editMode || !flow.steps.length || query.isLoading ? "1px solid" : undefined} borderColor="var(--border-main)" flexShrink={0} minH={0} maxH={editMode ? "55%" : undefined} display="flex" flexDirection="column" overflow="hidden">
+      {editMode && <Button size="xs" h={7} variant="ghost" w="full" flexShrink={0} justifyContent="space-between" px={3} rounded={0} aria-label="Toggle playback controls" aria-expanded={editPlaybackOpen} aria-controls={playbackId}
         onClick={() => { if (editPlaybackOpen) playback.pause(); setEditPlaybackOpen(!editPlaybackOpen) }}>
         <Text fontSize="xs" fontWeight="semibold">Preview playback</Text>
         <Box transform={editPlaybackOpen ? 'rotate(180deg)' : undefined}><ChevronDownIcon /></Box>
       </Button>}
-      {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" p={3} minH={0} display="flex" flexDirection="column" overflow="hidden">
-        {playback.frame && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={2} mb={3} minH={0} maxH="160px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
-          <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={3}>
+      {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" px={3} py={2.5} minH={0} display="flex" flexDirection="column" gap={2} overflow="hidden">
+        {playback.frame && <VStack key={playback.frame.id} data-testid="flow-playback-details" align="stretch" spacing={1.5} minH={0} maxH="140px" overflowY="auto" overscrollBehavior="contain" aria-live="polite" sx={{ '& > *': { flexShrink: 0 } }}>
+          <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2}>
             <Tooltip label={playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')} openDelay={300} closeOnPointerDown closeOnScroll>
               <Text flex={1} minW={0} fontWeight="semibold" fontSize="sm" isTruncated>{playback.frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</Text>
             </Tooltip>
+            {activeStep?.branches && <Select size="xs" h={6} w="auto" maxW="140px" flexShrink={0} aria-label="Choose flow path" value={playback.choices[activeStep.id] ?? activeStep.branches.paths[0]?.id ?? ''} onChange={event => playback.choose(activeStep.id, event.target.value)}>
+              {activeStep.branches.paths.map(path => <option key={path.id} value={path.id}>{path.name}</option>)}
+            </Select>}
             <StepCount count={playback.index + 1} label={`Step ${playback.index + 1} of ${playback.frames.length}`} accent />
           </HStack>
-          {activeStep?.branches && <Select size="sm" aria-label="Choose flow path" value={playback.choices[activeStep.id] ?? activeStep.branches.paths[0]?.id ?? ''} onChange={event => playback.choose(activeStep.id, event.target.value)}>
-            {activeStep.branches.paths.map(path => <option key={path.id} value={path.id}>{path.name}</option>)}
-          </Select>}
-          {activeStep?.goToFlowId && <HStack><Button size="sm" isDisabled={busy || !catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId)} onClick={goToFlow}>Go to flow</Button><Button size="sm" onClick={playback.next}>Skip flow</Button>
-            {!catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId) && <Text fontSize="xs">Linked flow unavailable.</Text>}
+          {activeStep?.goToFlowId && <HStack spacing={1.5}><Button size="xs" variant="primary" isDisabled={busy || !catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId)} onClick={goToFlow}>Go to flow</Button><Button size="xs" onClick={playback.next}>Skip flow</Button>
+            {!catalogFlows.some(candidate => candidate.id === activeStep.goToFlowId) && <Text fontSize="xs" color="gray.400">Linked flow unavailable.</Text>}
           </HStack>}
           {playback.frame.steps.map(step => (step.description || missingReference(step, currentDiagram) || Object.keys(step.metadata).length > 0) && <Box key={step.id}>
-            {step.description && <Text fontSize="sm" whiteSpace="pre-wrap" overflowWrap="anywhere">{step.description}</Text>}
+            {step.description && <Text fontSize="xs" color="gray.300" whiteSpace="pre-wrap" overflowWrap="anywhere">{step.description}</Text>}
             {missingReference(step, currentDiagram) && <Text color="orange.300" fontSize="xs">Reference unavailable. Use Next to skip this step.</Text>}
-            {Object.entries(step.metadata).map(([key, value]) => <Text key={key} fontSize="xs" whiteSpace="pre-wrap" overflowWrap="anywhere"><strong>{key}:</strong> {value}</Text>)}
+            {Object.entries(step.metadata).map(([key, value]) => <Text key={key} fontSize="xs" color="gray.400" whiteSpace="pre-wrap" overflowWrap="anywhere"><strong>{key}:</strong> {value}</Text>)}
           </Box>)}
         </VStack>}
-        <Box data-testid="flow-playback-navigation" flexShrink={0}>
-          <HStack justify="center" align="center" spacing={4} mb={2}>
-            <Tooltip label="Previous flow step" openDelay={200} closeOnPointerDown closeOnScroll>
-              <Box as="span" display="inline-flex"><IconButton size="sm" aria-label="Previous flow step" icon={<FontAwesomeIcon icon={faBackwardStep} size={14} />} _hover={{ transform: 'none' }} isDisabled={busy || playback.index < 0} onClick={playback.previous} /></Box>
-            </Tooltip>
-            <Tooltip label={playback.playing ? 'Pause' : 'Auto-play'} openDelay={200} closeOnPointerDown closeOnScroll>
-              <Box as="span" display="inline-flex"><IconButton size="lg" variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={24} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
-            </Tooltip>
-            <Tooltip label="Next flow step" openDelay={200} closeOnPointerDown closeOnScroll>
-              <Box as="span" display="inline-flex"><IconButton size="sm" aria-label="Next flow step" icon={<FontAwesomeIcon icon={faForwardStep} size={14} />} _hover={{ transform: 'none' }} isDisabled={busy || !playback.frames.length || (playback.index === playback.frames.length - 1 && !journey && !activeStep?.goToFlowId)} onClick={nextStep} /></Box>
-            </Tooltip>
+        <VStack data-testid="flow-playback-navigation" align="stretch" spacing={2} flexShrink={0}>
+          <FlowPlaybackMinimap
+            steps={flow.steps}
+            choices={playback.choices}
+            activeFrameId={playback.frame?.id ?? null}
+            diagram={currentDiagram}
+            disabled={busy}
+            onSelectStep={playback.select}
+            onChoosePath={playback.choose}
+          />
+          <HStack spacing={1.5} align="center" minW={0}>
+            <HStack spacing={1} flexShrink={0}>
+              <Tooltip label="Previous flow step" openDelay={200} closeOnPointerDown closeOnScroll>
+                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Previous flow step" icon={<FontAwesomeIcon icon={faBackwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || playback.index < 0} onClick={playback.previous} /></Box>
+              </Tooltip>
+              <Tooltip label={playback.playing ? 'Pause' : 'Auto-play'} openDelay={200} closeOnPointerDown closeOnScroll>
+                <Box as="span" display="inline-flex"><IconButton size="xs" w={8} h={7} variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={13} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
+              </Tooltip>
+              <Tooltip label="Next flow step" openDelay={200} closeOnPointerDown closeOnScroll>
+                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Next flow step" icon={<FontAwesomeIcon icon={faForwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || !playback.frames.length || (playback.index === playback.frames.length - 1 && !journey && !activeStep?.goToFlowId)} onClick={nextStep} /></Box>
+              </Tooltip>
+            </HStack>
+            <Box flex={1} minW={0}>
+              <Select size="xs" h={7} rounded="md" aria-label="Current flow step" isDisabled={busy} value={playback.frame?.id ?? ''} onChange={e => playback.select(e.target.value || null)}>
+                <option value="">Overview</option>
+                {playback.frames.map((frame, i) => <option key={frame.id} value={frame.id}>{i + 1}. {frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</option>)}
+              </Select>
+            </Box>
+            <HStack spacing={1} flexShrink={0}>
+              <Select size="xs" h={7} w="64px" rounded="md" aria-label="Autoplay interval" title="Autoplay interval" isDisabled={busy} value={playback.seconds} onChange={e => playback.setSeconds(Number(e.target.value))}>
+                {[1, 2, 3, 5, 8].map(seconds => <option key={seconds} value={seconds}>{seconds}s</option>)}
+              </Select>
+              <Tooltip label={playback.loop ? 'Repeat on' : 'Repeat off'} openDelay={200} closeOnPointerDown closeOnScroll>
+                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} variant={playback.loop ? 'primary' : 'ghost'} aria-label="Repeat flow" aria-pressed={playback.loop} icon={<FontAwesomeIcon icon={faRepeat} size={12} />} isDisabled={busy} onClick={() => playback.setLoop(!playback.loop)} /></Box>
+              </Tooltip>
+            </HStack>
           </HStack>
-          <Select size="sm" aria-label="Current flow step" isDisabled={busy} value={playback.frame?.id ?? ''} onChange={e => playback.select(e.target.value || null)}>
-            <option value="">Overview</option>
-            {playback.frames.map((frame, i) => <option key={frame.id} value={frame.id}>{i + 1}. {frame.steps.map(step => stepLabel(step, currentDiagram)).join(' + ')}</option>)}
-          </Select>
-
-          <HStack mt={2} justify="space-between">
-            <Select size="xs" w="120px" aria-label="Autoplay interval" isDisabled={busy} value={playback.seconds} onChange={e => playback.setSeconds(Number(e.target.value))}>
-              {[1, 2, 3, 5, 8].map(seconds => <option key={seconds} value={seconds}>{seconds}s per step</option>)}
-            </Select>
-            <Tooltip label={playback.loop ? 'Repeat on' : 'Repeat off'} openDelay={200} closeOnPointerDown closeOnScroll>
-              <Box as="span" display="inline-flex"><IconButton size="xs" variant={playback.loop ? 'primary' : 'ghost'} aria-label="Repeat flow" aria-pressed={playback.loop} icon={<FontAwesomeIcon icon={faRepeat} size={14} />} isDisabled={busy} onClick={() => playback.setLoop(!playback.loop)} /></Box>
-            </Tooltip>
-          </HStack>
-        </Box>
+        </VStack>
       </Box>}
     </Box>}
     {!(compact && captureActive) && <Box as="footer" data-testid="flow-yaml-footer" px={3} py={2} borderTop="1px solid" borderColor="var(--border-main)" flexShrink={0}>

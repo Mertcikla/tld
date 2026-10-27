@@ -580,4 +580,30 @@ describe('flow operation editing and navigation', () => {
     expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('call')
     expect(onFocus).toHaveBeenLastCalledWith({ viewId: 1, elementIds: [], connectors: [] })
   })
+
+  it('renders a left-to-right SVG minimap in playback navigation, highlights the active step, and selects steps on click', () => {
+    queryState.data = linkedFlows()
+    const onFocus = vi.fn()
+    act(() => { renderer = create(<FlowPanel open viewId={1} diagram={diagram} onClose={vi.fn()} onFocus={onFocus} />) })
+    const nav = renderer.root.findByProps({ 'data-testid': 'flow-playback-navigation' })
+    const minimap = nav.findByProps({ 'data-testid': 'flow-playback-minimap' })
+    expect(minimap.type).toBe('svg')
+
+    const steps = () => minimap.findAllByProps({ 'data-testid': 'flow-minimap-step' })
+    expect(steps().map(node => node.props['data-step-id'])).toEqual(['decision', 'call', 'end'])
+    expect(steps().filter(node => node.props['data-active'] === 'true')).toHaveLength(0)
+
+    act(() => steps().find(node => node.props['data-step-id'] === 'call')!.props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('call')
+    const active = steps().find(node => node.props['data-step-id'] === 'call')!
+    expect(active.props['data-active']).toBe('true')
+    expect(active.props['aria-current']).toBe('step')
+    expect(active.findAllByProps({ 'data-testid': 'flow-minimap-active-halo' })).toHaveLength(1)
+    expect(steps().find(node => node.props['data-step-id'] === 'decision')!.props['data-visited']).toBe('true')
+
+    const waypoint = minimap.findByProps({ 'data-testid': 'flow-minimap-waypoint' })
+    act(() => waypoint.props.onClick())
+    expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('decision')
+    expect(renderer.root.findByProps({ 'aria-label': 'Choose flow path' }).props.value).toBe('a')
+  })
 })
