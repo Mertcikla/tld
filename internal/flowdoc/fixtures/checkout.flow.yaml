@@ -1,0 +1,52 @@
+# Portable v1 fixture shared by CLI integration and codec tests.
+format: tld-flow
+version: 1
+name: Checkout
+description: A purchase journey
+steps:
+  - id: request
+    title: Receive request
+    elements: [API]
+    connectors:
+      - source: API
+        target: Database
+        label: writes
+  - id: payment
+    title: Payment result
+    branches:
+      mode: alternate
+      paths:
+        - id: approved
+          name: Approved
+          steps:
+            - id: persist
+              title: Persist order
+              elements: [Database]
+        - id: declined
+          name: Declined
+          steps: []
+resources:
+  elements:
+    - name: API
+      kind: service
+      description: Handles checkout
+      technology: Go
+      tags: [backend]
+      position_x: 120
+      position_y: 200
+      technology_connectors:
+        - type: catalog
+          slug: go
+          label: Go
+          is_primary_icon: true
+    - name: Database
+      kind: database
+      position_x: 480
+      position_y: 200
+  connectors:
+    - source: API
+      target: Database
+      label: writes
+      direction: forward
+      style: bezier
+      tags: [storage]

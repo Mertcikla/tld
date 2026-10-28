@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -43,12 +42,6 @@ type ImportBatch struct {
 	ConnectorsUpdated   int
 	ConnectorsUnchanged int
 }
-
-type ImportFieldError struct{ Field, Hint string }
-
-func (e *ImportFieldError) Error() string        { return "batch import cannot apply connector " + e.Field }
-func (e *ImportFieldError) RecoveryCode() string { return "unsupported_field" }
-func (e *ImportFieldError) RecoveryHint() string { return e.Hint }
 
 // BuildImportBatch validates the import document and resolves existing server
 // IDs so the resulting batch is idempotent. It performs read-only server calls
@@ -336,18 +329,6 @@ func BuildImportBatch(
 			viewID = rootID
 		}
 		id := resolveImportConnectorID(ws, c, viewID, elementIDs[c.Source], elementIDs[c.Target], serverConnectors)
-		if c.Tags != nil {
-			var currentTags []string
-			for _, current := range serverConnectors {
-				if current.GetId() == id {
-					currentTags = current.GetTags()
-					break
-				}
-			}
-			if !slices.Equal(c.Tags, currentTags) {
-				return nil, &ImportFieldError{Field: "tags", Hint: fmt.Sprintf("Set tags with 'tld update connector %q tags <comma-separated-tags>', then retry sync.", workspace.ConnectorKey(c))}
-			}
-		}
 		pc := &diagv1.BatchConnector{
 			Ref:              workspace.ConnectorKey(c),
 			ViewRef:          viewRef,
@@ -361,6 +342,8 @@ func BuildImportBatch(
 			Url:              strOrNil(c.URL),
 			SourceHandle:     strOrNil(c.SourceHandle),
 			TargetHandle:     strOrNil(c.TargetHandle),
+			Tags:             c.Tags,
+			ReplaceTags:      c.Tags != nil,
 		}
 		if c.VisibilityDeltaSet || c.VisibilityDelta != 0 {
 			delta := int32(c.VisibilityDelta)

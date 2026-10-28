@@ -135,6 +135,9 @@ func NewWithOptions(appStore *app.Store, static fs.FS, workspaceID uuid.UUID, op
 	mermaidPath, mermaidHandler := diagv1connect.NewMermaidServiceHandler(mermaidSvc)
 	mux.Handle("/api"+mermaidPath, http.StripPrefix("/api", mermaidHandler))
 
+	flowPath, flowHandler := diagv1connect.NewFlowServiceHandler(&api.FlowService{Store: apiStore, Hooks: collabHooks})
+	mux.Handle("/api"+flowPath, http.StripPrefix("/api", flowHandler))
+
 	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
 	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))
 

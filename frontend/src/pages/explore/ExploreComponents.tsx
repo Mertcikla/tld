@@ -16,6 +16,8 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import type { ReactNode } from 'react'
+import { faArrowsSplitUpAndLeft } from '@fortawesome/free-solid-svg-icons'
+import FontAwesomeIcon from '../../components/FontAwesomeIcon'
 import type { CrossBranchConnectorPriority, CrossBranchContextSettings } from '../../crossBranch/types'
 import type { Tag, ViewLayer } from '../../types'
 import CrossBranchControls from '../../components/CrossBranchControls'
@@ -91,6 +93,9 @@ export function ExploreToolbar({
   toggleLayerVisibility,
   toggleTagVisibility,
   onFitView,
+  flowsOpen = false,
+  flowsDisabledHint,
+  onFlowsOpenChange,
 }: {
   showContent: boolean
   shareSlot?: ReactNode
@@ -119,13 +124,18 @@ export function ExploreToolbar({
   toggleLayerVisibility: (layer: ViewLayer) => void
   toggleTagVisibility: (tag: string) => void
   onFitView: () => void
+  flowsOpen?: boolean
+  flowsDisabledHint?: string
+  onFlowsOpenChange?: (open: boolean) => void
 }) {
   return (
     <Box
+      data-canvas-overlay="bottom"
       position="absolute"
       bottom={4}
       left="50%"
       transform="translateX(-50%)"
+      maxW="calc(100% - 24px)"
       zIndex={10}
       className="glass"
       borderRadius="lg"
@@ -135,7 +145,7 @@ export function ExploreToolbar({
       opacity={showContent ? 1 : 0}
       transition="opacity 0.3s"
     >
-      <HStack spacing={0}>
+      <HStack spacing={0} overflowX="auto" sx={{ '& > *': { flexShrink: 0 } }}>
         <Tooltip label="Fit View" placement="top" openDelay={200}>
           <Button
             data-testid="zui-fit-view"
@@ -190,6 +200,7 @@ export function ExploreToolbar({
               <Portal>
                 <PopoverContent
                   data-testid="zui-tags-panel"
+                  data-canvas-overlay=""
                   data-zui-native-wheel="true"
                   bg="glass.bg"
                   backdropFilter="blur(16px)"
@@ -258,6 +269,28 @@ export function ExploreToolbar({
             <TagFilterReset active={selectedTags.length > 0} onReset={onResetTagFilters ? () => { onResetTagFilters(); setHighlightedTags([]); setHighlightColor('') } : undefined} />
           </>
         )}
+        {onFlowsOpenChange && <>
+          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+          <Tooltip label={flowsDisabledHint ?? 'Show flows'} shouldWrapChildren placement="top" openDelay={200}>
+            <Button
+              data-testid="zui-flows-button"
+              variant="ghost" h="28px" px={2.5}
+              aria-expanded={flowsOpen}
+              isDisabled={!!flowsDisabledHint}
+              title={flowsDisabledHint}
+              color={flowsOpen ? 'var(--accent)' : 'gray.300'}
+              bg={flowsOpen ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+              _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+              onClick={() => { if (!flowsDisabledHint) onFlowsOpenChange(!flowsOpen) }}
+            >
+              <HStack spacing={1.5}>
+                {/* The icon's arrowhead extends above its declared 512×512 bounds. */}
+                <FontAwesomeIcon icon={faArrowsSplitUpAndLeft} size={15} viewBox="0 -32 512 544" />
+                <Text fontSize="11px" fontWeight="normal">Flows</Text>
+              </HStack>
+            </Button>
+          </Tooltip>
+        </>}
       </HStack>
     </Box>
   )

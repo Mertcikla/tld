@@ -184,7 +184,8 @@ export function ConnectorSummaryCard({ details, direction = 'merged', ...props }
   )
 }
 
-export function UnderlyingConnectors({ details, maxHeight = '240px', onNavigate, renderActions }: {
+export function UnderlyingConnectors({ details, maxHeight = '240px', onNavigate, renderActions, editorLinksEnabled = true }: {
+  editorLinksEnabled?: boolean
   details: ProxyConnectorDetails
   maxHeight?: string
   onNavigate?: () => void
@@ -205,8 +206,10 @@ export function UnderlyingConnectors({ details, maxHeight = '240px', onNavigate,
               key={`${leaf.ownerViewId}-${leaf.connector.id}-${index}`}
               source={leaf.source.actualElementName}
               sourceTo={sourceViewId != null && sourceViewId > 0 ? `/views/${sourceViewId}?element=${leaf.source.actualElementId}` : undefined}
+              sourceDisabled={!editorLinksEnabled}
               target={leaf.target.actualElementName}
               targetTo={targetViewId != null && targetViewId > 0 ? `/views/${targetViewId}?element=${leaf.target.actualElementId}` : undefined}
+              targetDisabled={!editorLinksEnabled}
               direction={leaf.connector.direction}
               subtitle={Array.from(new Set([leaf.connector.label?.trim(), leaf.connector.relationship?.trim()].filter(Boolean))).join(' · ') || null}
               description={leaf.connector.description}

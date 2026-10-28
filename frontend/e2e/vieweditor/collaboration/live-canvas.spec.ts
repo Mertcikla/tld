@@ -130,13 +130,13 @@ test('connector metadata update appears on the second user canvas', async ({ pag
 
     await openConnectorPanelFromFirstEdge(alice.page)
     await alice.page.getByTestId('connector-panel-label-input').fill(nextLabel)
-    await alice.page.getByTestId('connector-panel-description-input').blur()
+    await alice.page.getByTestId('connector-panel-label-input').blur()
 
     await expect.poll(async () => {
       const connectors = await listConnectors(page, diagram.id)
       return connectors.find((candidate) => candidate.id === connector.id)?.label
     }).toBe(nextLabel)
-    await expect(bob.page.getByText(nextLabel)).toBeVisible()
+    await expect(bob.page.getByLabel(nextLabel, { exact: true })).toBeVisible()
   })
 })
 

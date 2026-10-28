@@ -95,6 +95,7 @@ export default function CrossBranchControls({
       </PopoverTrigger>
       <Portal>
         <PopoverContent
+          data-canvas-overlay=""
           bg="linear-gradient(180deg, rgba(var(--bg-main-rgb), 0.98) 0%, rgba(var(--bg-main-rgb), 0.92) 100%)"
           backdropFilter="blur(22px)"
           borderColor="whiteAlpha.100"

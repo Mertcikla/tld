@@ -15,6 +15,9 @@ export { default as ViewsGrid } from './pages/ViewsGrid'
 export { default as Inventory } from './pages/Inventory'
 export { default as Dependencies } from './pages/Inventory'
 export { default as InfiniteZoom, SharedInfiniteZoom } from './pages/InfiniteZoom'
+export { default as FlowSnapshotPage } from './pages/FlowSnapshot'
+export { createFlowSnapshotLink, encodeFlowSnapshot, decodeFlowSnapshot, exportFlowSnapshotYaml, parseFlowSnapshotYaml } from './flows/sharing'
+export type { FlowSnapshot } from './flows/sharing'
 export { default as Settings } from './pages/Settings'
 export { default as AppearanceSettings } from './pages/AppearanceSettings'
 
@@ -168,6 +171,12 @@ export * from './crossBranch/store'
 export * from './crossBranch/types'
 
 // ─── Demo ────────────────────────────────────────────────────────────────────
+export { FlowPanel, type FlowPanelProps } from './flows/FlowPanel'
+export { useFlowPlayback } from './flows/useFlowPlayback'
+export type { StoryFlow, FlowStep, FlowBranches, FlowBranch, FlowCatalog, FlowFocus, FlowDiagram } from './flows/model'
+export { exportCompleteFlowYaml, exportFlowYaml, importFlowYaml, parseFlowYaml, validatePortableFlow } from './flows/yaml'
+export type { PortableFlowDocument, PortableFlowStep, PortableConnectorHighlight, PortableFlowElement, PortableFlowConnector, PortableFlowResources, FlowYamlBindings } from './flows/yaml'
+
 export * from './demo/viewEditor'
 
 // ─── Utilities ───────────────────────────────────────────────────────────────

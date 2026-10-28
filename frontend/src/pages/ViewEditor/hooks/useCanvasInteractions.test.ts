@@ -7,6 +7,7 @@ import {
   applyPendingElementNodeChanges,
   getDraggedElementNodes,
   getDraggedSelectionElementNodes,
+  getHandleReconnectZoneAtPoint,
   getConnectorDeletionTarget,
   getPlacementPositionTimerKeys,
   pendingElementPositionFromFlowPoint,
@@ -57,6 +58,10 @@ class FakeElement {
 
   getAttribute(name: string) {
     return this.attrs[name] ?? null
+  }
+
+  matches(selector: string) {
+    return selector.startsWith('.') && (this.attrs.class ?? '').split(' ').includes(selector.slice(1))
   }
 }
 
@@ -347,6 +352,28 @@ describe('viewport zoom helpers', () => {
 })
 
 describe('connector drop target resolution', () => {
+  it('blocks handles and nodes covered by the flow panel or its controls', () => {
+    const nodeElement = new FakeElement({}, { 'data-id': '2' })
+    const zone = new FakeElement({ '.react-flow__node': nodeElement }, { class: 'element-node-reconnect-zone' })
+    const panel = new FakeElement({})
+    const panelBackground = new FakeElement({ '[data-testid="flow-panel"]': panel })
+    const panelControl = new FakeElement({ '[data-testid="flow-panel"]': panel })
+    for (const overlay of [panelBackground, panelControl]) {
+      installPointHitTest([overlay, zone, nodeElement])
+      expect(getHandleReconnectZoneAtPoint(120, 160)).toBeNull()
+      expect(resolveConnectorDropTarget(zone as unknown as EventTarget, 120, 160, [node('2')])).toEqual({
+        droppedNode: null, droppedHandleId: null,
+      })
+    }
+  })
+
+  it('still finds a reconnect zone among overlapping canvas hit targets', () => {
+    const handle = new FakeElement({})
+    const zone = new FakeElement({}, { class: 'element-node-reconnect-zone' })
+    installPointHitTest([handle, zone])
+    expect(getHandleReconnectZoneAtPoint(120, 160)).toBe(zone)
+  })
+
   it('uses coordinate hit-testing before event target fallback', () => {
     const sourceNodeElement = new FakeElement({}, { 'data-id': '1' })
     const sourceEventTarget = new FakeElement({ '.react-flow__node': sourceNodeElement })

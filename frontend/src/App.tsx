@@ -20,6 +20,7 @@ import { HomeRedirect } from './components/HomeRedirect'
 import { isWailsApp, isWailsAppStore, isWailsWindows } from './config/runtime'
 import ComparisonScenePage from './pages/ComparisonScene'
 import { useDesktopSceneLinks } from './hooks/useDesktopSceneLinks'
+import FlowSnapshotPage from './pages/FlowSnapshot'
 
 initializeTheme()
 
@@ -141,6 +142,7 @@ export default function App() {
   const ready = useDesktopSceneLinks()
   if (!ready) return <Center h="var(--app-viewport-height)"><Spinner size="xl" /></Center>
   return <Routes>
+    <Route path="/explore/shared/flow-snapshot" element={<ThemeProvider><ConnectorStyleProvider><Box h="var(--app-viewport-height)" overflow="hidden"><FlowSnapshotPage /></Box></ConnectorStyleProvider></ThemeProvider>} />
     <Route path="/compare" element={<ComparisonScenePage />} />
     <Route path="*" element={<WorkspaceApp />} />
   </Routes>

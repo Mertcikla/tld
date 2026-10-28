@@ -15,7 +15,7 @@ vi.mock('reactflow', async () => {
 })
 vi.mock('../pages/ViewEditor/context', () => ({ useViewEditorContext: () => ({ canEdit: state.canEdit }) }))
 vi.mock('./ViewExplorer/TagManager/tagDragGhostState', () => ({ useTagDragGhost: () => state.drag }))
-vi.mock('./ViewEditorEdgeLabelLayout', () => ({ measureEdgeLabel: () => 40, useEdgeLabelLayout: () => ({ x: 100, y: 50 }) }))
+vi.mock('./ViewEditorEdgeLabelLayout', () => ({ measureEdgeLabel: (text: string) => text.length * 7, useEdgeLabelLayout: () => ({ x: 100, y: 50 }) }))
 
 function render(overrides: Partial<EdgeProps> = {}) {
   return create(<ViewBezierConnector {...{
@@ -25,6 +25,50 @@ function render(overrides: Partial<EdgeProps> = {}) {
   } as EdgeProps} />)
 }
 afterEach(() => { state.canEdit = true; state.drag = { kind: 'tag', name: 'critical', color: '#f00' }; state.edges = [] })
+
+it.each([
+  ['x'.repeat(20), 'x'.repeat(20)],
+  ['x'.repeat(21), 'x'.repeat(21)],
+  ['x'.repeat(30), 'x'.repeat(30)],
+  ['x'.repeat(31), `${'x'.repeat(20)}…`],
+  ['A connector label longer than twenty characters', 'A connector label longer…'],
+  [`${'x'.repeat(30)} more text`, `${'x'.repeat(30)}…`],
+  [`${'x'.repeat(20)}   more text that continues`, `${'x'.repeat(20)}…`],
+  ['🚀'.repeat(31), `${'🚀'.repeat(20)}…`],
+])('truncates %s using the soft limit and whole words', (label, expected) => {
+  const renderer = render({ label })
+  const text = renderer.root.findByProps({ 'aria-label': label })
+  expect(text.children).toEqual([expected])
+  expect(text.props.title).toBe(label)
+  expect(text.props.style.width).toBe(expected.length * 7 + 8)
+  act(() => renderer.unmount())
+})
+
+it('expands long labels on hover or selection and collapses them when inactive', () => {
+  const label = 'A connector label longer than twenty characters'
+  const renderer = render({ label })
+  const labelWidth = () => renderer.root.findByProps({ 'aria-label': label }).props.style.width
+  const collapsedWidth = 'A connector label longer…'.length * 7 + 8
+  const expandedWidth = label.length * 7 + 8
+  expect(labelWidth()).toBe(collapsedWidth)
+  for (const [selected, isHovered, expectedWidth] of [
+    [false, true, expandedWidth],
+    [false, false, collapsedWidth],
+    [true, true, expandedWidth],
+    [true, false, expandedWidth],
+  ] as const) {
+    act(() => renderer.update(<ViewBezierConnector {...{
+      id: '12', source: '1', target: '2', sourceX: 0, sourceY: 0, targetX: 200, targetY: 100,
+      sourcePosition: Position.Right, targetPosition: Position.Left, label, selected,
+      data: { style: 'bezier', isHovered },
+    } as EdgeProps} />))
+    expect(labelWidth()).toBe(expectedWidth)
+    expect(renderer.root.findByProps({ 'aria-label': label }).children).toEqual([
+      selected || isHovered ? label : 'A connector label longer…',
+    ])
+  }
+  act(() => renderer.unmount())
+})
 
 it('opens aggregate details without letting pointer presses change canvas selection', () => {
   const details = { key: 'pair', connectors: [] }

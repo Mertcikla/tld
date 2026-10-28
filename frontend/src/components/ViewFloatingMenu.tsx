@@ -9,7 +9,8 @@ import type { ViewFloatingMenuSlots } from '../slots'
 import {
   HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, Slider, SliderTrack, SliderFilledTrack, SliderThumb, Switch, VStack, useDisclosure
 } from '@chakra-ui/react'
-import { faFilter } from '@fortawesome/free-solid-svg-icons'
+import { faArrowsSplitUpAndLeft, faFilter } from '@fortawesome/free-solid-svg-icons'
+import FontAwesomeIcon from './FontAwesomeIcon'
 
 import {
   DrawIcon as PencilSvg,
@@ -49,6 +50,8 @@ function FilterOffIcon({ size = 15 }: { size?: number }) {
 }
 
 export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
+  flowOpen?: boolean
+  onFlowOpenChange?: (open: boolean) => void
   drawingMode: boolean
   setDrawingMode: React.Dispatch<React.SetStateAction<boolean>>
   hasDrawingPaths: boolean
@@ -109,6 +112,8 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
  * Aliases: Bottom bar, Action bar.
  */
 function ViewFloatingMenu({
+  flowOpen = false,
+  onFlowOpenChange,
   drawingMode,
   setDrawingMode,
   hasDrawingPaths,
@@ -188,6 +193,7 @@ function ViewFloatingMenu({
       left="50%"
       bottom={4}
       transform="translateX(-50%)"
+      maxW="calc(100% - 24px)"
       zIndex={20}
       spacing={2.5}
       align="center"
@@ -203,7 +209,9 @@ function ViewFloatingMenu({
 
       <HStack
         pointerEvents="auto"
-        sx={editorToolbarStyles}
+        sx={{ ...editorToolbarStyles, '& > *': { flexShrink: 0 } }}
+        maxW="100%"
+        overflowX="auto"
         spacing={0}
         bg="var(--bg-panel)"
         border="1px solid"
@@ -584,6 +592,27 @@ function ViewFloatingMenu({
             </HStack>
           </Button>
         </Tooltip>
+
+        {onFlowOpenChange && <>
+          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+          <Button
+            data-testid="vieweditor-toolbar-flows"
+            variant="ghost"
+            h="28px"
+            px={2.5}
+            aria-expanded={flowOpen}
+            color={flowOpen ? 'var(--accent)' : 'gray.300'}
+            bg={flowOpen ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+            _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+            onClick={() => onFlowOpenChange(!flowOpen)}
+          >
+            <HStack spacing={1.5}>
+              {/* The icon's arrowhead extends above its declared 512×512 bounds. */}
+              <FontAwesomeIcon icon={faArrowsSplitUpAndLeft} size={15} viewBox="0 -32 512 544" />
+              <Text fontSize="11px" fontWeight="normal">Flows</Text>
+            </HStack>
+          </Button>
+        </>}
 
         {/* Drawing layer visibility toggle - only shown when there are strokes */}
         {hasDrawingPaths && (

@@ -228,6 +228,9 @@ func SetPlacementPosition(dir, ref, parentRef string, x, y float64) error {
 
 // Save writes the entire workspace state to YAML files in ws.Dir.
 func Save(ws *Workspace) error {
+	if err := ActivateTarget(ws.Dir, ws.CacheTarget); err != nil {
+		return err
+	}
 	if useElementWorkspaceFiles(ws) {
 		if ws.Elements == nil {
 			ws.Elements = make(map[string]*Element)

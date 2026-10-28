@@ -17,6 +17,7 @@ import {
   useStoreApi,
 } from 'reactflow'
 import { api } from '../../../api/client'
+import { isFlowPanelTarget } from '../../../flows/canvasInteraction'
 import type {
   Connector,
   PlacedElement,
@@ -117,9 +118,19 @@ function findHandleIdFromEventTarget(target: EventTarget | null) {
 
 function elementsFromClientPoint(clientX: number, clientY: number) {
   if (typeof document === 'undefined') return null
-  if (document.elementsFromPoint) return document.elementsFromPoint(clientX, clientY)
-  const element = document.elementFromPoint?.(clientX, clientY)
-  return element ? [element] : []
+  let elements: Element[]
+  if (typeof document.elementsFromPoint === 'function') elements = document.elementsFromPoint(clientX, clientY)
+  else {
+    const element = document.elementFromPoint?.(clientX, clientY)
+    elements = element ? [element] : []
+  }
+  // elementsFromPoint includes covered canvas objects, not just the visible hit.
+  return elements.some(isFlowPanelTarget) ? [] : elements
+}
+
+export function getHandleReconnectZoneAtPoint(clientX: number, clientY: number): Element | null {
+  return elementsFromClientPoint(clientX, clientY)
+    ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone')) ?? null
 }
 
 export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, nodes: RFNode[]): ConnectorDropTarget | null {
@@ -311,7 +322,7 @@ function findNearestHandleTargetInCache(targets: HandleTarget[], clientX: number
 
 function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNodeId: string) {
   const targets = elementsFromClientPoint(clientX, clientY)
-  if (!targets) return null
+  if (!targets?.length) return null
 
   for (const target of targets) {
     if (!isDomElement(target)) continue
@@ -423,6 +434,7 @@ export function getConnectorDeletionTarget(
 interface CanvasInteractionOptions {
   viewId: number | null
   canEdit: boolean
+  flowRecording?: boolean
   interactionSourceId: number | null
   setInteractionSourceId: React.Dispatch<React.SetStateAction<number | null>>
   clickConnectMode: ClickConnectModeState | null
@@ -631,6 +643,7 @@ export type ClickConnectCursorPosition = { x: number; y: number }
 export function useCanvasInteractions({
   viewId,
   canEdit,
+  flowRecording = false,
   interactionSourceId,
   setInteractionSourceId,
   clickConnectMode,
@@ -2084,10 +2097,9 @@ export function useCanvasInteractions({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return
-      const target = elementsFromClientPoint(event.clientX, event.clientY)
-        ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone'))
-      if (!isDomElement(target)) return
+      if (event.button !== 0 || isFlowPanelTarget(event.target)) return
+      const target = getHandleReconnectZoneAtPoint(event.clientX, event.clientY)
+      if (!target) return
 
       const edgeId = target.getAttribute('data-edge-id')
       const endpoint = target.getAttribute('data-endpoint')
@@ -2472,6 +2484,8 @@ export function useCanvasInteractions({
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
+      if (isFlowPanelTarget(target)) return
+      if (flowRecording && !['f', '+', '=', '-'].includes(e.key.toLowerCase())) return
       const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' ||
         target?.tagName === 'SELECT' || target?.isContentEditable
       if (isInput) return
@@ -2724,7 +2738,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
+  }, [flowRecording, canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {

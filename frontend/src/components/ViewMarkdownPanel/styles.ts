@@ -1,4 +1,5 @@
 import type { SystemStyleObject } from '@chakra-ui/react'
+import { saveButtonStyles } from '../../styles/saveButton'
 
 export const markdownPanelBodySx: SystemStyleObject = {
   '.tld-markdown-editor': {
@@ -185,16 +186,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
     transform: 'translateY(-1px)',
     boxShadow: 'var(--chakra-shadows-panel-hover)',
   },
-  '.tld-markdown-toolbar-action-save': {
-    background: 'var(--chakra-colors-whiteAlpha-200)',
-    color: 'var(--baseTextContrast)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
-  },
-  '.tld-markdown-toolbar-action-save:hover': {
-    background: 'var(--chakra-colors-whiteAlpha-300)',
-    color: 'var(--baseTextContrast)',
-    boxShadow: 'var(--chakra-shadows-panel-hover)',
-  },
+  '.tld-markdown-toolbar-action-save': saveButtonStyles,
   '.tld-markdown-toolbar-action[data-disabled], .tld-markdown-toolbar-action:disabled': {
     opacity: 0.38,
     transform: 'none',

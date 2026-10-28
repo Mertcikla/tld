@@ -205,10 +205,10 @@ owning view. Off-view relationships are retained for UI context/proxy rendering.
 				hasOffView = hasOffView || row.Visibility.Mode == "off-view"
 			}
 			_ = w.Flush()
-			if hasOffView {
-				term.Info(out, workspace.OffViewHint)
-			}
 			term.Infof(out, "%d of %d connector(s)", len(filtered), len(rows))
+			if hasOffView {
+				term.Warnf(out, "Warning: %s", workspace.OffViewHint)
+			}
 			return nil
 		},
 	}

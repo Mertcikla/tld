@@ -204,6 +204,8 @@ type WorkspaceSourceLock struct {
 
 // LockFile tracks workspace versioning and change history
 type LockFile struct {
+	ActiveTarget      string                       `yaml:"active_target,omitempty"`
+	Targets           map[string]*TargetState      `yaml:"targets,omitempty"`
 	Version           string                       `yaml:"version"`    // "v1"
 	VersionID         string                       `yaml:"version_id"` // Workspace version UUID
 	LastApply         time.Time                    `yaml:"last_apply"`
@@ -227,6 +229,7 @@ type ResourceCounts struct {
 
 // Workspace holds the fully loaded workspace state
 type Workspace struct {
+	CacheTarget     string // Destination whose IDs are loaded; empty for unscoped YAML editing.
 	Dir             string
 	Config          Config
 	WorkspaceConfig *WorkspaceConfig

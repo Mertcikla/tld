@@ -34,6 +34,10 @@ func NewPullCmd(wdir *string) *cobra.Command {
 		Long: `Pull downloads the current diagram state from the server and refreshes
 the local YAML cache. Use this after making changes in the frontend UI.
 
+Resource IDs and the deletion baseline belong to the selected database or
+cloud server/workspace. A new target does not inherit another target's IDs
+or treat that target's resources as deleted.
+
 If you have local hand-edits, tld pull will warn you before overwriting
 them. Use --force to skip the prompt.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -65,7 +69,11 @@ them. Use --force to skip the prompt.`,
 				}
 			}
 
-			lockFile, err := workspace.LoadLockFile(*wdir)
+			key, err := exec.CacheTarget(ws.Config, target, dataDir)
+			if err != nil {
+				return err
+			}
+			lockFile, err := workspace.BindTarget(ws, key)
 			if err != nil {
 				return fmt.Errorf("load lock file: %w", err)
 			}

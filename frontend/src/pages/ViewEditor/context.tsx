@@ -15,6 +15,7 @@ export interface ViewEditorContextValue {
   selectedConnector: Connector | null
   isMarkdownOpen?: boolean
   markdownPaneWidth?: number
+  leftPanelOffset?: number
   sidePanelStyle?: 'flat'
 }
 

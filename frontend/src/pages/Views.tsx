@@ -116,6 +116,7 @@ function DiagramJumpToolbar({
     <Box
       ref={toolbarRef}
       data-testid="views-jump-toolbar"
+      data-canvas-overlay="top"
       position="absolute"
       top={isMobileLayout ? 3 : 4}
       left="50%"
@@ -282,6 +283,7 @@ function DiagramJumpToolbar({
           >
             <Box
               data-testid="views-search-results"
+              data-canvas-overlay=""
               bg="var(--bg-panel)"
               backdropFilter="blur(24px) saturate(180%)"
               border="1px solid"

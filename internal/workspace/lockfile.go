@@ -38,6 +38,7 @@ func LoadLockFile(dir string) (*LockFile, error) {
 
 // WriteLockFile writes the .tld.lock file to the workspace directory
 func WriteLockFile(dir string, lockFile *LockFile) error {
+	lockFile.rememberTarget()
 	path := filepath.Join(dir, ".tld.lock")
 	data, err := yaml.Marshal(lockFile)
 	if err != nil {
@@ -166,6 +167,9 @@ func LoadMetadata(dir string) (*Meta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load lock file metadata: %w", err)
 	}
+	if lockFile != nil && lockFile.ActiveTarget != "" {
+		return lockFile.currentMetadata(), nil
+	}
 
 	loadedCurrentElements := false
 	if lockFile != nil && len(lockFile.CurrentElements) > 0 {
@@ -277,13 +281,14 @@ func touchCurrentMetadata(dir, ref string, pick func(*LockFile) map[string]*Reso
 	if lockFile == nil {
 		return nil
 	}
-	metadata := pick(lockFile)
-	if metadata[ref] == nil {
-		return nil
-	}
-	updated := *metadata[ref]
-	updated.UpdatedAt = time.Now()
-	metadata[ref] = &updated
+	lockFile.editAllTargets(func(state *LockFile) {
+		metadata := pick(state)
+		if metadata[ref] != nil {
+			updated := *metadata[ref]
+			updated.UpdatedAt = time.Now()
+			metadata[ref] = &updated
+		}
+	})
 	if err := WriteLockFile(dir, lockFile); err != nil {
 		return fmt.Errorf("write lock file: %w", err)
 	}
@@ -347,19 +352,14 @@ func renameCurrentMetadata(dir, oldRef, newRef string, sourceFn func(*LockFile) 
 		return nil
 	}
 
-	source := sourceFn(lockFile)
-	if len(source) == 0 {
-		return nil
-	}
-
-	current := cloneResourceMetadataMap(source)
-	metadata, ok := current[oldRef]
-	if !ok {
-		return nil
-	}
-	current[newRef] = metadata
-	delete(current, oldRef)
-	assign(lockFile, current)
+	lockFile.editAllTargets(func(state *LockFile) {
+		current := cloneResourceMetadataMap(sourceFn(state))
+		if metadata, ok := current[oldRef]; ok {
+			current[newRef] = metadata
+			delete(current, oldRef)
+			assign(state, current)
+		}
+	})
 	if err := WriteLockFile(dir, lockFile); err != nil {
 		return fmt.Errorf("write lock file: %w", err)
 	}

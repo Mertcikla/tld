@@ -58,6 +58,9 @@ func mergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMet
 	storedViewMeta := false
 	storedConnectorMeta := false
 	if !dryRun {
+		if err := ActivateTarget(dir, newWS.CacheTarget); err != nil {
+			return nil, err
+		}
 		var err error
 		storedViewMeta, err = PersistCurrentViewMetadata(dir, viewMeta)
 		if err != nil {

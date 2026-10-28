@@ -244,11 +244,8 @@ func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
 						if field == "visibility_delta" {
 							doc.Connectors[index].VisibilityDeltaSet = true
 						}
-						if field == "tags" || field == "id" || field == "updated_at" {
+						if field == "id" || field == "updated_at" {
 							hint := "Omit cache IDs and timestamps; import resolves existing resources automatically."
-							if field == "tags" {
-								hint = "Omit connector tags from the import; set them with 'tld update connector <key-or-id> tags <comma-separated-tags>'."
-							}
 							return nil, cmdutil.WithCode(fmt.Errorf("connector import does not support %s", field), "unsupported_field", hint)
 						}
 					}
@@ -604,11 +601,10 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 		})
 	}
 
+	hasOffView := false
 	for _, view := range batch.Views {
 		term.Infof(cmd.OutOrStdout(), "view %s: %d elements, %d connectors (%d direct, %d off-view, %d unresolved)", view.View, view.Elements, view.Connectors, view.RenderedConnectors, len(view.OffViewConnectors), len(view.UnresolvedConnectors))
-		if len(view.OffViewConnectors) > 0 {
-			term.Info(cmd.OutOrStdout(), workspace.OffViewHint)
-		}
+		hasOffView = hasOffView || len(view.OffViewConnectors) > 0
 	}
 	if len(batch.PreservedPlacements) > 0 {
 		refs := make([]string, 0, len(batch.PreservedPlacements))
@@ -629,15 +625,17 @@ func reportImport(cmd *cobra.Command, format string, compact bool, command, stat
 		if batch.ViewsCreated > 0 {
 			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", batch.ViewsCreated)
 		}
-		return nil
+	} else {
+		term.Successf(cmd.OutOrStdout(),
+			"%s: %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
+			command, elements, batch.ElementsCreated, batch.ElementsUpdated,
+			batch.ElementsUnchanged, connectors, batch.ConnectorsCreated, batch.ConnectorsUpdated, batch.ConnectorsUnchanged)
+		if batch.ViewsCreated > 0 {
+			term.Infof(cmd.OutOrStdout(), "created %d view(s)", batch.ViewsCreated)
+		}
 	}
-
-	term.Successf(cmd.OutOrStdout(),
-		"%s: %d element(s) (%d new, %d updated, %d unchanged) and %d connector(s) (%d new, %d updated, %d unchanged)",
-		command, elements, batch.ElementsCreated, batch.ElementsUpdated,
-		batch.ElementsUnchanged, connectors, batch.ConnectorsCreated, batch.ConnectorsUpdated, batch.ConnectorsUnchanged)
-	if batch.ViewsCreated > 0 {
-		term.Infof(cmd.OutOrStdout(), "created %d view(s)", batch.ViewsCreated)
+	if hasOffView {
+		term.Warnf(cmd.OutOrStdout(), "Warning: %s", workspace.OffViewHint)
 	}
 	return nil
 }

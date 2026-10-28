@@ -32,6 +32,7 @@ import {
   Text,
   Tooltip,
   VStack,
+  HStack,
   useBreakpointValue,
   useDisclosure,
   useToast,
@@ -87,6 +88,11 @@ import { KbdHint } from '../../components/PanelUI'
 import ViewHeaderButton from '../../components/ViewHeaderButton'
 import DrawingCanvas, { type DrawingCanvasHandle, type DrawingPath } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
+import { FlowPanel } from '../../flows/FlowPanel'
+import type { FlowFocus } from '../../flows/model'
+import { presentEditorFlow } from '../../flows/presentation'
+import { canvasHighlightTarget, isFlowPanelTarget, type FlowCanvasRecorder } from '../../flows/canvasInteraction'
+import { useFlowCamera } from '../../flows/useFlowCamera'
 import ViewDrawMenu from '../../components/ViewDrawMenu'
 import ViewBezierConnector, { ViewConnectorConnectionLine } from '../../components/ViewBezierConnector'
 import ViewContextNeighborElement from '../../components/ContextNeighborElement'
@@ -206,6 +212,7 @@ const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
 const VIEW_EDITOR_MAX_ZOOM = 4
+const VIEW_EDITOR_FLOW_PANEL_WIDTH = 360
 const VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH = 540
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH = 360
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE = 280
@@ -649,6 +656,15 @@ function ViewEditorInner({
   const lastNonFullDensityLevelRef = useRef(0)
 
   const elementPanel = useDisclosure()
+  const [storyOpen, setStoryOpen] = useState(() => searchParams.get('flow') === '1')
+  const [storyFocus, setStoryFocus] = useState<FlowFocus | null>(null)
+  const [storyCanvasMode, setStoryCanvasMode] = useState<'record' | 'pick' | null>(null)
+  const storyRecording = storyCanvasMode !== null
+  const [storyExpanded, setStoryExpanded] = useState(false)
+  useEffect(() => {
+    if (storyOpen) { setStoryExpanded(false) }
+  }, [storyOpen, viewId])
+  const storyRecorderRef = useRef<FlowCanvasRecorder | null>(null)
   const connectorPanel = useDisclosure()
   const proxyConnectorPanel = useDisclosure()
   const viewDetails = useDisclosure()
@@ -1387,6 +1403,19 @@ function ViewEditorInner({
   })
   const markdownRequestSeqRef = useRef(0)
   const editorSplitRef = useRef<HTMLDivElement | null>(null)
+  const storyLayoutRef = useRef<HTMLDivElement | null>(null)
+  const [storyCompact, setStoryCompact] = useState(isMobileLayout)
+  useEffect(() => {
+    const host = storyLayoutRef.current
+    if (!host) return
+    const update = () => {
+      setStoryCompact(host.clientWidth < 900)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [view?.id, isMobileLayout])
   const markdownResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const getClampedMarkdownPaneWidth = useCallback((nextWidth: number) => {
@@ -1812,7 +1841,7 @@ function ViewEditorInner({
     if (drawingMode) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
+      if (storyRecording || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
 
       const key = e.key.toLowerCase()
       if (key === 'tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1842,6 +1871,7 @@ function ViewEditorInner({
   }, [
     drawingMode,
     getVisibleCanvasElementRects,
+    storyRecording,
     replaceCanvasElementSelection,
     selectAllVisibleCanvasElements,
     selectedCanvasElementIds,
@@ -2798,7 +2828,7 @@ function ViewEditorInner({
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
-    viewId, canEdit,
+    viewId, canEdit: canEdit && !storyRecording, flowRecording: storyRecording,
     interactionSourceId,
     setInteractionSourceId,
     clickConnectMode,
@@ -3366,9 +3396,12 @@ function ViewEditorInner({
       const active = isEdgeActive(e)
       const targetZ = active ? Z_CONNECTOR_ACTIVE : Z_CONNECTOR
       const targetLabelZ = active ? Z_CONNECTOR_LABEL_ACTIVE : Z_CONNECTOR_LABEL
+      const isHovered = e.id === hoveredEdgeId
+        || e.source === hoveredElementId
+        || e.target === hoveredElementId
       const currentLabelZ = (e.data as { labelZIndex?: number } | undefined)?.labelZIndex
-      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ) return e
-      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ } }
+      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ && e.data?.isHovered === isHovered) return e
+      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ, isHovered } }
     }
 
     if (!hasNodeSel && !hasEdgeSel) {
@@ -3404,6 +3437,29 @@ function ViewEditorInner({
       return applyZ(faded)
     })
   }, [contextConnectors, rfEdgesWithProxyBadges, pendingPreviewEdges, liveContextNodes, rfNodes, pendingElementNode, hoveredElementId, hoveredEdgeId])
+
+  const storyDiagram = useMemo(() => ({ elements: viewElements, connectors }), [viewElements, connectors])
+  const activeStoryFocus = storyOpen && storyFocus?.viewId === viewId ? storyFocus : null
+  const storyPresentation = useMemo(() => presentEditorFlow(flowNodes, flowEdges, storyRecording ? null : activeStoryFocus, canEdit), [flowNodes, flowEdges, activeStoryFocus, canEdit, storyRecording])
+  useFlowCamera({ viewId, active: storyOpen && !!activeStoryFocus, recording: storyRecording, focus: activeStoryFocus, fitView })
+  const handleStoryRecorderChange = useCallback((recorder: FlowCanvasRecorder | null) => {
+    storyRecorderRef.current = recorder
+    setStoryCanvasMode(recorder ? recorder.mode ?? 'record' : null)
+    if (recorder) {
+      setDrawingMode(false)
+      closeElementPanelRef.current()
+      closeConnectorPanelRef.current()
+      closeProxyConnectorPanelRef.current()
+    }
+  }, [setDrawingMode])
+  useEffect(() => { if (drawingMode) storyRecorderRef.current?.stop() }, [drawingMode])
+  const handleStoryCanvasClick = useCallback((event: React.SyntheticEvent) => {
+    if (!storyRecorderRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    const target = canvasHighlightTarget(event.target)
+    if (target) storyRecorderRef.current.capture(target)
+  }, [])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.
@@ -3715,7 +3771,7 @@ function ViewEditorInner({
     if (!drawingMode) return
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return
+      if (isFlowPanelTarget(target) || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return
 
       const key = e.key.toLowerCase()
       const isCmd = e.metaKey || e.ctrlKey
@@ -3740,7 +3796,7 @@ function ViewEditorInner({
   useEffect(() => {
     if (drawingMode) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
+      if (storyRecording || e.defaultPrevented || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
 
       const key = e.key.toLowerCase()
       const isModifierShortcut = e.metaKey || e.ctrlKey
@@ -3766,6 +3822,7 @@ function ViewEditorInner({
   }, [
     canRedoViewEdit,
     canUndoViewEdit,
+    storyRecording,
     drawingMode,
     handleRedoViewEdit,
     handleUndoViewEdit,
@@ -3776,7 +3833,7 @@ function ViewEditorInner({
     if (drawingMode) return
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return
+      if (isFlowPanelTarget(target) || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return
       if (e.ctrlKey || e.altKey || e.metaKey) return
       if (e.key.toLowerCase() === 'v') {
         e.preventDefault()
@@ -4227,7 +4284,7 @@ function ViewEditorInner({
   }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, refreshGrid, toast, autoLayoutMode, rfNodesRef])
 
   const handleCopyCutViewSelection = useCallback((event: ClipboardEvent) => {
-    if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
+    if (storyRecording || isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
     if (isPasteImportingRef.current || (event.type === 'cut' && !canEdit)) return
 
     const currentViewId = viewIdRef.current
@@ -4269,6 +4326,7 @@ function ViewEditorInner({
       }).finally(() => { isPasteImportingRef.current = false })
     }
   }, [
+    storyRecording,
     canEdit,
     connectors,
     drawingMode,
@@ -4296,7 +4354,7 @@ function ViewEditorInner({
 
   const handlePasteFromClipboard = useCallback(async (event: ClipboardEvent) => {
     if (!canEdit || textEditorState || pendingElement) return
-    if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target)) return
+    if (storyRecording || isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target)) return
     if (isPasteImportingRef.current) {
       toast({ status: 'info', title: 'Clipboard operation is still finishing', description: 'Try pasting again when it completes.' })
       return
@@ -4365,6 +4423,7 @@ function ViewEditorInner({
       isPasteImportingRef.current = false
     }
   }, [
+    storyRecording,
     canEdit,
     duplicatePasteConfirm,
     getCanvasCenter,
@@ -4455,17 +4514,32 @@ function ViewEditorInner({
     />
   )
 
+  const storyPanelOffset = storyOpen && !storyCompact ? VIEW_EDITOR_FLOW_PANEL_WIDTH : 0
+  const storyOverlayHeight = storyCompact ? storyRecording ? '72px' : storyExpanded ? '78%' : '55%' : '100%'
+  const canvasSideToggleTop = storyOpen && storyCompact ? storyRecording ? 'calc(50% - 36px)' : storyExpanded ? '11%' : '22.5%' : '50%'
+
   return (
     <ViewEditorContext.Provider value={{
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
+      leftPanelOffset: storyPanelOffset,
       isMarkdownOpen, markdownPaneWidth, sidePanelStyle: flatPanels ? 'flat' : undefined
     }}>
       <Box data-testid="vieweditor-page" h="100%" minH={0} position="relative" overflow="hidden" display="flex" flexDir="column">
-        <Flex ref={editorSplitRef} flex={1} overflow="hidden">
+        <Flex ref={editorSplitRef} flex={1} minH={0} overflow="hidden">
+          <Flex ref={storyLayoutRef} position="relative" flex={1} minW={0} minH={0}>
+            <Box data-testid="flow-panel-overlay" position="absolute" zIndex={30} left={0} bottom={0} w={storyCompact ? '100%' : `${VIEW_EDITOR_FLOW_PANEL_WIDTH}px`} maxW="100%" h={storyOverlayHeight} display={storyOpen ? 'flex' : 'none'} minH={0} minW={0} overflow="hidden">
+              {viewId != null && <FlowPanel key={viewId} open={storyOpen} viewId={viewId} editMode={canEdit} docked compact={storyCompact} expanded={storyExpanded} onExpandedChange={setStoryExpanded}
+                diagram={storyDiagram} selection={{ elementId: selectedElement?.id, connectorId: selectedEdge?.id }}
+                onCanvasRecorderChange={handleStoryRecorderChange}
+                onEditModeChange={canEdit ? enabled => { if (enabled) { setStoryExpanded(true); setDrawingMode(false) } } : undefined}
+                onNavigateView={id => { setStoryOpen(true); navigate(`/views/${id}?flow=1`) }}
+                onFocus={setStoryFocus} onClose={() => setStoryOpen(false)} />}
+            </Box>
           <Box
             ref={containerRef}
+            minH={0}
             flex="1 1 auto"
             minW={0}
             position="relative"
@@ -4481,8 +4555,8 @@ function ViewEditorInner({
             {!isMobileLayout && (
               <VStack
                 position="absolute"
-                top="50%"
-                left={libraryOpen ? (flatPanels ? '312px' : '328px') : 3}
+                top={canvasSideToggleTop}
+                left={`${storyPanelOffset + (libraryOpen ? (flatPanels ? 312 : 328) : 12)}px`}
                 transform="translateY(-50%)"
                 spacing={1}
                 zIndex={1200}
@@ -4510,7 +4584,7 @@ function ViewEditorInner({
             {!isMobileLayout && !elementPanel.isOpen && !connectorPanel.isOpen && !viewDetails.isOpen && (
               <VStack
                 position="absolute"
-                top="50%"
+                top={canvasSideToggleTop}
                 right={isExplorerOpen ? (flatPanels ? '312px' : '328px') : 3}
                 transform="translateY(-50%)"
                 spacing={1}
@@ -4563,12 +4637,23 @@ function ViewEditorInner({
               w="full"
               h="full"
               onWheelCapture={onWheelCapture}
-              onPointerDownCapture={handlePendingPanePointerDownCapture}
+              onPointerDownCapture={event => {
+                if (storyRecording && canvasHighlightTarget(event.target)) { event.stopPropagation(); return }
+                handlePendingPanePointerDownCapture(event)
+              }}
+              onClickCapture={handleStoryCanvasClick}
+              onKeyDownCapture={event => {
+                if (storyRecording && (event.key === 'Enter' || event.key === ' ') && canvasHighlightTarget(event.target)) handleStoryCanvasClick(event)
+              }}
+              onTouchStartCapture={event => { if (storyRecording && canvasHighlightTarget(event.target)) event.stopPropagation() }}
+              onDoubleClickCapture={event => { if (storyRecording) { event.preventDefault(); event.stopPropagation() } }}
+              onContextMenuCapture={event => { if (storyRecording) { event.preventDefault(); event.stopPropagation() } }}
               onMouseMove={handleRealtimeCanvasMouseMove}
               onTouchStart={onTouchStart}
               onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}
               sx={{
+                '.react-flow__node, .react-flow__edge, [data-tag-drop-connector-id]': { cursor: storyRecording ? 'crosshair' : undefined },
                 // NOTE: the edge label renderer intentionally has no z-index so it
                 // does not create a stacking context; each label carries its own
                 // z-index (see ViewBezierConnector / ProxyConnectorEdge) so labels
@@ -4581,7 +4666,7 @@ function ViewEditorInner({
               }}
             >
               <ReactFlow
-                nodes={flowNodes} edges={flowEdges}
+                nodes={storyPresentation.nodes} edges={storyPresentation.edges}
                 onInit={onRFInit}
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                 onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
@@ -4601,16 +4686,16 @@ function ViewEditorInner({
                 connectionLineType={previewConnectorStyle as ConnectionLineType}
                 connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
-                nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
-                edgesUpdatable={canEdit} reconnectRadius={0}
+                nodesDraggable={canEdit && !storyRecording} nodesConnectable={canEdit && !storyRecording} connectionMode={ConnectionMode.Loose} connectionRadius={25}
+                edgesUpdatable={canEdit && !storyRecording} reconnectRadius={0}
                 snapToGrid={snapToGrid || autoLayoutMode}
                 snapGrid={autoLayoutMode ? AUTO_LAYOUT_GRID : SNAP_GRID}
                 deleteKeyCode={null}
                 connectOnClick={false}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
-                selectionOnDrag={canEdit && !drawingMode}
-                panOnDrag={drawingMode ? false : canEdit ? [1, 2] : true}
+                selectionOnDrag={canEdit && !drawingMode && !storyRecording}
+                panOnDrag={storyRecording ? true : drawingMode ? false : canEdit ? [1, 2] : true}
                 panOnScroll={enableCanvasWheelPan} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch
               >
@@ -4700,6 +4785,14 @@ function ViewEditorInner({
               }}
             />
 
+            {storyRecording && <HStack role="status" position="absolute" top={3} left={`${storyPanelOffset + 12}px`} right={3} zIndex={2001}
+              bg="var(--bg-panel)" border="1px solid" borderColor={storyCanvasMode === 'pick' ? 'blue.400' : 'red.400'} rounded="lg" p={3} spacing={3} boxShadow="lg">
+              <Box w="8px" h="8px" rounded="full" bg={storyCanvasMode === 'pick' ? 'blue.300' : 'red.300'} flexShrink={0} aria-hidden />
+              <Box flex={1} minW={0}><Text fontSize="sm" fontWeight="semibold">{storyCanvasMode === 'pick' ? 'Picking step highlights' : 'Recording flow steps'}</Text>
+                <Text fontSize="xs" color="gray.300">{storyCanvasMode === 'pick' ? 'Click elements or connections to add highlights to this step. Press Esc to stop.' : 'Click an element or connection to add a step. Press Esc to stop.'}</Text></Box>
+              <Button size="sm" flexShrink={0} onClick={() => storyRecorderRef.current?.stop()}>{storyCanvasMode === 'pick' ? 'Done picking' : 'Stop recording'}</Button>
+            </HStack>}
+
             {/* Reconnect picking banner */}
             {reconnectPicking && (
               <Box position="absolute" top="14px" left="50%" transform="translateX(-50%)" zIndex={2000}
@@ -4711,7 +4804,7 @@ function ViewEditorInner({
             )}
 
             {/* Overlap suggestion banner */}
-            {hasSignificantOverlaps && !reconnectPicking && (
+            {hasSignificantOverlaps && !reconnectPicking && !storyRecording && (
               <Box position="absolute" top="14px" left="50%" transform="translateX(-50%)" zIndex={2000}
                 bg="blue.900" border="1px" borderColor="blue.700" px={4} py={2} rounded="xl" shadow="xl"
                 display="flex" alignItems="center" gap={3} transition="all 0.2s"
@@ -4757,7 +4850,7 @@ function ViewEditorInner({
             <EmptyCanvasState isMobile={isMobileLayout} hasNodes={rfNodes.length > 0 || !!pendingElement} />
 
             <SelectionBulkBar
-              count={drawingMode ? 0 : selectedCanvasElementIds.length}
+              count={drawingMode || storyRecording ? 0 : selectedCanvasElementIds.length}
               availableTags={availableTags}
               availableGroups={availableGroups}
               selectedTagCounts={selectedCanvasTagCounts}
@@ -4779,16 +4872,19 @@ function ViewEditorInner({
               onCopyMermaid={handleBulkCopyMermaid}
             />
 
-            <ViewHeaderButton
+            <Box position="absolute" inset={0} left={`${storyPanelOffset}px`} bottom={storyOpen && storyCompact ? storyOverlayHeight : 0} pointerEvents="none" zIndex={20}>
+            {!storyRecording && <ViewHeaderButton
               name={viewName ?? undefined}
               isOpen={viewDetails.isOpen}
               onToggle={viewDetails.onToggle}
               onOpenExplorer={viewId != null ? () => navigate(`/views?view=explore&focus=${viewId}`) : undefined}
               supportsZoomOut={supportsZoomOut}
               supportsZoomIn={supportsZoomIn}
-            />
+            />}
 
             <ViewFloatingMenu
+              flowOpen={storyOpen}
+              onFlowOpenChange={setStoryOpen}
               drawingMode={drawingMode} setDrawingMode={setDrawingMode}
               hasDrawingPaths={drawingPaths.length > 0} drawingVisible={drawingVisible} setDrawingVisible={setDrawingVisible}
               extrasOpen={extrasOpen} setExtrasOpen={setExtrasOpen}
@@ -4834,7 +4930,9 @@ function ViewEditorInner({
               hideFocusView={demoOptions?.hideFocusView}
               hideExpandExtras={demoOptions?.hideExpandExtras}
             />
+            </Box>
           </Box>
+          </Flex>
 
           {isMarkdownOpen && (
             <>

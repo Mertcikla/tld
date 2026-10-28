@@ -45,7 +45,17 @@ func BatchConnectorChangesMetadata(planned *diagv1.BatchConnector, current *diag
 		patchStringChanged(planned.Style, current.GetStyle()) ||
 		patchStringChanged(planned.Url, current.GetUrl()) ||
 		patchStringChanged(planned.SourceHandle, current.GetSourceHandle()) ||
-		patchStringChanged(planned.TargetHandle, current.GetTargetHandle())
+		patchStringChanged(planned.TargetHandle, current.GetTargetHandle()) ||
+		(BatchConnectorTags(planned) != nil && !slices.Equal(planned.GetTags(), current.GetTags()))
+}
+
+// BatchConnectorTags preserves omitted tags and represents an explicit clear
+// with a non-nil empty slice, including after protobuf serialization.
+func BatchConnectorTags(planned *diagv1.BatchConnector) []string {
+	if planned.GetReplaceTags() && planned.Tags == nil {
+		return []string{}
+	}
+	return planned.Tags
 }
 
 func patchStringChanged(patch *string, current string) bool {

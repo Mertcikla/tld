@@ -36,6 +36,11 @@ func New(serverURL, apiKey string, debug bool) diagv1connect.WorkspaceServiceCli
 	)
 }
 
+// NewFlow creates a FlowServiceClient using the same authentication as workspace calls.
+func NewFlow(serverURL, apiKey string) diagv1connect.FlowServiceClient {
+	return diagv1connect.NewFlowServiceClient(&http.Client{}, NormalizeURL(serverURL), connect.WithInterceptors(newBearerInterceptor(apiKey)))
+}
+
 // NewDeviceClient creates a DeviceServiceClient without bearer token authentication.
 func NewDeviceClient(serverURL string, debug bool) diagv1connect.DeviceServiceClient {
 	interceptors := []connect.Interceptor{}

@@ -314,8 +314,14 @@ export function viewportForNodeRevealTarget(
 
 /** Explicit history navigation fits every requested endpoint, including
  * cross-view connectors, and can zoom in even when the targets are on screen. */
-export function viewportForElements(groups: DiagramGroupLayout[], refs: Array<{ viewId: number; elementId: number }>, width: number, height: number, maxZoom: number): ZUIViewState | null {
+export function viewportForElements(groups: DiagramGroupLayout[], refs: Array<{ viewId: number; elementId: number }>, width: number, height: number, maxZoom: number, options: { keepSingleElementCard?: boolean } = {}): ZUIViewState | null {
   const targets = refs.map((ref) => findElementFocusTarget(groups, ref.viewId, ref.elementId)).filter((target) => target !== null)
+  if (options.keepSingleElementCard && targets.length === 1) {
+    const target = targets[0]
+    // Stop before an expandable card starts giving way to its children.
+    const screenWidth = Math.min(360, target.node?.children.length ? getExpandThresholds(width).start : width * 0.64)
+    maxZoom = Math.min(maxZoom, screenWidth / positiveSize(target.absW))
+  }
   const bounds = boundsForRects(targets.map((target) => ({ x: target.absX, y: target.absY, w: target.absW, h: target.absH })))
   return bounds && width > 0 && height > 0 ? fitWorldRect(bounds, width, height, maxZoom, 0.18) : null
 }

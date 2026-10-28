@@ -46,6 +46,18 @@ func NewAPIAdapter(store *app.Store, paths ...string) *APIAdapter {
 	return adapter
 }
 
+func (a *APIAdapter) ListFlows(ctx context.Context, viewID int64) ([]app.FlowRecord, error) {
+	return a.Store.ListFlows(ctx, viewID)
+}
+
+func (a *APIAdapter) SaveFlow(ctx context.Context, flow app.FlowRecord) (app.FlowRecord, error) {
+	return a.Store.SaveFlow(ctx, flow)
+}
+
+func (a *APIAdapter) DeleteFlow(ctx context.Context, id string, viewID int64, revision int32) error {
+	return a.Store.DeleteFlow(ctx, id, viewID, revision)
+}
+
 func (a *APIAdapter) ListViews(ctx context.Context, _ uuid.UUID) ([]*diagv1.View, error) {
 	nodes, err := a.Store.ViewTree(ctx)
 	if err != nil {
@@ -921,6 +933,7 @@ func (a *APIAdapter) ApplyBatch(ctx context.Context, _ uuid.UUID, req *diagv1.Ap
 			URL:          planned.Url,
 			SourceHandle: planned.SourceHandle,
 			TargetHandle: planned.TargetHandle,
+			Tags:         api.BatchConnectorTags(planned),
 		}
 
 		// Placement insertion may have copied this exact relationship since the

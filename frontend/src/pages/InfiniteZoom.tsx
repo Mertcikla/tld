@@ -1,6 +1,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { ReactNode, Ref, RefObject } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { flowApi } from '../flows/api'
+import { FlowPanel } from '../flows/FlowPanel'
+import type { FlowFocus } from '../flows/model'
 import { Box, Center, Spinner, useDisclosure } from '@chakra-ui/react'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
@@ -8,6 +12,8 @@ import { ExploreEmptyState, ExploreToolbar } from './explore/ExploreComponents'
 import { useExploreData, type ExploreDataState } from './explore/useExploreData'
 import { useExploreTags } from './explore/useExploreTags'
 import { parseNumericId } from '../utils/ids'
+import FlowSnapshotPage from './FlowSnapshot'
+import { FLOW_SNAPSHOT_TOKEN } from '../flows/sharing'
 
 interface Props {
   breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
@@ -28,11 +34,24 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
   const location = useLocation()
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const [canvasReady, setCanvasReady] = useState(false)
+  const [flowsOpen, setFlowsOpen] = useState(false)
+  const [flowFocus, setFlowFocus] = useState<FlowFocus | null>(null)
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const [isCrossBranchControlsOpen, setIsCrossBranchControlsOpen] = useState(false)
   const localDataState = useExploreData(sharedToken, !dataState)
   const { data, loading, error, hasPlacements, reload } = dataState ?? localDataState
   const tags = useExploreTags(data, sharedToken)
+  const flowsQuery = useQuery({ queryKey: ['flows', 0], queryFn: () => flowApi.list(), enabled: !sharedToken && !loading && !!data, retry: false })
+  const hasFlows = !!flowsQuery.data?.length
+  const flowDisabledHint = flowsQuery.isPending
+    ? 'Loading flows…'
+    : flowsQuery.isError
+      ? 'Could not load flows. Refresh the page to try again.'
+      : !hasFlows ? 'No flows yet. Create a flow in the diagram editor.' : undefined
+  const flowDiagrams = useMemo(() => Object.fromEntries(Object.entries(data?.views ?? {}).map(([id, view]) => [id, { elements: view.placements, connectors: view.connectors }])), [data?.views])
+  useEffect(() => {
+    if (sharedToken || (flowsQuery.isSuccess && !hasFlows)) setFlowsOpen(false)
+  }, [sharedToken, flowsQuery.isSuccess, hasFlows])
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const {
     settings: crossBranchSettings,
@@ -122,6 +141,7 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
       {data && (
         <>
           <ZUICanvas
+            flowFocus={!sharedToken && flowsOpen ? flowFocus : null}
             breadcrumbBoundaryRef={breadcrumbBoundaryRef}
             ref={zuiRef}
             data={data}
@@ -165,7 +185,11 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
             toggleLayerVisibility={tags.toggleLayerVisibility}
             toggleTagVisibility={tags.toggleTagVisibility}
             onFitView={() => zuiRef.current?.fitView()}
+            flowsOpen={flowsOpen}
+            flowsDisabledHint={flowDisabledHint}
+            onFlowsOpenChange={!sharedToken ? setFlowsOpen : undefined}
           />
+          {!sharedToken && <FlowPanel open={flowsOpen} diagrams={flowDiagrams} onFocus={setFlowFocus} onClose={() => setFlowsOpen(false)} />}
         </>
       )}
     </Box>
@@ -178,5 +202,6 @@ export default InfiniteZoom
 export const SharedInfiniteZoom = forwardRef<InfiniteZoomHandle, Props>((props, ref) => {
   const { token } = useParams()
   const effectiveToken = props.sharedToken ?? token
+  if (effectiveToken === FLOW_SNAPSHOT_TOKEN) return <FlowSnapshotPage />
   return <InfiniteZoom {...props} ref={ref} sharedToken={effectiveToken} />
 })
