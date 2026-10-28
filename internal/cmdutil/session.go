@@ -46,6 +46,17 @@ type Session struct {
 	readLive bool
 }
 
+// OpenTargetSession uses global configuration and live target data without loading
+// or binding workspace YAML. Flow stories are independent of the YAML workspace.
+func OpenTargetSession(cmd *cobra.Command) (*Session, error) {
+	state, err := workspace.LoadGlobalConfigStateNoRepair()
+	if err != nil {
+		return nil, err
+	}
+	target, dataDir := TargetOverrides(cmd, "", "")
+	return &Session{command: cmd, Mode: ModeDB, Config: *state.Config, target: target, dataDir: dataDir, ctx: cmd.Context()}, nil
+}
+
 // OpenSession decides between DB mode and workspace mode for a command.
 // Workspace mode is used when --yaml is passed or when wdir holds workspace
 // marker files; otherwise the target store (local DB, or cloud when configured)

@@ -126,6 +126,7 @@ tld list views --tree             # View owners and drill-down hierarchy
 tld update element --help         # Editable fields, name changes, and YAML ref changes
 tld update connector --help       # Editable fields, connector keys, and direction values
 tld view --help                   # Create and manage an element's owned view
+tld flow --help                   # Author flows, steps, branches, and portable YAML
 tld render root                   # Export the root view as Mermaid
 tld doctor                        # Check source-indexing prerequisites
 tld index --help                  # Index a repository, generate a map of your codebase, or watch changes live

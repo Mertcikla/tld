@@ -229,6 +229,49 @@ func (s *WorkspaceService) DeleteElementNavigation(
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("manual navigation deletion is no longer supported"))
 }
 
+// ValidateWorkspaceBatchRequest validates batch resource fields without writes.
+func ValidateWorkspaceBatchRequest(m *diagv1.ApplyWorkspaceBatchRequest) error {
+	// Validate elements
+	for _, pe := range m.GetElements() {
+		if strings.TrimSpace(pe.GetRef()) == "" {
+			return invalidArg("elements[].ref", "must not be empty")
+		}
+		if strings.TrimSpace(pe.GetName()) == "" {
+			return invalidArg("elements[].name", "must not be empty")
+		}
+		if _, err := ConvertTechnologyLinks(pe.GetTechnologyLinks()); err != nil {
+			return err
+		}
+	}
+	for i, pc := range m.GetConnectors() {
+		if pc.GetViewRef() == "" {
+			return invalidArgF(fmt.Sprintf("connectors[%d].view_ref", i), "must not be empty")
+		}
+		if pc.GetSourceElementRef() == "" {
+			return invalidArgF(fmt.Sprintf("connectors[%d].source_element_ref", i), "must not be empty")
+		}
+		if pc.GetTargetElementRef() == "" {
+			return invalidArgF(fmt.Sprintf("connectors[%d].target_element_ref", i), "must not be empty")
+		}
+		dir := pc.GetDirection()
+		if dir == "" {
+			dir = "forward"
+		}
+		if err := validateDirection(dir); err != nil {
+			return err
+		}
+		style := pc.GetStyle()
+		if style == "" {
+			style = "bezier"
+		}
+		if err := validateEdgeType(style); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (s *WorkspaceService) ApplyWorkspaceBatch(
 	ctx context.Context,
 	req *connect.Request[diagv1.ApplyWorkspaceBatchRequest],
@@ -240,42 +283,8 @@ func (s *WorkspaceService) ApplyWorkspaceBatch(
 		return nil, err
 	}
 
-	// Validate elements
-	for _, pe := range m.GetElements() {
-		if strings.TrimSpace(pe.GetRef()) == "" {
-			return nil, invalidArg("elements[].ref", "must not be empty")
-		}
-		if strings.TrimSpace(pe.GetName()) == "" {
-			return nil, invalidArg("elements[].name", "must not be empty")
-		}
-		if _, err := ConvertTechnologyLinks(pe.GetTechnologyLinks()); err != nil {
-			return nil, err
-		}
-	}
-	for i, pc := range m.GetConnectors() {
-		if pc.GetViewRef() == "" {
-			return nil, invalidArgF(fmt.Sprintf("connectors[%d].view_ref", i), "must not be empty")
-		}
-		if pc.GetSourceElementRef() == "" {
-			return nil, invalidArgF(fmt.Sprintf("connectors[%d].source_element_ref", i), "must not be empty")
-		}
-		if pc.GetTargetElementRef() == "" {
-			return nil, invalidArgF(fmt.Sprintf("connectors[%d].target_element_ref", i), "must not be empty")
-		}
-		dir := pc.GetDirection()
-		if dir == "" {
-			dir = "forward"
-		}
-		if err := validateDirection(dir); err != nil {
-			return nil, err
-		}
-		style := pc.GetStyle()
-		if style == "" {
-			style = "bezier"
-		}
-		if err := validateEdgeType(style); err != nil {
-			return nil, err
-		}
+	if err := ValidateWorkspaceBatchRequest(m); err != nil {
+		return nil, err
 	}
 
 	if err := s.hooks().CheckApplyBatch(ctx, workspaceID, m); err != nil {

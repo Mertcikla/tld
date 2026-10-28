@@ -160,6 +160,22 @@ func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1
 	return connect.NewResponse(response), nil
 }
 
+// ValidateFlowRequest validates a proposed save without performing any target writes.
+// CLI previews use the same validation as FlowService.SaveFlow.
+func ValidateFlowRequest(req *diagv1.SaveFlowRequest) error {
+	if err := validateFlow(req); err != nil {
+		return err
+	}
+	document, err := protojson.Marshal(req.Content)
+	if err != nil {
+		return err
+	}
+	if len(document) > 1<<20 {
+		return errors.New("flow must be at most 1 MiB")
+	}
+	return nil
+}
+
 func validateFlow(req *diagv1.SaveFlowRequest) error {
 	content := req.GetContent()
 	if req.ViewId <= 0 || content == nil || strings.TrimSpace(content.Name) == "" {

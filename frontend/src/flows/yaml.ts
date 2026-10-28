@@ -186,7 +186,7 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
             ...(connector.label !== undefined ? { label: text(connector.label, `${location}.label`, 10000) } : {}),
           }
         })
-        const references = result.connectors.map(c => JSON.stringify([c.source, c.target, c.label]))
+        const references = result.connectors.map(c => JSON.stringify([c.source, c.target, c.label ?? '']))
         if (new Set(references).size !== references.length) fail(path, 'duplicate connector highlight')
       }
       return result

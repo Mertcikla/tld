@@ -8,6 +8,7 @@ import (
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	doctorcmd "github.com/mertcikla/tld/v2/cmd/doctor"
+	flowcmd "github.com/mertcikla/tld/v2/cmd/flow"
 	gitcmd "github.com/mertcikla/tld/v2/cmd/git"
 	importcmd "github.com/mertcikla/tld/v2/cmd/import"
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
@@ -193,6 +194,9 @@ workspace. To change a display name in either mode, use
 	viewCmd := viewcmd.NewViewCmd(&wdir, &outputFormat, &compactJSON)
 	viewCmd.GroupID = resourceGroup.ID
 
+	flowCmd := flowcmd.NewFlowCmd()
+	flowCmd.GroupID = resourceGroup.ID
+
 	// Workspace commands
 	initCmd := initialize.NewInitCmd()
 	initCmd.GroupID = workspaceGroup.ID
@@ -259,6 +263,7 @@ workspace. To change a display name in either mode, use
 		renameCmd,
 		linkCmd,
 		viewCmd,
+		flowCmd,
 		initCmd,
 		validateCmd,
 		loginCmd,
@@ -315,7 +320,7 @@ workspace. To change a display name in either mode, use
 		}
 		out := c.OutOrStdout()
 		_, _ = fmt.Fprintln(out, "tld - create and update architecture diagrams\n\nUsage: tld <command> [flags]\n\nAuthoring:")
-		for _, name := range []string{"init", "context", "list", "inspect", "add", "connect", "update", "remove", "view", "import", "validate", "render"} {
+		for _, name := range []string{"init", "context", "list", "inspect", "add", "connect", "update", "remove", "view", "flow", "import", "validate", "render"} {
 			command, _, _ := root.Find([]string{name})
 			_, _ = fmt.Fprintf(out, "  %-10s %s\n", name, command.Short)
 		}
