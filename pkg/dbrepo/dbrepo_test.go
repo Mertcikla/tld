@@ -334,8 +334,8 @@ func TestOpenSQLiteUpgradesFlowPredecessorWithoutLosingDiagramData(t *testing.T)
 	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_flows_view_id', 'idx_flows_org_id')`).Scan(&flowIndexCount); err != nil {
 		t.Fatal(err)
 	}
-	if flowColumnCount != 5 || flowIndexCount != 2 {
-		t.Fatalf("flow schema after predecessor upgrade: columns=%d indexes=%d, want 5 and 2", flowColumnCount, flowIndexCount)
+	if flowColumnCount != 6 || flowIndexCount != 2 {
+		t.Fatalf("flow schema after predecessor upgrade: columns=%d indexes=%d, want 6 and 2", flowColumnCount, flowIndexCount)
 	}
 }
 

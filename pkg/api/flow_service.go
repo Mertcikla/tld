@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	maxFlowSteps       = 1000
-	maxFlowPaths       = 26
-	maxFlowBranchDepth = 8
+	maxFlowSteps       = app.MaxFlowSteps
+	maxFlowPaths       = app.MaxFlowPaths
+	maxFlowBranchDepth = app.MaxFlowBranchDepth
 )
 
 type FlowService struct {
@@ -72,11 +72,61 @@ func flowViewError(action string, err error) error {
 }
 
 func flowFromRecord(row app.FlowRecord) (*diagv1.Flow, error) {
-	content := &diagv1.FlowContent{}
-	if err := protojson.Unmarshal([]byte(row.Document), content); err != nil {
+	steps, err := flowStepsToProto(row.Steps)
+	if err != nil {
 		return nil, err
 	}
-	return &diagv1.Flow{Id: row.ID, ViewId: int32(row.ViewID), Revision: row.Revision, Content: content}, nil
+	return &diagv1.Flow{Id: row.ID, ViewId: int32(row.ViewID), Revision: row.Revision,
+		Content: &diagv1.FlowContent{Name: row.Name, Description: row.Description, Steps: steps}}, nil
+}
+
+func flowStepsToProto(steps []app.FlowStep) ([]*diagv1.FlowStep, error) {
+	result := make([]*diagv1.FlowStep, 0, len(steps))
+	for _, step := range steps {
+		item := &diagv1.FlowStep{Id: step.ID, Title: step.Title, Description: step.Description, ElementIds: step.ElementIDs, ConnectorIds: step.ConnectorIDs}
+		if step.Branches != nil {
+			mode := diagv1.FlowBranchMode_FLOW_BRANCH_MODE_ALTERNATE
+			switch step.Branches.Mode {
+			case "alternate":
+			case "parallel":
+				mode = diagv1.FlowBranchMode_FLOW_BRANCH_MODE_PARALLEL
+			default:
+				return nil, fmt.Errorf("unknown flow branch mode %q", step.Branches.Mode)
+			}
+			branches := &diagv1.FlowBranches{Mode: mode}
+			for _, path := range step.Branches.Paths {
+				children, err := flowStepsToProto(path.Steps)
+				if err != nil {
+					return nil, err
+				}
+				branches.Paths = append(branches.Paths, &diagv1.FlowBranch{Id: path.ID, Name: path.Name, Steps: children})
+			}
+			item.Control = &diagv1.FlowStep_Branches{Branches: branches}
+		} else if step.GoToFlowID != "" {
+			item.Control = &diagv1.FlowStep_GoToFlowId{GoToFlowId: step.GoToFlowID}
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func flowStepsFromProto(steps []*diagv1.FlowStep) []app.FlowStep {
+	result := make([]app.FlowStep, 0, len(steps))
+	for _, step := range steps {
+		item := app.FlowStep{ID: step.Id, Title: step.Title, Description: step.Description, ElementIDs: step.ElementIds, ConnectorIDs: step.ConnectorIds, GoToFlowID: step.GetGoToFlowId()}
+		if branches := step.GetBranches(); branches != nil {
+			mode := "alternate"
+			if branches.Mode == diagv1.FlowBranchMode_FLOW_BRANCH_MODE_PARALLEL {
+				mode = "parallel"
+			}
+			item.Branches = &app.FlowBranches{Mode: mode}
+			for _, path := range branches.Paths {
+				item.Branches.Paths = append(item.Branches.Paths, app.FlowPath{ID: path.Id, Name: path.Name, Steps: flowStepsFromProto(path.Steps)})
+			}
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 func (s *FlowService) ListFlows(ctx context.Context, req *connect.Request[diagv1.ListFlowsRequest]) (*connect.Response[diagv1.ListFlowsResponse], error) {
@@ -211,7 +261,7 @@ func (s *FlowService) SaveFlow(ctx context.Context, req *connect.Request[diagv1.
 	if len(document) > 1<<20 {
 		return nil, invalidArg("flow", "must be at most 1 MiB")
 	}
-	row, err := s.Store.SaveFlow(ctx, app.FlowRecord{ID: flow.Id, ViewID: int64(flow.ViewId), Document: string(document), Revision: flow.ExpectedRevision})
+	row, err := s.Store.SaveFlow(ctx, app.FlowRecord{ID: flow.Id, ViewID: int64(flow.ViewId), Name: flow.Content.Name, Description: flow.Content.Description, Steps: flowStepsFromProto(flow.Content.Steps), Revision: flow.ExpectedRevision})
 	if err != nil {
 		return nil, flowStoreError("save flow", err)
 	}

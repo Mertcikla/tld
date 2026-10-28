@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -56,15 +55,20 @@ func TestFlowServiceRoundTrip(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("stored flow: %v %v", rows, err)
 	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(rows[0].Document), &document); err != nil {
+	if rows[0].Name != content.Name || len(rows[0].Steps) != len(content.Steps) {
+		t.Fatalf("stored content differs: %+v", rows[0])
+	}
+	var stepCount, pathCount int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM flow_steps WHERE flow_id = ?", saved.Msg.Flow.Id).Scan(&stepCount); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"id", "viewId", "revision", "content"} {
-		if _, ok := document[key]; ok {
-			t.Fatalf("envelope field %s leaked into content JSON: %s", key, rows[0].Document)
-		}
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM flow_paths WHERE flow_id = ?", saved.Msg.Flow.Id).Scan(&pathCount); err != nil {
+		t.Fatal(err)
 	}
+	if stepCount != 4 || pathCount != 2 {
+		t.Fatalf("normalized rows: steps=%d paths=%d", stepCount, pathCount)
+	}
+
 	listed, err := client.ListFlows(ctx, connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: int32(view.ID)}))
 	if err != nil || len(listed.Msg.Flows) != 1 || !proto.Equal(listed.Msg.Flows[0], saved.Msg.Flow) {
 		t.Fatalf("list: %v %v", listed, err)
@@ -269,15 +273,13 @@ func TestFlowMissingViewReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestFlowRecordRejectsUnknownAndPrunedFields(t *testing.T) {
-	for _, document := range []string{`{"id":"duplicate"}`, `{"name":"Flow","futureField":true}`, `{"steps":"invalid"}`, `{"steps":[{"id":"s","overview":true}]}`, `{"steps":[{"id":"s","metadata":{}}]}`, `{"steps":[{"id":"s","connectors":[{"id":1,"reverse":true}]}]}`} {
-		if _, err := flowFromRecord(app.FlowRecord{Document: document}); err == nil {
-			t.Fatalf("silently discarded unsupported data: %s", document)
-		}
-	}
-	flow, err := flowFromRecord(app.FlowRecord{ID: "row", ViewID: 42, Revision: 7, Document: `{"name":"Saved"}`})
+func TestFlowFromRecordUsesRowEnvelope(t *testing.T) {
+	flow, err := flowFromRecord(app.FlowRecord{ID: "row", ViewID: 42, Revision: 7, Name: "Saved"})
 	if err != nil || flow.Id != "row" || flow.ViewId != 42 || flow.Revision != 7 || flow.Content.Name != "Saved" {
 		t.Fatalf("row envelope: %v %v", flow, err)
+	}
+	if _, err := flowFromRecord(app.FlowRecord{Steps: []app.FlowStep{{ID: "s", Branches: &app.FlowBranches{Mode: "unknown"}}}}); err == nil {
+		t.Fatal("accepted invalid branch mode")
 	}
 }
 
@@ -288,18 +290,26 @@ func TestFlowListFailsClosedOnMixedCorruptRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, doc := range []string{`{"name":"Valid"}`, `{"futureField":true}`} {
-		if _, err := store.SaveFlow(ctx, app.FlowRecord{ViewID: view.ID, Document: doc}); err != nil {
+	var corruptID string
+	for _, name := range []string{"Valid", "Corrupt"} {
+		row, err := store.SaveFlow(ctx, app.FlowRecord{ViewID: view.ID, Name: name, Steps: []app.FlowStep{{ID: "step"}}})
+		if err != nil {
 			t.Fatal(err)
 		}
+		if name == "Corrupt" {
+			corruptID = row.ID
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE flow_steps SET element_ids = '["bad-id"]' WHERE flow_id = ?`, corruptID); err != nil {
+		t.Fatal(err)
 	}
 	svc := &FlowService{Store: NewAPIStore(store)}
 	if resp, err := svc.ListFlows(ctx, connect.NewRequest(&diagv1.ListFlowsRequest{})); connect.CodeOf(err) != connect.CodeInternal || resp != nil {
 		t.Fatalf("partial corrupt list: %v %v", resp, err)
 	}
-	rows, err := store.ListFlows(ctx, view.ID)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("read changed rows: %v %v", rows, err)
+	var count int
+	if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM flows").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("read changed rows: %d %v", count, err)
 	}
 }
 
@@ -456,5 +466,126 @@ func TestFlowContentSerializedSizeBoundary(t *testing.T) {
 	last.Description += "x"
 	if _, err := svc.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{ViewId: int32(view.ID), Content: content})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("accepted oversize content: %v", err)
+	}
+}
+
+func TestFlowServiceTreeCRUDWire(t *testing.T) {
+	for _, jsonWire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "protobuf", true: "JSON"}[jsonWire], func(t *testing.T) {
+			store, _ := newSQLiteWorkspaceClientWithStore(t)
+			ctx := t.Context()
+			view, err := store.CreateView(ctx, "Wire CRUD", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hooks := &flowTestHooks{}
+			_, handler := diagv1connect.NewFlowServiceHandler(&FlowService{Store: NewAPIStore(store), Hooks: hooks})
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			var opts []connect.ClientOption
+			if jsonWire {
+				opts = append(opts, connect.WithProtoJSON())
+			}
+			client := diagv1connect.NewFlowServiceClient(server.Client(), server.URL, opts...)
+			content := &diagv1.FlowContent{Name: "Wire flow", Description: "Preserve description", Steps: []*diagv1.FlowStep{
+				{Id: "first", Title: "First", ElementIds: []int32{101, 102}, ConnectorIds: []int32{201, 202}},
+				{Id: "branch", Control: flowBranches(diagv1.FlowBranchMode_FLOW_BRANCH_MODE_ALTERNATE,
+					&diagv1.FlowBranch{Id: "empty", Name: "Empty"},
+					&diagv1.FlowBranch{Id: "path", Name: "Work", Steps: []*diagv1.FlowStep{{Id: "linked", Control: &diagv1.FlowStep_GoToFlowId{GoToFlowId: "missing-target"}}}})},
+				{Id: "last", Description: "Text only"},
+			}}
+			created, err := client.SaveFlow(ctx, connect.NewRequest(&diagv1.SaveFlowRequest{ViewId: int32(view.ID), Content: content}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(want *diagv1.Flow) {
+				t.Helper()
+				listed, err := client.ListFlows(ctx, connect.NewRequest(&diagv1.ListFlowsRequest{ViewId: int32(view.ID)}))
+				if err != nil || len(listed.Msg.Flows) != 1 || !proto.Equal(listed.Msg.Flows[0], want) {
+					t.Fatalf("wire list differs: %v %v", listed, err)
+				}
+			}
+			check(created.Msg.Flow)
+			changed := proto.Clone(created.Msg.Flow).(*diagv1.Flow)
+			changed.Content.Name = "Updated"
+			changed.Content.Description = "Changed"
+			changed.Content.Steps[0], changed.Content.Steps[2] = changed.Content.Steps[2], changed.Content.Steps[0]
+			changed.Content.Steps[2].ConnectorIds = []int32{999}
+			changed.Content.Steps[2].ElementIds = nil
+			branch := changed.Content.Steps[1].GetBranches()
+			branch.Mode = diagv1.FlowBranchMode_FLOW_BRANCH_MODE_PARALLEL
+			branch.Paths[0], branch.Paths[1] = branch.Paths[1], branch.Paths[0]
+			branch.Paths[0].Name = "Renamed"
+			branch.Paths[1].Steps = []*diagv1.FlowStep{{Id: "new-child", Title: "New nested step"}}
+			changed.Content.Steps = append(changed.Content.Steps, &diagv1.FlowStep{Id: "added", Title: "New root"})
+			updated, err := client.SaveFlow(ctx, connect.NewRequest(flowSaveRequest(changed)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed.Revision = 2
+			if !proto.Equal(updated.Msg.Flow, changed) {
+				t.Fatalf("updated response differs: %v", updated)
+			}
+			check(changed)
+			// A path write error must roll back the envelope, removed old tree and all
+			// newly inserted steps, and must not emit an AfterWrite success event.
+			if _, err := store.DB().ExecContext(ctx, `CREATE TRIGGER reject_api_path BEFORE INSERT ON flow_paths WHEN NEW.name = 'reject' BEGIN SELECT RAISE(ABORT, 'injected path failure'); END`); err != nil {
+				t.Fatal(err)
+			}
+			rejected := proto.Clone(updated.Msg.Flow).(*diagv1.Flow)
+			rejected.Content.Name = "Must roll back"
+			rejected.Content.Steps[1].GetBranches().Paths[0].Name = "reject"
+			before := len(hooks.events)
+			if _, err := client.SaveFlow(ctx, connect.NewRequest(flowSaveRequest(rejected))); connect.CodeOf(err) != connect.CodeInternal {
+				t.Fatalf("write failure status: %v", err)
+			}
+			if len(hooks.events) != before {
+				t.Fatal("failed save emitted success event")
+			}
+			check(changed)
+			request := flowSaveRequest(rejected)
+			request.Id = ""
+			request.ExpectedRevision = 0
+			if _, err := client.SaveFlow(ctx, connect.NewRequest(request)); connect.CodeOf(err) != connect.CodeInternal {
+				t.Fatalf("create failure status: %v", err)
+			}
+			check(changed)
+			if _, err := client.SaveFlow(ctx, connect.NewRequest(flowSaveRequest(created.Msg.Flow))); connect.CodeOf(err) != connect.CodeAborted {
+				t.Fatalf("stale update: %v", err)
+			}
+			if _, err := client.DeleteFlow(ctx, connect.NewRequest(&diagv1.DeleteFlowRequest{Id: changed.Id, ViewId: changed.ViewId, ExpectedRevision: 1})); connect.CodeOf(err) != connect.CodeAborted {
+				t.Fatalf("stale delete: %v", err)
+			}
+			// Clearing and restoring the tree exercises removal and recreation of all
+			// nested rows without changing the flow identity.
+			empty := proto.Clone(changed).(*diagv1.Flow)
+			empty.Content.Steps = nil
+			cleared, err := client.SaveFlow(ctx, connect.NewRequest(flowSaveRequest(empty)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			empty.Revision = 3
+			check(empty)
+			restore := flowSaveRequest(cleared.Msg.Flow)
+			restore.Content = content
+			restored, err := client.SaveFlow(ctx, connect.NewRequest(restore))
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(restored.Msg.Flow)
+			if _, err := client.DeleteFlow(ctx, connect.NewRequest(&diagv1.DeleteFlowRequest{Id: restored.Msg.Flow.Id, ViewId: int32(view.ID), ExpectedRevision: 4})); err != nil {
+				t.Fatal(err)
+			}
+			listed, err := client.ListFlows(ctx, connect.NewRequest(&diagv1.ListFlowsRequest{}))
+			if err != nil || len(listed.Msg.Flows) != 0 {
+				t.Fatalf("deleted flow remains: %v %v", listed, err)
+			}
+			for _, table := range []string{"flows", "flow_steps", "flow_paths"} {
+				var count int
+				if err := store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("%s after delete: %d %v", table, count, err)
+				}
+			}
+		})
 	}
 }
