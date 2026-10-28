@@ -385,6 +385,23 @@ describe('flow step editing', () => {
     expect(flowApi.save).not.toHaveBeenCalled()
   })
 
+  it('adjusts the autoplay interval with bounded stepper buttons', () => {
+    mount()
+    const interval = () => renderer.root.findByProps({ role: 'group', 'aria-label': 'Autoplay interval' }).findByProps({ as: 'output' }).props.children.join('')
+    expect(interval()).toBe('3s')
+    for (const value of ['2s', '1s']) {
+      act(() => button('Decrease autoplay interval').props.onClick())
+      expect(interval()).toBe(value)
+    }
+    expect(button('Decrease autoplay interval').props.isDisabled).toBe(true)
+    for (const value of ['2s', '3s', '5s', '8s']) {
+      act(() => button('Increase autoplay interval').props.onClick())
+      expect(interval()).toBe(value)
+    }
+    expect(button('Increase autoplay interval').props.isDisabled).toBe(true)
+    expect(renderer.root.findAllByType('select').some(node => node.props['aria-label'] === 'Autoplay interval')).toBe(false)
+  })
+
   it('records a new step for each click, including repeats, from an empty flow', async () => {
     const onCanvasRecorderChange = vi.fn()
     const onFocus = mount(undefined, { onCanvasRecorderChange })

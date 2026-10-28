@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { Box, Button, HStack, IconButton, Input, Menu, MenuButton, MenuItem, MenuList, Portal, Select, Text, Textarea, Tooltip, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { AddIcon, CopyIcon, DragHandleIcon } from '@chakra-ui/icons'
+import { AddIcon, CopyIcon, DragHandleIcon, MinusIcon } from '@chakra-ui/icons'
 import { motion } from 'framer-motion'
 import { faBackwardStep, faCodeFork, faForwardStep, faPause, faPlay, faRepeat, faStairs } from '@fortawesome/free-solid-svg-icons'
 import FontAwesomeIcon from '../components/FontAwesomeIcon'
@@ -22,6 +22,7 @@ import { resolveElementIconUrl } from '../utils/elementIcon'
 import { TYPE_COLORS } from '../types'
 
 const emptyDiagram: FlowDiagram = { elements: [], connectors: [] }
+const PLAYBACK_INTERVALS = [1, 2, 3, 5, 8]
 function stepSummary(step: FlowStep): string {
   const behavior = step.branches ? `${step.branches.mode === 'parallel' ? 'Parallel' : 'Alternate'} paths` : step.goToFlowId ? 'Linked flow' : ''
   const highlights = [
@@ -758,6 +759,7 @@ export function FlowPanel({ snapshotCatalog, open, viewId, editMode: requestedEd
   const currentDiagram = diagram ?? (flow ? diagrams?.[flow.viewId] : undefined) ?? emptyDiagram
   const identifiers = useMemo(() => flowIdentifiers(flow?.steps ?? []), [flow?.steps])
   const playback = useFlowPlayback(flow)
+  const intervalIndex = PLAYBACK_INTERVALS.indexOf(playback.seconds)
   const focus = useMemo(() => open && flow && (!editMode || playback.frame) ? resolveFocus(flow, playback.frame, currentDiagram) : null, [open, flow, editMode, playback.frame, currentDiagram])
   useEffect(() => { onFocus(focus) }, [focus, onFocus])
   useEffect(() => () => onFocus(null), [onFocus])
@@ -1015,6 +1017,37 @@ export function FlowPanel({ snapshotCatalog, open, viewId, editMode: requestedEd
         <Box transform={editPlaybackOpen ? undefined : 'rotate(180deg)'}><ChevronDownIcon /></Box>
       </Button>}
       {(!editMode || editPlaybackOpen) && <Box id={playbackId} data-testid="flow-playback-controls" px={3} py={2.5} minH={0} display="flex" flexDirection="column" gap={2} overflow="hidden">
+        <Box display="grid" gridTemplateColumns="minmax(0, 1fr) auto minmax(0, 1fr)" alignItems="center" gap={1.5} minW={0} flexShrink={0}>
+          <HStack role="group" aria-label="Autoplay interval" spacing={0} w="max-content" color="text.muted">
+            <Tooltip label="Faster playback (shorter interval)" openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" variant="ghost" w={6} minW={6} h={6} rounded="md" color="text.muted" _hover={{ bg: 'whiteAlpha.50', color: 'gray.200' }} aria-label="Decrease autoplay interval" icon={<MinusIcon boxSize="8px" />} isDisabled={busy || intervalIndex <= 0}
+                onClick={() => { if (!busy && intervalIndex > 0) playback.setSeconds(PLAYBACK_INTERVALS[intervalIndex - 1]) }} /></Box>
+            </Tooltip>
+            <Tooltip label="Time between steps during auto-play" openDelay={200} closeOnPointerDown closeOnScroll>
+              <Text as="output" aria-live="polite" minW="22px" textAlign="center" fontSize="11px" sx={{ fontVariantNumeric: 'tabular-nums' }}>{playback.seconds}s</Text>
+            </Tooltip>
+            <Tooltip label="Slower playback (longer interval)" openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" variant="ghost" w={6} minW={6} h={6} rounded="md" color="text.muted" _hover={{ bg: 'whiteAlpha.50', color: 'gray.200' }} aria-label="Increase autoplay interval" icon={<AddIcon boxSize="8px" />} isDisabled={busy || intervalIndex >= PLAYBACK_INTERVALS.length - 1}
+                onClick={() => { if (!busy && intervalIndex < PLAYBACK_INTERVALS.length - 1) playback.setSeconds(PLAYBACK_INTERVALS[intervalIndex + 1]) }} /></Box>
+            </Tooltip>
+          </HStack>
+          <HStack spacing={1} flexShrink={0}>
+            <Tooltip label="Previous flow step" openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Previous flow step" icon={<FontAwesomeIcon icon={faBackwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || playback.index < 0} onClick={playback.previous} /></Box>
+            </Tooltip>
+            <Tooltip label={playback.playing ? 'Pause' : 'Auto-play'} openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" w={16} h={7} variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={13} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
+            </Tooltip>
+            <Tooltip label="Next flow step" openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Next flow step" icon={<FontAwesomeIcon icon={faForwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || !playback.frames.length || (playback.index === playback.frames.length - 1 && !journey && !activeStep?.goToFlowId)} onClick={nextStep} /></Box>
+            </Tooltip>
+          </HStack>
+          <Box display="flex" justifyContent="flex-end" minW={0}>
+            <Tooltip label={playback.loop ? 'Repeat on' : 'Repeat off'} openDelay={200} closeOnPointerDown closeOnScroll>
+              <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} variant={playback.loop ? 'primary' : 'ghost'} aria-label="Repeat flow" aria-pressed={playback.loop} icon={<FontAwesomeIcon icon={faRepeat} size={12} />} isDisabled={busy} onClick={() => playback.setLoop(!playback.loop)} /></Box>
+            </Tooltip>
+          </Box>
+        </Box>
         <HStack data-testid="flow-playback-heading" justify="space-between" minW={0} spacing={2} flexShrink={0}>
           {playback.frame && <StepIdentifier identifier={identifiers.get(playback.frame.path?.id ?? playback.frame.id) ?? ''} />}
           <Box flex={1} minW={0}>
@@ -1046,27 +1079,6 @@ export function FlowPanel({ snapshotCatalog, open, viewId, editMode: requestedEd
             onSelectStep={playback.select}
             onChoosePath={playback.choose}
           />
-          <Box display="grid" gridTemplateColumns="minmax(0, 1fr) auto minmax(0, 1fr)" alignItems="center" gap={1.5} minW={0}>
-            <Select size="xs" h={7} w="full" maxW="64px" minW={0} rounded="md" aria-label="Autoplay interval" title="Autoplay interval" isDisabled={busy} value={playback.seconds} onChange={e => playback.setSeconds(Number(e.target.value))}>
-              {[1, 2, 3, 5, 8].map(seconds => <option key={seconds} value={seconds}>{seconds}s</option>)}
-            </Select>
-            <HStack spacing={1} flexShrink={0}>
-              <Tooltip label="Previous flow step" openDelay={200} closeOnPointerDown closeOnScroll>
-                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Previous flow step" icon={<FontAwesomeIcon icon={faBackwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || playback.index < 0} onClick={playback.previous} /></Box>
-              </Tooltip>
-              <Tooltip label={playback.playing ? 'Pause' : 'Auto-play'} openDelay={200} closeOnPointerDown closeOnScroll>
-                <Box as="span" display="inline-flex"><IconButton size="xs" w={16} h={7} variant="primary" aria-label={playback.playing ? 'Pause' : 'Auto-play'} icon={<FontAwesomeIcon icon={playback.playing ? faPause : faPlay} size={13} />} isDisabled={busy || !playback.frames.length || !!activeStep?.goToFlowId} onClick={playback.toggle} /></Box>
-              </Tooltip>
-              <Tooltip label="Next flow step" openDelay={200} closeOnPointerDown closeOnScroll>
-                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} aria-label="Next flow step" icon={<FontAwesomeIcon icon={faForwardStep} size={12} />} _hover={{ transform: 'none' }} isDisabled={busy || !playback.frames.length || (playback.index === playback.frames.length - 1 && !journey && !activeStep?.goToFlowId)} onClick={nextStep} /></Box>
-              </Tooltip>
-            </HStack>
-            <Box display="flex" justifyContent="flex-end" minW={0}>
-              <Tooltip label={playback.loop ? 'Repeat on' : 'Repeat off'} openDelay={200} closeOnPointerDown closeOnScroll>
-                <Box as="span" display="inline-flex"><IconButton size="xs" w={7} h={7} variant={playback.loop ? 'primary' : 'ghost'} aria-label="Repeat flow" aria-pressed={playback.loop} icon={<FontAwesomeIcon icon={faRepeat} size={12} />} isDisabled={busy} onClick={() => playback.setLoop(!playback.loop)} /></Box>
-              </Tooltip>
-            </Box>
-          </Box>
         </VStack>
       </Box>}
     </Box>}

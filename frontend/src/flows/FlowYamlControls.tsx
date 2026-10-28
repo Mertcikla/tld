@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react'
 import { useHref } from 'react-router-dom'
 import { Button, Checkbox, HStack, IconButton, Input, Modal, ModalBody, ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Text, Textarea, Tooltip } from '@chakra-ui/react'
-import { ImportIcon, ExportIcon, ShareIcon } from '../components/Icons'
+import { ImportIcon, ExportIcon } from '../components/Icons'
+import { faShareFromSquare } from '@fortawesome/free-solid-svg-icons'
+import FontAwesomeIcon from '../components/FontAwesomeIcon'
 import { copyTextToClipboard } from '../utils/clipboard'
 import { toast } from '../utils/toast'
 import { exportCompleteFlowYaml, exportFlowYaml, FLOW_YAML_MAX_BYTES, importFlowYaml, parseFlowYaml, type PortableFlowDocument } from './yaml'
@@ -135,7 +137,7 @@ export function FlowYamlControls({ catalog, flow, diagram, diagrams, loadDiagram
         <span><IconButton size="xs" w={7} h={7} variant="ghost" aria-label="Export YAML" icon={<ExportIcon size={14} />} isDisabled={disabled} onClick={() => open('export')} /></span>
       </Tooltip>}
       {flow && <Tooltip label="Share flow" openDelay={200} closeOnPointerDown closeOnScroll>
-        <span><IconButton size="xs" w={7} h={7} variant="ghost" aria-label="Share flow" icon={<ShareIcon size={14} />} isDisabled={disabled} onClick={() => void share()} /></span>
+        <span><IconButton size="xs" w={7} h={7} variant="ghost" aria-label="Share flow" icon={<FontAwesomeIcon icon={faShareFromSquare} size={14} />} isDisabled={disabled} onClick={() => void share()} /></span>
       </Tooltip>}
     </HStack>
     <Modal isOpen={mode !== null} onClose={close} size="xl" closeOnOverlayClick={!importing} closeOnEsc={!importing}>
