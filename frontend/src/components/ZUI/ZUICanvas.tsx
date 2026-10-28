@@ -55,6 +55,7 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  editorLinksEnabled?: boolean
   /** Optional story presentation controlled by the Explore page. */
   flowFocus?: FlowFocus | null
   breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
@@ -78,6 +79,7 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  editorLinksEnabled = true,
   flowFocus = null,
   breadcrumbBoundaryRef,
   preserveCameraOnUpdate = false,
@@ -414,6 +416,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       />
 
       <ZUIHoverPopover
+        editorLinksEnabled={editorLinksEnabled}
         hoveredItem={hoveredItem}
         hiddenProxyBadges={proxyState.hiddenProxyBadges}
         hoveredScreenRect={hoveredScreenRect}

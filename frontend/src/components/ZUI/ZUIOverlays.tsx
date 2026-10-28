@@ -264,6 +264,7 @@ export function ZUIBreadcrumb({
 }
 
 export function ZUIHoverPopover({
+  editorLinksEnabled = true,
   hoveredItem,
   hiddenProxyBadges = [],
   hoveredScreenRect,
@@ -271,6 +272,7 @@ export function ZUIHoverPopover({
   onHoverLock,
   onPopoverElement,
 }: {
+  editorLinksEnabled?: boolean
   hoveredItem: HoveredItem | null
   hiddenProxyBadges?: ZUIHiddenProxyBadge[]
   hoveredScreenRect: { sx: number; sy: number; sw: number; sh: number } | null
@@ -376,7 +378,7 @@ export function ZUIHoverPopover({
                       <ConnectorNameButton
                         label={hoveredItem.data.label}
                         to={primaryHref}
-                        isDisabled={hoveredItem.data.diagramId < 0}
+                        isDisabled={!editorLinksEnabled || hoveredItem.data.diagramId < 0}
                         size="md"
                       />
                     </HStack>
@@ -450,12 +452,12 @@ export function ZUIHoverPopover({
                     <ConnectorSummaryCard
                       details={details}
                       sourceTo={`/views/${sourceAnchorViewId}?element=${hoveredItem.data.sourceObjId}`}
-                      sourceDisabled={sourceAnchorViewId < 0}
+                      sourceDisabled={!editorLinksEnabled || sourceAnchorViewId < 0}
                       targetTo={`/views/${targetAnchorViewId}?element=${hoveredItem.data.targetObjId}`}
-                      targetDisabled={targetAnchorViewId < 0}
+                      targetDisabled={!editorLinksEnabled || targetAnchorViewId < 0}
                       direction={hoveredItem.data.direction}
                     />
-                    <UnderlyingConnectors details={details} />
+                    <UnderlyingConnectors details={details} editorLinksEnabled={editorLinksEnabled} />
                   </VStack>
                 </PopoverBody>
               </>
@@ -478,7 +480,7 @@ export function ZUIHoverPopover({
                 <PopoverHeader borderBottom="1px solid" borderColor="whiteAlpha.100" px={3.5} py={2.5}>
                   <HStack spacing={2} align="center" justify="space-between">
                     {connectorHref ? (
-                      <ConnectorNameButton label={connectorTitle} to={connectorHref} size="md" />
+                      <ConnectorNameButton label={connectorTitle} to={connectorHref} isDisabled={!editorLinksEnabled} size="md" />
                     ) : (
                       <Text fontWeight="700" fontSize="13px" isTruncated flex={1} color="gray.50" lineHeight="1.2">
                         {connectorTitle}
@@ -502,10 +504,10 @@ export function ZUIHoverPopover({
                     <ConnectorRouteCard
                       source={hoveredItem.data.sourceId}
                       sourceTo={sourceHref}
-                      sourceDisabled={hoveredItem.data.diagramId < 0}
+                      sourceDisabled={!editorLinksEnabled || hoveredItem.data.diagramId < 0}
                       target={hoveredItem.data.targetId}
                       targetTo={targetHref}
-                      targetDisabled={hoveredItem.data.diagramId < 0}
+                      targetDisabled={!editorLinksEnabled || hoveredItem.data.diagramId < 0}
                       direction={hoveredItem.data.direction}
                     />
                     {hoveredItem.data.description && (
@@ -513,7 +515,7 @@ export function ZUIHoverPopover({
                         {hoveredItem.data.description}
                       </Text>
                     )}
-                    {mergedProxyDetails && <UnderlyingConnectors details={mergedProxyDetails} />}
+                    {mergedProxyDetails && <UnderlyingConnectors details={mergedProxyDetails} editorLinksEnabled={editorLinksEnabled} />}
                   </VStack>
                 </PopoverBody>
               </>
@@ -528,7 +530,7 @@ export function ZUIHoverPopover({
                     <ConnectorNameButton
                       label={hoveredItem.data.label}
                       to={`/views/${hoveredItem.data.diagramId}`}
-                      isDisabled={hoveredItem.data.diagramId < 0}
+                      isDisabled={!editorLinksEnabled || hoveredItem.data.diagramId < 0}
                       size="md"
                     />
                     {groupKindLabel && (

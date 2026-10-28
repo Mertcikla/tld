@@ -18,7 +18,7 @@ export interface FlowBranches { mode: string; paths: FlowBranch[] }
 export interface FlowCatalog { flows: StoryFlow[]; views: { id: number; name: string }[] }
 export interface StoryFlow { id: string; viewId: number; name: string; description: string; steps: FlowStep[]; revision: number }
 export interface FlowDiagram {
-  elements: (Pick<PlacedElement, 'element_id' | 'name'> & Partial<Pick<PlacedElement, 'kind' | 'technology' | 'logo_url' | 'technology_connectors'>>)[]
+  elements: (Pick<PlacedElement, 'element_id' | 'name'> & Partial<Pick<PlacedElement, 'kind' | 'description' | 'technology' | 'url' | 'logo_url' | 'technology_connectors' | 'tags' | 'position_x' | 'position_y'>>)[]
   connectors: Connector[]
 }
 export interface FlowFrame { id: string; steps: FlowStep[]; path?: FlowBranch; choices?: Record<string, string> }

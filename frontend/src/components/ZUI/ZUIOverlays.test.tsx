@@ -302,6 +302,13 @@ describe('ZUIHoverPopover edge change', () => {
       '/views/2?element=10',
       '/views/2?element=20',
     ])
+    act(() => renderer.update(<ZUIHoverPopover editorLinksEnabled={false}
+      hoveredItem={{ type: 'edge', data: { sourceId: 'Auth API', targetId: 'User DB', label: 'queries user records', id: 42, diagramId: 2, sourceObjId: 10, targetObjId: 20 }, absX: 0, absY: 0 }}
+      hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }} isHoveredItemFullyVisible onHoverLock={() => {}} />))
+    const disabledButtons = renderer.root.findAllByType('button')
+    expect(disabledButtons).toHaveLength(3)
+    expect(disabledButtons.every(button => button.props.isDisabled && button.props.to === undefined && button.props.as === undefined)).toBe(true)
+    act(() => renderer.unmount())
   })
 
   it('renders off-view connectors and their underlying paths, including when merged into native edges', () => {
@@ -407,6 +414,12 @@ describe('ZUIHoverPopover edge change', () => {
       '/views/4?element=1010',
       '/views/5?element=2020',
     ])
+
+    act(() => renderer.update(<ZUIHoverPopover editorLinksEnabled={false} hoveredItem={item}
+      hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }} isHoveredItemFullyVisible onHoverLock={() => {}} />))
+    const disabledButtons = renderer.root.findAllByType('button')
+    expect(disabledButtons).toHaveLength(4)
+    expect(disabledButtons.every(button => button.props.isDisabled && button.props.to === undefined)).toBe(true)
 
     const details = item.data.details!
     const leaves = Array.from({ length: 6 }, (_, index) => ({

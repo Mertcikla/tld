@@ -14,6 +14,7 @@ import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, flowIdentifiers,
 import { useFlowPlayback } from './useFlowPlayback'
 import { useFloatingFlowPanel } from './useFloatingFlowPanel'
 import { FlowYamlControls } from './FlowYamlControls'
+import { prepareCompleteFlowImport } from './completeImport'
 import { addCanvasHighlight, captureCanvasStep, type FlowCanvasRecorder } from './canvasInteraction'
 import { saveButtonStyles } from '../styles/saveButton'
 import { panelSurfaceStyles } from '../styles/surfaces'
@@ -374,6 +375,8 @@ function FlowPlaybackMinimap({
 }
 
 export interface FlowPanelProps {
+  /** A self-contained, read-only catalog. Disables workspace queries and draft restoration. */
+  snapshotCatalog?: FlowCatalog
   open: boolean
   viewId?: number
   editMode?: boolean
@@ -700,36 +703,40 @@ function StepList({ steps, onChange, diagram, selection, onSelect, expanded, onP
   </VStack>
 }
 
-export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, diagram, diagrams, selection, docked = false, compact = false, expanded = false, onExpandedChange, onCanvasRecorderChange, onEditModeChange, onNavigateView, onClose, onFocus }: FlowPanelProps) {
+export function FlowPanel({ snapshotCatalog, open, viewId, editMode: requestedEditMode = false, diagram, diagrams, selection, docked = false, compact = false, expanded = false, onExpandedChange, onCanvasRecorderChange, onEditModeChange, onNavigateView, onClose, onFocus }: FlowPanelProps) {
   const floating = useFloatingFlowPanel(open && !docked)
   const queryClient = useQueryClient()
-  const queryKey = useMemo(() => ['flows', 0], [])
-  const query = useQuery({ queryKey, queryFn: () => flowApi.list(), enabled: open, retry: false })
-  const navigationScope = viewId === undefined ? 'explorer' : 'editor'
+  const queryKey = useMemo(() => snapshotCatalog ? ['snapshot-flows'] : ['flows', 0], [snapshotCatalog])
+  const query = useQuery({ queryKey, queryFn: () => flowApi.list(), enabled: open && !snapshotCatalog, retry: false })
+  const loading = !snapshotCatalog && query.isLoading
+  const queryError = snapshotCatalog ? null : query.error
+  const navigationScope = snapshotCatalog ? 'snapshot' : viewId === undefined ? 'explorer' : 'editor'
   const navigationKey = useMemo(() => ['flow-navigation', navigationScope], [navigationScope])
-  const initialJourney = useRef(queryClient.getQueryData<FlowJourney>(navigationKey))
+  const initialJourney = useRef(snapshotCatalog ? undefined : queryClient.getQueryData<FlowJourney>(navigationKey))
   const initial = initialJourney.current?.current && (viewId === undefined || initialJourney.current.current.flow.viewId === viewId) ? initialJourney.current : undefined
   const [journey, setJourney] = useState<FlowJourney | null>(() => initial?.stack.length ? initial : null)
   const pendingRestore = useRef<FlowVisit | null>(initial?.current ?? null)
   const selectionStorageKey = `diag:lastFlow:${viewId ?? 'explorer'}`
   const [selectedId, setSelectedId] = useState(() => {
+    if (snapshotCatalog) return snapshotCatalog.flows[0]?.id ?? ''
     if (initial) return initial.current.flow.id
     try { return window.localStorage.getItem(selectionStorageKey) ?? '' }
     catch { return '' }
   })
-  const editMode = (requestedEditMode || !!onEditModeChange) && !journey
-  const viewsQuery = useQuery({ queryKey: ['flow-link-views'], queryFn: () => api.workspace.views.list(), enabled: open, retry: false })
-  const catalogFlows = query.data ?? []
-  const catalog = { flows: catalogFlows, views: viewsQuery.data ?? [] }
+  const editMode = !snapshotCatalog && (requestedEditMode || !!onEditModeChange) && !journey
+  const viewsQuery = useQuery({ queryKey: snapshotCatalog ? ['snapshot-views'] : ['flow-link-views'], queryFn: () => api.workspace.views.list(), enabled: open && !snapshotCatalog, retry: false })
+  const catalogFlows = snapshotCatalog?.flows ?? query.data ?? []
+  const catalog = snapshotCatalog ?? { flows: catalogFlows, views: viewsQuery.data ?? [] }
   const draftKey = useMemo(() => ['flow-draft', viewId ?? 0], [viewId])
-  const [draft, setDraft] = useState<StoryFlow | null>(() => queryClient.getQueryData<StoryFlow>(draftKey) ?? null)
+  const [draft, setDraft] = useState<StoryFlow | null>(() => snapshotCatalog ? null : queryClient.getQueryData<StoryFlow>(draftKey) ?? null)
   useEffect(() => {
-    if (!viewId) return
+    if (!viewId || snapshotCatalog) return
     // Keep unsaved work across canvas navigation for this app session only.
     queryClient.setQueryDefaults(draftKey, { gcTime: Infinity })
     if (draft) queryClient.setQueryData(draftKey, draft)
     else queryClient.removeQueries({ queryKey: draftKey, exact: true })
-  }, [draft, draftKey, queryClient, viewId])
+  }, [draft, draftKey, queryClient, viewId, snapshotCatalog])
+  const completeImportView = useRef<{ source: string; viewId: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [deletePending, setDeletePending] = useState(false)
@@ -737,17 +744,17 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
   const playbackId = useId()
   useEffect(() => { if (editMode) setEditPlaybackOpen(true) }, [editMode])
   const [canvasMode, setCanvasMode] = useState<'record' | 'pick' | null>(null)
-  const flows = query.data ?? []
+  const flows = catalogFlows
   const flow = journey?.current.flow ?? draft
     ?? flows.find(flow => flow.id === selectedId && (viewId === undefined || flow.viewId === viewId))
     ?? flows.find(flow => viewId === undefined || flow.viewId === viewId) ?? null
   useEffect(() => {
-    if (!open || journey || draft || !flow) return
+    if (snapshotCatalog || !open || journey || draft || !flow) return
     setSelectedId(flow.id)
     try { window.localStorage.setItem(selectionStorageKey, flow.id) }
     catch { /* Selection still works when browser storage is unavailable. */ }
-  }, [open, journey, draft, flow, selectionStorageKey])
-  const canEditFlow = !journey && (!!onEditModeChange || editMode)
+  }, [open, journey, draft, flow, selectionStorageKey, snapshotCatalog])
+  const canEditFlow = !snapshotCatalog && !journey && (!!onEditModeChange || editMode)
   const currentDiagram = diagram ?? (flow ? diagrams?.[flow.viewId] : undefined) ?? emptyDiagram
   const identifiers = useMemo(() => flowIdentifiers(flow?.steps ?? []), [flow?.steps])
   const playback = useFlowPlayback(flow)
@@ -816,6 +823,31 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
 
   function discardAllowed() { return !draft || window.confirm('Discard unsaved flow changes?') }
   function patch(changes: Partial<StoryFlow>) { if (flow && editMode && !busy) { playback.pause(); setDraft({ ...flow, ...changes }) } }
+  async function importComplete(source: string): Promise<boolean> {
+    if (!viewId || !canEditFlow || busy || !onNavigateView) return false
+    const plan = prepareCompleteFlowImport(source, viewId, catalog)
+    setBusy(true); playback.pause(); setCanvasMode(null)
+    try {
+      let targetViewId = completeImportView.current?.source === source ? completeImportView.current.viewId : undefined
+      if (!targetViewId) {
+        targetViewId = (await api.import.resources('', plan.batch)).view_id
+        completeImportView.current = { source, viewId: targetViewId }
+        void queryClient.invalidateQueries({ queryKey: ['workspace'] })
+        void queryClient.invalidateQueries({ queryKey: ['flow-link-views'] })
+      }
+      const content = await api.workspace.views.content(targetViewId)
+      const imported = plan.resolve(targetViewId, { elements: content.placements, connectors: content.connectors })
+      const targetDraftKey = ['flow-draft', targetViewId]
+      queryClient.setQueryDefaults(targetDraftKey, { gcTime: Infinity })
+      queryClient.setQueryData(targetDraftKey, imported)
+      completeImportView.current = null
+      onNavigateView(targetViewId)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not import complete flow.'
+      throw new Error(completeImportView.current?.source === source ? `Resources were created, but the flow could not be opened. Retry to use the same view. ${message}` : message)
+    } finally { setBusy(false) }
+  }
   async function save() {
     if (!draft || !editMode || busy) return
     setBusy(true); setCanvasMode(null); setError('')
@@ -954,15 +986,15 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
         {editMode && <FlowAction label="Save flow" hint="Save flow (Cmd/Ctrl+S)" icon={<SaveIcon />} primary loading={busy} disabled={!draft || !flow.name.trim() || allSteps(flow.steps).length > FLOW_MAX_STEPS} onClick={() => void save()} />}
       </HStack>
     </HStack>}
-      {(query.error || error) && <Box role="alert" p={3} flexShrink={0} maxH="35%" overflowY="auto" bg="orange.900" rounded="md">
+      {(queryError || error) && <Box role="alert" p={3} flexShrink={0} maxH="35%" overflowY="auto" bg="orange.900" rounded="md">
         <Text fontSize="sm">{error ? 'Could not complete the action. Your draft is still available.' : 'Flows could not be loaded. Try again to reconnect.'}</Text>
-        <Box as="details" mt={2}><Box as="summary" fontSize="xs" cursor="pointer">Technical details</Box><Text fontSize="xs" mt={1} overflowWrap="anywhere">{error || query.error?.message}</Text></Box>
-        {query.error && <Button size="sm" mt={2} isLoading={query.isFetching} onClick={() => { void query.refetch() }}>Retry loading</Button>}
+        <Box as="details" mt={2}><Box as="summary" fontSize="xs" cursor="pointer">Technical details</Box><Text fontSize="xs" mt={1} overflowWrap="anywhere">{error || queryError?.message}</Text></Box>
+        {queryError && <Button size="sm" mt={2} isLoading={query.isFetching} onClick={() => { void query.refetch() }}>Retry loading</Button>}
       </Box>}
-    <VStack as={motion.div} layoutScroll data-flow-scroll align="stretch" spacing={4} p={query.isLoading || !flow || editMode || !flow.steps.length ? 3 : 0} display={compact && captureActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={query.isLoading || !flow || editMode || !flow.steps.length ? 1 : 0}>
-      {query.isLoading && <Text role="status" fontSize="sm">Loading flows…</Text>}
+    <VStack as={motion.div} layoutScroll data-flow-scroll align="stretch" spacing={4} p={loading || !flow || editMode || !flow.steps.length ? 3 : 0} display={compact && captureActive ? "none" : "flex"} minH={0} overflowY="auto" overscrollBehavior="contain" flex={loading || !flow || editMode || !flow.steps.length ? 1 : 0}>
+      {loading && <Text role="status" fontSize="sm">Loading flows…</Text>}
 
-      {!flow && !query.isLoading && <Text fontSize="sm" color="gray.400">{flows.length ? 'Choose a story to follow through the diagram.' : editMode ? 'Create a flow, then add steps to highlight parts of this diagram.' : onEditModeChange ? 'No flows yet. Choose New flow to create your first story.' : 'No flows in this diagram yet.'}</Text>}
+      {!flow && !loading && <Text fontSize="sm" color="gray.400">{flows.length ? 'Choose a story to follow through the diagram.' : editMode ? 'Create a flow, then add steps to highlight parts of this diagram.' : onEditModeChange ? 'No flows yet. Choose New flow to create your first story.' : 'No flows in this diagram yet.'}</Text>}
       {flow && <>
         {editMode && <Box as="fieldset" disabled={busy} border={0} minW={0} p={0}>
           <VStack align="stretch" spacing={3}>
@@ -976,7 +1008,7 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
 
       </>}
     </VStack>
-    {flow && !captureActive && <Box data-testid="flow-playback-dock" role="region" aria-label="Flow playback" borderTop={editMode || !flow.steps.length || query.isLoading ? "1px solid" : undefined} borderColor="var(--border-main)" flexShrink={0} minH={0} maxH={editMode ? "55%" : undefined} display="flex" flexDirection="column" overflow="hidden">
+    {flow && !captureActive && <Box data-testid="flow-playback-dock" role="region" aria-label="Flow playback" borderTop={editMode || !flow.steps.length || loading ? "1px solid" : undefined} borderColor="var(--border-main)" flexShrink={0} minH={0} maxH={editMode ? "55%" : undefined} display="flex" flexDirection="column" overflow="hidden">
       {editMode && <Button size="xs" h={7} variant="ghost" w="full" flexShrink={0} justifyContent="space-between" px={3} rounded={0} aria-label="Toggle playback controls" aria-expanded={editPlaybackOpen} aria-controls={playbackId}
         onClick={() => { if (editPlaybackOpen) playback.pause(); setEditPlaybackOpen(!editPlaybackOpen) }}>
         <Text fontSize="xs" fontWeight="semibold">Preview</Text>
@@ -1041,7 +1073,10 @@ export function FlowPanel({ open, viewId, editMode: requestedEditMode = false, d
     {!(compact && captureActive) && <Box as="footer" data-testid="flow-yaml-footer" px={3} py={2} borderTop="1px solid" borderColor="var(--border-main)" flexShrink={0}>
       {canEditFlow && deletePending && <HStack mb={2}><Text flex={1} fontSize="xs">Delete this flow?</Text><Button size="xs" colorScheme="red" isDisabled={busy} onClick={() => void remove()}>Delete</Button><Button size="xs" isDisabled={busy} onClick={() => setDeletePending(false)}>Cancel</Button></HStack>}
       <HStack justify="space-between">
-        <FlowYamlControls catalog={catalog} flow={flow} diagram={currentDiagram} viewId={viewId} canImport={canEditFlow} disabled={busy} onImport={imported => {
+        <FlowYamlControls loadDiagram={snapshotCatalog ? undefined : async id => {
+          const content = await api.workspace.views.content(id)
+          return { elements: content.placements, connectors: content.connectors }
+        }} onImportComplete={onNavigateView ? importComplete : undefined} catalog={catalog} flow={flow} diagram={currentDiagram} diagrams={diagrams} viewId={viewId} canImport={canEditFlow} disabled={busy} onImport={imported => {
           if (!canEditFlow || busy || !discardAllowed()) return false
           playback.pause(); setSelectedId(''); setDraft(imported); setError(''); setDeletePending(false)
           return true

@@ -4,6 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FlowPanel, type FlowPanelProps } from './FlowPanel'
 import { flowApi } from './api'
+import { api } from '../api/client'
+import { FlowYamlControls } from './FlowYamlControls'
+import { exportCompleteFlowYaml } from './yaml'
 import type { Connector } from '../types'
 import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, newStep, type FlowDiagram, type StoryFlow } from './model'
 
@@ -45,6 +48,23 @@ function mount(selection?: { elementId?: number; connectorId?: number }, extra: 
 afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); queryState.data = []; queryState.error = null; queryClient.getQueryData.mockReset() })
 
 describe('flow step editing', () => {
+  it('uses only the snapshot catalog, bypassing workspace queries, drafts, journeys, and editing', () => {
+    const snapshot: StoryFlow = { id: 'snapshot-flow-0', viewId: 1, name: 'Shared snapshot', description: '', revision: 0, steps: [] }
+    const workspace: StoryFlow = { ...snapshot, id: 'private-flow', name: 'Private workspace flow' }
+    queryState.data = [workspace]
+    queryState.error = new Error('Unrelated workspace error')
+    queryClient.getQueryData.mockReturnValue(workspace)
+    const onFocus = vi.fn()
+    act(() => { renderer = create(<FlowPanel open docked editMode snapshotCatalog={{ flows: [snapshot], views: [{ id: 1, name: 'Snapshot' }] }} diagrams={{ 1: diagram }} onClose={vi.fn()} onFocus={onFocus} onEditModeChange={vi.fn()} />) })
+    expect(vi.mocked(useQuery).mock.calls.every(([options]) => !options.enabled)).toBe(true)
+    expect(queryClient.getQueryData).not.toHaveBeenCalled()
+    expect(queryClient.setQueryData).not.toHaveBeenCalled()
+    expect(button('Save flow')).toBeUndefined()
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(renderer.root.findByType(FlowYamlControls).props.flow).toBe(snapshot)
+    expect(renderer.root.findByType(FlowYamlControls).props.canImport).toBe(false)
+    expect(onFocus).toHaveBeenCalledWith({ viewId: 1, elementIds: [], connectorIds: [] })
+  })
   it('compacts and expands the flow description without changing the saved text', async () => {
     mount()
     const value = 'Request overview\n\nDetails about the round trip.'
@@ -1081,5 +1101,49 @@ describe('flow operation editing and navigation', () => {
     act(() => waypoint.props.onClick())
     expect(renderer.root.findByProps({ 'aria-label': 'Current flow step' }).props.value).toBe('decision')
     expect(renderer.root.findByProps({ 'aria-label': 'Choose flow path' }).props.value).toBe('a')
+  })
+})
+
+
+describe('complete flow import orchestration', () => {
+  afterEach(() => vi.restoreAllMocks())
+  const source = () => exportCompleteFlowYaml({ id: '', revision: 0, viewId: 1, name: 'Imported story', description: '', steps: [newStep(diagram, { connectorId: 10 })] }, diagram)
+
+  it('creates a new element-owned view, caches its rebound draft and navigates without discarding the current draft', async () => {
+    const onNavigateView = vi.fn()
+    const resources = vi.spyOn(api.import, 'resources').mockResolvedValue({ view_id: 88, view_url: '/views/88' })
+    vi.spyOn(api.workspace.views, 'content').mockResolvedValue({ placements: diagram.elements as never, connectors: diagram.connectors })
+    mount(undefined, { onNavigateView })
+    const oldDraft = currentDraft()
+    queryClient.removeQueries.mockClear()
+    const completeSource = source()
+    const onImportComplete = renderer.root.findByType(FlowYamlControls).props.onImportComplete
+    await act(async () => { expect(await onImportComplete(completeSource)).toBe(true) })
+    expect(resources).toHaveBeenCalledOnce()
+    expect(resources.mock.calls[0][1].elements[0]).toMatchObject({ name: 'Imported story', hasView: true, placements: [{ parentRef: 'root' }] })
+    expect(queryClient.setQueryData).toHaveBeenCalledWith(['flow-draft', 88], expect.objectContaining({ name: 'Imported story', viewId: 88, id: '', revision: 0 }))
+    const imported = queryClient.setQueryData.mock.calls.find(([key]) => key[0] === 'flow-draft' && key[1] === 88)![1] as StoryFlow
+    expect(imported.steps[0].connectorIds).toEqual([10])
+    expect(queryClient.removeQueries).not.toHaveBeenCalledWith({ queryKey: ['flow-draft', 1], exact: true })
+    expect(oldDraft.name).toBe('New flow')
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(flowApi.save).not.toHaveBeenCalled()
+    expect(onNavigateView).toHaveBeenCalledWith(88)
+  })
+
+  it('reuses created resources if loading the new view fails and is retried', async () => {
+    const resources = vi.spyOn(api.import, 'resources').mockResolvedValue({ view_id: 89, view_url: '/views/89' })
+    const content = vi.spyOn(api.workspace.views, 'content').mockRejectedValueOnce(new Error('Read failed')).mockResolvedValue({ placements: diagram.elements as never, connectors: diagram.connectors })
+    const onNavigateView = vi.fn()
+    mount(undefined, { onNavigateView })
+    const completeSource = source()
+    await act(async () => {
+      await expect(renderer.root.findByType(FlowYamlControls).props.onImportComplete(completeSource)).rejects.toThrow(/Resources were created.*Retry/)
+    })
+    expect(onNavigateView).not.toHaveBeenCalled()
+    await act(async () => { await renderer.root.findByType(FlowYamlControls).props.onImportComplete(completeSource) })
+    expect(resources).toHaveBeenCalledOnce()
+    expect(content).toHaveBeenCalledTimes(2)
+    expect(onNavigateView).toHaveBeenCalledWith(89)
   })
 })

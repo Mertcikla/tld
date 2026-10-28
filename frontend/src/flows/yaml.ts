@@ -1,5 +1,5 @@
 import { parseDocument, stringify } from 'yaml'
-import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, type FlowCatalog, type FlowDiagram, type FlowStep, type StoryFlow } from './model'
+import { FLOW_MAX_STEPS, FLOW_MAX_PATHS, FLOW_MAX_BRANCH_DEPTH, allSteps, type FlowCatalog, type FlowDiagram, type FlowStep, type StoryFlow } from './model'
 
 export const FLOW_YAML_MAX_BYTES = 1024 * 1024
 export const FLOW_YAML_SCHEMA_URL = 'https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/flow.schema.json'
@@ -14,12 +14,39 @@ export interface PortableFlowStep {
   branches?: { mode: 'alternate' | 'parallel'; paths: { id?: string; name: string; steps: PortableFlowStep[] }[] }
   goToFlow?: { name: string; view?: string }
 }
+export interface PortableFlowElement {
+  name: string
+  kind?: string
+  description?: string
+  technology?: string
+  url?: string
+  logo_url?: string
+  technology_connectors?: { type: 'catalog' | 'custom'; slug?: string; label: string; is_primary_icon?: boolean }[]
+  tags?: string[]
+  position_x?: number
+  position_y?: number
+}
+export interface PortableFlowConnector extends PortableConnectorHighlight {
+  description?: string
+  relationship?: string
+  direction?: string
+  style?: string
+  url?: string
+  source_handle?: string
+  target_handle?: string
+  tags?: string[]
+}
+export interface PortableFlowResources {
+  elements: PortableFlowElement[]
+  connectors: PortableFlowConnector[]
+}
 export interface PortableFlowDocument {
   format: 'tld-flow'
   version: 1
   name: string
   description?: string
   steps: PortableFlowStep[]
+  resources?: PortableFlowResources
 }
 /** Local-only overrides for duplicate or renamed objects. */
 export interface FlowYamlBindings {
@@ -50,10 +77,58 @@ function list(value: unknown, path: string, max = 500): unknown[] {
   return value
 }
 
+/** Resource bundles contain display data only, never local database identity. */
+function validateResources(value: unknown): PortableFlowResources {
+  const resources = record(value, 'resources')
+  keys(resources, ['elements', 'connectors'], 'resources')
+  const strings = (entry: Record<string, unknown>, fields: string[], path: string) => Object.fromEntries(fields
+    .filter(field => entry[field] !== undefined)
+    .map(field => [field, text(entry[field], `${path}.${field}`, 10000)]))
+  const tags = (entry: Record<string, unknown>, path: string) => entry.tags === undefined ? {} : {
+    tags: list(entry.tags, `${path}.tags`, 100).map((tag, index) => text(tag, `${path}.tags[${index}]`, 200, true)),
+  }
+  const elements = list(resources.elements, 'resources.elements', 5000).map((value, index): PortableFlowElement => {
+    const path = `resources.elements[${index}]`, element = record(value, path)
+    const fields = ['kind', 'description', 'technology', 'url', 'logo_url']
+    keys(element, ['name', ...fields, 'tags', 'technology_connectors', 'position_x', 'position_y'], path)
+    const result: PortableFlowElement = { name: text(element.name, `${path}.name`, 10000, true), ...strings(element, fields, path), ...tags(element, path) }
+    for (const field of ['position_x', 'position_y'] as const) {
+      if (element[field] !== undefined) {
+        if (typeof element[field] !== 'number' || !Number.isFinite(element[field])) fail(`${path}.${field}`, 'expected a finite number')
+        result[field] = element[field]
+      }
+    }
+    if ((result.position_x === undefined) !== (result.position_y === undefined)) fail(path, 'supply both position coordinates')
+    if (element.technology_connectors !== undefined) result.technology_connectors = list(element.technology_connectors, `${path}.technology_connectors`, 100).map((value, index) => {
+      const location = `${path}.technology_connectors[${index}]`, link = record(value, location)
+      keys(link, ['type', 'slug', 'label', 'is_primary_icon'], location)
+      if (link.type !== 'catalog' && link.type !== 'custom') fail(location, 'expected catalog or custom technology type')
+      if (link.is_primary_icon !== undefined && typeof link.is_primary_icon !== 'boolean') fail(location, 'expected a boolean for is_primary_icon')
+      return { type: link.type, label: text(link.label, `${location}.label`, 10000),
+        ...(link.slug !== undefined ? { slug: text(link.slug, `${location}.slug`, 10000) } : {}),
+        ...(link.is_primary_icon !== undefined ? { is_primary_icon: link.is_primary_icon as boolean } : {}),
+      }
+    })
+    return result
+  })
+  if (new Set(elements.map(element => element.name)).size !== elements.length) fail('resources.elements', 'duplicate element name')
+  const connectors = list(resources.connectors, 'resources.connectors', 5000).map((value, index): PortableFlowConnector => {
+    const path = `resources.connectors[${index}]`, connector = record(value, path)
+    const fields = ['label', 'description', 'relationship', 'direction', 'style', 'url', 'source_handle', 'target_handle']
+    keys(connector, ['source', 'target', ...fields, 'tags'], path)
+    const result = { source: text(connector.source, `${path}.source`, 10000, true), target: text(connector.target, `${path}.target`, 10000, true), ...strings(connector, fields, path), ...tags(connector, path) }
+    if (![result.source, result.target].every(name => elements.some(element => element.name === name))) fail(path, 'connector endpoints must be included in resources.elements')
+    return result
+  })
+  const references = connectors.map(connector => JSON.stringify([connector.source, connector.target, connector.label ?? '']))
+  if (new Set(references).size !== references.length) fail('resources.connectors', 'duplicate connection')
+  return { elements, connectors }
+}
+
 /** Strict, bounded validation shared by parsing and exporting. No document data executes. */
 export function validatePortableFlow(value: unknown): PortableFlowDocument {
   const doc = record(value, 'flow')
-  keys(doc, ['format', 'version', 'name', 'description', 'steps'], 'flow')
+  keys(doc, ['format', 'version', 'name', 'description', 'steps', 'resources'], 'flow')
   if (doc.format !== 'tld-flow') fail('flow.format', 'expected tld-flow')
   if (doc.version !== 1) fail('flow.version', 'only version 1 is supported')
   const name = text(doc.name, 'flow.name', 200, true)
@@ -117,7 +192,7 @@ export function validatePortableFlow(value: unknown): PortableFlowDocument {
       return result
     })
   }
-  return { format: 'tld-flow', version: 1, name, ...(description !== undefined ? { description } : {}), steps: validateSteps(doc.steps, 'steps', 0) }
+  return { format: 'tld-flow', version: 1, name, ...(description !== undefined ? { description } : {}), steps: validateSteps(doc.steps, 'steps', 0), ...(doc.resources !== undefined ? { resources: validateResources(doc.resources) } : {}) }
 }
 
 export function parseFlowYaml(source: string): PortableFlowDocument {
@@ -226,6 +301,36 @@ export function exportFlowYaml(flow: StoryFlow, diagram: FlowDiagram, catalog: F
   }
   const doc = validatePortableFlow({ format: 'tld-flow', version: 1, name: flow.name, ...(flow.description ? { description: flow.description } : {}), steps: convert(flow.steps, 0) })
   const source = `# yaml-language-server: $schema=${FLOW_YAML_SCHEMA_URL}\n${stringify(doc, { lineWidth: 0 })}`
+  if (byteLength(source) > FLOW_YAML_MAX_BYTES) fail('export', 'YAML must be at most 1 MiB')
+  return source
+}
+
+/** Opt-in export of the resources referenced anywhere in the flow, including connector endpoints. */
+export function exportCompleteFlowYaml(flow: StoryFlow, diagram: FlowDiagram, catalog: FlowCatalog = { flows: [], views: [] }): string {
+  const doc = parseFlowYaml(exportFlowYaml(flow, diagram, catalog))
+  const steps = allSteps(flow.steps)
+  const connectorIds = new Set(steps.flatMap(step => step.connectorIds))
+  const connectors = diagram.connectors.filter(connector => connectorIds.has(connector.id))
+  const elementIds = new Set([...steps.flatMap(step => step.elementIds), ...connectors.flatMap(connector => [connector.source_element_id, connector.target_element_id])])
+  const name = (id: number) => diagram.elements.find(element => element.element_id === id)!.name
+  const resources: PortableFlowResources = {
+    elements: diagram.elements.filter(element => elementIds.has(element.element_id)).map(element => ({
+      name: element.name,
+      ...Object.fromEntries(['kind', 'description', 'technology', 'url', 'logo_url', 'tags', 'position_x', 'position_y'].flatMap(field => {
+        const value = element[field as keyof typeof element]
+        return value === undefined || value === null ? [] : [[field, value]]
+      })),
+      ...(element.technology_connectors ? { technology_connectors: element.technology_connectors.map(link => ({ type: link.type, label: link.label, ...(link.slug !== undefined ? { slug: link.slug } : {}), is_primary_icon: link.is_primary_icon ?? link.isPrimaryIcon ?? false })) } : {}),
+    })),
+    connectors: connectors.map(connector => ({
+      source: name(connector.source_element_id), target: name(connector.target_element_id), label: connector.label ?? '',
+      ...Object.fromEntries(['description', 'relationship', 'direction', 'style', 'url', 'source_handle', 'target_handle', 'tags'].flatMap(field => {
+        const value = connector[field as keyof typeof connector]
+        return value === undefined || value === null ? [] : [[field, value]]
+      })),
+    })),
+  }
+  const source = `# yaml-language-server: $schema=${FLOW_YAML_SCHEMA_URL}\n${stringify(validatePortableFlow({ ...doc, resources }), { lineWidth: 0 })}`
   if (byteLength(source) > FLOW_YAML_MAX_BYTES) fail('export', 'YAML must be at most 1 MiB')
   return source
 }

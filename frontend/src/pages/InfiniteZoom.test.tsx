@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import InfiniteZoom from './InfiniteZoom'
+import InfiniteZoom, { SharedInfiniteZoom } from './InfiniteZoom'
+import FlowSnapshotPage from './FlowSnapshot'
 import { FlowPanel } from '../flows/FlowPanel'
 import type { FlowFocus, StoryFlow } from '../flows/model'
 import type { ExploreData } from '../types'
@@ -20,6 +21,7 @@ vi.mock('../components/ZUI', async () => {
   return { ZUICanvas: React.forwardRef((props, _ref) => React.createElement('canvas', props)) }
 })
 vi.mock('../flows/FlowPanel', () => ({ FlowPanel: () => null }))
+vi.mock('./FlowSnapshot', () => ({ default: () => null }))
 vi.mock('../flows/api', () => ({ flowApi: { list: vi.fn() } }))
 vi.mock('./explore/useExploreData', () => ({ useExploreData: () => ({ data: null, loading: false, hasPlacements: false, reload: vi.fn() }) }))
 vi.mock('./explore/useExploreTags', () => ({ useExploreTags: () => ({ allTags: [], layers: [], tagColors: {}, layerElementCounts: {}, tagCounts: {}, tagElementCounts: {}, tagConnectorCounts: {}, layerConnectorCounts: {}, highlightedTags: [], hiddenTags: [], selectedTags: [], toggleTagSelection: vi.fn(), resetFilters: vi.fn(), setHighlightedTags: vi.fn(), setHighlightColor: vi.fn(), toggleLayerVisibility: vi.fn(), toggleTagVisibility: vi.fn() }) }))
@@ -38,6 +40,11 @@ const flowButton = () => renderer.root.findByProps({ 'data-testid': 'zui-flows-b
 afterEach(() => { act(() => renderer?.unmount()); queryState.data = []; queryState.isPending = false; queryState.isError = false; queryState.isSuccess = true; vi.clearAllMocks(); vi.unstubAllGlobals() })
 
 describe('Explore flow controls', () => {
+  it('opens URL flow snapshots through the existing public shared route without workspace hooks', () => {
+    act(() => { renderer = create(<SharedInfiniteZoom sharedToken="flow-snapshot" />) })
+    expect(renderer.root.findByType(FlowSnapshotPage)).toBeDefined()
+    expect(useQuery).not.toHaveBeenCalled()
+  })
   it('disables the floating-menu button and explains how to create the first flow', () => {
     mount()
     expect(flowButton().props.isDisabled).toBe(true)

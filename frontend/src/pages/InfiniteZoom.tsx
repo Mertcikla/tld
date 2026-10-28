@@ -12,6 +12,8 @@ import { ExploreEmptyState, ExploreToolbar } from './explore/ExploreComponents'
 import { useExploreData, type ExploreDataState } from './explore/useExploreData'
 import { useExploreTags } from './explore/useExploreTags'
 import { parseNumericId } from '../utils/ids'
+import FlowSnapshotPage from './FlowSnapshot'
+import { FLOW_SNAPSHOT_TOKEN } from '../flows/sharing'
 
 interface Props {
   breadcrumbBoundaryRef?: RefObject<HTMLDivElement>
@@ -200,5 +202,6 @@ export default InfiniteZoom
 export const SharedInfiniteZoom = forwardRef<InfiniteZoomHandle, Props>((props, ref) => {
   const { token } = useParams()
   const effectiveToken = props.sharedToken ?? token
+  if (effectiveToken === FLOW_SNAPSHOT_TOKEN) return <FlowSnapshotPage />
   return <InfiniteZoom {...props} ref={ref} sharedToken={effectiveToken} />
 })

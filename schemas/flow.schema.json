@@ -34,6 +34,31 @@
       "items": {
         "$ref": "#/$defs/step"
       }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "elements",
+        "connectors"
+      ],
+      "description": "Optional complete export. Import asks before creating fresh elements and connectors in a new element-owned view under Root. Resource names and connections must uniquely resolve every highlight. Linked flows still resolve against the importing workspace.",
+      "properties": {
+        "elements": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/resourceElement"
+          }
+        },
+        "connectors": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/resourceConnector"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -184,6 +209,160 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "resourceElement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "technology": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "logo_url": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "position_x": {
+          "type": "number"
+        },
+        "position_y": {
+          "type": "number"
+        },
+        "technology_connectors": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "label"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "catalog",
+                  "custom"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 10000
+              },
+              "slug": {
+                "type": "string",
+                "maxLength": 10000
+              },
+              "is_primary_icon": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "dependentRequired": {
+        "position_x": [
+          "position_y"
+        ],
+        "position_y": [
+          "position_x"
+        ]
+      }
+    },
+    "resourceConnector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "relationship": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "direction": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "style": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "source_handle": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "target_handle": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "\\S"
           }
         }
       }
