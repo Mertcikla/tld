@@ -180,4 +180,28 @@ describe('flow control extensions', () => {
     expect(layout.edges.find(edge => edge.id === 'b->after')).toMatchObject({ onActivePath: true, isVisited: false })
     expect(layout.edges.find(edge => edge.id === 'branch->a')).toMatchObject({ onActivePath: false, isVisited: false })
   })
+
+  it.each(['alternate', 'parallel'] as const)('mirrors %s fork and join curves for unequal and empty paths', mode => {
+    const step = (id: string) => ({ ...newStep(diagram), id })
+    for (const empty of [false, true]) {
+      for (const rejoin of [false, true]) {
+        const fork = { ...step('fork'), branches: { mode, paths: [
+          { id: 'long', name: 'Long', steps: [step('a1'), step('a2'), step('a3')] },
+          { id: 'short', name: 'Short', steps: empty ? [] : [step('b')] },
+        ] } }
+        const layout = layoutFlowMinimap(rejoin ? [fork, step('after')] : [fork], diagram)
+        const center = layout.nodes.find(node => node.id === 'fork')!.y
+        const curve = (d: string) => d.match(/C ([\d. -]+)/)![1].trim().split(/\s+/).map(Number)
+        const reflected = (d: string) => curve(d).map((value, i) => i % 2 ? 2 * center - value : value)
+        const forks = layout.edges.filter(edge => edge.fromId === 'fork')
+        expect(forks).toHaveLength(2)
+        expect(curve(forks[0].d)).toEqual(reflected(forks[1].d))
+        if (rejoin) {
+          const joins = layout.edges.filter(edge => edge.toId === 'after')
+          expect(joins).toHaveLength(2)
+          expect(curve(joins[0].d)).toEqual(reflected(joins[1].d))
+        }
+      }
+    }
+  })
 })

@@ -125,7 +125,6 @@ function FlowPlaybackMinimap({
   const overviewActive = !activeFrameId && stepNodes.length > 0
   const centerY = Math.round((layout.height / 2) * 10) / 10
   const firstX = stepNodes[0]?.x ?? 18
-  const lastX = stepNodes[stepNodes.length - 1]?.x ?? layout.width - 18
 
   useEffect(() => {
     const el = scrollRef.current
@@ -171,16 +170,6 @@ function FlowPlaybackMinimap({
           strokeWidth={1}
           strokeDasharray={stepNodes.length ? undefined : '3 3'}
         />
-        {stepNodes.length > 0 && (
-          <line
-            x1={lastX}
-            y1={centerY}
-            x2={layout.width - 10}
-            y2={centerY}
-            stroke="rgba(255, 255, 255, 0.08)"
-            strokeWidth={1}
-          />
-        )}
         {layout.edges.filter(edge => !edge.onActivePath).map(edge => (
           <path
             key={edge.id}

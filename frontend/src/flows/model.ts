@@ -221,12 +221,17 @@ function measureMinimapSeq(steps: FlowStep[]): MeasuredMinimapSeq {
   }
 }
 
-export function minimapEdgePath(x1: number, y1: number, x2: number, y2: number): string {
+export function minimapEdgePath(x1: number, y1: number, x2: number, y2: number, bendWidth = x2 - x1, bendAt: 'start' | 'end' = 'start'): string {
   if (Math.abs(y1 - y2) < 0.5) return `M ${x1} ${y1} L ${x2} ${y2}`
-  const dx = x2 - x1
-  const c1 = Math.round((x1 + dx * 0.5) * 10) / 10
-  const c2 = Math.round((x2 - dx * 0.5) * 10) / 10
-  return `M ${x1} ${y1} C ${c1} ${y1} ${c2} ${y2} ${x2} ${y2}`
+  const round = (value: number) => Math.round(value * 10) / 10
+  const span = Math.min(bendWidth, x2 - x1)
+  // Bend beside the fork/join, keeping sibling curves equal despite different path lengths.
+  const start = bendAt === 'start' ? x1 : round(x2 - span)
+  const end = bendAt === 'start' ? round(x1 + span) : x2
+  const control = round((start + end) / 2)
+  const lead = start === x1 ? '' : ` L ${start} ${y1}`
+  const tail = end === x2 ? '' : ` L ${x2} ${y2}`
+  return `M ${x1} ${y1}${lead} C ${control} ${y1} ${control} ${y2} ${end} ${y2}${tail}`
 }
 
 /** Lay out flow steps and branches as a left-to-right series-parallel chart. */
@@ -314,7 +319,7 @@ export function layoutFlowMinimap(
           y1: prev.y,
           x2: node.x,
           y2: node.y,
-          d: minimapEdgePath(prev.x, prev.y, node.x, node.y),
+          d: minimapEdgePath(prev.x, prev.y, node.x, node.y, colStep, prev.isBranch ? 'start' : 'end'),
           onActivePath: edgeOnActive,
           isVisited: edgeVisited,
           isActiveEdge,
@@ -365,7 +370,7 @@ export function layoutFlowMinimap(
             y1: node.y,
             x2: waypoint.x,
             y2: waypoint.y,
-            d: minimapEdgePath(node.x, node.y, waypoint.x, waypoint.y),
+            d: minimapEdgePath(node.x, node.y, waypoint.x, waypoint.y, colStep),
             onActivePath: isChosenPath,
             isVisited: waypoint.isVisited,
             isActiveEdge: false,
