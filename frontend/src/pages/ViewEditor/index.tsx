@@ -127,6 +127,7 @@ import { useDrawingEngine } from './hooks/useDrawingEngine'
 import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
+  getHandleReconnectZoneAtPoint,
   applyNodeChangesWithStructuralSharing,
   useCanvasInteractions,
   type ClickConnectCursorPosition,
@@ -744,6 +745,12 @@ function ViewEditorInner({
   const [renameElementId, setRenameElementId] = useState<number | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
+  const [reconnectHoverZone, setReconnectHoverZone] = useState<Element | null>(null)
+  useEffect(() => {
+    if (!reconnectHoverZone) return
+    reconnectHoverZone.setAttribute('data-pickup-hover', 'true')
+    return () => reconnectHoverZone.removeAttribute('data-pickup-hover')
+  }, [reconnectHoverZone])
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const hoveredElementClearRef = useRef<number | null>(null)
   const hoveredEdgeClearRef = useRef<number | null>(null)
@@ -3527,7 +3534,6 @@ function ViewEditorInner({
     onSelectionDragStart, onSelectionDrag, onSelectionDragStop,
     onSelectionStart, onSelectionEnd,
     onConnect, onConnectStart, onConnectEnd,
-    onReconnect, onReconnectStart, onReconnectEnd,
     onEdgeClick, onEdgeContextMenu, onPaneClick, onPaneContextMenu, onPaneMouseMove,
     onMoveStart, onMove, onMoveEnd,
     onTouchStart, onTouchMove, onTouchEnd,
@@ -4632,6 +4638,14 @@ function ViewEditorInner({
             <Box
               ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-reconnect-hover={reconnectHoverZone ? 'true' : undefined}
+              data-reconnect-enabled={canEdit && !storyRecording ? 'true' : undefined}
+              onPointerMoveCapture={event => {
+                const zone = canEdit && !storyRecording
+                  ? getHandleReconnectZoneAtPoint(event.clientX, event.clientY) : null
+                setReconnectHoverZone(zone)
+              }}
+              onPointerLeave={() => setReconnectHoverZone(null)}
               data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
@@ -4681,13 +4695,12 @@ function ViewEditorInner({
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
                 translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
-                onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 connectionLineStyle={connectionLineStyle}
                 connectionLineType={previewConnectorStyle as ConnectionLineType}
                 connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit && !storyRecording} nodesConnectable={canEdit && !storyRecording} connectionMode={ConnectionMode.Loose} connectionRadius={25}
-                edgesUpdatable={canEdit && !storyRecording} reconnectRadius={0}
+                edgesUpdatable={false} reconnectRadius={0}
                 snapToGrid={snapToGrid || autoLayoutMode}
                 snapGrid={autoLayoutMode ? AUTO_LAYOUT_GRID : SNAP_GRID}
                 deleteKeyCode={null}

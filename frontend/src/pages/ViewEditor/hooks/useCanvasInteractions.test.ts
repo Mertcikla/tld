@@ -374,6 +374,13 @@ describe('connector drop target resolution', () => {
     expect(getHandleReconnectZoneAtPoint(120, 160)).toBe(zone)
   })
 
+  it('prioritizes the selected endpoint when its enlarged pickup area overlaps another connector', () => {
+    const other = new FakeElement({}, { class: 'element-node-reconnect-zone' })
+    const selected = new FakeElement({}, { class: 'element-node-reconnect-zone', 'data-selected': 'true' })
+    installPointHitTest([other, selected])
+    expect(getHandleReconnectZoneAtPoint(120, 160)).toBe(selected)
+  })
+
   it('uses coordinate hit-testing before event target fallback', () => {
     const sourceNodeElement = new FakeElement({}, { 'data-id': '1' })
     const sourceEventTarget = new FakeElement({ '.react-flow__node': sourceNodeElement })

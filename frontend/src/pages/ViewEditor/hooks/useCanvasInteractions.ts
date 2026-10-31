@@ -129,8 +129,9 @@ function elementsFromClientPoint(clientX: number, clientY: number) {
 }
 
 export function getHandleReconnectZoneAtPoint(clientX: number, clientY: number): Element | null {
-  return elementsFromClientPoint(clientX, clientY)
-    ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone')) ?? null
+  const zones = elementsFromClientPoint(clientX, clientY)
+    ?.filter((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone')) ?? []
+  return zones.find(zone => zone.getAttribute('data-selected') === 'true') ?? zones[0] ?? null
 }
 
 export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, nodes: RFNode[]): ConnectorDropTarget | null {
@@ -1939,7 +1940,7 @@ export function useCanvasInteractions({
       if (event.pointerType === 'touch') return
       const target = event.target
       if (!isDomElement(target)) return
-      if (target.closest('.element-node-reconnect-zone')) return
+      if (getHandleReconnectZoneAtPoint(event.clientX, event.clientY)) return
       const nodeElement = target.closest('.react-flow__node')
       const nodeId = nodeElement?.getAttribute('data-id')
       if (!nodeId) return
@@ -2097,7 +2098,7 @@ export function useCanvasInteractions({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || isFlowPanelTarget(event.target)) return
+      if (!canEdit || event.button !== 0 || isFlowPanelTarget(event.target)) return
       const target = getHandleReconnectZoneAtPoint(event.clientX, event.clientY)
       if (!target) return
 
@@ -2126,7 +2127,7 @@ export function useCanvasInteractions({
 
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [stableOnStartHandleReconnect])
+  }, [canEdit, stableOnStartHandleReconnect])
 
   const stableOnReconnectPick = useCallback(async (targetElementId: number) => {
     const picking = reconnectPickingRef.current

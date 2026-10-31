@@ -352,8 +352,15 @@ function pendingInputRectsEqual(a: PendingInputRect | null, b: PendingInputRect)
     a.viewportHeight === b.viewportHeight
 }
 
-function getReconnectZoneStyle(position: Position, slot: number): React.CSSProperties {
+function getReconnectZoneStyle(position: Position, slot: number, selected: boolean): React.CSSProperties {
   const baseStyle = getVisualHandleStyle(position, slot)
+  if (selected) {
+    const offset = { [position]: '-22px' }
+    return {
+      ...baseStyle, ...offset, width: '44px', height: '44px',
+      transform: position === Position.Top || position === Position.Bottom ? 'translateX(-50%)' : 'translateY(-50%)',
+    }
+  }
 
   switch (position) {
     case Position.Top:
@@ -683,18 +690,23 @@ function ElementNode({ data, selected }: Props) {
     return sides
   }, [connectedHandleIds])
   const reconnectCandidateByHandle = useMemo(() => {
-    const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target' }>()
+    const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target'; selected: boolean }>()
     const sortedCandidates = [...(data.reconnectCandidates ?? [])].sort((left, right) => {
       if (left.selected !== right.selected) return left.selected ? -1 : 1
       return left.edgeId.localeCompare(right.edgeId)
     })
     for (const candidate of sortedCandidates) {
       if (!next.has(candidate.handleId)) {
-        next.set(candidate.handleId, { edgeId: candidate.edgeId, endpoint: candidate.endpoint })
+        next.set(candidate.handleId, { edgeId: candidate.edgeId, endpoint: candidate.endpoint, selected: candidate.selected })
       }
     }
     return next
   }, [data.reconnectCandidates])
+  const pickupOnlySides = useMemo(() => new Set(
+    (data.reconnectCandidates ?? [])
+      .filter(candidate => candidate.selected)
+      .map(candidate => candidate.handleId.split('-')[0]),
+  ), [data.reconnectCandidates])
   const isMultiSelected = !!data.isMultiSelected
 
   const nodeLogoUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
@@ -915,6 +927,8 @@ function ElementNode({ data, selected }: Props) {
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
           const isTagHidden = tagHiddenHandleIds.has(handleId)
+          const pickupOnly = pickupOnlySides.has(side)
+          const reconnectCandidate = reconnectCandidateByHandle.get(handleId)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
           const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
@@ -935,7 +949,13 @@ function ElementNode({ data, selected }: Props) {
                 id={handleId}
                 className={className}
                 isConnectable={!isPending && !isPreviewHiddenSlot && !isTagHidden}
+                isConnectableStart={!pickupOnly}
                 onPointerDown={(e: React.PointerEvent) => {
+                  if (pickupOnly) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    return
+                  }
                   if (isPending) return
                   if (data.interactionSourceId === data.element_id) {
                     suppressHandleClickUntil.current = Date.now() + 500
@@ -945,7 +965,7 @@ function ElementNode({ data, selected }: Props) {
                   }
                 }}
                 onMouseDown={(e: React.MouseEvent) => {
-                  if (isPending || e.button !== 0 || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || e.button !== 0 || data.interactionSourceId === data.element_id) return
                   suppressHandleClickUntil.current = Date.now() + 500
                   data.onInteractionStart(data.element_id, {
                     sourceHandle: handleId,
@@ -954,7 +974,7 @@ function ElementNode({ data, selected }: Props) {
                   })
                 }}
                 onTouchStart={(e: React.TouchEvent) => {
-                  if (isPending || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || data.interactionSourceId === data.element_id) return
                   const touch = e.touches[0]
                   if (!touch) return
                   suppressHandleClickUntil.current = Date.now() + 500
@@ -979,7 +999,8 @@ function ElementNode({ data, selected }: Props) {
                   data-endpoint={reconnectCandidateByHandle.get(handleId)?.endpoint}
                   data-handle-id={handleId}
                   className="element-node-reconnect-zone"
-                  style={getReconnectZoneStyle(position, slot)}
+                  data-selected={reconnectCandidate?.selected ? 'true' : undefined}
+                  style={getReconnectZoneStyle(position, slot, !!reconnectCandidate?.selected)}
                   pointerEvents="auto"
                   cursor="grab"
                   zIndex={4}

@@ -76,15 +76,23 @@ body {
     opacity: 1;
 }
 
-/* Keep React Flow reconnect endpoints interactive, but let the node slot handle
-   be the only visible endpoint marker. */
-.react-flow__edge.selected .react-flow__edgeupdater {
-    fill: transparent;
-    stroke: transparent;
-    stroke-width: 0;
-    opacity: 0;
-    cursor: grab;
-    r: 10px;
+/* Pickup zones provide hit areas only; the existing endpoint is the visual marker. */
+.element-node-reconnect-zone {
+    display: none;
+}
+
+[data-reconnect-enabled="true"] .element-node-reconnect-zone {
+    display: block;
+}
+
+/* Match the coordinate hit test even when an edge's wide hit path covers a grip. */
+[data-reconnect-hover="true"],
+[data-reconnect-hover="true"] * {
+    cursor: grab !important;
+}
+
+[data-connector-preview-active="true"] .element-node-reconnect-zone {
+    display: none;
 }
 
 /* Paths run from source to target, so decreasing dash offset flows forward. */
@@ -350,6 +358,14 @@ body {
     height: 14px;
     border: 2px solid rgba(255, 255, 255, 0.9);
     box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.38);
+}
+
+/* Highlight the exact endpoint being picked up without drawing a second circle
+   or changing the selected handle's size. */
+[data-reconnect-enabled="true"]:not([data-connector-preview-active="true"])
+.react-flow__handle.element-node-handle:has(+ .element-node-reconnect-zone[data-pickup-hover="true"]) {
+    filter: brightness(1.25);
+    box-shadow: 0 0 8px 2px rgba(var(--accent-rgb), 0.55);
 }
 
 .react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-active-slot,
