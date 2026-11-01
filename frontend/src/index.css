@@ -307,7 +307,7 @@ body {
     stroke-width: 24 !important;
 }
 
-/* Hide handles by default; reveal them on hover, during connection, or when already connected */
+/* Handles stay hidden at rest and appear only for an active interaction. */
 .react-flow__handle {
     opacity: 0;
     pointer-events: none;
@@ -329,7 +329,8 @@ body {
     border-radius: 50%;
 }
 
-.react-flow__handle.handle-connected {
+.react-flow__handle.handle-hovered-edge,
+[data-pending="true"] .react-flow__handle.handle-connected {
     opacity: 1;
     pointer-events: all;
 }
@@ -360,6 +361,7 @@ body {
    or changing the selected handle's size. */
 [data-reconnect-enabled="true"]:not([data-connector-preview-active="true"])
 .react-flow__handle.element-node-handle:has(+ .element-node-reconnect-zone[data-pickup-hover="true"]) {
+    opacity: 1;
     filter: brightness(1.25);
     box-shadow: 0 0 8px 2px rgba(var(--accent-rgb), 0.55);
 }

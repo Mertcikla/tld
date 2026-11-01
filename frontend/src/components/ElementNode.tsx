@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Handle, Position, useStore } from 'reactflow'
+import { Handle, Position, useStore, type ReactFlowState } from 'reactflow'
 import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Portal } from '@chakra-ui/react'
 import { LinkIcon } from '@chakra-ui/icons'
 
@@ -667,6 +667,17 @@ function PendingElementLabelEditor({
 
 function ElementNode({ data, selected }: Props) {
   const zoom = useStore(zoomSelector)
+  const hoveredHandleKey = useStore(useCallback((state: ReactFlowState) => {
+    const nodeId = String(data.element_id)
+    const handles = new Set<string>()
+    for (const edge of state.edges) {
+      if (!edge.data?.isHovered || edge.hidden || edge.style?.pointerEvents === 'none') continue
+      if (edge.source === nodeId && edge.sourceHandle) handles.add(edge.sourceHandle)
+      if (edge.target === nodeId && edge.targetHandle) handles.add(edge.targetHandle)
+    }
+    return [...handles].sort().join('|')
+  }, [data.element_id]))
+  const hoveredHandleIds = useMemo(() => new Set(hoveredHandleKey.split('|')), [hoveredHandleKey])
   const isPending = !!data.isPendingElement || !!data.pendingCreate
 
   const connectedHandleIds = useMemo(
@@ -941,6 +952,7 @@ function ElementNode({ data, selected }: Props) {
             isFallbackSlot ? 'handle-fallback-slot' : '',
             connectedHandleIds.has(handleId) ? 'handle-connected' : '',
             selectedHandleIds.has(handleId) ? 'handle-selected-edge' : '',
+            hoveredHandleIds.has(handleId) ? 'handle-hovered-edge' : '',
           ].filter(Boolean).join(' ') || undefined
 
           return (

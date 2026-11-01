@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react'
-import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode, Position } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
@@ -73,6 +73,20 @@ export function ViewConnectorConnectionLine({
   return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
 }
 
+function connectorEndpoint(
+  node: RFNode | undefined, x: number, y: number, position: Position,
+) {
+  if (!node) return { x, y }
+  const origin = node.positionAbsolute ?? node.position
+  // Keep the stroke anchored to the node border whether handles are visible or hidden.
+  switch (position) {
+    case Position.Left: return { x: origin.x, y }
+    case Position.Right: return { x: origin.x + (node.width ?? 180), y }
+    case Position.Top: return { x, y: origin.y }
+    case Position.Bottom: return { x, y: origin.y + (node.height ?? 85) }
+  }
+}
+
 function ViewBezierConnector({
   id, source, target,
   sourceX, sourceY, sourcePosition,
@@ -107,10 +121,12 @@ function ViewBezierConnector({
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
 
-  const finalSourceX = sourceX
-  const finalSourceY = sourceY
-  const finalTargetX = targetX
-  const finalTargetY = targetY
+  const sourceEndpoint = connectorEndpoint(sourceNode, sourceX, sourceY, sourcePosition)
+  const targetEndpoint = connectorEndpoint(targetNode, targetX, targetY, targetPosition)
+  const finalSourceX = sourceEndpoint.x
+  const finalSourceY = sourceEndpoint.y
+  const finalTargetX = targetEndpoint.x
+  const finalTargetY = targetEndpoint.y
 
   const srcW = sourceNode?.width ?? 200
   const srcH = sourceNode?.height ?? 100
@@ -136,10 +152,10 @@ function ViewBezierConnector({
   const interactionPath = routeStyle === 'bezier'
     ? buildViewConnectorPath({
       routeStyle,
-      sourceX: finalSourceX,
-      sourceY: finalSourceY,
-      targetX: finalTargetX,
-      targetY: finalTargetY,
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
       sourcePosition,
       targetPosition,
       sourceWidth: Math.max(srcW - INTERACTION_PADDING * 2, 0),

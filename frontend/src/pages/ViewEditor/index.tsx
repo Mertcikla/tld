@@ -764,6 +764,17 @@ function ViewEditorInner({
     hoveredEdgeClearRef.current = null
     setHoveredEdgeId(null)
   }, [])
+  useEffect(() => {
+    if (hoveredEdgeId === null && hoveredElementId === null) return
+    const clearStaleHover = (event: PointerEvent) => {
+      if (!(event.target instanceof globalThis.Element)) return
+      // Edge z-order changes can replace the hovered SVG group before it emits leave.
+      if (!event.target.closest('.react-flow__edge, [data-tag-drop-connector-id]')) clearHoveredEdge()
+      if (!event.target.closest('.react-flow__node')) clearHoveredElement()
+    }
+    document.addEventListener('pointermove', clearStaleHover)
+    return () => document.removeEventListener('pointermove', clearStaleHover)
+  }, [hoveredEdgeId, hoveredElementId, clearHoveredEdge, clearHoveredElement])
   const scheduleClearHoveredElement = useCallback(() => {
     if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
     hoveredElementClearRef.current = window.setTimeout(() => {
@@ -3553,7 +3564,11 @@ function ViewEditorInner({
 
   const handleRealtimePaneMouseMove = useCallback((event: React.MouseEvent) => {
     onPaneMouseMove(event)
-  }, [onPaneMouseMove])
+    if (event.target === event.currentTarget) {
+      clearHoveredEdge()
+      clearHoveredElement()
+    }
+  }, [onPaneMouseMove, clearHoveredEdge, clearHoveredElement])
 
   const handlePendingPanePointerDownCapture = useCallback((event: React.PointerEvent) => {
     if (!pendingElement || pendingElement.preview || event.button !== 0) return
@@ -4646,7 +4661,11 @@ function ViewEditorInner({
                   ? getHandleReconnectZoneAtPoint(event.clientX, event.clientY) : null
                 setReconnectHoverZone(zone)
               }}
-              onPointerLeave={() => setReconnectHoverZone(null)}
+              onPointerLeave={() => {
+                setReconnectHoverZone(null)
+                clearHoveredEdge()
+                clearHoveredElement()
+              }}
               data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"

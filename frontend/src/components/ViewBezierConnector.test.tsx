@@ -194,3 +194,18 @@ it('snaps a newly dragged connector to a node body before releasing', () => {
   }).path)
   act(() => renderer.unmount())
 })
+
+it.each(['bezier', 'straight', 'step', 'smoothstep'])('keeps %s endpoints fixed at node borders during hover and selection', routeStyle => {
+  state.nodes.set('1', { id: '1', position: { x: 0, y: 0 }, width: 180, height: 85, data: {} })
+  state.nodes.set('2', { id: '2', position: { x: 400, y: 0 }, width: 180, height: 85, data: {} })
+  for (const [selected, isHovered, start, end] of [
+    [false, false, 180, 400], [false, true, 180, 400], [true, false, 180, 400],
+  ] as const) {
+    const renderer = render({ sourceX: 184, sourceY: 42.5, targetX: 396, targetY: 42.5,
+      sourceHandleId: 'right-2', targetHandleId: 'left-2', selected, data: { style: routeStyle, isHovered } })
+    const path = renderer.root.findAllByType('path')[0].props.path
+    expect(path).toMatch(new RegExp(`^M ${start},42\\.5 `))
+    expect(path).toMatch(new RegExp(`${end},42\\.5$`))
+    act(() => renderer.unmount())
+  }
+})
