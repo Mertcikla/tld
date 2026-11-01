@@ -30,7 +30,7 @@ import type {
 import { parseNumericId } from '../../../utils/ids'
 import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { routeStyleFromValue } from '../../../utils/connectorRoute'
-import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
+import { connectorToConnector, findClosestHandles, findClosestHandleToPoint, resolvePendingConnectorHandles } from '../utils'
 import { connectorTagsFromDrop, resolveTagDropConnector, saveConnectorTagDrop } from '../connectorTagDrop'
 import { isElementShapedMarqueeRect, marqueeHitsElementRect } from '../selection'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
@@ -40,10 +40,7 @@ import {
   CONNECTOR_SNAP_RADIUS,
   HANDLE_SLOT_CENTER_INDEX,
   ensureVisualHandleId,
-  getCenterVisualHandleId,
   getLogicalHandleId,
-  getOppositeHandleSide,
-  getVisualHandleSlotFromId,
 } from '../../../utils/edgeDistribution'
 import { useStore } from '../../../store/useStore'
 import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../../utils/wheel'
@@ -167,8 +164,8 @@ export function resolveConnectorDragAttachHandles(
   targetHandleId: string | null | undefined,
 ) {
   return {
-    sourceHandle: getLogicalHandleId(sourceHandleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE,
-    targetHandle: getLogicalHandleId(targetHandleId, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE,
+    sourceHandle: ensureVisualHandleId(sourceHandleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE,
+    targetHandle: ensureVisualHandleId(targetHandleId, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE,
   }
 }
 
@@ -262,10 +259,9 @@ function getConnectorDragTargetAtPoint(clientX: number, clientY: number): Connec
   return sawPendingNode ? { nodeId: PENDING_ELEMENT_NODE_ID, isHandle: false } : null
 }
 
-function collectHandleTargets(excludeNodeId?: string, options?: { snapToCenterSlot?: boolean }): HandleTarget[] {
-  const handles = document.querySelectorAll('.react-flow__handle')
+function collectHandleTargets(excludeNodeId?: string): HandleTarget[] {
+  const handles = document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot)')
   const targets: HandleTarget[] = []
-  const centerTargetsBySide = new Map<string, HandleTarget>()
 
   for (const handle of handles) {
     if (!isDomElement(handle)) continue
@@ -282,16 +278,6 @@ function collectHandleTargets(excludeNodeId?: string, options?: { snapToCenterSl
     }
     targets.push(target)
 
-    if (options?.snapToCenterSlot) {
-      const side = getLogicalHandleId(handleId, null)
-      if (side && getVisualHandleSlotFromId(handleId) === HANDLE_SLOT_CENTER_INDEX) {
-        centerTargetsBySide.set(`${nodeId ?? ''}:${side}`, target)
-      }
-    }
-  }
-
-  if (options?.snapToCenterSlot) {
-    return Array.from(centerTargetsBySide.values())
   }
 
   return targets
@@ -325,22 +311,8 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
   const targets = elementsFromClientPoint(clientX, clientY)
   if (!targets?.length) return null
 
-  for (const target of targets) {
-    if (!isDomElement(target)) continue
-    const handle = target.closest('.react-flow__handle')
-    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
-    if (!nodeId || nodeId === excludedNodeId || !handle) continue
-    return { nodeId, handleId: handle.getAttribute('data-handleid') || handle.id || null }
-  }
-
-  for (const target of targets) {
-    if (!isDomElement(target)) continue
-    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
-    if (nodeId && nodeId !== excludedNodeId) return { nodeId, handleId: null }
-  }
-
   let nearestHandle: { nodeId: string; handleId: string; distance: number } | null = null
-  for (const handle of document.querySelectorAll('.react-flow__handle')) {
+  for (const handle of document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot)')) {
     if (!isDomElement(handle)) continue
     const nodeId = handle.closest('.react-flow__node')?.getAttribute('data-id')
     if (!nodeId || nodeId === excludedNodeId) continue
@@ -356,6 +328,20 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
   }
 
   if (nearestHandle) return { nodeId: nearestHandle.nodeId, handleId: nearestHandle.handleId }
+
+  for (const target of targets) {
+    if (!isDomElement(target)) continue
+    const handle = target.closest('.react-flow__handle')
+    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
+    if (!nodeId || nodeId === excludedNodeId || !handle) continue
+    return { nodeId, handleId: handle.getAttribute('data-handleid') || handle.id || null }
+  }
+
+  for (const target of targets) {
+    if (!isDomElement(target)) continue
+    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
+    if (nodeId && nodeId !== excludedNodeId) return { nodeId, handleId: null }
+  }
 
   let nearestNode: { nodeId: string; distance: number } | null = null
   for (const node of document.querySelectorAll('.react-flow__node')) {
@@ -1082,10 +1068,9 @@ export function useCanvasInteractions({
   const handleConfirmNewElement = useCallback(async (name: string) => {
     if (!canEdit || viewId === null || !pendingElement || pendingElement.mode === 'connect') return
     const activePendingElement = pendingElement
-    const targetPoint = {
-      x: activePendingElement.position.x + PENDING_ELEMENT_OFFSET_X,
-      y: activePendingElement.position.y + PENDING_ELEMENT_OFFSET_Y,
-    }
+    const handlesBySource = new Map(activePendingElement.sourceElementIds.map(sourceId => [sourceId,
+      resolvePendingConnectorHandles(rfNodesRef.current.find(node => node.id === String(sourceId)), { position: activePendingElement.position }, activePendingElement.sourceHandle),
+    ]))
     setPendingElement(null)
     clearPendingConnectionRefs()
     try {
@@ -1097,14 +1082,7 @@ export function useCanvasInteractions({
       const sourceIds = activePendingElement.sourceElementIds
         .filter((nextSourceId) => nextSourceId !== obj.id)
       for (const nextSourceId of sourceIds) {
-        const sourceNode = rfNodesRef.current.find((n) => n.id === String(nextSourceId))
-        const { sourceHandle, targetHandle } = sourceNode
-          ? findClosestHandleToPoint(sourceNode, targetPoint.x, targetPoint.y)
-          : { sourceHandle: 'right', targetHandle: 'left' }
-        const resolvedSourceHandle = getLogicalHandleId(activePendingElement.sourceHandle ?? sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-        const resolvedTargetHandle = activePendingElement.sourceHandle
-          ? getOppositeHandleSide(resolvedSourceHandle)
-          : targetHandle
+        const { sourceHandle: resolvedSourceHandle, targetHandle: resolvedTargetHandle } = handlesBySource.get(nextSourceId)!
         const newConnector = await api.workspace.connectors.create(viewId, {
           source_element_id: nextSourceId, target_element_id: obj.id,
           source_handle: resolvedSourceHandle,
@@ -1121,12 +1099,14 @@ export function useCanvasInteractions({
   const handleConfirmExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !pendingElement) return
     const activePendingElement = pendingElement
-    const targetPoint = {
-      x: activePendingElement.position.x + PENDING_ELEMENT_OFFSET_X,
-      y: activePendingElement.position.y + PENDING_ELEMENT_OFFSET_Y,
-    }
     const sourceIds = activePendingElement.sourceElementIds.filter((sourceId) => sourceId !== obj.id)
     const addPlacement = activePendingElement.mode === 'add' && !existingElementIds.has(obj.id)
+    const targetGeometry = addPlacement
+      ? { position: activePendingElement.position }
+      : rfNodesRef.current.find(node => node.id === String(obj.id)) ?? { position: activePendingElement.position }
+    const handlesBySource = new Map(sourceIds.map(sourceId => [sourceId,
+      resolvePendingConnectorHandles(rfNodesRef.current.find(node => node.id === String(sourceId)), targetGeometry, activePendingElement.sourceHandle),
+    ]))
     setPendingElement(null)
     clearPendingConnectionRefs()
     try {
@@ -1137,17 +1117,7 @@ export function useCanvasInteractions({
         if (placed) upsertPlacementGraphSnapshot(viewId, placed)
       }
       for (const nextSourceId of sourceIds) {
-        const sourceNode = rfNodesRef.current.find((n) => n.id === String(nextSourceId))
-        const targetNode = rfNodesRef.current.find((n) => n.id === String(obj.id))
-        const { sourceHandle, targetHandle } = sourceNode && targetNode
-          ? findClosestHandles(sourceNode, targetNode)
-          : sourceNode
-            ? findClosestHandleToPoint(sourceNode, targetPoint.x, targetPoint.y)
-            : { sourceHandle: 'right', targetHandle: 'left' }
-        const resolvedSourceHandle = getLogicalHandleId(activePendingElement.sourceHandle ?? sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-        const resolvedTargetHandle = activePendingElement.sourceHandle
-          ? getOppositeHandleSide(resolvedSourceHandle)
-          : targetHandle
+        const { sourceHandle: resolvedSourceHandle, targetHandle: resolvedTargetHandle } = handlesBySource.get(nextSourceId)!
         const newConnector = await api.workspace.connectors.create(viewId, {
           source_element_id: nextSourceId, target_element_id: obj.id,
           source_handle: resolvedSourceHandle,
@@ -1292,11 +1262,11 @@ export function useCanvasInteractions({
     const sourceIds = activeConnectionSourceIds(sourceElementId, targetElementId)
     if (cid === null || sourceIds.length === 0) return
 
-    const sourceHandle = getLogicalHandleId(
+    const sourceHandle = ensureVisualHandleId(
       clickConnectModeRef.current?.sourceHandle ?? pendingConnectionSourceHandleRef.current,
       DEFAULT_SOURCE_HANDLE_SIDE,
     ) ?? DEFAULT_SOURCE_HANDLE_SIDE
-    const logicalTargetHandle = getLogicalHandleId(targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
+    const logicalTargetHandle = ensureVisualHandleId(targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
 
     setSyncedInteractionSourceId(null)
     clearPendingConnectionRefs()
@@ -1329,8 +1299,8 @@ export function useCanvasInteractions({
     const sourceIds = activeConnectionSourceIds(sourceElementId, targetElementId)
     if (cid === null || sourceIds.length === 0) return false
 
-    const sourceHandle = getLogicalHandleId(mode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-    const targetHandle = getLogicalHandleId(mode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? getOppositeHandleSide(sourceHandle)
+    const sourceHandle = ensureVisualHandleId(mode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+    const targetHandle = ensureVisualHandleId(mode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
 
     setSyncedInteractionSourceId(null)
     clearPendingConnectionRefs()
@@ -1381,14 +1351,14 @@ export function useCanvasInteractions({
         return
       }
 
-      pendingConnectionSourceHandleRef.current = getCenterVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
+      pendingConnectionSourceHandleRef.current = ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
       multiConnectionSourceIdsRef.current = null
       setSyncedInteractionSourceId(elementId)
       pendingConnectionSourceRef.current = null
       setPendingElement(null)
       setSyncedClickConnectMode({
         sourceNodeId: String(elementId),
-        sourceHandle: getCenterVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle,
+        sourceHandle: ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle,
       })
       setClickConnectCursorPos(cursorPos)
       return
@@ -1699,7 +1669,7 @@ export function useCanvasInteractions({
     connectingSourceRef.current = nodeId
     setConnectorCreatePreviewActive(!!nodeId)
     onConnectorCreatePreviewActiveChange?.(!!nodeId)
-    pendingConnectionSourceHandleRef.current = getCenterVisualHandleId(handleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? getLogicalHandleId(handleId, DEFAULT_SOURCE_HANDLE_SIDE)
+    pendingConnectionSourceHandleRef.current = ensureVisualHandleId(handleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? getLogicalHandleId(handleId, DEFAULT_SOURCE_HANDLE_SIDE)
     const sourceElementId = nodeId
       ? resolveElementIdFromNode(getInteractionNodes().find((node) => node.id === nodeId)) ?? parseNumericId(nodeId)
       : null
@@ -1834,7 +1804,7 @@ export function useCanvasInteractions({
 
     const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
     const { sourceHandle } = findClosestHandleToPoint(sourceNode, flowPos.x, flowPos.y)
-    const visualSourceHandle = getCenterVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
+    const visualSourceHandle = ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
     const pointerId = event.pointerId
 
     syncAltConnectorDrag({
@@ -1909,7 +1879,7 @@ export function useCanvasInteractions({
       let targetHandleId = target.handleId
       if (targetHandleId === null) {
         const closest = findClosestHandles(sourceNodeCurrent, target.node)
-        targetHandleId = getCenterVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
+        targetHandleId = ensureVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
       }
       const { sourceHandle: resolvedSourceHandle, targetHandle: resolvedTargetHandle } =
         resolveConnectorDragAttachHandles(current.sourceHandle, targetHandleId)
@@ -1971,8 +1941,8 @@ export function useCanvasInteractions({
     setRfEdges((eds) => reconnectEdge(oldConnector, newConnection, eds))
     try {
       const existingData = oldConnector.data as Connector
-      const sourceHandle = getLogicalHandleId(newConnection.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
-      const targetHandle = getLogicalHandleId(newConnection.targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
+      const sourceHandle = ensureVisualHandleId(newConnection.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+      const targetHandle = ensureVisualHandleId(newConnection.targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
       const updated = await api.workspace.connectors.update(viewId, edgeId, {
         source_element_id: sourceId, target_element_id: targetId,
         source_handle: sourceHandle ?? undefined,
@@ -2021,7 +1991,7 @@ export function useCanvasInteractions({
     setClickConnectCursorPos(null)
     clearHandleReconnectListeners()
     isReconnectingRef.current = true
-    const handleTargets = collectHandleTargets(fixedNodeId, { snapToCenterSlot: true })
+    const handleTargets = collectHandleTargets(fixedNodeId)
     connectorDragLastUpdateRef.current = 0
     syncHandleReconnectDrag({
       edgeId: args.edgeId,
@@ -2150,11 +2120,11 @@ export function useCanvasInteractions({
         source: pickedNode.id,
         sourceHandle: ensureVisualHandleId(closest.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? closest.sourceHandle,
         target: fixedNode.id,
-        targetHandle: ensureVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle,
+        targetHandle: oldConnector.targetHandle ?? null,
       }
       : {
         source: fixedNode.id,
-        sourceHandle: ensureVisualHandleId(closest.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? closest.sourceHandle,
+        sourceHandle: oldConnector.sourceHandle ?? null,
         target: pickedNode.id,
         targetHandle: ensureVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle,
       }
@@ -2172,8 +2142,7 @@ export function useCanvasInteractions({
       setClickConnectCursorPos(null)
       return
     }
-    const handleTargets = collectHandleTargets(clickConnectMode.sourceNodeId, { snapToCenterSlot: true })
-    const sourceHandleTargets = collectHandleTargets().filter((target) => target.nodeId === clickConnectMode.sourceNodeId)
+    const handleTargets = collectHandleTargets(clickConnectMode.sourceNodeId)
     connectorDragLastUpdateRef.current = 0
     const listener = (e: MouseEvent) => {
       const now = performance.now()
@@ -2183,17 +2152,8 @@ export function useCanvasInteractions({
       setClickConnectCursorPos(hit.snapPos)
       setSyncedClickConnectMode((prev) => {
         if (!prev) return null
-        let bestHandle = prev.sourceHandle
-        let minDist = Infinity
-        for (const target of sourceHandleTargets) {
-          const dist = Math.hypot(e.clientX - target.x, e.clientY - target.y)
-          if (dist < minDist) {
-            minDist = dist
-            bestHandle = getCenterVisualHandleId(target.handleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? target.handleId
-          }
-        }
-        if (prev.sourceHandle !== bestHandle || prev.targetHandle !== hit.hoveredHandleId) {
-          return { ...prev, sourceHandle: bestHandle, targetHandle: hit.hoveredHandleId }
+        if (prev.targetHandle !== hit.hoveredHandleId) {
+          return { ...prev, targetHandle: hit.hoveredHandleId }
         }
         return prev
       })
@@ -2276,7 +2236,7 @@ export function useCanvasInteractions({
         setSyncedInteractionSourceId(null)
         pendingConnectionSourceRef.current = sourceId
         pendingConnectionSourceHandleRef.current = clickConnectModeRef.current?.sourceHandle
-          ? getLogicalHandleId(clickConnectModeRef.current.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+          ? ensureVisualHandleId(clickConnectModeRef.current.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
           : pendingConnectionSourceHandleRef.current
         setSyncedClickConnectMode(null)
         setClickConnectCursorPos(null)
@@ -2622,7 +2582,7 @@ export function useCanvasInteractions({
         const { sourceHandle } = findClosestHandleToPoint(node, flowCursor.x, flowCursor.y)
         const nextClickConnectMode = {
           sourceNodeId: node.id,
-          sourceHandle: getCenterVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle,
+          sourceHandle: ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle,
         }
         suppressNextPaneClickUntilRef.current = 0
         multiConnectionSourceIdsRef.current = sourceElementIds.length > 1 ? sourceElementIds : null

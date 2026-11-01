@@ -182,3 +182,19 @@ func TestValidate_LineAnchorSkipsSymbolCheck(t *testing.T) {
 		t.Fatalf("line anchor should not require a symbol, got %v", errs)
 	}
 }
+
+func TestConnectorHandleSlots(t *testing.T) {
+	for _, handle := range []string{"", "top", "right-0", "bottom-2", "left-4"} {
+		if err := workspace.ValidateConnectorValues(&workspace.Connector{SourceHandle: handle, TargetHandle: handle}); err != nil {
+			t.Errorf("valid handle %q: %v", handle, err)
+		}
+	}
+	for _, handle := range []string{"right-5", "left--1", "top-22", "middle-2", "bottom-x"} {
+		if err := workspace.ValidateConnectorValues(&workspace.Connector{SourceHandle: handle}); err == nil {
+			t.Errorf("accepted invalid source handle %q", handle)
+		}
+		if err := workspace.ValidateConnectorValues(&workspace.Connector{TargetHandle: handle}); err == nil {
+			t.Errorf("accepted invalid target handle %q", handle)
+		}
+	}
+}

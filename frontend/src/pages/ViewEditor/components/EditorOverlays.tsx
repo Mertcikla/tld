@@ -3,7 +3,7 @@ import { useViewport, type Node as RFNode } from 'reactflow'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
-  getCenterVisualHandleId,
+  ensureVisualHandleId,
   getHandleFlowPosition,
   getLogicalHandleId,
   getOppositeHandleSide,
@@ -59,7 +59,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
           sp.y,
           w,
           h,
-          getCenterVisualHandleId(clickConnectMode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
+          ensureVisualHandleId(clickConnectMode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
           DEFAULT_SOURCE_HANDLE_SIDE,
         )
         const rfRect = document.querySelector('.react-flow')?.getBoundingClientRect()
@@ -108,7 +108,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
           sp.y,
           w,
           h,
-          getCenterVisualHandleId(altConnectorDrag.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
+          ensureVisualHandleId(altConnectorDrag.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
           DEFAULT_SOURCE_HANDLE_SIDE,
         )
         const rfRect = document.querySelector('.react-flow')?.getBoundingClientRect()
@@ -130,7 +130,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
           const hw = hoveredNode.width ?? 180; const hh = hoveredNode.height ?? 80
           const hp = hoveredNode.positionAbsolute ?? hoveredNode.position
           const closest = findClosestHandles(sourceNode, hoveredNode)
-          const targetHandle = getCenterVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
+          const targetHandle = ensureVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
           const target = getHandleFlowPosition(hp.x, hp.y, hw, hh, targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
           tx = target.x * viewportState.zoom + viewportState.x + rfX
           ty = target.y * viewportState.zoom + viewportState.y + rfY

@@ -138,8 +138,8 @@ import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { AUTO_LAYOUT_GRID, findAutoPlacementPosition, nodeRect, planIncrementalLayout, type IncrementalEdge } from '../../utils/autoLayout'
 import { chooseConnectorHandles } from '../../utils/connectorHandles'
-import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
+import { connectorToConnector, findClosestHandles, resolvePendingConnectorHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
+import { DEFAULT_SOURCE_HANDLE_SIDE, getLogicalHandleId } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
@@ -3324,19 +3324,13 @@ function ViewEditorInner({
       .filter((sourceId) => sourceId !== -1)
       .map((sourceId) => {
         const sourceNode = rfNodes.find((node) => node.id === String(sourceId))
-        const handles = sourceNode
-          ? findClosestHandles(sourceNode, pendingElementNode)
-          : { sourceHandle: DEFAULT_SOURCE_HANDLE_SIDE, targetHandle: DEFAULT_TARGET_HANDLE_SIDE }
-        const pendingSourceSide = getLogicalHandleId(pending.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
-        const previewTargetHandle = pending.sourceHandle && pendingSourceSide
-          ? getOppositeHandleSide(pendingSourceSide)
-          : handles.targetHandle
+        const handles = resolvePendingConnectorHandles(sourceNode, pendingElementNode, pending.sourceHandle)
         return {
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          sourceHandle: handles.sourceHandle,
+          targetHandle: handles.targetHandle,
           type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
           className: 'vieweditor-temporary-connector',
           label: '',
@@ -3351,8 +3345,8 @@ function ViewEditorInner({
             direction: 'forward',
             style: previewConnectorStyle,
             url: null,
-            source_handle: pending.sourceHandle ?? handles.sourceHandle,
-            target_handle: previewTargetHandle,
+            source_handle: handles.sourceHandle,
+            target_handle: handles.targetHandle,
             tags: [],
             created_at: '',
             updated_at: '',

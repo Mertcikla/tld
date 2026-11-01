@@ -35,7 +35,7 @@ function placed(id: number, tags: string[]): PlacedElement {
 function connector(id: number, source: number, target: number, tags: string[]): Connector {
   return { id, view_id: 1, source_element_id: source, target_element_id: target, tags,
     label: 'reads', description: null, relationship: null, direction: 'both', style: 'bezier',
-    url: null, source_handle: null, target_handle: null, created_at: '', updated_at: '',
+    url: null, source_handle: `right-${id % 5}`, target_handle: `left-${id % 5}`, created_at: '', updated_at: '',
   }
 }
 
@@ -119,6 +119,32 @@ describe('editor canvas tags', () => {
     expect(useStore.getState().nodes.every((node) => node.style === undefined && node.data.tagHiddenHandleIds.length === 0)).toBe(true)
     expect(node('1').data.reconnectCandidates).toHaveLength(3)
     expect(useStore.getState().edges.every((edge) => edge.style?.opacity === 0.8 && edge.style.strokeWidth === 2)).toBe(true)
+    act(() => renderer.unmount())
+    client.clear()
+  })
+})
+
+
+describe('connector handle placement', () => {
+  it('preserves chosen slots when neighbors move, are added, or are removed', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let renderer: ReturnType<typeof create>
+    act(() => { renderer = create(<QueryClientProvider client={client}><Harness /></QueryClientProvider>) })
+    const chosen = { ...connector(10, 1, 2, []), source_handle: 'bottom-4', target_handle: 'top-0' }
+    const legacy = { ...connector(11, 1, 3, []), source_handle: 'bottom', target_handle: 'top' }
+    act(() => useStore.setState({ viewElements: [placed(1, []), placed(2, []), placed(3, [])], connectors: [chosen] }))
+    const expectChosen = () => {
+      const edge = useStore.getState().edges.find(edge => edge.id === '10')!
+      expect([edge.sourceHandle, edge.targetHandle]).toEqual(['bottom-4', 'top-0'])
+    }
+    expectChosen()
+    act(() => useStore.setState({ connectors: [chosen, legacy] }))
+    expectChosen()
+    expect(useStore.getState().edges.find(edge => edge.id === '11')).toMatchObject({ sourceHandle: 'bottom-2', targetHandle: 'top-2' })
+    act(() => useStore.setState({ viewElements: [placed(1, []), { ...placed(2, []), position_x: -500 }, placed(3, [])] }))
+    expectChosen()
+    act(() => useStore.setState({ connectors: [chosen] }))
+    expectChosen()
     act(() => renderer.unmount())
     client.clear()
   })

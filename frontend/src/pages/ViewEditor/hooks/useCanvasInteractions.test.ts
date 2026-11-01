@@ -272,17 +272,17 @@ describe('connector drag placeholder visibility', () => {
 })
 
 describe('connector drag attach handle resolution', () => {
-  it('preserves explicit handle sides instead of choosing closest geometry', () => {
+  it('preserves explicit handle sides and slots instead of choosing closest geometry', () => {
     expect(resolveConnectorDragAttachHandles('bottom-2', 'right-4')).toEqual({
-      sourceHandle: 'bottom',
-      targetHandle: 'right',
+      sourceHandle: 'bottom-2',
+      targetHandle: 'right-4',
     })
   })
 
   it('falls back to default sides when a drag attach has no explicit target handle', () => {
     expect(resolveConnectorDragAttachHandles('top-2', null)).toEqual({
-      sourceHandle: 'top',
-      targetHandle: 'left',
+      sourceHandle: 'top-2',
+      targetHandle: 'left-2',
     })
   })
 })

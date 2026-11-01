@@ -17,7 +17,7 @@ import {
   getHandleFlowPosition,
   getHandleSlotOffsetFromId,
   getLogicalHandleId,
-  getVisualHandleIdForGroup,
+  ensureVisualHandleId,
 } from '../../utils/edgeDistribution'
 import {
   ELEMENT_NAME_FONT_FAMILY,
@@ -1246,21 +1246,12 @@ function drawSceneNode(
   }
 }
 
-interface HandleUsage {
-  edgeKey: string
-  type: 'source' | 'target'
-  otherNodeCoord: number
-}
-
 interface DrawEdgesLayoutMetadata {
   nodeMap: Map<string, LayoutNode>
   sceneNodeMap: Map<string, SceneNode>
-  handleUsage: Record<string, HandleUsage[]>
-  handleUsageIndex: Record<string, number>
 }
 
 const drawEdgesMetadataCache = new WeakMap<SceneNode[], DrawEdgesLayoutMetadata>()
-const emptyHandleUsage: HandleUsage[] = []
 
 function getDrawEdgesLayoutMetadata(sceneNodes: SceneNode[]): DrawEdgesLayoutMetadata {
   const cached = drawEdgesMetadataCache.get(sceneNodes)
@@ -1268,56 +1259,13 @@ function getDrawEdgesLayoutMetadata(sceneNodes: SceneNode[]): DrawEdgesLayoutMet
 
   const nodeMap = new Map<string, LayoutNode>()
   const sceneNodeMap = new Map<string, SceneNode>()
-  const handleUsage: Record<string, HandleUsage[]> = {}
-  const handleUsageIndex: Record<string, number> = {}
 
   for (const sceneNode of sceneNodes) {
     nodeMap.set(sceneNode.layout.id, sceneNode.layout)
     sceneNodeMap.set(sceneNode.layout.id, sceneNode)
   }
 
-  for (const sceneNode of sceneNodes) {
-    const node = sceneNode.layout
-    for (let edgeIndex = 0; edgeIndex < node.edgesOut.length; edgeIndex++) {
-      const edge = node.edgesOut[edgeIndex]
-      const target = nodeMap.get(edge.targetId)
-      if (!target) continue
-
-      const edgeKey = `${node.id}:${edgeIndex}`
-      const sourceSide = getLogicalHandleId(edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-      const targetSide = getLogicalHandleId(edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-
-      const srcKey = `${node.id}-${sourceSide}`
-      handleUsage[srcKey] ??= []
-      handleUsage[srcKey].push({
-        edgeKey,
-        type: 'source',
-        otherNodeCoord: sourceSide === 'left' || sourceSide === 'right'
-          ? target.worldY + target.worldH / 2
-          : target.worldX + target.worldW / 2,
-      })
-
-      const tgtKey = `${target.id}-${targetSide}`
-      handleUsage[tgtKey] ??= []
-      handleUsage[tgtKey].push({
-        edgeKey,
-        type: 'target',
-        otherNodeCoord: targetSide === 'left' || targetSide === 'right'
-          ? node.worldY + node.worldH / 2
-          : node.worldX + node.worldW / 2,
-      })
-    }
-  }
-
-  for (const [usageKey, usages] of Object.entries(handleUsage)) {
-    usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
-    for (let i = 0; i < usages.length; i++) {
-      const usage = usages[i]
-      handleUsageIndex[`${usageKey}:${usage.edgeKey}:${usage.type}`] = i
-    }
-  }
-
-  const metadata = { nodeMap, sceneNodeMap, handleUsage, handleUsageIndex }
+  const metadata = { nodeMap, sceneNodeMap }
   drawEdgesMetadataCache.set(sceneNodes, metadata)
   return metadata
 }
@@ -1376,12 +1324,12 @@ function drawEdges(
   const ox = originX ?? 0
   const oy = originY ?? 0
 
-  const { nodeMap, sceneNodeMap, handleUsage, handleUsageIndex } = getDrawEdgesLayoutMetadata(sceneNodes)
+  const { nodeMap, sceneNodeMap } = getDrawEdgesLayoutMetadata(sceneNodes)
   const changeMode = sceneNodes.some((sn) => subtreeHasChangeOverlay(sn.layout))
 
   for (const sn of sceneNodes) {
     const node = sn.layout
-    for (const [edgeIndex, edge] of node.edgesOut.entries()) {
+    for (const edge of node.edgesOut) {
       const target = nodeMap.get(edge.targetId)
       if (!target) continue
 
@@ -1437,24 +1385,14 @@ function drawEdges(
       const effXTarget = cxTarget - effWTarget / 2
       const effYTarget = cyTarget - effHTarget / 2
 
-      const edgeKey = `${node.id}:${edgeIndex}`
-      const sourceSide = getLogicalHandleId(edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-      const targetSide = getLogicalHandleId(edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-      const srcKey = `${node.id}-${sourceSide}`
-      const tgtKey = `${target.id}-${targetSide}`
-      const srcGroup = handleUsage[srcKey] ?? emptyHandleUsage
-      const tgtGroup = handleUsage[tgtKey] ?? emptyHandleUsage
-      const sourceGroupIndex = handleUsageIndex[`${srcKey}:${edgeKey}:source`] ?? -1
-      const targetGroupIndex = handleUsageIndex[`${tgtKey}:${edgeKey}:target`] ?? -1
-
       const sH = getHandlePos(
         effXSource, effYSource, effWSource, effHSource,
-        getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, Math.max(srcGroup.length, 1)),
+        ensureVisualHandleId(edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
         true, sSource,
       )
       const tH = getHandlePos(
         effXTarget, effYTarget, effWTarget, effHTarget,
-        getVisualHandleIdForGroup(targetSide, targetGroupIndex, Math.max(tgtGroup.length, 1)),
+        ensureVisualHandleId(edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE),
         false, sTarget,
       )
 

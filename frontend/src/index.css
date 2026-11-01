@@ -368,30 +368,11 @@ body {
     box-shadow: 0 0 8px 2px rgba(var(--accent-rgb), 0.55);
 }
 
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-active-slot,
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-fallback-slot {
+.react-flow__node:hover .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot),
+.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot),
+[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot) {
     opacity: 1;
     pointer-events: all;
-}
-
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-visual-slot {
-    opacity: 0;
-    pointer-events: none;
-}
-
-[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-center-slot {
-    opacity: 1;
-    pointer-events: all;
-}
-
-[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-visual-slot {
-    opacity: 0;
-    pointer-events: none;
-}
-
-.react-flow__handle.element-node-handle.handle-hidden-during-create {
-    opacity: 0;
-    pointer-events: none;
 }
 
 /* Alt-drag connector: ring the element currently under the cursor */

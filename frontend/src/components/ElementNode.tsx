@@ -880,7 +880,6 @@ function ElementNode({ data, selected }: Props) {
 
   const isSource = data.interactionSourceId === data.element_id
   const isTarget = !!data.interactionSourceId && !isSource
-  const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
 
@@ -926,15 +925,18 @@ function ElementNode({ data, selected }: Props) {
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
+          const isHandleChoice = slot % 2 === 0
+          // Retain anchors for saved endpoints without offering removed slots for new drops.
+          if (!isHandleChoice && !connectedHandleIds.has(handleId)) return null
           const isTagHidden = tagHiddenHandleIds.has(handleId)
           const pickupOnly = pickupOnlySides.has(side)
           const reconnectCandidate = reconnectCandidateByHandle.get(handleId)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
-          const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
             'element-node-handle',
+            isHandleChoice ? 'handle-choice' : 'handle-legacy-slot',
+            activeSides.has(side) ? 'handle-active-side' : '',
             slot === HANDLE_SLOT_CENTER_INDEX ? 'handle-center-slot' : 'handle-visual-slot',
-            isPreviewHiddenSlot ? 'handle-hidden-during-create' : '',
             connectedHandleIds.has(handleId) ? 'handle-active-slot' : '',
             isFallbackSlot ? 'handle-fallback-slot' : '',
             connectedHandleIds.has(handleId) ? 'handle-connected' : '',
@@ -948,10 +950,11 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
-                isConnectable={!isPending && !isPreviewHiddenSlot && !isTagHidden}
-                isConnectableStart={!pickupOnly}
+                data-handle-choice={isHandleChoice ? 'true' : undefined}
+                isConnectable={!isPending && !isTagHidden && isHandleChoice}
+                isConnectableStart={!pickupOnly && isHandleChoice}
                 onPointerDown={(e: React.PointerEvent) => {
-                  if (pickupOnly) {
+                  if (pickupOnly || !isHandleChoice) {
                     e.preventDefault()
                     e.stopPropagation()
                     return
@@ -965,7 +968,7 @@ function ElementNode({ data, selected }: Props) {
                   }
                 }}
                 onMouseDown={(e: React.MouseEvent) => {
-                  if (isPending || pickupOnly || e.button !== 0 || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || !isHandleChoice || e.button !== 0 || data.interactionSourceId === data.element_id) return
                   suppressHandleClickUntil.current = Date.now() + 500
                   data.onInteractionStart(data.element_id, {
                     sourceHandle: handleId,
@@ -974,7 +977,7 @@ function ElementNode({ data, selected }: Props) {
                   })
                 }}
                 onTouchStart={(e: React.TouchEvent) => {
-                  if (isPending || pickupOnly || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || !isHandleChoice || data.interactionSourceId === data.element_id) return
                   const touch = e.touches[0]
                   if (!touch) return
                   suppressHandleClickUntil.current = Date.now() + 500
@@ -988,7 +991,7 @@ function ElementNode({ data, selected }: Props) {
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
                   visibility: isTagHidden ? 'hidden' : undefined,
-                  pointerEvents: isPending || isPreviewHiddenSlot || isTagHidden ? 'none' : undefined,
+                  pointerEvents: isPending || isTagHidden ? 'none' : undefined,
                 }}
               />
               {!isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
