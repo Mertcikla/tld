@@ -623,6 +623,7 @@ export type ClickConnectModeState = {
   sourceNodeId: string
   sourceHandle: string
   targetHandle?: string
+  targetNodeId?: string
 }
 
 export type ClickConnectCursorPosition = { x: number; y: number }
@@ -1300,7 +1301,13 @@ export function useCanvasInteractions({
     if (cid === null || sourceIds.length === 0) return false
 
     const sourceHandle = ensureVisualHandleId(mode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-    const targetHandle = ensureVisualHandleId(mode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
+    const nodes = getInteractionNodes()
+    const targetNode = nodes.find(node => resolveElementIdFromNode(node) === targetElementId)
+    const targetHandle = mode.targetNodeId === targetNode?.id && mode.targetHandle
+      ? mode.targetHandle
+      : targetNode
+        ? resolvePendingConnectorHandles(nodes.find(node => node.id === mode.sourceNodeId), targetNode, sourceHandle).targetHandle
+        : ensureVisualHandleId(null, DEFAULT_TARGET_HANDLE_SIDE)!
 
     setSyncedInteractionSourceId(null)
     clearPendingConnectionRefs()
@@ -1323,7 +1330,7 @@ export function useCanvasInteractions({
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
     return true
-  }, [activeConnectionSourceIds, canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
+  }, [activeConnectionSourceIds, getInteractionNodes, canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
 
   const stableOnInteractionStart = useCallback((elementId: number, options?: InteractionStartOptions) => {
     if (!canEdit) return
@@ -2148,19 +2155,29 @@ export function useCanvasInteractions({
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
+      const nodes = getInteractionNodes()
+      const bodyTarget = resolveConnectorDropTarget(e.target, e.clientX, e.clientY, nodes).droppedNode
       const hit = findNearestHandleTargetInCache(handleTargets, e.clientX, e.clientY)
+      const targetNode = bodyTarget?.id === clickConnectMode.sourceNodeId || bodyTarget?.id === PENDING_ELEMENT_NODE_ID
+        ? undefined
+        : bodyTarget ?? nodes.find(node => node.id === hit.hoveredNodeId)
+      const targetHandle = targetNode
+        ? hit.hoveredNodeId === targetNode.id && hit.hoveredHandleId
+          ? hit.hoveredHandleId
+          : resolvePendingConnectorHandles(nodes.find(node => node.id === clickConnectMode.sourceNodeId), targetNode, clickConnectMode.sourceHandle).targetHandle
+        : undefined
       setClickConnectCursorPos(hit.snapPos)
       setSyncedClickConnectMode((prev) => {
         if (!prev) return null
-        if (prev.targetHandle !== hit.hoveredHandleId) {
-          return { ...prev, targetHandle: hit.hoveredHandleId }
+        if (prev.targetHandle !== targetHandle || prev.targetNodeId !== targetNode?.id) {
+          return { ...prev, targetHandle, targetNodeId: targetNode?.id }
         }
         return prev
       })
     }
     document.addEventListener('mousemove', listener)
     return () => { document.removeEventListener('mousemove', listener) }
-  }, [clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode])
+  }, [clickConnectMode, getInteractionNodes, setClickConnectCursorPos, setSyncedClickConnectMode])
 
   useEffect(() => {
     if (interactionSourceId === null) setSyncedClickConnectMode(null)

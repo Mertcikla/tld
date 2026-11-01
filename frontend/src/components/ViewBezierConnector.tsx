@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react'
-import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
@@ -9,14 +9,8 @@ import { useTagDragGhost } from './ViewExplorer/TagManager/tagDragGhostState'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
-  getCenterVisualHandleId,
-  getHandleFlowPosition,
   getLogicalHandleId,
 } from '../utils/edgeDistribution'
-
-function getNodeFlowOrigin(node: RFNode) {
-  return ((node as { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position)
-}
 
 function truncateConnectorLabel(text: string) {
   const characters = Array.from(text)
@@ -39,42 +33,24 @@ export function ViewConnectorConnectionLine({
   fromPosition,
   toPosition,
 }: ConnectionLineComponentProps) {
-  const sourceFallbackSide = handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE)
-  const sourceSide = getLogicalHandleId(fromHandle?.id, sourceFallbackSide) ?? sourceFallbackSide
-  const sourceHandle = getCenterVisualHandleId(fromHandle?.id ?? sourceSide, sourceSide) ?? sourceSide
-  let finalFromX = fromX
-  let finalFromY = fromY
-  const finalToX = toX
-  const finalToY = toY
-  let finalSourceSide = sourceSide
-  const finalTargetSide = handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE)
-  let sourceWidth = 200
-  let sourceHeight = 100
-  const targetWidth = 200
-  const targetHeight = 100
-
-  if (fromNode) {
-    sourceWidth = fromNode.width ?? sourceWidth
-    sourceHeight = fromNode.height ?? sourceHeight
-    const sourceOrigin = getNodeFlowOrigin(fromNode)
-    const sourcePoint = getHandleFlowPosition(sourceOrigin.x, sourceOrigin.y, sourceWidth, sourceHeight, sourceHandle, sourceSide)
-    finalFromX = sourcePoint.x
-    finalFromY = sourcePoint.y
-    finalSourceSide = sourcePoint.side
-  }
-
+  const endHandle = useStore(state => state.connectionEndHandle)
+  const targetNode = useStore(state => endHandle ? state.nodeInternals.get(endHandle.nodeId) : undefined)
+  const sourceSide = getLogicalHandleId(fromHandle?.id, handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE))!
+  // React Flow supplies the opposite source side as toPosition even after snapping.
+  // The actual hovered handle must determine the approach direction instead.
+  const targetSide = getLogicalHandleId(endHandle?.handleId, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
   const { path } = buildViewConnectorPath({
     routeStyle: routeStyleFromValue(connectionLineType),
-    sourceX: finalFromX,
-    sourceY: finalFromY,
-    targetX: finalToX,
-    targetY: finalToY,
-    sourcePosition: positionForHandleSide(finalSourceSide),
-    targetPosition: positionForHandleSide(finalTargetSide),
-    sourceWidth,
-    sourceHeight,
-    targetWidth,
-    targetHeight,
+    sourceX: fromX,
+    sourceY: fromY,
+    targetX: toX,
+    targetY: toY,
+    sourcePosition: positionForHandleSide(sourceSide),
+    targetPosition: positionForHandleSide(targetSide),
+    sourceWidth: fromNode?.width ?? 200,
+    sourceHeight: fromNode?.height ?? 100,
+    targetWidth: targetNode?.width ?? 200,
+    targetHeight: targetNode?.height ?? 100,
   })
 
   return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
@@ -211,7 +187,11 @@ function ViewBezierConnector({
         path={path}
         markerStart={markerStart}
         markerEnd={markerEnd}
-        style={isTagDraggedOver && canDropTag ? { ...style, stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : style}
+        style={{
+          ...style,
+          ...(isTagDraggedOver && canDropTag ? { stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : {}),
+          ...(selected ? { strokeWidth: 4 } : {}),
+        }}
         interactionWidth={0}
       />
       <BaseEdge

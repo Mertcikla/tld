@@ -1,14 +1,15 @@
 import React from 'react'
 import { act, create } from 'react-test-renderer'
-import { Position, type EdgeProps } from 'reactflow'
+import { ConnectionLineType, Position, type Node, type ConnectingHandle, type EdgeProps } from 'reactflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import ViewBezierConnector from './ViewBezierConnector'
+import ViewBezierConnector, { ViewConnectorConnectionLine } from './ViewBezierConnector'
+import { buildViewConnectorPath } from '../utils/connectorRoute'
 
-const state = vi.hoisted(() => ({ canEdit: true, drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null, edges: [] as Array<{ id: string; data: Record<string, unknown> }> }))
+const state = vi.hoisted(() => ({ canEdit: true, endHandle: null as ConnectingHandle | null, nodes: new Map<string, Node>(), drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null, edges: [] as Array<{ id: string; data: Record<string, unknown> }> }))
 vi.mock('reactflow', async () => {
   const actual = await vi.importActual<typeof import('reactflow')>('reactflow')
   return { ...actual,
-    useStore: (selector: (store: unknown) => unknown) => selector({ nodeInternals: new Map(), edges: state.edges }),
+    useStore: (selector: (store: unknown) => unknown) => selector({ nodeInternals: state.nodes, connectionEndHandle: state.endHandle, edges: state.edges }),
     BaseEdge: (props: Record<string, unknown>) => <path {...props} />,
     EdgeLabelRenderer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   }
@@ -24,7 +25,7 @@ function render(overrides: Partial<EdgeProps> = {}) {
     style: { stroke: '#aaa', strokeWidth: 2 }, data: { style: 'bezier' }, ...overrides,
   } as EdgeProps} />)
 }
-afterEach(() => { state.canEdit = true; state.drag = { kind: 'tag', name: 'critical', color: '#f00' }; state.edges = [] })
+afterEach(() => { state.canEdit = true; state.drag = { kind: 'tag', name: 'critical', color: '#f00' }; state.edges = []; state.endHandle = null; state.nodes.clear() })
 
 it.each([
   ['x'.repeat(20), 'x'.repeat(20)],
@@ -126,6 +127,52 @@ describe('connector hover direction', () => {
     const visual = renderer.root.findByType('g')
     expect(visual.props.className).toBe('vieweditor-connector')
     expect(visual.props['data-connector-direction']).toBe(expected)
+    act(() => renderer.unmount())
+  })
+})
+
+
+it('thickens only the visible stroke when selected', () => {
+  const renderer = render({ selected: true })
+  const paths = renderer.root.findAllByType('path')
+  expect(paths[0].props.style).toMatchObject({ stroke: '#aaa', strokeWidth: 4 })
+  expect(paths[1].props.style?.strokeWidth).not.toBe(4)
+  act(() => renderer.unmount())
+  const unselected = render()
+  expect(unselected.root.findAllByType('path')[0].props.style.strokeWidth).toBe(2)
+  act(() => unselected.unmount())
+})
+
+
+describe('snapped connector preview', () => {
+  it.each([
+    [Position.Top, 130, 100, 430, 100],
+    [Position.Bottom, 130, 185, 430, 185],
+    [Position.Left, 100, 130, 100, 430],
+    [Position.Right, 280, 130, 280, 430],
+  ] as const)('approaches a %s handle from outside and matches the placed route', (side, fromX, fromY, toX, toY) => {
+    const fromNode: Node = { id: '1', position: { x: 100, y: 100 }, width: 180, height: 85, data: {} }
+    const targetNode: Node = { id: '2', position: { x: 400, y: 100 }, width: 220, height: 110, data: {} }
+    state.nodes.set('2', targetNode)
+    state.endHandle = { nodeId: '2', type: 'source', handleId: `${side}-0` }
+    const opposites = { top: Position.Bottom, bottom: Position.Top, left: Position.Right, right: Position.Left }
+    const renderer = create(<ViewConnectorConnectionLine
+      fromNode={fromNode} fromHandle={{ id: `${side}-0`, position: side, x: 0, y: 0, width: 8, height: 8 }}
+      fromX={fromX} fromY={fromY} toX={toX} toY={toY}
+      fromPosition={side} toPosition={opposites[side]}
+      connectionLineType={ConnectionLineType.Bezier} connectionStatus="valid"
+    />)
+    const path = renderer.root.findByType('path').props.d
+    expect(path).toBe(buildViewConnectorPath({
+      routeStyle: 'bezier', sourceX: fromX, sourceY: fromY, targetX: toX, targetY: toY,
+      sourcePosition: side, targetPosition: side, sourceWidth: 180, sourceHeight: 85, targetWidth: 220, targetHeight: 110,
+    }).path)
+    const coordinates = path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)
+    const [sx, sy, c1x, c1y, c2x, c2y, tx, ty] = coordinates
+    if (side === Position.Top) { expect(c1y).toBeLessThan(sy); expect(c2y).toBeLessThan(ty) }
+    if (side === Position.Bottom) { expect(c1y).toBeGreaterThan(sy); expect(c2y).toBeGreaterThan(ty) }
+    if (side === Position.Left) { expect(c1x).toBeLessThan(sx); expect(c2x).toBeLessThan(tx) }
+    if (side === Position.Right) { expect(c1x).toBeGreaterThan(sx); expect(c2x).toBeGreaterThan(tx) }
     act(() => renderer.unmount())
   })
 })
