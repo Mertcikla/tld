@@ -196,8 +196,16 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         const rfY = rfRect?.top ?? 0
         const fixedScreenX = fx * viewportState.zoom + viewportState.x + rfX
         const fixedScreenY = fy * viewportState.zoom + viewportState.y + rfY
-        const movingScreenX = handleReconnectDrag.cursorPos.x
-        const movingScreenY = handleReconnectDrag.cursorPos.y
+        const movingNode = handleReconnectDrag.hoveredNodeId
+          ? rfNodes.find(n => n.id === handleReconnectDrag.hoveredNodeId)
+          : undefined
+        const movingOrigin = movingNode?.positionAbsolute ?? movingNode?.position
+        const movingPoint = movingOrigin && handleReconnectDrag.hoveredHandleId
+          ? getHandleFlowPosition(movingOrigin.x, movingOrigin.y, movingNode?.width ?? 180, movingNode?.height ?? 85,
+            handleReconnectDrag.hoveredHandleId, DEFAULT_TARGET_HANDLE_SIDE)
+          : null
+        const movingScreenX = movingPoint ? movingPoint.x * viewportState.zoom + viewportState.x + rfX : handleReconnectDrag.cursorPos.x
+        const movingScreenY = movingPoint ? movingPoint.y * viewportState.zoom + viewportState.y + rfY : handleReconnectDrag.cursorPos.y
 
         const sourceX = handleReconnectDrag.endpoint === 'source' ? movingScreenX : fixedScreenX
         const sourceY = handleReconnectDrag.endpoint === 'source' ? movingScreenY : fixedScreenY
@@ -209,9 +217,6 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         ) ?? (handleReconnectDrag.endpoint === 'source' ? DEFAULT_SOURCE_HANDLE_SIDE : DEFAULT_TARGET_HANDLE_SIDE)
         const sourceSide = handleReconnectDrag.endpoint === 'source' ? movingSide : fixedSide
         const targetSide = handleReconnectDrag.endpoint === 'source' ? fixedSide : movingSide
-        const movingNode = handleReconnectDrag.hoveredNodeId
-          ? rfNodes.find((n) => n.id === handleReconnectDrag.hoveredNodeId)
-          : null
         const movingWidth = (movingNode?.width ?? 180) * viewportState.zoom
         const movingHeight = (movingNode?.height ?? 80) * viewportState.zoom
         const fixedWidth = w * viewportState.zoom

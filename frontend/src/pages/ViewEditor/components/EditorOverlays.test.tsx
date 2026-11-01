@@ -40,3 +40,26 @@ it('snaps the body-hover ghost to the attachment used for creation, at the curre
   expect(renderer.root.findByType('path').props.d).toMatch(/1200,500$/)
   act(() => renderer.unmount())
 })
+
+it.each(['source', 'target'] as const)('snaps a dragged %s endpoint to the node boundary rather than its center', endpoint => {
+  vi.stubGlobal('document', { querySelector: () => ({ getBoundingClientRect: () => ({ left: 10, top: 15 }) }) })
+  const fixed: Node = { id: '1', position: { x: 0, y: 0 }, width: 180, height: 85, data: {} }
+  const moving: Node = { id: '2', position: { x: 400, y: 0 }, width: 220, height: 100, data: {} }
+  const handle = resolvePendingConnectorHandles(fixed, moving, 'right-2').targetHandle
+  const renderer = create(<EditorOverlays
+    clickConnectMode={null} clickConnectCursorPos={null} connectorRouteStyle="bezier"
+    rfNodes={[fixed, moving]}
+    handleReconnectDrag={{ endpoint, fixedNodeId: '1', fixedHandle: 'right-2', movingHandle: handle,
+      hoveredNodeId: '2', hoveredHandleId: handle, cursorPos: { x: 1050, y: 145 } }}
+  />)
+  const movingIsSource = endpoint === 'source'
+  expect(renderer.root.findByType('path').props.d).toBe(buildViewConnectorPath({
+    routeStyle: 'bezier', sourceX: movingIsSource ? 830 : 390, sourceY: movingIsSource ? 145 : 130,
+    targetX: movingIsSource ? 390 : 830, targetY: movingIsSource ? 130 : 145,
+    sourcePosition: movingIsSource ? Position.Left : Position.Right,
+    targetPosition: movingIsSource ? Position.Right : Position.Left,
+    sourceWidth: movingIsSource ? 440 : 360, sourceHeight: movingIsSource ? 200 : 170,
+    targetWidth: movingIsSource ? 360 : 440, targetHeight: movingIsSource ? 170 : 200,
+  }).path)
+  act(() => renderer.unmount())
+})

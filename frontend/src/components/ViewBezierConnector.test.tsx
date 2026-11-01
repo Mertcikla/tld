@@ -176,3 +176,21 @@ describe('snapped connector preview', () => {
     act(() => renderer.unmount())
   })
 })
+
+it('snaps a newly dragged connector to a node body before releasing', () => {
+  const fromNode: Node = { id: '1', type: 'elementNode', position: { x: 0, y: 0 }, width: 180, height: 85, data: {} }
+  const targetNode: Node = { id: '2', type: 'elementNode', position: { x: 400, y: 0 }, width: 220, height: 100, data: {} }
+  state.nodes.set('2', targetNode)
+  const renderer = create(<ViewConnectorConnectionLine
+    fromNode={fromNode} fromHandle={{ id: 'right-2', position: Position.Right, x: 180, y: 42.5, width: 8, height: 8 }}
+    fromX={180} fromY={42.5} toX={510} toY={50}
+    fromPosition={Position.Right} toPosition={Position.Left}
+    connectionLineType={ConnectionLineType.Bezier} connectionStatus={null}
+  />)
+  expect(renderer.root.findByType('path').props.d).toBe(buildViewConnectorPath({
+    routeStyle: 'bezier', sourceX: 180, sourceY: 42.5, targetX: 400, targetY: 50,
+    sourcePosition: Position.Right, targetPosition: Position.Left,
+    sourceWidth: 180, sourceHeight: 85, targetWidth: 220, targetHeight: 100,
+  }).path)
+  act(() => renderer.unmount())
+})

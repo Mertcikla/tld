@@ -1783,7 +1783,9 @@ export function useCanvasInteractions({
       }
       const { sourceHandle, targetHandle } = resolveConnectorDragAttachHandles(
         pendingConnectionSourceHandleRef.current,
-        nearNode === releaseNode ? droppedHandleId : null,
+        (nearNode === releaseNode ? droppedHandleId : null) ?? resolvePendingConnectorHandles(
+          interactionNodes.find(node => node.id === sourceId), nearNode, pendingConnectionSourceHandleRef.current,
+        ).targetHandle,
       )
       api.workspace.connectors.create(cid, {
         source_element_id: sourceElementId, target_element_id: targetElementId,
@@ -1999,7 +2001,18 @@ export function useCanvasInteractions({
     setClickConnectCursorPos(null)
     clearHandleReconnectListeners()
     isReconnectingRef.current = true
-    const handleTargets = collectHandleTargets(fixedNodeId)
+    const resolveDragTarget = (clientX: number, clientY: number) => {
+      const hit = findReconnectTargetAtPoint(clientX, clientY, fixedNodeId)
+      const nodes = getInteractionNodes()
+      const targetNode = nodes.find(node => node.id === hit?.nodeId)
+      if (!hit || !targetNode || resolveElementIdFromNode(targetNode) === null) return null
+      return {
+        nodeId: targetNode.id,
+        handleId: hit.handleId ?? resolvePendingConnectorHandles(
+          nodes.find(node => node.id === fixedNodeId), targetNode, fixedHandle,
+        ).targetHandle,
+      }
+    }
     connectorDragLastUpdateRef.current = 0
     syncHandleReconnectDrag({
       edgeId: args.edgeId,
@@ -2017,15 +2030,15 @@ export function useCanvasInteractions({
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
-      const hit = findNearestHandleTargetInCache(handleTargets, event.clientX, event.clientY)
+      const hit = resolveDragTarget(event.clientX, event.clientY)
       const current = handleReconnectDragRef.current
       if (!current) return
       syncHandleReconnectDrag({
         ...current,
-        cursorPos: hit.snapPos,
-        hoveredNodeId: hit.hoveredNodeId,
-        hoveredHandleId: hit.hoveredHandleId,
-        movingHandle: hit.hoveredHandleId ?? current.movingHandle,
+        cursorPos: { x: event.clientX, y: event.clientY },
+        hoveredNodeId: hit?.nodeId,
+        hoveredHandleId: hit?.handleId,
+        movingHandle: hit?.handleId ?? current.movingHandle,
       })
     }
 
@@ -2042,7 +2055,7 @@ export function useCanvasInteractions({
       const oldConnector = _rfEdgesRef.current.find((candidate) => candidate.id === current.edgeId)
       if (!oldConnector) return
 
-      const releaseTarget = findReconnectTargetAtPoint(event.clientX, event.clientY, current.fixedNodeId)
+      const releaseTarget = resolveDragTarget(event.clientX, event.clientY)
       const hoveredNodeId = releaseTarget?.nodeId
       const hoveredHandleId = releaseTarget?.handleId ?? null
 
@@ -2072,7 +2085,7 @@ export function useCanvasInteractions({
     document.addEventListener('pointermove', move)
     document.addEventListener('pointerup', up)
     document.addEventListener('pointercancel', up)
-  }, [canEdit, clearHandleReconnectListeners, performReconnect, _rfEdgesRef, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, suppressImmediatePaneClick, syncHandleReconnectDrag])
+  }, [canEdit, getInteractionNodes, clearHandleReconnectListeners, performReconnect, _rfEdgesRef, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, suppressImmediatePaneClick, syncHandleReconnectDrag])
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {

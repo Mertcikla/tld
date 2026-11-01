@@ -990,7 +990,7 @@ function ElementNode({ data, selected }: Props) {
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
-                  visibility: isTagHidden ? 'hidden' : undefined,
+                  visibility: isTagHidden || (isPending && !connectedHandleIds.has(handleId)) ? 'hidden' : undefined,
                   pointerEvents: isPending || isTagHidden ? 'none' : undefined,
                 }}
               />
@@ -1342,29 +1342,34 @@ function ElementNode({ data, selected }: Props) {
               </VStack>
             </Box>
           )}
-
-          {/* interaction mode */}
-          <Box
-            position="absolute"
-            bottom="-22px"
-            left="50%"
-            transform={`translateX(-50%) scale(${1 / zoom})`}
-            transformOrigin="top center"
-            bg="clay.in"
-            color="clay.dim"
-            border="1px solid"
-            borderColor="rgba(255,255,255,0.06)"
-            fontSize="9px"
-            px={2}
-            py="2px"
-            rounded="full"
-            whiteSpace="nowrap"
-            pointerEvents="none"
-            zIndex={10}
-          >
-            tap element to connect · tap canvas to add
-          </Box>
         </>
+      )}
+
+      {/* Keep the drag instructions next to the ghost, using the source-mode badge. */}
+      {((isPending && !data.pendingCreate) || (!isPending && isSource && !data.isCanvasMoving)) && (
+        <Box
+          data-testid="vieweditor-connect-hint"
+          position="absolute"
+          bottom="-22px"
+          left="50%"
+          transform={`translateX(-50%) scale(${1 / zoom})`}
+          transformOrigin="top center"
+          bg="clay.in"
+          color="white"
+          border="1px solid"
+          borderColor="rgba(255,255,255,0.06)"
+          fontSize="9px"
+          px={2}
+          py="2px"
+          rounded="full"
+          whiteSpace="nowrap"
+          pointerEvents="none"
+          zIndex={10}
+        >
+          {isPending
+            ? 'release on element to connect · release on canvas to add'
+            : 'tap element to connect · tap canvas to add'}
+        </Box>
       )}
 
       {/* Drill-down menu for multiple connectors */}
@@ -1450,6 +1455,7 @@ function arePropsEqual(prev: Props, next: Props) {
     return (
       p.isPendingElement === n.isPendingElement &&
       p.pendingCreate === n.pendingCreate &&
+      p.connectedHandleIds === n.connectedHandleIds &&
       p.name === n.name &&
       p.kind === n.kind &&
       p.isCanvasMoving === n.isCanvasMoving

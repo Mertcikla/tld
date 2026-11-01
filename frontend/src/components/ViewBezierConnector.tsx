@@ -3,6 +3,7 @@ import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProp
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
+import { resolvePendingConnectorHandles } from '../pages/ViewEditor/utils'
 import { Z_CONNECTOR_LABEL } from '../utils/zOrder'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import { useTagDragGhost } from './ViewExplorer/TagManager/tagDragGhostState'
@@ -10,6 +11,7 @@ import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
   getLogicalHandleId,
+  getHandleFlowPosition,
 } from '../utils/edgeDistribution'
 
 function truncateConnectorLabel(text: string) {
@@ -34,17 +36,32 @@ export function ViewConnectorConnectionLine({
   toPosition,
 }: ConnectionLineComponentProps) {
   const endHandle = useStore(state => state.connectionEndHandle)
-  const targetNode = useStore(state => endHandle ? state.nodeInternals.get(endHandle.nodeId) : undefined)
+  const targetNode = useStore(state => {
+    if (endHandle) return state.nodeInternals.get(endHandle.nodeId)
+    return [...state.nodeInternals.values()].reverse().find(node => {
+      if (node.id === fromNode?.id || node.type !== 'elementNode' || node.hidden || node.style?.pointerEvents === 'none') return false
+      const origin = node.positionAbsolute ?? node.position
+      return toX >= origin.x && toX <= origin.x + (node.width ?? 180) &&
+        toY >= origin.y && toY <= origin.y + (node.height ?? 85)
+    })
+  })
   const sourceSide = getLogicalHandleId(fromHandle?.id, handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE))!
   // React Flow supplies the opposite source side as toPosition even after snapping.
   // The actual hovered handle must determine the approach direction instead.
-  const targetSide = getLogicalHandleId(endHandle?.handleId, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
+  const targetHandle = endHandle?.handleId ?? (targetNode
+    ? resolvePendingConnectorHandles(fromNode, targetNode, fromHandle?.id ?? sourceSide).targetHandle
+    : null)
+  const targetSide = getLogicalHandleId(targetHandle, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
+  const targetOrigin = targetNode?.positionAbsolute ?? targetNode?.position
+  const bodySnap = !endHandle && targetOrigin && targetHandle
+    ? getHandleFlowPosition(targetOrigin.x, targetOrigin.y, targetNode?.width ?? 180, targetNode?.height ?? 85, targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
+    : null
   const { path } = buildViewConnectorPath({
     routeStyle: routeStyleFromValue(connectionLineType),
     sourceX: fromX,
     sourceY: fromY,
-    targetX: toX,
-    targetY: toY,
+    targetX: bodySnap?.x ?? toX,
+    targetY: bodySnap?.y ?? toY,
     sourcePosition: positionForHandleSide(sourceSide),
     targetPosition: positionForHandleSide(targetSide),
     sourceWidth: fromNode?.width ?? 200,

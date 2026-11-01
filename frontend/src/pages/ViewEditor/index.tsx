@@ -3136,7 +3136,13 @@ function ViewEditorInner({
         layerHighlightColor: undefined,
         forceShowTagPopup: false,
         isPendingElement: true,
-        connectedHandleIds: [],
+        connectedHandleIds: [...new Set(pending.sourceElementIds.filter(id => id !== -1).map(sourceId =>
+          resolvePendingConnectorHandles(
+            rfNodes.find(node => node.id === String(sourceId)),
+            { position: pending.position },
+            pending.sourceHandle,
+          ).targetHandle,
+        ))],
         selectedHandleIds: [],
         reconnectCandidates: [],
         isConnectorHighlighted: false,
@@ -3163,6 +3169,7 @@ function ViewEditorInner({
     canvas.pendingElement,
     canvas.setPendingElementMode,
     existingElementIds,
+    rfNodes,
     placementSummaryByElementId,
     viewId,
   ])
