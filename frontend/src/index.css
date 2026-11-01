@@ -340,15 +340,11 @@ body {
     pointer-events: all;
 }
 
-/* When a node is selected: show handles at full size (matching edge-updater r=6px) */
+/* Selecting a node reveals handles without changing their size or appearance. */
 .react-flow__node.selected .react-flow__handle.element-node-handle.handle-active-slot,
 .react-flow__node.selected .react-flow__handle.element-node-handle.handle-fallback-slot {
     opacity: 1;
     pointer-events: all;
-    width: 12px;
-    height: 12px;
-    border: 1.5px solid rgba(255, 255, 255, 0.85);
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
 }
 
 .react-flow__handle.handle-selected-edge {
