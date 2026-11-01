@@ -796,6 +796,7 @@ export function useCanvasInteractions({
   const connectWasValidRef = useRef(false)
   const connectorDragLastUpdateRef = useRef(0)
   const isReconnectingRef = useRef(false)
+  const childViewShortcutPendingRef = useRef(false)
   const suppressNextConnectorClickRef = useRef(false)
   const suppressNextPaneClickUntilRef = useRef(0)
   const longPressCanvasRef = useRef<{ timer: ReturnType<typeof setTimeout>; clientX: number; clientY: number } | null>(null)
@@ -2652,6 +2653,22 @@ export function useCanvasInteractions({
         toggleMarkdown?.()
         return
       }
+      if (key === 's' && !e.shiftKey) {
+        const selectedNodes = rfNodesRef.current.filter(node => node.selected && node.type === 'elementNode')
+        const selectedNode = selectedNodes.find(node => resolveElementIdFromNode(node) === selectedElement?.id) ?? selectedNodes[0]
+        const elementId = resolveElementIdFromNode(selectedNode) ?? selectedElement?.id
+        if (elementId !== undefined && elementId !== null) {
+          if (e.repeat || childViewShortcutPendingRef.current) return
+          childViewShortcutPendingRef.current = true
+          try {
+            // Reuse the node's open/create child-view action, including edit permissions.
+            await stableOnZoomIn(elementId)
+          } finally {
+            childViewShortcutPendingRef.current = false
+          }
+          return
+        }
+      }
       const cid = viewIdRef.current
       if (!cid) return
       const incoming = incomingLinksRef.current
@@ -2716,7 +2733,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [flowRecording, canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
+  }, [flowRecording, stableOnZoomIn, canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
