@@ -127,6 +127,7 @@ import { useDrawingEngine } from './hooks/useDrawingEngine'
 import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
+  getHandleReconnectZoneAtPoint,
   applyNodeChangesWithStructuralSharing,
   useCanvasInteractions,
   type ClickConnectCursorPosition,
@@ -137,8 +138,8 @@ import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { AUTO_LAYOUT_GRID, findAutoPlacementPosition, nodeRect, planIncrementalLayout, type IncrementalEdge } from '../../utils/autoLayout'
 import { chooseConnectorHandles } from '../../utils/connectorHandles'
-import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
+import { connectorToConnector, findClosestHandles, resolvePendingConnectorHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
+import { DEFAULT_SOURCE_HANDLE_SIDE, getLogicalHandleId } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
@@ -744,6 +745,12 @@ function ViewEditorInner({
   const [renameElementId, setRenameElementId] = useState<number | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
+  const [reconnectHoverZone, setReconnectHoverZone] = useState<Element | null>(null)
+  useEffect(() => {
+    if (!reconnectHoverZone) return
+    reconnectHoverZone.setAttribute('data-pickup-hover', 'true')
+    return () => reconnectHoverZone.removeAttribute('data-pickup-hover')
+  }, [reconnectHoverZone])
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const hoveredElementClearRef = useRef<number | null>(null)
   const hoveredEdgeClearRef = useRef<number | null>(null)
@@ -757,6 +764,17 @@ function ViewEditorInner({
     hoveredEdgeClearRef.current = null
     setHoveredEdgeId(null)
   }, [])
+  useEffect(() => {
+    if (hoveredEdgeId === null && hoveredElementId === null) return
+    const clearStaleHover = (event: PointerEvent) => {
+      if (!(event.target instanceof globalThis.Element)) return
+      // Edge z-order changes can replace the hovered SVG group before it emits leave.
+      if (!event.target.closest('.react-flow__edge, [data-tag-drop-connector-id]')) clearHoveredEdge()
+      if (!event.target.closest('.react-flow__node')) clearHoveredElement()
+    }
+    document.addEventListener('pointermove', clearStaleHover)
+    return () => document.removeEventListener('pointermove', clearStaleHover)
+  }, [hoveredEdgeId, hoveredElementId, clearHoveredEdge, clearHoveredElement])
   const scheduleClearHoveredElement = useCallback(() => {
     if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
     hoveredElementClearRef.current = window.setTimeout(() => {
@@ -3129,7 +3147,13 @@ function ViewEditorInner({
         layerHighlightColor: undefined,
         forceShowTagPopup: false,
         isPendingElement: true,
-        connectedHandleIds: [],
+        connectedHandleIds: [...new Set(pending.sourceElementIds.filter(id => id !== -1).map(sourceId =>
+          resolvePendingConnectorHandles(
+            rfNodes.find(node => node.id === String(sourceId)),
+            { position: pending.position },
+            pending.sourceHandle,
+          ).targetHandle,
+        ))],
         selectedHandleIds: [],
         reconnectCandidates: [],
         isConnectorHighlighted: false,
@@ -3156,6 +3180,7 @@ function ViewEditorInner({
     canvas.pendingElement,
     canvas.setPendingElementMode,
     existingElementIds,
+    rfNodes,
     placementSummaryByElementId,
     viewId,
   ])
@@ -3317,19 +3342,13 @@ function ViewEditorInner({
       .filter((sourceId) => sourceId !== -1)
       .map((sourceId) => {
         const sourceNode = rfNodes.find((node) => node.id === String(sourceId))
-        const handles = sourceNode
-          ? findClosestHandles(sourceNode, pendingElementNode)
-          : { sourceHandle: DEFAULT_SOURCE_HANDLE_SIDE, targetHandle: DEFAULT_TARGET_HANDLE_SIDE }
-        const pendingSourceSide = getLogicalHandleId(pending.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
-        const previewTargetHandle = pending.sourceHandle && pendingSourceSide
-          ? getOppositeHandleSide(pendingSourceSide)
-          : handles.targetHandle
+        const handles = resolvePendingConnectorHandles(sourceNode, pendingElementNode, pending.sourceHandle)
         return {
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          sourceHandle: handles.sourceHandle,
+          targetHandle: handles.targetHandle,
           type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
           className: 'vieweditor-temporary-connector',
           label: '',
@@ -3344,8 +3363,8 @@ function ViewEditorInner({
             direction: 'forward',
             style: previewConnectorStyle,
             url: null,
-            source_handle: pending.sourceHandle ?? handles.sourceHandle,
-            target_handle: previewTargetHandle,
+            source_handle: handles.sourceHandle,
+            target_handle: handles.targetHandle,
             tags: [],
             created_at: '',
             updated_at: '',
@@ -3527,7 +3546,6 @@ function ViewEditorInner({
     onSelectionDragStart, onSelectionDrag, onSelectionDragStop,
     onSelectionStart, onSelectionEnd,
     onConnect, onConnectStart, onConnectEnd,
-    onReconnect, onReconnectStart, onReconnectEnd,
     onEdgeClick, onEdgeContextMenu, onPaneClick, onPaneContextMenu, onPaneMouseMove,
     onMoveStart, onMove, onMoveEnd,
     onTouchStart, onTouchMove, onTouchEnd,
@@ -3546,7 +3564,11 @@ function ViewEditorInner({
 
   const handleRealtimePaneMouseMove = useCallback((event: React.MouseEvent) => {
     onPaneMouseMove(event)
-  }, [onPaneMouseMove])
+    if (event.target === event.currentTarget) {
+      clearHoveredEdge()
+      clearHoveredElement()
+    }
+  }, [onPaneMouseMove, clearHoveredEdge, clearHoveredElement])
 
   const handlePendingPanePointerDownCapture = useCallback((event: React.PointerEvent) => {
     if (!pendingElement || pendingElement.preview || event.button !== 0) return
@@ -4632,6 +4654,18 @@ function ViewEditorInner({
             <Box
               ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-reconnect-hover={reconnectHoverZone ? 'true' : undefined}
+              data-reconnect-enabled={canEdit && !storyRecording ? 'true' : undefined}
+              onPointerMoveCapture={event => {
+                const zone = canEdit && !storyRecording
+                  ? getHandleReconnectZoneAtPoint(event.clientX, event.clientY) : null
+                setReconnectHoverZone(zone)
+              }}
+              onPointerLeave={() => {
+                setReconnectHoverZone(null)
+                clearHoveredEdge()
+                clearHoveredElement()
+              }}
               data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
@@ -4681,13 +4715,12 @@ function ViewEditorInner({
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
                 translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
-                onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 connectionLineStyle={connectionLineStyle}
                 connectionLineType={previewConnectorStyle as ConnectionLineType}
                 connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit && !storyRecording} nodesConnectable={canEdit && !storyRecording} connectionMode={ConnectionMode.Loose} connectionRadius={25}
-                edgesUpdatable={canEdit && !storyRecording} reconnectRadius={0}
+                edgesUpdatable={false} reconnectRadius={0}
                 snapToGrid={snapToGrid || autoLayoutMode}
                 snapGrid={autoLayoutMode ? AUTO_LAYOUT_GRID : SNAP_GRID}
                 deleteKeyCode={null}

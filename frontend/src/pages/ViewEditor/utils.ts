@@ -1,6 +1,7 @@
 import type { Connector } from '../../types'
 import { saveBlobAs, saveDataUrlAs, type DialogFilter } from '../../lib/desktop'
 import type { Node as RFNode } from 'reactflow'
+import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, ensureVisualHandleId, getHandleFlowPosition } from '../../utils/edgeDistribution'
 
 // ── Domain-model conversion ────────────────────────────────────────────────
 
@@ -45,6 +46,37 @@ export function findClosestHandles(
     }
   }
   return { sourceHandle: bestSrc, targetHandle: bestTgt }
+}
+
+/** Shared by the ghost and confirmation, keeping the source slot the user chose. */
+export function resolvePendingConnectorHandles(
+  sourceNode: RFNode | undefined,
+  targetNode: Pick<RFNode, 'position' | 'positionAbsolute' | 'width' | 'height'>,
+  chosenSourceHandle: string | null,
+): { sourceHandle: string; targetHandle: string } {
+  const targetPosition = targetNode.positionAbsolute ?? targetNode.position
+  const target = { ...targetNode, id: 'pending-target', data: {}, position: targetPosition, width: targetNode.width ?? 180, height: targetNode.height ?? 85 }
+  const source = sourceNode ? {
+    ...sourceNode, position: sourceNode.positionAbsolute ?? sourceNode.position,
+    width: sourceNode.width ?? 180, height: sourceNode.height ?? 85,
+  } : undefined
+  const sourceHandle = ensureVisualHandleId(
+    chosenSourceHandle ?? (source ? findClosestHandles(source, target).sourceHandle : null),
+    DEFAULT_SOURCE_HANDLE_SIDE,
+  )!
+  if (!source) return { sourceHandle, targetHandle: ensureVisualHandleId(null, DEFAULT_TARGET_HANDLE_SIDE)! }
+  const sourcePoint = getHandleFlowPosition(source.position.x, source.position.y, source.width, source.height, sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+  let targetHandle = 'left-2'
+  let nearest = Infinity
+  for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+    const point = getHandleFlowPosition(target.position.x, target.position.y, target.width, target.height, side, side)
+    const distance = Math.hypot(point.x - sourcePoint.x, point.y - sourcePoint.y)
+    if (distance < nearest) {
+      nearest = distance
+      targetHandle = `${side}-2`
+    }
+  }
+  return { sourceHandle, targetHandle }
 }
 
 export function findClosestHandleToPoint(

@@ -272,17 +272,17 @@ describe('connector drag placeholder visibility', () => {
 })
 
 describe('connector drag attach handle resolution', () => {
-  it('preserves explicit handle sides instead of choosing closest geometry', () => {
+  it('preserves explicit handle sides and slots instead of choosing closest geometry', () => {
     expect(resolveConnectorDragAttachHandles('bottom-2', 'right-4')).toEqual({
-      sourceHandle: 'bottom',
-      targetHandle: 'right',
+      sourceHandle: 'bottom-2',
+      targetHandle: 'right-4',
     })
   })
 
   it('falls back to default sides when a drag attach has no explicit target handle', () => {
     expect(resolveConnectorDragAttachHandles('top-2', null)).toEqual({
-      sourceHandle: 'top',
-      targetHandle: 'left',
+      sourceHandle: 'top-2',
+      targetHandle: 'left-2',
     })
   })
 })
@@ -372,6 +372,13 @@ describe('connector drop target resolution', () => {
     const zone = new FakeElement({}, { class: 'element-node-reconnect-zone' })
     installPointHitTest([handle, zone])
     expect(getHandleReconnectZoneAtPoint(120, 160)).toBe(zone)
+  })
+
+  it('prioritizes the selected endpoint when its enlarged pickup area overlaps another connector', () => {
+    const other = new FakeElement({}, { class: 'element-node-reconnect-zone' })
+    const selected = new FakeElement({}, { class: 'element-node-reconnect-zone', 'data-selected': 'true' })
+    installPointHitTest([other, selected])
+    expect(getHandleReconnectZoneAtPoint(120, 160)).toBe(selected)
   })
 
   it('uses coordinate hit-testing before event target fallback', () => {

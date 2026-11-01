@@ -17,8 +17,8 @@ import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
   getLogicalHandleId,
-  getVisualHandleIdForGroup,
-  getVisualHandleSlot,
+  ensureVisualHandleId,
+  getVisualHandleSlotFromId,
 } from '../../../utils/edgeDistribution'
 import { buildViewContentLinks, useStore } from '../../../store/useStore'
 import {
@@ -121,55 +121,21 @@ function buildConnectorLayouts(connectors: Connector[], elementMap: Map<number, 
     elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id),
   )
 
-  const handleUsage: Record<string, { id: string; type: 'source' | 'target'; otherNodeCoord: number }[]> = {}
-  filtered.forEach((connector) => {
-    const srcNode = elementMap.get(connector.source_element_id)
-    const tgtNode = elementMap.get(connector.target_element_id)
-    if (!srcNode || !tgtNode) return
-
-    const sourceSide = getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-    const targetSide = getLogicalHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-
-    const srcKey = `${connector.source_element_id}-${sourceSide}`
-    handleUsage[srcKey] ??= []
-    const srcCoord = (sourceSide === 'left' || sourceSide === 'right') ? (tgtNode.position_y ?? 0) : (tgtNode.position_x ?? 0)
-    handleUsage[srcKey].push({ id: String(connector.id), type: 'source', otherNodeCoord: srcCoord })
-
-    const tgtKey = `${connector.target_element_id}-${targetSide}`
-    handleUsage[tgtKey] ??= []
-    const tgtCoord = (targetSide === 'left' || targetSide === 'right') ? (srcNode.position_y ?? 0) : (srcNode.position_x ?? 0)
-    handleUsage[tgtKey].push({ id: String(connector.id), type: 'target', otherNodeCoord: tgtCoord })
-  })
-
-  Object.values(handleUsage).forEach((usages) => {
-    usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
-  })
-
   return filtered.map((connector) => {
-    const edgeId = String(connector.id)
-    const sourceSide = getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-    const targetSide = getLogicalHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-    const srcGroup = handleUsage[`${connector.source_element_id}-${sourceSide}`] ?? []
-    const tgtGroup = handleUsage[`${connector.target_element_id}-${targetSide}`] ?? []
-    const sourceGroupIndex = srcGroup.findIndex((usage) => usage.id === edgeId && usage.type === 'source')
-    const targetGroupIndex = tgtGroup.findIndex((usage) => usage.id === edgeId && usage.type === 'target')
-    const sourceGroupCount = Math.max(srcGroup.length, 1)
-    const targetGroupCount = Math.max(tgtGroup.length, 1)
-    const sourceHandleSlot = getVisualHandleSlot(sourceGroupIndex, sourceGroupCount)
-    const targetHandleSlot = getVisualHandleSlot(targetGroupIndex, targetGroupCount)
-
+    const sourceHandle = ensureVisualHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)!
+    const targetHandle = ensureVisualHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE)!
     return {
       connector,
-      sourceHandle: getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, sourceGroupCount),
-      targetHandle: getVisualHandleIdForGroup(targetSide, targetGroupIndex, targetGroupCount),
-      sourceGroupIndex,
-      sourceGroupCount: srcGroup.length,
-      targetGroupIndex,
-      targetGroupCount: tgtGroup.length,
-      sourceHandleSide: sourceSide,
-      targetHandleSide: targetSide,
-      sourceHandleSlot,
-      targetHandleSlot,
+      sourceHandle,
+      targetHandle,
+      sourceGroupIndex: 0,
+      sourceGroupCount: 1,
+      targetGroupIndex: 0,
+      targetGroupCount: 1,
+      sourceHandleSide: getLogicalHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)!,
+      targetHandleSide: getLogicalHandleId(targetHandle, DEFAULT_TARGET_HANDLE_SIDE)!,
+      sourceHandleSlot: getVisualHandleSlotFromId(sourceHandle)!,
+      targetHandleSlot: getVisualHandleSlotFromId(targetHandle)!,
     }
   })
 }

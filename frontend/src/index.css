@@ -76,15 +76,23 @@ body {
     opacity: 1;
 }
 
-/* Keep React Flow reconnect endpoints interactive, but let the node slot handle
-   be the only visible endpoint marker. */
-.react-flow__edge.selected .react-flow__edgeupdater {
-    fill: transparent;
-    stroke: transparent;
-    stroke-width: 0;
-    opacity: 0;
-    cursor: grab;
-    r: 10px;
+/* Pickup zones provide hit areas only; the existing endpoint is the visual marker. */
+.element-node-reconnect-zone {
+    display: none;
+}
+
+[data-reconnect-enabled="true"] .element-node-reconnect-zone {
+    display: block;
+}
+
+/* Match the coordinate hit test even when an edge's wide hit path covers a grip. */
+[data-reconnect-hover="true"],
+[data-reconnect-hover="true"] * {
+    cursor: grab !important;
+}
+
+[data-connector-preview-active="true"] .element-node-reconnect-zone {
+    display: none;
 }
 
 /* Paths run from source to target, so decreasing dash offset flows forward. */
@@ -109,28 +117,28 @@ body {
 }
 
 /* Animate only the visible editor stroke, keeping hit paths and labels still. */
-.react-flow__edge:hover:not(.selected) .vieweditor-connector > .react-flow__edge-path:first-child {
+.react-flow__edge:is(:hover, .selected) .vieweditor-connector > .react-flow__edge-path:first-child {
     stroke-dasharray: 8 4;
     animation: edge-flow 0.4s linear infinite;
     opacity: 1;
 }
 
-.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="backward"] > .react-flow__edge-path:first-child {
+.react-flow__edge:is(:hover, .selected) .vieweditor-connector[data-connector-direction="backward"] > .react-flow__edge-path:first-child {
     animation-direction: reverse;
 }
 
-.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="both"] > .react-flow__edge-path:first-child {
+.react-flow__edge:is(:hover, .selected) .vieweditor-connector[data-connector-direction="both"] > .react-flow__edge-path:first-child {
     stroke-dasharray: 4 4;
     animation: edge-flow 0.8s ease-in-out infinite alternate;
 }
 
-.react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction="none"] > .react-flow__edge-path:first-child {
+.react-flow__edge:is(:hover, .selected) .vieweditor-connector[data-connector-direction="none"] > .react-flow__edge-path:first-child {
     stroke-dasharray: none;
     animation: edge-pulse 1.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .react-flow__edge:hover:not(.selected) .vieweditor-connector[data-connector-direction] > .react-flow__edge-path:first-child {
+    .react-flow__edge:is(:hover, .selected) .vieweditor-connector[data-connector-direction] > .react-flow__edge-path:first-child {
         animation: none;
     }
 }
@@ -299,7 +307,7 @@ body {
     stroke-width: 24 !important;
 }
 
-/* Hide handles by default; reveal them on hover, during connection, or when already connected */
+/* Handles stay hidden at rest and appear only for an active interaction. */
 .react-flow__handle {
     opacity: 0;
     pointer-events: none;
@@ -321,7 +329,8 @@ body {
     border-radius: 50%;
 }
 
-.react-flow__handle.handle-connected {
+.react-flow__handle.handle-hovered-edge,
+[data-pending="true"] .react-flow__handle.handle-connected {
     opacity: 1;
     pointer-events: all;
 }
@@ -332,15 +341,11 @@ body {
     pointer-events: all;
 }
 
-/* When a node is selected: show handles at full size (matching edge-updater r=6px) */
+/* Selecting a node reveals handles without changing their size or appearance. */
 .react-flow__node.selected .react-flow__handle.element-node-handle.handle-active-slot,
 .react-flow__node.selected .react-flow__handle.element-node-handle.handle-fallback-slot {
     opacity: 1;
     pointer-events: all;
-    width: 12px;
-    height: 12px;
-    border: 1.5px solid rgba(255, 255, 255, 0.85);
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
 }
 
 .react-flow__handle.handle-selected-edge {
@@ -352,30 +357,20 @@ body {
     box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.38);
 }
 
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-active-slot,
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-fallback-slot {
+/* Highlight the exact endpoint being picked up without drawing a second circle
+   or changing the selected handle's size. */
+[data-reconnect-enabled="true"]:not([data-connector-preview-active="true"])
+.react-flow__handle.element-node-handle:has(+ .element-node-reconnect-zone[data-pickup-hover="true"]) {
+    opacity: 1;
+    filter: brightness(1.25);
+    box-shadow: 0 0 8px 2px rgba(var(--accent-rgb), 0.55);
+}
+
+.react-flow__node:hover .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot),
+.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot),
+[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-choice:is(.handle-active-side, .handle-center-slot) {
     opacity: 1;
     pointer-events: all;
-}
-
-.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-visual-slot {
-    opacity: 0;
-    pointer-events: none;
-}
-
-[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-center-slot {
-    opacity: 1;
-    pointer-events: all;
-}
-
-[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-visual-slot {
-    opacity: 0;
-    pointer-events: none;
-}
-
-.react-flow__handle.element-node-handle.handle-hidden-during-create {
-    opacity: 0;
-    pointer-events: none;
 }
 
 /* Alt-drag connector: ring the element currently under the cursor */

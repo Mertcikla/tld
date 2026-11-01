@@ -1,22 +1,18 @@
 import { memo, useCallback, useEffect, useState } from 'react'
-import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode, Position } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
+import { resolvePendingConnectorHandles } from '../pages/ViewEditor/utils'
 import { Z_CONNECTOR_LABEL } from '../utils/zOrder'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import { useTagDragGhost } from './ViewExplorer/TagManager/tagDragGhostState'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
-  getCenterVisualHandleId,
-  getHandleFlowPosition,
   getLogicalHandleId,
+  getHandleFlowPosition,
 } from '../utils/edgeDistribution'
-
-function getNodeFlowOrigin(node: RFNode) {
-  return ((node as { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position)
-}
 
 function truncateConnectorLabel(text: string) {
   const characters = Array.from(text)
@@ -39,45 +35,56 @@ export function ViewConnectorConnectionLine({
   fromPosition,
   toPosition,
 }: ConnectionLineComponentProps) {
-  const sourceFallbackSide = handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE)
-  const sourceSide = getLogicalHandleId(fromHandle?.id, sourceFallbackSide) ?? sourceFallbackSide
-  const sourceHandle = getCenterVisualHandleId(fromHandle?.id ?? sourceSide, sourceSide) ?? sourceSide
-  let finalFromX = fromX
-  let finalFromY = fromY
-  const finalToX = toX
-  const finalToY = toY
-  let finalSourceSide = sourceSide
-  const finalTargetSide = handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE)
-  let sourceWidth = 200
-  let sourceHeight = 100
-  const targetWidth = 200
-  const targetHeight = 100
-
-  if (fromNode) {
-    sourceWidth = fromNode.width ?? sourceWidth
-    sourceHeight = fromNode.height ?? sourceHeight
-    const sourceOrigin = getNodeFlowOrigin(fromNode)
-    const sourcePoint = getHandleFlowPosition(sourceOrigin.x, sourceOrigin.y, sourceWidth, sourceHeight, sourceHandle, sourceSide)
-    finalFromX = sourcePoint.x
-    finalFromY = sourcePoint.y
-    finalSourceSide = sourcePoint.side
-  }
-
+  const endHandle = useStore(state => state.connectionEndHandle)
+  const targetNode = useStore(state => {
+    if (endHandle) return state.nodeInternals.get(endHandle.nodeId)
+    return [...state.nodeInternals.values()].reverse().find(node => {
+      if (node.id === fromNode?.id || node.type !== 'elementNode' || node.hidden || node.style?.pointerEvents === 'none') return false
+      const origin = node.positionAbsolute ?? node.position
+      return toX >= origin.x && toX <= origin.x + (node.width ?? 180) &&
+        toY >= origin.y && toY <= origin.y + (node.height ?? 85)
+    })
+  })
+  const sourceSide = getLogicalHandleId(fromHandle?.id, handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE))!
+  // React Flow supplies the opposite source side as toPosition even after snapping.
+  // The actual hovered handle must determine the approach direction instead.
+  const targetHandle = endHandle?.handleId ?? (targetNode
+    ? resolvePendingConnectorHandles(fromNode, targetNode, fromHandle?.id ?? sourceSide).targetHandle
+    : null)
+  const targetSide = getLogicalHandleId(targetHandle, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
+  const targetOrigin = targetNode?.positionAbsolute ?? targetNode?.position
+  const bodySnap = !endHandle && targetOrigin && targetHandle
+    ? getHandleFlowPosition(targetOrigin.x, targetOrigin.y, targetNode?.width ?? 180, targetNode?.height ?? 85, targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
+    : null
   const { path } = buildViewConnectorPath({
     routeStyle: routeStyleFromValue(connectionLineType),
-    sourceX: finalFromX,
-    sourceY: finalFromY,
-    targetX: finalToX,
-    targetY: finalToY,
-    sourcePosition: positionForHandleSide(finalSourceSide),
-    targetPosition: positionForHandleSide(finalTargetSide),
-    sourceWidth,
-    sourceHeight,
-    targetWidth,
-    targetHeight,
+    sourceX: fromX,
+    sourceY: fromY,
+    targetX: bodySnap?.x ?? toX,
+    targetY: bodySnap?.y ?? toY,
+    sourcePosition: positionForHandleSide(sourceSide),
+    targetPosition: positionForHandleSide(targetSide),
+    sourceWidth: fromNode?.width ?? 200,
+    sourceHeight: fromNode?.height ?? 100,
+    targetWidth: targetNode?.width ?? 200,
+    targetHeight: targetNode?.height ?? 100,
   })
 
   return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
+}
+
+function connectorEndpoint(
+  node: RFNode | undefined, x: number, y: number, position: Position,
+) {
+  if (!node) return { x, y }
+  const origin = node.positionAbsolute ?? node.position
+  // Keep the stroke anchored to the node border whether handles are visible or hidden.
+  switch (position) {
+    case Position.Left: return { x: origin.x, y }
+    case Position.Right: return { x: origin.x + (node.width ?? 180), y }
+    case Position.Top: return { x, y: origin.y }
+    case Position.Bottom: return { x, y: origin.y + (node.height ?? 85) }
+  }
 }
 
 function ViewBezierConnector({
@@ -114,10 +121,12 @@ function ViewBezierConnector({
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
 
-  const finalSourceX = sourceX
-  const finalSourceY = sourceY
-  const finalTargetX = targetX
-  const finalTargetY = targetY
+  const sourceEndpoint = connectorEndpoint(sourceNode, sourceX, sourceY, sourcePosition)
+  const targetEndpoint = connectorEndpoint(targetNode, targetX, targetY, targetPosition)
+  const finalSourceX = sourceEndpoint.x
+  const finalSourceY = sourceEndpoint.y
+  const finalTargetX = targetEndpoint.x
+  const finalTargetY = targetEndpoint.y
 
   const srcW = sourceNode?.width ?? 200
   const srcH = sourceNode?.height ?? 100
@@ -143,10 +152,10 @@ function ViewBezierConnector({
   const interactionPath = routeStyle === 'bezier'
     ? buildViewConnectorPath({
       routeStyle,
-      sourceX: finalSourceX,
-      sourceY: finalSourceY,
-      targetX: finalTargetX,
-      targetY: finalTargetY,
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
       sourcePosition,
       targetPosition,
       sourceWidth: Math.max(srcW - INTERACTION_PADDING * 2, 0),
@@ -211,7 +220,11 @@ function ViewBezierConnector({
         path={path}
         markerStart={markerStart}
         markerEnd={markerEnd}
-        style={isTagDraggedOver && canDropTag ? { ...style, stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : style}
+        style={{
+          ...style,
+          ...(isTagDraggedOver && canDropTag ? { stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : {}),
+          ...(selected ? { strokeWidth: 4 } : {}),
+        }}
         interactionWidth={0}
       />
       <BaseEdge

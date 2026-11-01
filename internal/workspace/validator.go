@@ -120,7 +120,10 @@ func ValidateConnectorValues(c *Connector) error {
 		} // legacy spelling of both
 		valid := false
 		for _, value := range field.allowed {
-			if field.value == value {
+			// Numbered endpoint slots are persisted by the view editor.
+			if field.value == value || ((field.name == "source_handle" || field.name == "target_handle") &&
+				len(field.value) == len(value)+2 && strings.HasPrefix(field.value, value+"-") &&
+				field.value[len(field.value)-1] >= '0' && field.value[len(field.value)-1] <= '4') {
 				valid = true
 				break
 			}

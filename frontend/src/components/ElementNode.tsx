@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Handle, Position, useStore } from 'reactflow'
+import { Handle, Position, useStore, type ReactFlowState } from 'reactflow'
 import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Portal } from '@chakra-ui/react'
 import { LinkIcon } from '@chakra-ui/icons'
 
@@ -352,8 +352,15 @@ function pendingInputRectsEqual(a: PendingInputRect | null, b: PendingInputRect)
     a.viewportHeight === b.viewportHeight
 }
 
-function getReconnectZoneStyle(position: Position, slot: number): React.CSSProperties {
+function getReconnectZoneStyle(position: Position, slot: number, selected: boolean): React.CSSProperties {
   const baseStyle = getVisualHandleStyle(position, slot)
+  if (selected) {
+    const offset = { [position]: '-22px' }
+    return {
+      ...baseStyle, ...offset, width: '44px', height: '44px',
+      transform: position === Position.Top || position === Position.Bottom ? 'translateX(-50%)' : 'translateY(-50%)',
+    }
+  }
 
   switch (position) {
     case Position.Top:
@@ -660,6 +667,17 @@ function PendingElementLabelEditor({
 
 function ElementNode({ data, selected }: Props) {
   const zoom = useStore(zoomSelector)
+  const hoveredHandleKey = useStore(useCallback((state: ReactFlowState) => {
+    const nodeId = String(data.element_id)
+    const handles = new Set<string>()
+    for (const edge of state.edges) {
+      if (!edge.data?.isHovered || edge.hidden || edge.style?.pointerEvents === 'none') continue
+      if (edge.source === nodeId && edge.sourceHandle) handles.add(edge.sourceHandle)
+      if (edge.target === nodeId && edge.targetHandle) handles.add(edge.targetHandle)
+    }
+    return [...handles].sort().join('|')
+  }, [data.element_id]))
+  const hoveredHandleIds = useMemo(() => new Set(hoveredHandleKey.split('|')), [hoveredHandleKey])
   const isPending = !!data.isPendingElement || !!data.pendingCreate
 
   const connectedHandleIds = useMemo(
@@ -683,18 +701,23 @@ function ElementNode({ data, selected }: Props) {
     return sides
   }, [connectedHandleIds])
   const reconnectCandidateByHandle = useMemo(() => {
-    const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target' }>()
+    const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target'; selected: boolean }>()
     const sortedCandidates = [...(data.reconnectCandidates ?? [])].sort((left, right) => {
       if (left.selected !== right.selected) return left.selected ? -1 : 1
       return left.edgeId.localeCompare(right.edgeId)
     })
     for (const candidate of sortedCandidates) {
       if (!next.has(candidate.handleId)) {
-        next.set(candidate.handleId, { edgeId: candidate.edgeId, endpoint: candidate.endpoint })
+        next.set(candidate.handleId, { edgeId: candidate.edgeId, endpoint: candidate.endpoint, selected: candidate.selected })
       }
     }
     return next
   }, [data.reconnectCandidates])
+  const pickupOnlySides = useMemo(() => new Set(
+    (data.reconnectCandidates ?? [])
+      .filter(candidate => candidate.selected)
+      .map(candidate => candidate.handleId.split('-')[0]),
+  ), [data.reconnectCandidates])
   const isMultiSelected = !!data.isMultiSelected
 
   const nodeLogoUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
@@ -868,7 +891,6 @@ function ElementNode({ data, selected }: Props) {
 
   const isSource = data.interactionSourceId === data.element_id
   const isTarget = !!data.interactionSourceId && !isSource
-  const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
 
@@ -914,17 +936,23 @@ function ElementNode({ data, selected }: Props) {
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
+          const isHandleChoice = slot % 2 === 0
+          // Retain anchors for saved endpoints without offering removed slots for new drops.
+          if (!isHandleChoice && !connectedHandleIds.has(handleId)) return null
           const isTagHidden = tagHiddenHandleIds.has(handleId)
+          const pickupOnly = pickupOnlySides.has(side)
+          const reconnectCandidate = reconnectCandidateByHandle.get(handleId)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
-          const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
             'element-node-handle',
+            isHandleChoice ? 'handle-choice' : 'handle-legacy-slot',
+            activeSides.has(side) ? 'handle-active-side' : '',
             slot === HANDLE_SLOT_CENTER_INDEX ? 'handle-center-slot' : 'handle-visual-slot',
-            isPreviewHiddenSlot ? 'handle-hidden-during-create' : '',
             connectedHandleIds.has(handleId) ? 'handle-active-slot' : '',
             isFallbackSlot ? 'handle-fallback-slot' : '',
             connectedHandleIds.has(handleId) ? 'handle-connected' : '',
             selectedHandleIds.has(handleId) ? 'handle-selected-edge' : '',
+            hoveredHandleIds.has(handleId) ? 'handle-hovered-edge' : '',
           ].filter(Boolean).join(' ') || undefined
 
           return (
@@ -934,8 +962,15 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
-                isConnectable={!isPending && !isPreviewHiddenSlot && !isTagHidden}
+                data-handle-choice={isHandleChoice ? 'true' : undefined}
+                isConnectable={!isPending && !isTagHidden && isHandleChoice}
+                isConnectableStart={!pickupOnly && isHandleChoice}
                 onPointerDown={(e: React.PointerEvent) => {
+                  if (pickupOnly || !isHandleChoice) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    return
+                  }
                   if (isPending) return
                   if (data.interactionSourceId === data.element_id) {
                     suppressHandleClickUntil.current = Date.now() + 500
@@ -945,7 +980,7 @@ function ElementNode({ data, selected }: Props) {
                   }
                 }}
                 onMouseDown={(e: React.MouseEvent) => {
-                  if (isPending || e.button !== 0 || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || !isHandleChoice || e.button !== 0 || data.interactionSourceId === data.element_id) return
                   suppressHandleClickUntil.current = Date.now() + 500
                   data.onInteractionStart(data.element_id, {
                     sourceHandle: handleId,
@@ -954,7 +989,7 @@ function ElementNode({ data, selected }: Props) {
                   })
                 }}
                 onTouchStart={(e: React.TouchEvent) => {
-                  if (isPending || data.interactionSourceId === data.element_id) return
+                  if (isPending || pickupOnly || !isHandleChoice || data.interactionSourceId === data.element_id) return
                   const touch = e.touches[0]
                   if (!touch) return
                   suppressHandleClickUntil.current = Date.now() + 500
@@ -967,8 +1002,8 @@ function ElementNode({ data, selected }: Props) {
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
-                  visibility: isTagHidden ? 'hidden' : undefined,
-                  pointerEvents: isPending || isPreviewHiddenSlot || isTagHidden ? 'none' : undefined,
+                  visibility: isTagHidden || (isPending && !connectedHandleIds.has(handleId)) ? 'hidden' : undefined,
+                  pointerEvents: isPending || isTagHidden ? 'none' : undefined,
                 }}
               />
               {!isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
@@ -979,7 +1014,8 @@ function ElementNode({ data, selected }: Props) {
                   data-endpoint={reconnectCandidateByHandle.get(handleId)?.endpoint}
                   data-handle-id={handleId}
                   className="element-node-reconnect-zone"
-                  style={getReconnectZoneStyle(position, slot)}
+                  data-selected={reconnectCandidate?.selected ? 'true' : undefined}
+                  style={getReconnectZoneStyle(position, slot, !!reconnectCandidate?.selected)}
                   pointerEvents="auto"
                   cursor="grab"
                   zIndex={4}
@@ -1318,29 +1354,34 @@ function ElementNode({ data, selected }: Props) {
               </VStack>
             </Box>
           )}
-
-          {/* interaction mode */}
-          <Box
-            position="absolute"
-            bottom="-22px"
-            left="50%"
-            transform={`translateX(-50%) scale(${1 / zoom})`}
-            transformOrigin="top center"
-            bg="clay.in"
-            color="clay.dim"
-            border="1px solid"
-            borderColor="rgba(255,255,255,0.06)"
-            fontSize="9px"
-            px={2}
-            py="2px"
-            rounded="full"
-            whiteSpace="nowrap"
-            pointerEvents="none"
-            zIndex={10}
-          >
-            tap element to connect · tap canvas to add
-          </Box>
         </>
+      )}
+
+      {/* Keep the drag instructions next to the ghost, using the source-mode badge. */}
+      {((isPending && !data.pendingCreate) || (!isPending && isSource && !data.isCanvasMoving)) && (
+        <Box
+          data-testid="vieweditor-connect-hint"
+          position="absolute"
+          bottom="-22px"
+          left="50%"
+          transform={`translateX(-50%) scale(${1 / zoom})`}
+          transformOrigin="top center"
+          bg="clay.in"
+          color="white"
+          border="1px solid"
+          borderColor="rgba(255,255,255,0.06)"
+          fontSize="9px"
+          px={2}
+          py="2px"
+          rounded="full"
+          whiteSpace="nowrap"
+          pointerEvents="none"
+          zIndex={10}
+        >
+          {isPending
+            ? 'release on element to connect · release on canvas to add'
+            : 'tap element to connect · tap canvas to add'}
+        </Box>
       )}
 
       {/* Drill-down menu for multiple connectors */}
@@ -1426,6 +1467,7 @@ function arePropsEqual(prev: Props, next: Props) {
     return (
       p.isPendingElement === n.isPendingElement &&
       p.pendingCreate === n.pendingCreate &&
+      p.connectedHandleIds === n.connectedHandleIds &&
       p.name === n.name &&
       p.kind === n.kind &&
       p.isCanvasMoving === n.isCanvasMoving
