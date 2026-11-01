@@ -39,7 +39,7 @@ test('E shortcut persists the preview source handle on target click', async ({ p
   const sourceNode = nodeByName(page, elements[0].name)
   const targetNode = nodeByName(page, elements[1].name)
   await expect(targetNode).toBeVisible()
-  const expectedSourceHandle = 'top'
+  const expectedSourceHandle = 'top-2'
 
   await sourceNode.click()
   await page.keyboard.press('e')
