@@ -71,7 +71,7 @@ function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: 
 }
 
 /** Cached text/tokens and visible symbol regions only; animation redraws while active. */
-export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent) {
+export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent, bodyBg = '#232732') {
   const w = node.worldW, h = node.worldH, detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
   const source = (node.subKind ?? node.type) === 'code' && node.sourceLink
     ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined
@@ -79,7 +79,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   const pulse = activeHandle ? 0.75 + Math.sin(performance.now() / 220) * 0.2 : 0.5
   const active = (left: string, right: string) => activeHandle === left || activeHandle === right || (!!activeHandle && model.endpoints.get(activeHandle)?.area?.key === right)
   ctx.save(); ctx.globalAlpha = alpha
-  ctx.fillStyle = '#20252d'; ctx.strokeStyle = accent; ctx.lineWidth = 1 / zoom
+  ctx.fillStyle = bodyBg; ctx.strokeStyle = accent; ctx.lineWidth = 1 / zoom
   ctx.beginPath(); ctx.roundRect(0, 0, w, h, 10); ctx.fill(); ctx.stroke(); ctx.clip()
   ctx.fillStyle = headerBg; ctx.fillRect(0.5, 0.5, w - 1, SUB_HEADER - 0.5)
   if (w * zoom < 50) { ctx.restore(); return }
@@ -150,7 +150,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     const count = overflow.areas.length
     const label = [count ? `${count} ${count === 1 ? 'symbol' : 'symbols'}` : '', overflow.connectionCount ? `${overflow.connectionCount} connections` : ''].filter(Boolean).join(' · ')
     if (!label) continue
-    ctx.fillStyle = '#20252d'; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
+    ctx.fillStyle = bodyBg; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
     ctx.strokeStyle = '#455263'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
     ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = symbolAccent
     ctx.fillText(`⋯ ${label} ⋯`, w / 2, overflow.y, w - 50)

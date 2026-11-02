@@ -291,6 +291,7 @@ export function useZUIRenderLoop({
       }
       const renderCtx: RenderContext = {
         canvasBg: theme.canvasBg,
+        sourcePreviewBg: theme.sourcePreviewBg,
         nodeBg: theme.nodeBg,
         accent: theme.accent,
         labelBg: theme.labelBg,

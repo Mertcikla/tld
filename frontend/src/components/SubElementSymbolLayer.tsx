@@ -60,7 +60,7 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
       if (!label) return null
       return <Box key={direction} data-testid={`sub-symbol-ellipsis-${direction}`} data-symbol-handle={overflow.representative?.id}
         position="absolute" top={direction === 'above' ? `${SUB_HEADER}px` : undefined} bottom={direction === 'below' ? 0 : undefined} left={0} right={0} h={`${SUB_ELLIPSIS}px`}
-        bg="#20252d" borderTop={label ? '1px solid' : undefined} borderBottom={label && direction === 'above' ? '1px solid' : undefined} borderColor="whiteAlpha.100" zIndex={6}
+        bg="var(--bg-source-preview, #232732)" borderTop={label ? '1px solid' : undefined} borderBottom={label && direction === 'above' ? '1px solid' : undefined} borderColor="whiteAlpha.100" zIndex={6}
         borderBottomRadius={direction === 'below' ? 'calc(var(--chakra-radii-lg) - 1px)' : undefined} overflow="hidden"
         cursor={count ? 'pointer' : 'default'} title={names || label || undefined}
         onClick={event => {

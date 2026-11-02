@@ -96,6 +96,7 @@ function typeBorderColor(_type: string, alpha = 0.5): string {
 }
 
 interface RendererThemeVars {
+  sourcePreviewBg: string
   canvasBg: string
   nodeBg: string
   accent: string
@@ -115,6 +116,7 @@ interface NavigationHintDraw {
 }
 
 const themeFallbacks: RendererThemeVars = {
+  sourcePreviewBg: '#232732',
   canvasBg: '#0d121e',
   nodeBg: '#2d3748',
   accent: '#63b3ed',
@@ -128,6 +130,7 @@ function refreshThemeVars(): void {
   if (typeof document === 'undefined') return
   const styles = getComputedStyle(document.documentElement)
   cachedThemeVars = {
+    sourcePreviewBg: styles.getPropertyValue('--bg-source-preview').trim() || themeFallbacks.sourcePreviewBg,
     canvasBg: styles.getPropertyValue('--bg-main').trim() || themeFallbacks.canvasBg,
     nodeBg: styles.getPropertyValue('--bg-element').trim() || themeFallbacks.nodeBg,
     accent: styles.getPropertyValue('--accent').trim() || themeFallbacks.accent,
@@ -157,6 +160,7 @@ export function getThemeVars(): RendererThemeVars {
 }
 
 export interface RenderContext {
+  sourcePreviewBg?: string
   canvasBg: string
   nodeBg: string
   accent: string
@@ -970,7 +974,7 @@ function drawSceneNode(
     const activeHandle = hovered?.type === 'node' && hovered.data === layout ? hovered.symbolHandle
       : hovered?.type === 'edge' ? layout.subConnections?.find(connection => connection.id === hovered.data.id)?.handleId : undefined
     const groupTag = layout.tags.find(isElementGroupTag)
-    drawSubElement(ctx, layout, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg, accent)
+    drawSubElement(ctx, layout, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg, accent, renderCtx.sourcePreviewBg)
     drawNodeTags(ctx, layout, renderCtx, { x: 0, y: 0, w, h: SUB_HEADER, drawZoom, drawScreenW, parentAlpha, isHovered, accent })
     return
   }

@@ -137,7 +137,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
       onCommit={async size => {
         await data.onResize!(data.element_id, size.width, size.height)
       }} />}
-    {detail === 'overview' ? renderCard(() => setDetail('code')) : <ElementContainer data-testid="sub-element-container" w={`${width}px`} h={`${height}px`} bg="#20252d"
+    {detail === 'overview' ? renderCard(() => setDetail('code')) : <ElementContainer data-testid="sub-element-container" w={`${width}px`} h={`${height}px`} bg="var(--bg-source-preview, #232732)"
       isSelected={selected} isSource={sourceActive} isTarget={!!data.interactionSourceId && !sourceActive}
       isConnectorHighlighted={!!data.isConnectorHighlighted} hasStack={data.links.length > 0 || data.has_view} kind={data.kind}
       borderTopWidth={data.layerHighlightColor ? '2px' : undefined} borderTopColor={data.layerHighlightColor ?? undefined}

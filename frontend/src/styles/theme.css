@@ -9,6 +9,7 @@
 
     /* Derived background colors */
     --bg-canvas: color-mix(in srgb, var(--bg-main), black 15%);
+    --bg-source-preview: color-mix(in srgb, var(--bg-main), white 6%);
     --bg-header: rgba(var(--bg-main-rgb), 0.96);
     --bg-menu: rgba(var(--bg-main-rgb), 0.98);
     --bg-panel: rgba(var(--bg-main-rgb), 0.96);
