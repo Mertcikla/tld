@@ -151,7 +151,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = groupColor ?? overflow.color
     ctx.fillText(`⋯ ${label} ⋯`, w / 2, overflow.y, w - 50)
   }
-  for (const endpoint of model.endpoints.values()) if (endpoint.visible) {
+  for (const endpoint of model.endpoints.values()) if (endpoint.visible && (endpoint.connected || (endpoint.area && active(endpoint.area.leftId, endpoint.area.rightId)))) {
     ctx.fillStyle = groupColor ?? endpoint.color; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()
   }
   ctx.restore()

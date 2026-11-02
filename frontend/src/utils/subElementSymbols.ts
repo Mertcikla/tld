@@ -102,13 +102,13 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     const rawY = SUB_CONTENT_TOP + (index + 0.5) * rowHeight - scrollTop
     const overflow = rawY < top ? 'above' : rawY > bottom ? 'below' : undefined
     const endpoint: SymbolEndpoint = { id, area, y: overflow ? (overflow === 'above' ? above.y : below.y) : rawY,
-      side: overflow ? 'right' : id.startsWith('left') ? 'left' : 'right', color: area?.color ?? '#a0adbd', visible: visible && !overflow, connected: false, overflow }
+      side: id.startsWith('left') ? 'left' : 'right', color: area?.color ?? '#a0adbd', visible: visible && !overflow, connected: false, overflow }
     endpoints.set(id, endpoint)
     return endpoint
   }
   if (detail !== 'overview') {
     for (const area of areas) if (area.visible) {
-      addEndpoint(area.leftId, area, area.start, connected.includes(area.leftId))
+      addEndpoint(area.leftId, area, area.start, true)
       addEndpoint(area.rightId, area, area.start, true)
     }
     for (const { id, area, index, count } of connections) {
@@ -122,7 +122,10 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     for (const overflow of [above, below]) {
       overflow.representative = overflow.endpoints.find(endpoint => endpoint.id.startsWith('right')) ?? overflow.endpoints[0]
       overflow.color = overflow.representative?.color ?? '#a0adbd'
-      if (overflow.representative) overflow.representative.visible = true
+      for (const side of ['left', 'right'] as const) {
+        const representative = overflow.endpoints.find(endpoint => endpoint.side === side)
+        if (representative) representative.visible = true
+      }
     }
     // Saved line handles and declaration aliases can share a symbol's port.
     // Keep their routing IDs mounted, with a single visible port per position.

@@ -1,10 +1,12 @@
-import type { CSSProperties, MouseEvent } from 'react'
+import { Fragment, type CSSProperties, type MouseEvent } from 'react'
 import { Box, Text } from '@chakra-ui/react'
 import { getSmoothStepPath, Handle, Position } from 'reactflow'
 import { symbolStems, type SymbolArea, type SymbolEndpoint, type SymbolOverflow, type SymbolPresentation } from '../utils/subElementSymbols'
 import { groupHighlightColors } from '../utils/elementGroups'
 import { SUB_ELLIPSIS, SUB_HEADER } from '../utils/subElements'
 import type { NodeData } from './ElementNode'
+import ElementReconnectZone from './ElementReconnectZone'
+import { compareReconnectCandidates } from './elementReconnect'
 
 export interface SymbolInteractions {
   isActive: (area: SymbolArea) => boolean
@@ -71,14 +73,23 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
     })}
     {[...presentation.endpoints.values()].map(endpoint => {
       const active = endpoint.area && interactions.isActive(endpoint.area)
-      return <Handle key={endpoint.id} id={endpoint.id} type="source" position={endpoint.side === 'left' ? Position.Left : Position.Right}
-        isConnectable={canEdit} data-testid={endpoint.visible ? 'sub-symbol-port' : undefined} data-symbol-port={endpoint.visible ? 'true' : undefined}
+      const shown = endpoint.visible && interactions.showStem(endpoint)
+      // Aliases and offscreen symbols share one visible port. Pick up the selected
+      // connection there while retaining its original semantic handle ID.
+      const candidate = endpoint.visible && canEdit && data.onStartHandleReconnect
+        ? [...(data.reconnectCandidates ?? [])].filter(candidate => {
+          const anchor = presentation.endpoints.get(candidate.handleId)
+          return anchor?.side === endpoint.side && anchor.y === endpoint.y && !data.tagHiddenHandleIds?.includes(candidate.handleId)
+        }).sort(compareReconnectCandidates)[0] : undefined
+      const position = endpoint.side === 'left' ? Position.Left : Position.Right
+      return <Fragment key={endpoint.id}><Handle id={endpoint.id} type="source" position={position}
+        isConnectable={canEdit} data-testid={shown ? 'sub-symbol-port' : undefined} data-symbol-port={shown ? 'true' : undefined}
         data-symbol-overflow={endpoint.overflow} data-active={active ? 'true' : undefined} className="sub-symbol-port" title={endpoint.area ? `${endpoint.area.symbol.name} · line ${endpoint.area.symbol.startLine}` : 'Source line'}
         aria-label={endpoint.area ? `Connect ${endpoint.area.symbol.name}` : undefined}
         style={{ ...symbolStyle(endpoint.color), top: endpoint.y, width: PORT_SIZE, height: PORT_SIZE,
           left: endpoint.side === 'left' ? -(PORT_SIZE + CARD_BORDER) / 2 : undefined,
           right: endpoint.side === 'right' ? -(PORT_SIZE + CARD_BORDER) / 2 : undefined,
-          opacity: endpoint.visible ? 1 : 0, pointerEvents: endpoint.visible && canEdit ? 'all' : 'none', background: endpoint.color, border: `2px solid ${endpoint.color}`, zIndex: 9 }}
+          opacity: shown ? 1 : 0, pointerEvents: endpoint.visible && canEdit ? 'all' : 'none', background: endpoint.color, border: `2px solid ${endpoint.color}`, zIndex: 9 }}
         onMouseEnter={() => endpoint.area && interactions.onHover(endpoint.area.key)} onMouseLeave={() => interactions.onHover(null)}
         onClick={event => event.stopPropagation()}
         onMouseDown={event => { if (canEdit && event.button === 0) data.onInteractionStart(data.element_id, { sourceHandle: endpoint.id, clientX: event.clientX, clientY: event.clientY }) }}
@@ -86,6 +97,8 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
           const touch = event.touches[0]
           if (canEdit && touch) data.onInteractionStart(data.element_id, { sourceHandle: endpoint.id, clientX: touch.clientX, clientY: touch.clientY })
         }} />
+        <ElementReconnectZone candidate={candidate} position={position} anchorStyle={{ top: endpoint.y }} zIndex={10} />
+      </Fragment>
     })}
   </>
 }

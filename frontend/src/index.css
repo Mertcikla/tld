@@ -360,7 +360,7 @@ body {
 /* Highlight the exact endpoint being picked up without drawing a second circle
    or changing the selected handle's size. */
 [data-reconnect-enabled="true"]:not([data-connector-preview-active="true"])
-.react-flow__handle.element-node-handle:has(+ .element-node-reconnect-zone[data-pickup-hover="true"]) {
+.react-flow__handle:is(.element-node-handle, .sub-symbol-port):has(+ .element-node-reconnect-zone[data-pickup-hover="true"]) {
     opacity: 1;
     filter: brightness(1.25);
     box-shadow: 0 0 8px 2px rgba(var(--accent-rgb), 0.55);

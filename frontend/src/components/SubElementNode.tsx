@@ -1,3 +1,4 @@
+import { symbolDropHandle } from '../utils/symbolDropHandle'
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
@@ -11,24 +12,27 @@ import type { NodeData } from './ElementNode'
 import { useSubElementLayout } from '../hooks/useSubElementLayout'
 import SubElementLayoutButtons from './SubElementLayoutButtons'
 import SubElementResizeHandle from './SubElementResizeHandle'
-import { isSubElement, SUB_HEADER, subEditorSize, subElementKind, subResizeLayout, type SubDetail } from '../utils/subElements'
+import { isSubElement, SUB_HEADER, subEditorSize, subElementKind, type SubDetail } from '../utils/subElements'
 import { peekSubSource, requestSubSource, subscribeSubSources } from '../utils/subElementSource'
 import { expandCodeTabs, expandCodeTokens, SUB_CODE_FONT_FAMILY } from '../utils/subElementText'
 import { elementTechnologyText, resolveElementIconUrl } from '../utils/elementIcon'
 import { ElementBody } from './NodeBody'
 import ElementTags from './ElementTags'
 import SourceLinkActions from './SourceLinkActions'
+import ElementReconnectZone from './ElementReconnectZone'
+import { compareReconnectCandidates } from './elementReconnect'
+import { getVisualHandleStyle } from '../utils/edgeDistribution'
 
 export default function SubElementNode({ data, selected, renderCard }: { data: NodeData; selected: boolean; renderCard: (onOpenSource: () => void) => ReactNode }) {
   const kind = subElementKind(data)!
   const [draftSize, setDraftSize] = useState<{ width: number; height: number; detail: SubDetail } | null>(null)
-  const { canEdit, viewId } = useViewEditorContext()
+  const { canEdit, viewId, isConnectingConnector, selectedConnector } = useViewEditorContext()
   const { detail: savedDetail, setDetail } = useSubElementLayout(viewId ?? data.view_id, data.element_id, isSubElement(data.kind) ? 'code' : 'overview')
   const detail = draftSize?.detail ?? savedDetail
   const previewSize = useSyncExternalStore(subscribeSourcePreviewSizes, () => readSourcePreviewSize(viewId ?? data.view_id, data.element_id), () => null)
   useEffect(() => {
     if (detail !== 'overview' && !isSubElement(data.kind) && !previewSize) {
-      const size = subEditorSize(kind, null, 'code')
+      const size = subEditorSize(kind, null, detail)
       writeSourcePreviewSize(viewId ?? data.view_id, data.element_id, size)
     }
   }, [detail, data.kind, data.view_id, data.element_id, viewId, kind, previewSize])
@@ -44,6 +48,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const [scrollViewport, setScrollViewport] = useState<{ width: number; height: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const revealedSelection = useRef('')
   const flow = useStoreApi()
   const sourceIdentity = JSON.stringify([data.repo, data.repository_id, data.branch, data.file_path, data.language])
   const sourceLink = useMemo(() => ({ repo: data.repo, repository_id: data.repository_id, branch: data.branch, file_path: data.file_path, language: data.language }), [data.repo, data.repository_id, data.branch, data.file_path, data.language])
@@ -63,6 +68,22 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   for (const id of data.tagHiddenHandleIds ?? []) connectionCounts[id] = 0
   const presentation = buildSymbolPresentation({ kind, source, path: data.file_path ?? '', detail, width, height, scrollTop, connected: data.connectedHandleIds, connectionCounts, groupColor: groupTag ? data.tagColors[groupTag]?.color : undefined })
   const { rowHeight, rowCount } = presentation
+  useEffect(() => {
+    const key = JSON.stringify([detail, sourceIdentity, selectedConnector?.id, data.selectedHandleIds])
+    if (detail === 'overview' || !data.selectedHandleIds?.length) { revealedSelection.current = ''; return }
+    if (revealedSelection.current === key) return
+    const scroller = scrollRef.current
+    const endpoint = data.selectedHandleIds.map(id => presentation.endpoints.get(id)).find(endpoint => endpoint?.area)
+    const area = endpoint?.area
+    if (!scroller || !area) return
+    revealedSelection.current = key
+    const top = area.start * rowHeight, bottom = (area.end + 1) * rowHeight
+    const nextTop = top < scroller.scrollTop + 16 || bottom > scroller.scrollTop + scroller.clientHeight - 16
+      ? Math.max(0, top - 16) : scroller.scrollTop
+    const nextLeft = area.x < scroller.scrollLeft || area.x > scroller.scrollLeft + scroller.clientWidth - 16
+      ? Math.max(0, area.x - 12) : scroller.scrollLeft
+    scroller.scrollTo({ top: nextTop, left: nextLeft, behavior: 'auto' })
+  }, [detail, sourceIdentity, selectedConnector?.id, data.selectedHandleIds, presentation, rowHeight])
   useLayoutEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
@@ -80,8 +101,9 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const reading = detail === 'code'
   const first = Math.min(rowCount, Math.max(0, Math.floor(scrollTop / rowHeight) - 1))
   const last = Math.min(rowCount, first + Math.ceil(visibleHeight / rowHeight) + 3)
+  const connecting = nativeConnecting || isConnectingConnector || data.isCreateConnectMode || data.isClickConnectMode || data.interactionSourceId != null
   const interactions: SymbolInteractions = {
-    showStem: endpoint => endpoint.connected || hoveredSymbol === endpoint.area?.key || nativeConnecting || data.interactionSourceId != null,
+    showStem: endpoint => endpoint.connected || hoveredSymbol === endpoint.area?.key || connecting,
     isActive: area => hoveredSymbol === area.key || selectedSymbol === area.key || [nativeSourceHandle, data.interactionSourceHandleId, ...(data.selectedHandleIds ?? [])].some(id => id && (id === area.leftId || id === area.rightId || presentation.endpoints.get(id)?.area?.key === area.key)),
     onHover: setHoveredSymbol,
     onActivate: (area: SymbolArea, event: MouseEvent<HTMLElement>) => {
@@ -89,7 +111,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
       const selection = window.getSelection()
       if (!data.interactionSourceId && selection && !selection.isCollapsed && scrollRef.current?.contains(selection.anchorNode)) return
       setSelectedSymbol(area.key)
-      if (canEdit && data.interactionSourceId && data.interactionSourceId !== data.element_id) data.onInteractionStart(data.element_id, { sourceHandle: area.leftId, clientX: event.clientX, clientY: event.clientY })
+      if (canEdit && data.interactionSourceId && data.interactionSourceId !== data.element_id) data.onInteractionStart(data.element_id, { sourceHandle: symbolDropHandle(event.currentTarget, event.clientX, String(data.interactionSourceId)) ?? area.leftId, clientX: event.clientX, clientY: event.clientY })
     },
   }
   const geometry = [...presentation.endpoints.values()].map(endpoint => `${endpoint.id}:${endpoint.y}:${endpoint.side}`).join('|')
@@ -100,13 +122,13 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
     flow.getState().updateNodeDimensions([{ id: nodeElement.dataset.id ?? String(data.element_id), nodeElement, forceUpdate: true }])
   }, [flow, data.element_id, width, height, geometry])
   const sourceActive = data.interactionSourceId === data.element_id
+  const reconnectCandidates = canEdit && data.onStartHandleReconnect
+    ? [...(data.reconnectCandidates ?? [])].filter(candidate => !data.tagHiddenHandleIds?.includes(candidate.handleId)).sort(compareReconnectCandidates) : []
   return <Box ref={rootRef} position="relative" w={`${width}px`} h={`${height}px`} data-detail-level={detail} data-testid="vieweditor-node" data-element-id={data.element_id} data-node-name={data.name} aria-selected={selected}>
-    {detail !== 'overview' && data.onResize && <SubElementResizeHandle name={data.name} width={width} height={height} keyboardStep={detail === 'outline' ? 40 : 10}
-      onPreview={size => setDraftSize(size ? subResizeLayout(size, savedSize, savedDetail) : null)}
+    {detail !== 'overview' && data.onResize && <SubElementResizeHandle name={data.name} width={width} height={height} keyboardStep={10}
+      onPreview={size => setDraftSize(size ? { ...size, detail: savedDetail } : null)}
       onCommit={async size => {
-        const next = subResizeLayout(size, savedSize, savedDetail)
-        if (next.detail === 'code') await data.onResize!(data.element_id, next.width, next.height)
-        setDetail(next.detail)
+        await data.onResize!(data.element_id, size.width, size.height)
       }} />}
     {detail === 'overview' ? renderCard(() => setDetail('code')) : <Box w="100%" h="100%" position="relative" bg="#20252d" border="1px solid" borderColor={selected || sourceActive ? 'var(--accent)' : '#455263'} borderRadius="10px" onClick={e => {
     e.stopPropagation()
@@ -156,12 +178,22 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
         </Box>
       </Box>
     </Box>
-    {(['top', 'bottom', 'left', 'right'] as const).flatMap(side => [0, 1, 2, 3, 4].map(slot => <Handle key={`${side}-${slot}`} id={`${side}-${slot}`} type="source" isConnectable={false} className={`element-node-handle handle-choice ${slot === 2 ? 'handle-center-slot' : ''} ${data.connectedHandleIds?.includes(`${side}-${slot}`) ? 'handle-active-slot' : ''}`} position={{ top: Position.Top, bottom: Position.Bottom, left: Position.Left, right: Position.Right }[side]} style={side === 'left' || side === 'right' ? { opacity: 0, top: `calc(50% + ${(slot - 2) * 12}px)` } : { opacity: 0, left: `calc(50% + ${(slot - 2) * 12}px)` }} />))}
+    {(['top', 'bottom', 'left', 'right'] as const).flatMap(side => [0, 1, 2, 3, 4].map(slot => {
+      const id = `${side}-${slot}`, position = { top: Position.Top, bottom: Position.Bottom, left: Position.Left, right: Position.Right }[side]
+      const anchorStyle = getVisualHandleStyle(position, slot)
+      return <Box key={id} position="absolute" inset={0} pointerEvents="none">
+        <Handle id={id} type="source" isConnectable={false} className={`element-node-handle handle-choice ${slot === 2 ? 'handle-center-slot' : ''} ${data.connectedHandleIds?.includes(id) ? 'handle-active-slot' : ''}`} position={position} style={{ ...anchorStyle, opacity: 0 }} />
+        <ElementReconnectZone candidate={reconnectCandidates.find(candidate => candidate.handleId === id)} position={position} anchorStyle={anchorStyle} zIndex={10} />
+      </Box>
+    }))}
     <SubElementSymbolPorts data={data} presentation={presentation} width={width} height={height} scrollTop={scrollTop} scrollLeft={scrollLeft} canEdit={canEdit} interactions={interactions} onReveal={index => {
       if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight)
     }} />
     </Box>}
     <SubElementLayoutButtons detail={detail} onChange={setDetail} />
     {detail === 'overview' && (data.connectedHandleIds ?? []).filter(id => /-(member|line|symbol)-/.test(id)).map(id => <Handle key={id} id={id} type="source" position={id.startsWith('left') ? Position.Left : Position.Right} style={{ top: height / 2, opacity: 0, pointerEvents: 'none' }} />)}
+    {detail === 'overview' && (['left', 'right'] as const).map(side => <ElementReconnectZone key={side}
+      candidate={reconnectCandidates.find(candidate => candidate.handleId.startsWith(`${side}-`) && /-(member|line|symbol)-/.test(candidate.handleId))}
+      position={side === 'left' ? Position.Left : Position.Right} anchorStyle={{ top: height / 2 }} />)}
   </Box>
 }

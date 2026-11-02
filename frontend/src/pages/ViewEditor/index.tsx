@@ -4557,6 +4557,7 @@ function ViewEditorInner({
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
+      isConnectingConnector: isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!reconnectPicking || !!clickConnectMode || interactionSourceId !== null,
       leftPanelOffset: storyPanelOffset,
       isMarkdownOpen, markdownPaneWidth, sidePanelStyle: flatPanels ? 'flat' : undefined
     }}>

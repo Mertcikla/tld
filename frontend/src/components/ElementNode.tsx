@@ -9,6 +9,8 @@ import { ElementBody } from './NodeBody'
 import SubElementNode from './SubElementNode'
 import SourceLinkActions from './SourceLinkActions'
 import ElementTags from './ElementTags'
+import ElementReconnectZone from './ElementReconnectZone'
+import { compareReconnectCandidates, type HandleReconnectCandidate } from './elementReconnect'
 import { subElementKind } from '../utils/subElements'
 import { elementTechnologyText, resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
@@ -357,28 +359,6 @@ function pendingInputRectsEqual(a: PendingInputRect | null, b: PendingInputRect)
     a.viewportHeight === b.viewportHeight
 }
 
-function getReconnectZoneStyle(position: Position, slot: number, selected: boolean): React.CSSProperties {
-  const baseStyle = getVisualHandleStyle(position, slot)
-  if (selected) {
-    const offset = { [position]: '-22px' }
-    return {
-      ...baseStyle, ...offset, width: '44px', height: '44px',
-      transform: position === Position.Top || position === Position.Bottom ? 'translateX(-50%)' : 'translateY(-50%)',
-    }
-  }
-
-  switch (position) {
-    case Position.Top:
-      return { ...baseStyle, top: '-18px', width: '28px', height: '18px', transform: 'translateX(-50%)' }
-    case Position.Bottom:
-      return { ...baseStyle, bottom: '-18px', width: '28px', height: '18px', transform: 'translateX(-50%)' }
-    case Position.Left:
-      return { ...baseStyle, left: '-18px', width: '18px', height: '28px', transform: 'translateY(-50%)' }
-    case Position.Right:
-      return { ...baseStyle, right: '-18px', width: '18px', height: '28px', transform: 'translateY(-50%)' }
-  }
-}
-
 function PendingElementLabelEditor({
   config,
 }: {
@@ -706,14 +686,11 @@ function ElementNode({ data, selected, embeddedCard, onOpenSource }: Props) {
     return sides
   }, [connectedHandleIds])
   const reconnectCandidateByHandle = useMemo(() => {
-    const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target'; selected: boolean }>()
-    const sortedCandidates = [...(data.reconnectCandidates ?? [])].sort((left, right) => {
-      if (left.selected !== right.selected) return left.selected ? -1 : 1
-      return left.edgeId.localeCompare(right.edgeId)
-    })
+    const next = new Map<string, HandleReconnectCandidate>()
+    const sortedCandidates = [...(data.reconnectCandidates ?? [])].sort(compareReconnectCandidates)
     for (const candidate of sortedCandidates) {
       if (!next.has(candidate.handleId)) {
-        next.set(candidate.handleId, { edgeId: candidate.edgeId, endpoint: candidate.endpoint, selected: candidate.selected })
+        next.set(candidate.handleId, candidate)
       }
     }
     return next
@@ -1001,20 +978,8 @@ function ElementNode({ data, selected, embeddedCard, onOpenSource }: Props) {
                   pointerEvents: embeddedCard || isPending || isTagHidden ? 'none' : undefined,
                 }}
               />
-              {!embeddedCard && !isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
-                <Box
-                  position="absolute"
-                  data-testid="vieweditor-node-reconnect-zone"
-                  data-edge-id={reconnectCandidateByHandle.get(handleId)?.edgeId}
-                  data-endpoint={reconnectCandidateByHandle.get(handleId)?.endpoint}
-                  data-handle-id={handleId}
-                  className="element-node-reconnect-zone"
-                  data-selected={reconnectCandidate?.selected ? 'true' : undefined}
-                  style={getReconnectZoneStyle(position, slot, !!reconnectCandidate?.selected)}
-                  pointerEvents="auto"
-                  cursor="grab"
-                  zIndex={4}
-                />
+              {!isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
+                <ElementReconnectZone candidate={reconnectCandidate} position={position} anchorStyle={getVisualHandleStyle(position, slot)} />
               )}
             </Box>
           )

@@ -59,9 +59,10 @@ describe('symbol selection areas and semantic ports', () => {
     const model = buildSymbolPresentation({ ...base, scrollTop: 120, connected: [above, above, below, raw] })
     expect(model.above.connectionCount).toBe(2)
     expect(model.below.connectionCount).toBe(2)
-    expect(model.endpoints.get(above)).toMatchObject({ y: 92, side: 'right', overflow: 'above', visible: true })
-    for (const id of [below, raw]) expect(model.endpoints.get(id)).toMatchObject({ y: 352, side: 'right', overflow: 'below' })
-    expect(model.below.endpoints.filter(endpoint => endpoint.visible)).toHaveLength(1)
+    expect(model.endpoints.get(above)).toMatchObject({ y: 92, side: 'left', overflow: 'above', visible: true })
+    expect(model.endpoints.get(below)).toMatchObject({ y: 352, side: 'right', overflow: 'below' })
+    expect(model.endpoints.get(raw)).toMatchObject({ y: 352, side: 'left', overflow: 'below' })
+    expect(model.below.endpoints.filter(endpoint => endpoint.visible)).toHaveLength(2)
     expect(model.endpoints.size).toBeGreaterThanOrEqual(3)
   })
 
@@ -88,10 +89,10 @@ describe('symbol selection areas and semantic ports', () => {
     const ids = [symbolHandle('right', wrapper), lineHandle('right', 2)]
     const model = buildSymbolPresentation({ ...base, source: doc, connected: ids })
     expect(model.areas.map(area => area.symbol)).toEqual([spec])
-    expect([...model.endpoints.values()].filter(endpoint => endpoint.visible)).toHaveLength(1)
+    expect([...model.endpoints.values()].filter(endpoint => endpoint.visible)).toHaveLength(2)
     expect(model.endpoints.get(symbolHandle('right', spec))?.connected).toBe(true)
     for (const id of ids) expect(model.endpoints.get(id)?.area?.symbol).toEqual(spec)
-    expect(symbolStems(model, 600, 360)).toHaveLength(1)
+    expect(symbolStems(model, 600, 360)).toHaveLength(2)
     expect(buildSymbolPresentation({ ...base, source: doc, detail: 'outline', connected: ids }).areas.map(area => area.symbol)).toEqual([spec])
   })
 
@@ -137,7 +138,7 @@ describe('symbol selection areas and semantic ports', () => {
     expect(model.contentWidth).toBeGreaterThan(area.x + area.width)
     expect(buildSymbolPresentation({ ...base, width: 900, source: doc }).areas[0].width).toBe(area.width)
     // The boundary is outside the viewport until the user scrolls to its right edge.
-    expect(symbolStems(model, 300, 360)).toHaveLength(0)
+    expect(symbolStems(model, 300, 360).filter(stem => stem.endpoint.side === 'right')).toHaveLength(0)
     const scrollLeft = area.x + area.width - 250
     expect(symbolStems(model, 300, 360, 0, scrollLeft)[0].sourceX).toBeCloseTo(250)
   })

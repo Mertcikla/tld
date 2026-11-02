@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ensureVisualHandleId, getHandleSlotOffsetFromId } from './edgeDistribution'
-import { isSubElement, isSubHandle, lineHandle, memberHandle, subDetail, subEditorSize, subElementKind, subHandleY, subResizeLayout, subSize, symbolHandle, subRouteDimension } from './subElements'
+import { isSubElement, isSubHandle, lineHandle, memberHandle, subDetail, subEditorSize, subElementKind, subHandleY, subSize, symbolHandle, subRouteDimension } from './subElements'
 
 it('enables source layouts for repo files and symbols without changing their authored kind', () => {
   const element = { kind: 'service', repo: 'owner/repo', file_path: 'src/api.ts#function_declaration:find' }
@@ -62,27 +62,12 @@ it('keeps saved dimensions stable as an element changes detail with screen size'
   expect(size).toEqual(config)
 })
 
-it('uses fixed editor card and collapsed sizes while retaining the full layout size', () => {
+it('keeps cards fixed and preserves preview sizes independently of layout', () => {
   const config = { width: 900, height: 700 }
   expect(subEditorSize('code', config, 'overview')).toEqual({ width: 180, height: 85 })
-  expect(subEditorSize('code', config, 'outline')).toEqual({ width: 400, height: 240 })
+  expect(subEditorSize('code', config, 'outline')).toEqual(config)
   expect(subEditorSize('code', config, 'code')).toEqual(config)
   expect(config).toEqual({ width: 900, height: 700 })
-})
-
-it('snaps collapsed resize previews to full size on either axis and back when reversed', () => {
-  const start = { width: 400, height: 240 }
-  expect(subResizeLayout({ width: 420, height: 250 }, start, 'outline')).toEqual({ detail: 'outline', ...start })
-  expect(subResizeLayout({ width: 460, height: 240 }, start, 'outline')).toEqual({ detail: 'code', width: 460, height: 280 })
-  expect(subResizeLayout({ width: 400, height: 300 }, start, 'outline')).toEqual({ detail: 'code', width: 440, height: 300 })
-  expect(subResizeLayout({ width: 410, height: 240 }, start, 'outline')).toEqual({ detail: 'outline', ...start })
-})
-
-it('collapses small shrinking full views while preserving narrow or growing full views', () => {
-  const start = { width: 600, height: 360 }
-  expect(subResizeLayout({ width: 420, height: 260 }, start, 'code')).toEqual({ detail: 'outline', width: 400, height: 240 })
-  expect(subResizeLayout({ width: 580, height: 200 }, start, 'code')).toEqual({ detail: 'code', width: 580, height: 200 })
-  expect(subResizeLayout({ width: 300, height: 160 }, { width: 280, height: 160 }, 'code')).toEqual({ detail: 'code', width: 300, height: 160 })
 })
 
 it('folds nested symbols and anchors their endpoints to the enclosing row', async () => {

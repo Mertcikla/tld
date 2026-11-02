@@ -20,23 +20,10 @@ export function subSize(kind?: string | null, value?: SourcePreviewSize | null) 
 }
 export function subEditorSize(kind: string | null | undefined, value: SourcePreviewSize | null | undefined, detail: SubDetail) {
   if (detail === 'overview') return { width: 180, height: 85 }
-  if (detail === 'outline') return { width: 400, height: 240 }
+  if (detail === 'outline' && !value) return { width: 400, height: 240 }
   return subSize(kind, value)
 }
 
-export function subResizeLayout(size: { width: number; height: number }, start: { width: number; height: number }, detail: SubDetail) {
-  const collapsed = subEditorSize('code', undefined, 'outline')
-  const fullWidth = collapsed.width + 40, fullHeight = collapsed.height + 40
-  if (detail === 'outline') {
-    return size.width >= fullWidth || size.height >= fullHeight
-      ? { detail: 'code' as const, width: Math.max(fullWidth, size.width), height: Math.max(fullHeight, size.height) }
-      : { detail: 'outline' as const, ...collapsed }
-  }
-  const shrinking = size.width < start.width || size.height < start.height
-  return shrinking && size.width <= fullWidth && size.height <= fullHeight
-    ? { detail: 'outline' as const, ...collapsed }
-    : { detail: 'code' as const, ...size }
-}
 // Large cards should not force connector control points across nearby cards.
 export const subRouteDimension = (kind: string | null | undefined, size: number, gap: number) => isSubElement(kind) ? Math.min(size, Math.max(24, gap)) : size
 export function subRowHeight() { return SUB_ROW }

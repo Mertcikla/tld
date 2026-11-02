@@ -1,3 +1,4 @@
+import { symbolDropHandle } from '../../../utils/symbolDropHandle'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DrawingCanvasHandle } from '../../../components/DrawingCanvas'
 import {
@@ -107,10 +108,10 @@ function findNodeFromEventTarget(target: EventTarget | null, nodes: RFNode[]) {
   return nodes.find((node) => node.id === nodeId) ?? null
 }
 
-function findHandleIdFromEventTarget(target: EventTarget | null) {
+function findHandleIdFromEventTarget(target: EventTarget | null, clientX: number, sourceNodeId?: string | null) {
   if (!isDomElement(target)) return null
   const handle = target.closest('.react-flow__handle')
-  return handle?.getAttribute('data-handleid') || handle?.id || target.closest('[data-symbol-handle]')?.getAttribute('data-symbol-handle') || null
+  return handle?.getAttribute('data-handleid') || handle?.id || symbolDropHandle(target, clientX, sourceNodeId) || null
 }
 
 function elementsFromClientPoint(clientX: number, clientY: number) {
@@ -131,13 +132,13 @@ export function getHandleReconnectZoneAtPoint(clientX: number, clientY: number):
   return zones.find(zone => zone.getAttribute('data-selected') === 'true') ?? zones[0] ?? null
 }
 
-export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, nodes: RFNode[]): ConnectorDropTarget | null {
+export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, nodes: RFNode[], sourceNodeId?: string | null): ConnectorDropTarget | null {
   const targets = elementsFromClientPoint(clientX, clientY)
   if (!targets) return null
 
   for (const target of targets) {
     const droppedNode = findNodeFromEventTarget(target, nodes)
-    const droppedHandleId = findHandleIdFromEventTarget(target)
+    const droppedHandleId = findHandleIdFromEventTarget(target, clientX, sourceNodeId)
     if (droppedNode || droppedHandleId) {
       return { droppedNode, droppedHandleId }
     }
@@ -146,10 +147,10 @@ export function getConnectorDropTargetAtPoint(clientX: number, clientY: number, 
   return { droppedNode: null, droppedHandleId: null }
 }
 
-export function resolveConnectorDropTarget(eventTarget: EventTarget | null, clientX: number, clientY: number, nodes: RFNode[]): ConnectorDropTarget {
-  return getConnectorDropTargetAtPoint(clientX, clientY, nodes) ?? {
+export function resolveConnectorDropTarget(eventTarget: EventTarget | null, clientX: number, clientY: number, nodes: RFNode[], sourceNodeId?: string | null): ConnectorDropTarget {
+  return getConnectorDropTargetAtPoint(clientX, clientY, nodes, sourceNodeId) ?? {
     droppedNode: findNodeFromEventTarget(eventTarget, nodes),
-    droppedHandleId: findHandleIdFromEventTarget(eventTarget),
+    droppedHandleId: findHandleIdFromEventTarget(eventTarget, clientX, sourceNodeId),
   }
 }
 
@@ -311,6 +312,13 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
   const targets = elementsFromClientPoint(clientX, clientY)
   if (!targets?.length) return null
 
+  for (const target of targets) {
+    if (!isDomElement(target) || target.closest('.react-flow__handle')) continue
+    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
+    const handleId = symbolDropHandle(target, clientX, excludedNodeId)
+    if (nodeId && nodeId !== excludedNodeId && handleId) return { nodeId, handleId }
+  }
+
   let nearestHandle: { nodeId: string; handleId: string; distance: number } | null = null
   for (const handle of document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot), .react-flow__handle[data-symbol-port="true"]')) {
     if (!isDomElement(handle)) continue
@@ -331,7 +339,7 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
 
   for (const target of targets) {
     if (!isDomElement(target)) continue
-    const handleId = findHandleIdFromEventTarget(target)
+    const handleId = findHandleIdFromEventTarget(target, clientX, excludedNodeId)
     const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
     if (!nodeId || nodeId === excludedNodeId || !handleId) continue
     return { nodeId, handleId }
@@ -1748,7 +1756,7 @@ export function useCanvasInteractions({
       return
     }
     const { clientX, clientY } = point
-    const { droppedNode, droppedHandleId } = resolveConnectorDropTarget(event.target, clientX, clientY, interactionNodes)
+    const { droppedNode, droppedHandleId } = resolveConnectorDropTarget(event.target, clientX, clientY, interactionNodes, sourceId)
     const flowPos = screenToFlowPositionRef.current({ x: clientX, y: clientY })
     if (droppedNode?.id === sourceId) {
       clearPendingConnectionRefs()
@@ -1840,7 +1848,7 @@ export function useCanvasInteractions({
       const current = altConnectorDragRef.current
       if (!current) return
       const interactionNodes = getInteractionNodes()
-      const hit = getConnectorDropTargetAtPoint(moveEvent.clientX, moveEvent.clientY, interactionNodes)
+      const hit = getConnectorDropTargetAtPoint(moveEvent.clientX, moveEvent.clientY, interactionNodes, sourceNode.id)
       const flowPos = screenToFlowPositionRef.current({ x: moveEvent.clientX, y: moveEvent.clientY })
       const target = resolveAltConnectorTarget(
         sourceNode.id,
@@ -1872,7 +1880,7 @@ export function useCanvasInteractions({
       const sourceNodeCurrent = interactionNodes.find((node) => node.id === current.sourceNodeId)
       if (!sourceNodeCurrent) return
 
-      const hit = getConnectorDropTargetAtPoint(upEvent.clientX, upEvent.clientY, interactionNodes)
+      const hit = getConnectorDropTargetAtPoint(upEvent.clientX, upEvent.clientY, interactionNodes, sourceNode.id)
       const flowPos = screenToFlowPositionRef.current({ x: upEvent.clientX, y: upEvent.clientY })
       const target = resolveAltConnectorTarget(
         sourceNode.id,
@@ -2170,7 +2178,7 @@ export function useCanvasInteractions({
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
       const nodes = getInteractionNodes()
-      const { droppedNode: bodyTarget, droppedHandleId: symbolTargetHandle } = resolveConnectorDropTarget(e.target, e.clientX, e.clientY, nodes)
+      const { droppedNode: bodyTarget, droppedHandleId: symbolTargetHandle } = resolveConnectorDropTarget(e.target, e.clientX, e.clientY, nodes, clickConnectMode.sourceNodeId)
       const hit = findNearestHandleTargetInCache(handleTargets, e.clientX, e.clientY)
       const targetNode = bodyTarget?.id === clickConnectMode.sourceNodeId || bodyTarget?.id === PENDING_ELEMENT_NODE_ID
         ? undefined

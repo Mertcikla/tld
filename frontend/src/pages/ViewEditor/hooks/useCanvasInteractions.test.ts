@@ -47,6 +47,8 @@ const hadOriginalDocument = 'document' in globalThis
 class FakeElement {
   id = ''
 
+  getBoundingClientRect() { return { left: 100, right: 200 } }
+
   constructor(
     private readonly closestResults: Record<string, FakeElement | null>,
     private readonly attrs: Record<string, string> = {},
@@ -359,6 +361,9 @@ describe('connector drop target resolution', () => {
     installPointHitTest([token])
     expect(resolveConnectorDropTarget(null, 120, 160, [node('1'), node('2')])).toEqual({
       droppedNode: node('2'), droppedHandleId: 'left-symbol-method%3AUser.save',
+    })
+    expect(resolveConnectorDropTarget(null, 180, 160, [node('1'), node('2')])).toEqual({
+      droppedNode: node('2'), droppedHandleId: 'right-symbol-method%3AUser.save',
     })
   })
 
