@@ -199,3 +199,14 @@ describe('ZUI edge hover index', () => {
   })
 
 })
+
+it('routes source line handles on previews without stored element detail', async () => {
+  const { scrollSubElement } = await import('./subElements')
+  const source = node('source-scroll', 200, 0, 0, {
+    type: 'service', subKind: 'code', subDetail: 'code', worldW: 520, worldH: 180,
+  })
+  const target = node('target', 201, 800, 0)
+  const edge = { id: 2, sourceId: source.id, targetId: target.id, sourceHandle: 'right-line-3', targetHandle: 'left-2', type: 'straight', label: '', direction: 'forward' }
+  expect(buildEdgeRoutePoints(source, target, edge).points[0]).toMatchObject({ x: 520, y: 144 })
+  expect(scrollSubElement(source, 24, 0.2)).toBe(false)
+})

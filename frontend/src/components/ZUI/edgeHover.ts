@@ -1,3 +1,5 @@
+import { isDetailedSubElement, isSubHandle, subRouteDimension } from '../../utils/subElements'
+import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
 import { getExpandThresholds, transitionT } from './layoutEngine'
@@ -115,6 +117,7 @@ export function buildEdgeRoutePoints(
   edge: DiagramGroupLayout['edges'][number],
   sourceSlotScale = 1,
   targetSlotScale = 1,
+  detailZoom = 1,
 ): { points: EdgeRoutePoint[]; midX: number; midY: number } {
   const sourcePoint = getHandleFlowPosition(
     source.worldX,
@@ -132,6 +135,10 @@ export function buildEdgeRoutePoints(
     edge.targetHandle,
     DEFAULT_TARGET_HANDLE_SIDE,
   )
+  const sourceAnchor = subNodeHandleAnchor(source, edge.sourceHandle, detailZoom)
+  const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, detailZoom)
+  if (sourceAnchor) { sourcePoint.x = source.worldX + sourceAnchor.x; sourcePoint.y = source.worldY + sourceAnchor.y; sourcePoint.side = sourceAnchor.side }
+  if (targetAnchor) { targetPoint.x = target.worldX + targetAnchor.x; targetPoint.y = target.worldY + targetAnchor.y; targetPoint.side = targetAnchor.side }
   for (const [point, handle, slotScale] of [
     [sourcePoint, edge.sourceHandle, sourceSlotScale],
     [targetPoint, edge.targetHandle, targetSlotScale],
@@ -147,11 +154,11 @@ export function buildEdgeRoutePoints(
     const dy = Math.abs(targetPoint.y - sourcePoint.y)
     const sourceStem = Math.max(
       (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? dx : dy) * 0.5,
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? source.worldW : source.worldH) * 0.5,
+      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? subRouteDimension(source.subKind ?? source.type, source.worldW, dx) : subRouteDimension(source.subKind ?? source.type, source.worldH, dy)) * 0.5,
     )
     const targetStem = Math.max(
       (targetPoint.side === 'left' || targetPoint.side === 'right' ? dx : dy) * 0.5,
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? target.worldW : target.worldH) * 0.5,
+      (targetPoint.side === 'left' || targetPoint.side === 'right' ? subRouteDimension(target.subKind ?? target.type, target.worldW, dx) : subRouteDimension(target.subKind ?? target.type, target.worldH, dy)) * 0.5,
     )
     const cp1 = {
       x: sourcePoint.x + (sourcePoint.side === 'left' ? -sourceStem : sourcePoint.side === 'right' ? sourceStem : 0),
@@ -268,6 +275,7 @@ export function buildEdgeSpatialIndex(
         [source, target, edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE, 'source'],
         [target, source, edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE, 'target'],
       ] as const) {
+        if (isSubHandle(handle)) continue
         const side = getLogicalHandleId(handle, fallback) ?? fallback
         const key = `${node.id}:${side}`
         const bucket = usages.get(key) ?? []
@@ -286,7 +294,7 @@ export function buildEdgeSpatialIndex(
     }
 
     function visualNode(node: LayoutNode): LayoutNode {
-      const cap = node.children.length === 0 ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
+      const cap = node.children.length === 0 && !isDetailedSubElement(node.subKind ?? node.type, node.subDetail, node.worldW, node.worldH, zoom * scale) ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
       return {
         ...node,
         worldX: node.worldX + node.worldW * (1 - cap) / 2,
@@ -306,7 +314,7 @@ export function buildEdgeSpatialIndex(
         ...edge,
         sourceHandle: handles.get(`${i}:source`) ?? edge.sourceHandle,
         targetHandle: handles.get(`${i}:target`) ?? edge.targetHandle,
-      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW)
+      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW, zoom * scale)
       const points = route.points.map((point) => ({ x: offsetX + point.x * scale, y: offsetY + point.y * scale }))
       const first = points[0]
       const last = points[points.length - 1]

@@ -1,5 +1,6 @@
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { sourcePreviewSizeRevision, subscribeSourcePreviewSizes } from '../../utils/sourcePreviewSize'
 import { useBreakpointValue } from '@chakra-ui/react'
 import type { FlowFocus } from '../../flows/model'
 import { presentZUIFlow } from '../../flows/presentation'
@@ -111,10 +112,13 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
+  const previewRevision = useSyncExternalStore(subscribeSourcePreviewSizes, sourcePreviewSizeRevision, () => 0)
   const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
-  }, [data, changeOverlays])
+  // Preview sizes are stored outside the workspace graph and invalidate its layout.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, changeOverlays, previewRevision])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])

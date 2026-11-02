@@ -1,3 +1,6 @@
+import { isSubElement } from '../../utils/subElements'
+import { scrollSubElement, subscribeSubScroll, subSymbolAtPoint } from './subElements'
+import { subscribeSubSources } from '../../utils/subElementSource'
 // src/components/ZUI/useZUIInteraction.ts
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
@@ -292,9 +295,18 @@ export function useZUIInteraction(
   const groupsRef = useRef<DiagramGroupLayout[]>(groups)
   const hiddenTagsRef = useRef<ReadonlySet<string>>(new Set(hiddenTags))
   const edgeSpatialIndexRef = useRef<EdgeSpatialIndex | null>(null)
-  const edgeSpatialIndex = useMemo(() => buildEdgeSpatialIndex(
-    groups, viewState.zoom, getExpandThresholds(canvasWidth || 1200), new Set(hiddenTags),
-  ), [groups, viewState.zoom, canvasWidth, hiddenTags])
+  const [symbolGeometryVersion, setSymbolGeometryVersion] = useState(0)
+  useEffect(() => {
+    const invalidate = () => setSymbolGeometryVersion(version => version + 1)
+    const unsubscribeScroll = subscribeSubScroll(invalidate)
+    const unsubscribeSource = subscribeSubSources(invalidate)
+    return () => { unsubscribeScroll(); unsubscribeSource() }
+  }, [])
+  const edgeSpatialIndex = useMemo(() => {
+    // Endpoint positions change when source symbols load or their rows scroll.
+    void symbolGeometryVersion
+    return buildEdgeSpatialIndex(groups, viewState.zoom, getExpandThresholds(canvasWidth || 1200), new Set(hiddenTags))
+  }, [groups, viewState.zoom, canvasWidth, hiddenTags, symbolGeometryVersion])
   edgeSpatialIndexRef.current = edgeSpatialIndex
   const bboxRef = useRef<BBox | undefined>(bbox)
   const onZoomRef = useRef(onZoom)
@@ -458,6 +470,14 @@ export function useZUIInteraction(
         e.clientY <= rect.bottom
 
       if (!isInsideCanvas) return
+      if (e.altKey && !e.ctrlKey) {
+        const view = viewStateRef.current
+        const hit = hitTestZUIRenderedNode(screenToWorldX(e.clientX - rect.left, view), screenToWorldY(e.clientY - rect.top, view), groupsRef.current, view, getExpandThresholds(rect.width), hiddenTagsRef.current)
+        if (hit && isSubElement(hit.node.type) && scrollSubElement(hit.node, e.deltaY * (e.deltaMode === 1 ? 24 : 1), view.zoom * hit.cumulativeScale)) {
+          e.preventDefault()
+          return
+        }
+      }
 
       // Heuristic to distinguish between trackpad and physical mouse wheel:
       // 1. If ctrlKey is true, it's a pinch (trackpad) or Ctrl+Wheel. We always zoom.
@@ -611,6 +631,7 @@ export function useZUIInteraction(
         setHoveredItem({
           type: 'node',
           data: node,
+          symbolHandle: subSymbolAtPoint(node, view.zoom * deepest.cumulativeScale, (worldX - absX) / deepest.cumulativeScale, (worldY - absY) / deepest.cumulativeScale),
           absX,
           absY,
           absW,

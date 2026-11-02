@@ -352,6 +352,16 @@ describe('viewport zoom helpers', () => {
 })
 
 describe('connector drop target resolution', () => {
+  it('maps a padded symbol area to its exact semantic endpoint', () => {
+    const targetNode = new FakeElement({}, { 'data-id': '2' })
+    const symbol = new FakeElement({}, { 'data-symbol-handle': 'left-symbol-method%3AUser.save' })
+    const token = new FakeElement({ '.react-flow__node': targetNode, '[data-symbol-handle]': symbol })
+    installPointHitTest([token])
+    expect(resolveConnectorDropTarget(null, 120, 160, [node('1'), node('2')])).toEqual({
+      droppedNode: node('2'), droppedHandleId: 'left-symbol-method%3AUser.save',
+    })
+  })
+
   it('blocks handles and nodes covered by the flow panel or its controls', () => {
     const nodeElement = new FakeElement({}, { 'data-id': '2' })
     const zone = new FakeElement({ '.react-flow__node': nodeElement }, { class: 'element-node-reconnect-zone' })

@@ -1,3 +1,4 @@
+import { isDetailedSubElement } from '../../utils/subElements'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { transitionT } from './layoutEngine'
 
@@ -167,7 +168,7 @@ function hitTestNodes(
 
     if (selfAlpha < SELF_HOVER_ALPHA_MIN) continue
 
-    const cap = !hasChildren ? Math.min(1, thresholds.end / screenW) : 1
+    const cap = !hasChildren && !isDetailedSubElement(node.type, node.subDetail, node.worldW, node.worldH, view.zoom * parentAbsScale) ? Math.min(1, thresholds.end / screenW) : 1
     const visualW = absW * cap
     const visualH = absH * cap
     const visualX = absX + (absW - visualW) / 2

@@ -1,14 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Handle, Position, useStore, type ReactFlowState } from 'reactflow'
-import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Portal } from '@chakra-ui/react'
+import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Portal, Popover, PopoverTrigger, PopoverContent, PopoverBody } from '@chakra-ui/react'
 import { LinkIcon } from '@chakra-ui/icons'
 
 import type { LibraryElement, PlacedElement, ViewConnector, Tag } from '../types'
-import { isElementGroupTag } from '../utils/elementGroups'
-import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
-import { resolveElementIconUrl } from '../utils/elementIcon'
+import SubElementNode from './SubElementNode'
+import SourceLinkActions from './SourceLinkActions'
+import ElementTags from './ElementTags'
+import { subElementKind } from '../utils/subElements'
+import { elementTechnologyText, resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
 import { KbdHint, ShortcutHint } from './PanelUI'
 import { vscodeBridge } from '../lib/vscodeBridge'
@@ -187,13 +189,14 @@ function VscodeCodePreview({
   )
 }
 
-interface NodeData extends PlacedElement {
+export interface NodeData extends PlacedElement {
   links: ViewConnector[]        // child (zoom-in) connectors
   parentLinks: ViewConnector[]  // parent (zoom-out) connectors
   parentViewId?: number | null
   onZoomIn: (elementId: number) => void
   onZoomOut: (elementId: number) => void
   onNavigateToDiagram: (viewId: number) => void
+  onResize?: (elementId: number, width: number, height: number) => Promise<void>
   onSelect: (obj: PlacedElement) => void
   onInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   onConnectTo: (elementId: number) => void
@@ -201,8 +204,8 @@ interface NodeData extends PlacedElement {
   onRemove: (elementId: number) => void
   onHoverZoom: (elementId: number, type: 'in' | 'out' | null) => void
   isZoomHovered: 'in' | 'out' | null
+  interactionSourceHandleId?: string | null
   interactionSourceId: number | null
-  onOpenCodePreview?: (elementId: number) => void
   isClickConnectMode?: boolean
   isCreateConnectMode?: boolean
   tagColors: Record<string, Tag>
@@ -235,6 +238,8 @@ export interface PendingElementCreateData {
 interface Props {
   data: NodeData
   selected: boolean
+  onOpenSource?: () => void
+  embeddedCard?: boolean
 }
 
 // Flat icon button used for zoom-in / zoom-out.
@@ -665,7 +670,7 @@ function PendingElementLabelEditor({
   )
 }
 
-function ElementNode({ data, selected }: Props) {
+function ElementNode({ data, selected, embeddedCard, onOpenSource }: Props) {
   const zoom = useStore(zoomSelector)
   const hoveredHandleKey = useStore(useCallback((state: ReactFlowState) => {
     const nodeId = String(data.element_id)
@@ -722,18 +727,7 @@ function ElementNode({ data, selected }: Props) {
 
   const nodeLogoUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
 
-  const technologyLinkCount = (data.technology_connectors || []).filter((l) => !!l.label).length
-  const technologyParts = (data.technology || '')
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean)
-  const technologyCount = technologyLinkCount > 0 ? technologyLinkCount : technologyParts.length
-
-  const showTechnologyText = !nodeLogoUrl || technologyCount > 1
-  const technologyText =
-    showTechnologyText
-      ? (data.technology || (technologyLinkCount > 1 ? data.technology_connectors.map((l) => l.label).join(', ') : undefined))
-      : undefined
+  const technologyText = elementTechnologyText(data.technology, data.technology_connectors, !!nodeLogoUrl)
 
   const [, bumpNameFontGeneration] = useReducer((value: number) => value + 1, 0)
   useEffect(
@@ -896,7 +890,7 @@ function ElementNode({ data, selected }: Props) {
 
   return (
     <ElementContainer
-      data-testid="vieweditor-node"
+      data-testid={embeddedCard ? undefined : 'vieweditor-node'}
       data-element-id={data.element_id}
       data-node-name={data.name}
       data-pending={isPending ? 'true' : undefined}
@@ -963,7 +957,7 @@ function ElementNode({ data, selected }: Props) {
                 id={handleId}
                 className={className}
                 data-handle-choice={isHandleChoice ? 'true' : undefined}
-                isConnectable={!isPending && !isTagHidden && isHandleChoice}
+                isConnectable={!embeddedCard && !isPending && !isTagHidden && isHandleChoice}
                 isConnectableStart={!pickupOnly && isHandleChoice}
                 onPointerDown={(e: React.PointerEvent) => {
                   if (pickupOnly || !isHandleChoice) {
@@ -1001,12 +995,13 @@ function ElementNode({ data, selected }: Props) {
                 }}
                 style={{
                   ...getVisualHandleStyle(position, slot),
+                  ...(embeddedCard ? { opacity: 0, pointerEvents: 'none' as const } : {}),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
                   visibility: isTagHidden || (isPending && !connectedHandleIds.has(handleId)) ? 'hidden' : undefined,
-                  pointerEvents: isPending || isTagHidden ? 'none' : undefined,
+                  pointerEvents: embeddedCard || isPending || isTagHidden ? 'none' : undefined,
                 }}
               />
-              {!isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
+              {!embeddedCard && !isTagHidden && data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
                 <Box
                   position="absolute"
                   data-testid="vieweditor-node-reconnect-zone"
@@ -1122,74 +1117,10 @@ function ElementNode({ data, selected }: Props) {
         pb={2}
       />
 
-      {/* Tags Dots & Hover Overlay */}
-      {!isPending && data.tags?.some((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)) && (
-        <Box
-          position="absolute"
-          bottom="8px"
-          left="8px"
-          zIndex={10}
-          role="group"
-        >
-          {/* Tag Dots (up to 5) */}
-          <HStack spacing={1} _groupHover={{ opacity: 0 }}>
-            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).slice(0, 5).map((tag, i) => (
-              <Box
-                key={i}
-                w="6px"
-                h="6px"
-                rounded="full"
-                bg={data.tagColors[tag]?.color || 'var(--accent)'}
-                boxShadow="0 0 3px rgba(0,0,0,0.3)"
-                transition="all 0.2s"
-              />
-            ))}
-            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).length > 5 && (
-              <Text fontSize="8px" fontWeight="bold" color="whiteAlpha.600" lineHeight={1}>
-                +{data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).length - 5}
-              </Text>
-            )}
-          </HStack>
+      {!isPending && <ElementTags tags={data.tags} tagColors={data.tagColors} forceShowTagPopup={data.forceShowTagPopup} isCanvasMoving={data.isCanvasMoving} />}
 
-          {/* Hover Menu: Expanding tags at -45 degree angle */}
-          <VStack
-            position="absolute"
-            bottom="-4px"
-            left="-4px"
-            align="start"
-            spacing={1}
-            opacity={data.forceShowTagPopup && !data.isCanvasMoving ? 1 : 0}
-            visibility={data.forceShowTagPopup && !data.isCanvasMoving ? 'visible' : 'hidden'}
-            transform={data.forceShowTagPopup && !data.isCanvasMoving ? 'scale(1) translate(0px, 0px)' : 'scale(0.2) translate(10px, 10px)'}
-            transformOrigin="bottom left"
-            transition="all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275)"
-            _groupHover={{ opacity: 1, visibility: 'visible', transform: 'scale(1) translate(0px, 0px)' }}
-            pointerEvents="none"
-          >
-            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).map((tag) => (
-              <Box
-                key={tag}
-                bg="var(--bg-panel)"
-                border="1px solid"
-                borderColor="whiteAlpha.300"
-                rounded="full"
-                px={2}
-                py="1px"
-                boxShadow="0 4px 12px rgba(0,0,0,0.5)"
-                whiteSpace="nowrap"
-              >
-                <HStack spacing={1.5}>
-                  <Box w="6px" h="6px" rounded="full" bg={data.tagColors[tag]?.color || 'var(--accent)'} />
-                  <Text fontSize="10px" fontWeight="700" color="white">{tag}</Text>
-                </HStack>
-              </Box>
-            ))}
-          </VStack>
-        </Box>
-      )}
-
-      {/* Code Preview Icon/Link in Bottom Right Corner */}
-      {!isPending && !window.__TLD_VSCODE__ && (data.repo || data.url) && (
+      {/* Source link actions */}
+      {(!embeddedCard || onOpenSource) && !isPending && (!window.__TLD_VSCODE__ || onOpenSource) && (data.repo || data.repository_id || data.url) && (
         <HStack
           position="absolute"
           bottom="8px"
@@ -1198,7 +1129,9 @@ function ElementNode({ data, selected }: Props) {
           spacing={1}
           align="center"
         >
-          {(data.repo || data.url) && !window.__TLD_VSCODE__ && (
+          {!onOpenSource && (data.repo || data.repository_id) ? (
+            <Popover isLazy placement="top-end"><PopoverTrigger><Box as="button" aria-label="Source link actions" onClick={(event: React.MouseEvent) => event.stopPropagation()} onPointerDown={(event: React.PointerEvent) => event.stopPropagation()}><LinkIcon w={2.5} h={2.5} /></Box></PopoverTrigger><PopoverContent w="auto" bg="var(--bg-panel)"><PopoverBody><SourceLinkActions element={data} /></PopoverBody></PopoverContent></Popover>
+          ) : (
             <Tooltip
               label={
                 data.repo
@@ -1222,8 +1155,8 @@ function ElementNode({ data, selected }: Props) {
                 transition="all 0.15s"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation()
-                  if (data.repo) {
-                    data.onOpenCodePreview?.(data.element_id)
+                  if (onOpenSource) {
+                    onOpenSource()
                   } else if (data.url) {
                     openExternalUrl(data.url)
                   }
@@ -1238,7 +1171,7 @@ function ElementNode({ data, selected }: Props) {
       )}
 
       {/* VSCode specific file link with hover preview */}
-      {!isPending && window.__TLD_VSCODE__ && data.file_path && (
+      {!embeddedCard && !onOpenSource && !isPending && window.__TLD_VSCODE__ && data.file_path && (
         <HStack
           position="absolute"
           bottom="8px"
@@ -1484,8 +1417,10 @@ function arePropsEqual(prev: Props, next: Props) {
     p.parentLinks === n.parentLinks &&
     p.isZoomHovered === n.isZoomHovered &&
     p.interactionSourceId === n.interactionSourceId &&
+    p.interactionSourceHandleId === n.interactionSourceHandleId &&
     p.onZoomIn === n.onZoomIn &&
     p.onZoomOut === n.onZoomOut &&
+    p.onResize === n.onResize &&
     p.onSelect === n.onSelect &&
     p.onHoverZoom === n.onHoverZoom &&
     p.isCanvasMoving === n.isCanvasMoving &&
@@ -1496,6 +1431,7 @@ function arePropsEqual(prev: Props, next: Props) {
     p.onNavigateToDiagram === n.onNavigateToDiagram &&
     p.technology_connectors === n.technology_connectors &&
     p.repo === n.repo &&
+    p.repository_id === n.repository_id &&
     p.branch === n.branch &&
     p.file_path === n.file_path &&
     p.language === n.language &&
@@ -1514,4 +1450,9 @@ function arePropsEqual(prev: Props, next: Props) {
   )
 }
 
-export default memo(ElementNode, arePropsEqual)
+function ElementNodeSwitch(props: Props) {
+  return subElementKind(props.data) && !props.data.isPendingElement
+    ? <SubElementNode {...props} renderCard={onOpenSource => <ElementNode {...props} embeddedCard onOpenSource={(props.data.repo || props.data.repository_id) && sourceLinkKind(props.data.file_path) === 'file' ? onOpenSource : undefined} />} />
+    : <ElementNode {...props} />
+}
+export default memo(ElementNodeSwitch, arePropsEqual)

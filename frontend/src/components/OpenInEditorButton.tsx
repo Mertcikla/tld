@@ -20,8 +20,8 @@ function githubFileUrl(repo: string, branch: string | null | undefined, filePath
   return line && line > 0 ? `${blob}#L${line}` : blob
 }
 
-export default function OpenInEditorButton({ repo, repositoryId, filePath, line, branch, borderless = false }: {
-  repo: string; repositoryId?: string | null; filePath: string; line?: number | null; branch?: string | null; borderless?: boolean
+export default function OpenInEditorButton({ repo, repositoryId, filePath, line, branch, borderless = false, iconOnly = false, fallbackToGithub = true }: {
+  repo: string; repositoryId?: string | null; filePath: string; line?: number | null; branch?: string | null; borderless?: boolean; iconOnly?: boolean; fallbackToGithub?: boolean
 }) {
   const [openingEditor, setOpeningEditor] = useState(false)
   const [editorAvailable, setEditorAvailable] = useState(true)
@@ -59,7 +59,10 @@ export default function OpenInEditorButton({ repo, repositoryId, filePath, line,
   }
 
   const buttonProps = {
-    leftIcon: <ExternalLinkIcon w="12px" h="12px" />,
+    leftIcon: iconOnly ? undefined : <ExternalLinkIcon w="12px" h="12px" />,
+    minW: iconOnly ? '24px' : undefined,
+    w: iconOnly ? '24px' : undefined,
+    px: iconOnly ? 0 : undefined,
     size: 'xs' as const,
     variant: borderless ? ('ghost' as const) : ('outline' as const),
     color: 'whiteAlpha.700',
@@ -83,12 +86,12 @@ export default function OpenInEditorButton({ repo, repositoryId, filePath, line,
   // Self-hosted servers cannot open the caller's editor. Fall back to the public
   // remote when one is configured, otherwise disable the action.
   if (!editorAvailable) {
-    const target = githubFileUrl(repo, branch, filePath, line)
+    const target = fallbackToGithub ? githubFileUrl(repo, branch, filePath, line) : null
     if (target) {
       return (
         <Tooltip label="Open on GitHub" placement="bottom">
           <Button as="a" href={target} target="_blank" rel="noreferrer" aria-label="Open on GitHub" {...buttonProps}>
-            GitHub
+            {iconOnly ? <ExternalLinkIcon /> : 'GitHub'}
           </Button>
         </Tooltip>
       )
@@ -96,7 +99,7 @@ export default function OpenInEditorButton({ repo, repositoryId, filePath, line,
     return (
       <Tooltip label="Open in editor is unavailable for this deployment" placement="bottom">
         <Button aria-label="Open in editor unavailable" isDisabled {...buttonProps}>
-          Open
+          {iconOnly ? <ExternalLinkIcon /> : 'Open'}
         </Button>
       </Tooltip>
     )
@@ -110,7 +113,7 @@ export default function OpenInEditorButton({ repo, repositoryId, filePath, line,
         onClick={handleOpenInEditor}
         {...buttonProps}
       >
-        Open
+        {iconOnly ? <ExternalLinkIcon /> : 'Open'}
       </Button>
     </Tooltip>
   )

@@ -1,3 +1,5 @@
+import { readSourcePreviewSize, writeSourcePreviewSize } from '../../utils/sourcePreviewSize'
+import { subElementKind } from '../../utils/subElements'
 import { connectorTagsForDrag } from './connectorTagDrop'
 import { getTagDragSource, useTagDragGhost } from '../../components/ViewExplorer/TagManager/tagDragGhostState'
 import { filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
@@ -64,7 +66,6 @@ import ElementPanel from '../../components/ElementPanel'
 import ElementPanelCollaboration from '../../components/ElementPanelCollaboration'
 import MergeDialog from '../../components/MergeDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
-import CodePreviewPanel from '../../components/CodePreviewPanel'
 import ConnectorPanel from '../../components/ConnectorPanel'
 import ConnectorPanelCollaboration from '../../components/ConnectorPanelCollaboration'
 import ElementLibrary from '../../components/ElementInventory'
@@ -414,6 +415,7 @@ function elementUpdatePayload(element: WorkspaceElement) {
   }
 }
 
+
 function connectorUpdatePayload(connector: Connector) {
   return {
     source_element_id: connector.source_element_id,
@@ -671,7 +673,6 @@ function ViewEditorInner({
   const viewDetails = useDisclosure()
   const exportModal = useDisclosure()
   const importModal = useDisclosure()
-  const codePreview = useDisclosure()
   const mergeDialog = useDisclosure()
   const duplicatePasteConfirm = useDisclosure()
   const [mergeSourceElement, setMergeSourceElement] = useState<WorkspaceElement | null>(null)
@@ -725,8 +726,6 @@ function ViewEditorInner({
   const openViewDetailsRef = useRef(viewDetails.onToggle)
   openViewDetailsRef.current = viewDetails.onToggle
 
-  const openCodePreviewRef = useRef(codePreview.onOpen)
-  openCodePreviewRef.current = codePreview.onOpen
 
   const openExportModalRef = useRef(exportModal.onOpen)
   openExportModalRef.current = exportModal.onOpen
@@ -826,7 +825,6 @@ function ViewEditorInner({
     setSelectedEdge(null)
     setSelectedProxyConnectorDetails(null)
   }
-  const [previewElement, setPreviewElement] = useState<PlacedElement | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(() => {
     if (typeof window === 'undefined') return false
     const stored = localStorage.getItem('diag:libraryOpen')
@@ -1028,7 +1026,6 @@ function ViewEditorInner({
   const workspaceGraphSnapshot = useWorkspaceGraphSnapshot(true)
   const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings('editor')
 
-  const previewViewElementsRef = useRef<PlacedElement[]>([])
 
   const handleSetActiveTags = useCallback((tags: string[]) => {
     setActiveTags(tags)
@@ -1063,6 +1060,9 @@ function ViewEditorInner({
   const stableOnNavigateToViewRef = useRef<(id: number) => void>(() => { })
   const stableOnRemoveElementRef = useRef<(id: number) => Promise<void>>(async () => { })
 
+  const stableOnResizeElementRef = useRef<(elementId: number, width: number, height: number) => Promise<void>>(async () => {})
+  const stableOnResizeElement = useCallback((elementId: number, width: number, height: number) => stableOnResizeElementRef.current(elementId, width, height), [])
+
   const data = useViewData({
     viewId,
     interactionSourceId,
@@ -1077,6 +1077,7 @@ function ViewEditorInner({
     tagColors,
     workspaceSnapshot: workspaceGraphSnapshot,
     draggedConnectorTags,
+    stableOnResizeElement: canEdit ? stableOnResizeElement : undefined,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
@@ -1090,20 +1091,13 @@ function ViewEditorInner({
         setSelectedElement({
           id: obj.element_id, name: obj.name, description: obj.description, kind: obj.kind,
           technology: obj.technology, url: obj.url, logo_url: obj.logo_url,
-          technology_connectors: obj.technology_connectors, tags: obj.tags, repo: obj.repo,
+          technology_connectors: obj.technology_connectors, tags: obj.tags, repo: obj.repo, repository_id: obj.repository_id,
           branch: obj.branch, file_path: obj.file_path, language: obj.language,
           bypass_noise_gate: obj.bypass_noise_gate ?? false,
           created_at: '', updated_at: '', has_view: false, view_label: null,
         })
         openElementPanelRef.current()
       })
-    }, []),
-    stableOnOpenCodePreview: useCallback((elementId: number) => {
-      const obj = previewViewElementsRef.current.find((o) => o.element_id === elementId)
-      if (obj) {
-        setPreviewElement(obj)
-        openCodePreviewRef.current()
-      }
     }, []),
     stableOnInteractionStart: useCallback((elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => {
       stableOnInteractionStartRef.current(elementId, options)
@@ -2200,7 +2194,6 @@ function ViewEditorInner({
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams, viewElements])
 
-  previewViewElementsRef.current = viewElements
 
   const handleUnsupportedMutation = useCallback(() => {
     clearEditHistory()
@@ -2781,6 +2774,23 @@ function ViewEditorInner({
     }
   }, [applyElementSaved, flushElementEditSession])
 
+  const handleResizeElement = useCallback(async (elementId: number, width: number, height: number) => {
+    if (!viewId) return
+    const element = resolveElementForUpdate(elementId, selectedElement, allElements, viewElements)
+    if (!subElementKind(element)) return
+    const before = readSourcePreviewSize(viewId, elementId)
+    const after = { width, height }
+    if (before?.width === width && before.height === height) return
+    flushElementEditSession(elementId)
+    writeSourcePreviewSize(viewId, elementId, after)
+    pushEditAction({
+      undo: async () => { writeSourcePreviewSize(viewId, elementId, before) },
+      redo: async () => { writeSourcePreviewSize(viewId, elementId, after) },
+    })
+  }, [viewId, selectedElement, allElements, viewElements, flushElementEditSession, pushEditAction])
+
+  useEffect(() => { stableOnResizeElementRef.current = handleResizeElement }, [handleResizeElement])
+
   const handleElementPanelClose = useCallback(() => {
     finalizeElementEditSession()
     elementPanel.onClose()
@@ -2951,6 +2961,9 @@ function ViewEditorInner({
     onFitView: safeFitView,
     setSnapToGrid,
     autoLayoutEnabled: autoLayoutMode,
+    onMoveStateChange: useCallback((moving: boolean) => {
+      containerRef.current?.toggleAttribute('data-canvas-moving', moving)
+    }, []),
   })
 
   // Wire stable placeholders to the real implementations from canvas hook
@@ -3134,7 +3147,6 @@ function ViewEditorInner({
         onZoomOut: noopAsync,
         onNavigateToDiagram: noop,
         onSelect: noop,
-        onOpenCodePreview: noop,
         onInteractionStart: noop,
         onConnectTo: noopAsync,
         onStartHandleReconnect: undefined,
@@ -5100,7 +5112,6 @@ function ViewEditorInner({
           elementPanelAfterContentSlot={resolvedElementPanelAfterContentSlot}
         />
 
-        <CodePreviewPanel isOpen={codePreview.isOpen} onClose={codePreview.onClose} element={previewElement} hasBackdrop={isMobileLayout} />
 
         <ConnectorPanel
           isOpen={connectorPanel.isOpen} onClose={handleConnectorPanelClose} connector={selectedEdge}

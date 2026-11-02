@@ -110,7 +110,7 @@ function findNodeFromEventTarget(target: EventTarget | null, nodes: RFNode[]) {
 function findHandleIdFromEventTarget(target: EventTarget | null) {
   if (!isDomElement(target)) return null
   const handle = target.closest('.react-flow__handle')
-  return handle?.getAttribute('data-handleid') || handle?.id || null
+  return handle?.getAttribute('data-handleid') || handle?.id || target.closest('[data-symbol-handle]')?.getAttribute('data-symbol-handle') || null
 }
 
 function elementsFromClientPoint(clientX: number, clientY: number) {
@@ -247,7 +247,7 @@ function getConnectorDragTargetAtPoint(clientX: number, clientY: number): Connec
   for (const target of targets) {
     if (!isDomElement(target)) continue
     const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id') || undefined
-    const isHandle = !!target.closest('.react-flow__handle')
+    const isHandle = !!target.closest('.react-flow__handle') || !!target.closest('[data-symbol-handle]')
     if (isHandle && nodeId !== PENDING_ELEMENT_NODE_ID) return { nodeId, isHandle: true }
     if (nodeId === PENDING_ELEMENT_NODE_ID) {
       sawPendingNode = true
@@ -260,7 +260,7 @@ function getConnectorDragTargetAtPoint(clientX: number, clientY: number): Connec
 }
 
 function collectHandleTargets(excludeNodeId?: string): HandleTarget[] {
-  const handles = document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot)')
+  const handles = document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot), .react-flow__handle[data-symbol-port="true"]')
   const targets: HandleTarget[] = []
 
   for (const handle of handles) {
@@ -312,7 +312,7 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
   if (!targets?.length) return null
 
   let nearestHandle: { nodeId: string; handleId: string; distance: number } | null = null
-  for (const handle of document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot)')) {
+  for (const handle of document.querySelectorAll('.react-flow__handle[data-handle-choice="true"]:is(.handle-active-side, .handle-center-slot), .react-flow__handle[data-symbol-port="true"]')) {
     if (!isDomElement(handle)) continue
     const nodeId = handle.closest('.react-flow__node')?.getAttribute('data-id')
     if (!nodeId || nodeId === excludedNodeId) continue
@@ -331,10 +331,10 @@ function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNo
 
   for (const target of targets) {
     if (!isDomElement(target)) continue
-    const handle = target.closest('.react-flow__handle')
+    const handleId = findHandleIdFromEventTarget(target)
     const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
-    if (!nodeId || nodeId === excludedNodeId || !handle) continue
-    return { nodeId, handleId: handle.getAttribute('data-handleid') || handle.id || null }
+    if (!nodeId || nodeId === excludedNodeId || !handleId) continue
+    return { nodeId, handleId }
   }
 
   for (const target of targets) {
@@ -2170,15 +2170,15 @@ export function useCanvasInteractions({
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
       const nodes = getInteractionNodes()
-      const bodyTarget = resolveConnectorDropTarget(e.target, e.clientX, e.clientY, nodes).droppedNode
+      const { droppedNode: bodyTarget, droppedHandleId: symbolTargetHandle } = resolveConnectorDropTarget(e.target, e.clientX, e.clientY, nodes)
       const hit = findNearestHandleTargetInCache(handleTargets, e.clientX, e.clientY)
       const targetNode = bodyTarget?.id === clickConnectMode.sourceNodeId || bodyTarget?.id === PENDING_ELEMENT_NODE_ID
         ? undefined
         : bodyTarget ?? nodes.find(node => node.id === hit.hoveredNodeId)
       const targetHandle = targetNode
-        ? hit.hoveredNodeId === targetNode.id && hit.hoveredHandleId
+        ? symbolTargetHandle ?? (hit.hoveredNodeId === targetNode.id && hit.hoveredHandleId
           ? hit.hoveredHandleId
-          : resolvePendingConnectorHandles(nodes.find(node => node.id === clickConnectMode.sourceNodeId), targetNode, clickConnectMode.sourceHandle).targetHandle
+          : resolvePendingConnectorHandles(nodes.find(node => node.id === clickConnectMode.sourceNodeId), targetNode, clickConnectMode.sourceHandle).targetHandle)
         : undefined
       setClickConnectCursorPos(hit.snapPos)
       setSyncedClickConnectMode((prev) => {

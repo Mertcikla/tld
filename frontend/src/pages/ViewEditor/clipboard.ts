@@ -385,3 +385,4 @@ function readTechnologyConnectors(value: unknown): TechnologyConnector[] | null 
   }
   return connectors
 }
+

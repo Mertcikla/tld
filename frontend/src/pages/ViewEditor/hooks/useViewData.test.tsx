@@ -18,7 +18,7 @@ function Harness({ selected = emptyTags, hidden = emptyTags, hovered = null, col
     viewId: null, interactionSourceId: null, clickConnectMode: null, selectedConnector: connectorSelection,
     activeTags: selected, draggedConnectorTags: dragged, hiddenLayerTags: hidden, hoveredLayerTags: hovered, hoveredLayerColor: color, tagColors,
     stableOnZoomIn: asyncNoop, stableOnZoomOut: asyncNoop, stableOnNavigateToView: noop,
-    stableOnSelect: noop, stableOnOpenCodePreview: noop, stableOnInteractionStart: noop,
+    stableOnSelect: noop, stableOnInteractionStart: noop,
     stableOnConnectTo: asyncNoop, stableOnStartHandleReconnect: noop, stableOnRemoveElement: asyncNoop,
     stableOnHoverZoom: noop, hoveredZoomRef,
   })
@@ -126,6 +126,20 @@ describe('editor canvas tags', () => {
 
 
 describe('connector handle placement', () => {
+  it('keeps semantic source handles on file-linked elements of ordinary types', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let renderer: ReturnType<typeof create>
+    act(() => { renderer = create(<QueryClientProvider client={client}><Harness /></QueryClientProvider>) })
+    const source = { ...placed(1, []), repository_id: 'indexed', file_path: 'api.ts#L2-L5' }
+    const link = { ...connector(10, 1, 2, []), source_handle: 'right-line-2' }
+    act(() => useStore.setState({ viewElements: [source, placed(2, [])], connectors: [link] }))
+    expect(useStore.getState().edges[0].sourceHandle).toBe('right-line-2')
+    act(() => useStore.setState({ viewElements: [placed(1, []), placed(2, [])] }))
+    expect(useStore.getState().edges[0].sourceHandle).toBe('right-2')
+    act(() => renderer.unmount())
+    client.clear()
+  })
+
   it('preserves chosen slots when neighbors move, are added, or are removed', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     let renderer: ReturnType<typeof create>

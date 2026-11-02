@@ -1,3 +1,5 @@
+import { subElementKind, subRouteDimension } from '../utils/subElements'
+import { subHandleFlowPosition, symbolHandleAtFlowPoint } from '../utils/subElementDom'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode, Position } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
@@ -45,17 +47,18 @@ export function ViewConnectorConnectionLine({
         toY >= origin.y && toY <= origin.y + (node.height ?? 85)
     })
   })
-  const sourceSide = getLogicalHandleId(fromHandle?.id, handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE))!
+  const sourceSide = subHandleFlowPosition(fromNode, fromHandle?.id)?.side ?? getLogicalHandleId(fromHandle?.id, handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE))!
   // React Flow supplies the opposite source side as toPosition even after snapping.
   // The actual hovered handle must determine the approach direction instead.
   const targetHandle = endHandle?.handleId ?? (targetNode
-    ? resolvePendingConnectorHandles(fromNode, targetNode, fromHandle?.id ?? sourceSide).targetHandle
+    ? symbolHandleAtFlowPoint(targetNode, toX, toY) ?? resolvePendingConnectorHandles(fromNode, targetNode, fromHandle?.id ?? sourceSide).targetHandle
     : null)
-  const targetSide = getLogicalHandleId(targetHandle, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
+  const symbolSnap = subHandleFlowPosition(targetNode, targetHandle)
+  const targetSide = symbolSnap?.side ?? getLogicalHandleId(targetHandle, handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE))!
   const targetOrigin = targetNode?.positionAbsolute ?? targetNode?.position
-  const bodySnap = !endHandle && targetOrigin && targetHandle
+  const bodySnap = symbolSnap ?? (!endHandle && targetOrigin && targetHandle
     ? getHandleFlowPosition(targetOrigin.x, targetOrigin.y, targetNode?.width ?? 180, targetNode?.height ?? 85, targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
-    : null
+    : null)
   const { path } = buildViewConnectorPath({
     routeStyle: routeStyleFromValue(connectionLineType),
     sourceX: fromX,
@@ -128,10 +131,10 @@ function ViewBezierConnector({
   const finalTargetX = targetEndpoint.x
   const finalTargetY = targetEndpoint.y
 
-  const srcW = sourceNode?.width ?? 200
-  const srcH = sourceNode?.height ?? 100
-  const tgtW = targetNode?.width ?? 200
-  const tgtH = targetNode?.height ?? 100
+  const srcW = subRouteDimension(subElementKind(sourceNode?.data), sourceNode?.width ?? 200, Math.abs(finalTargetX - finalSourceX))
+  const srcH = subRouteDimension(subElementKind(sourceNode?.data), sourceNode?.height ?? 100, Math.abs(finalTargetY - finalSourceY))
+  const tgtW = subRouteDimension(subElementKind(targetNode?.data), targetNode?.width ?? 200, Math.abs(finalTargetX - finalSourceX))
+  const tgtH = subRouteDimension(subElementKind(targetNode?.data), targetNode?.height ?? 100, Math.abs(finalTargetY - finalSourceY))
 
   const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
   const { path, labelX, labelY } = buildViewConnectorPath({

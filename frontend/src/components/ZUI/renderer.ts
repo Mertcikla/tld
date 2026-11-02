@@ -1,3 +1,5 @@
+import { isDetailedSubElement, subRouteDimension, SUB_HEADER } from '../../utils/subElements'
+import { drawSubElement, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
@@ -721,6 +723,99 @@ function drawGroupLabel(
   ctx.restore()
 }
 
+function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderCtx: RenderContext, { x, y, w, h, drawZoom, drawScreenW, parentAlpha, isHovered, accent }: {
+  x: number; y: number; w: number; h: number; drawZoom: number; drawScreenW: number; parentAlpha: number; isHovered: boolean; accent: string
+}) {
+  // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
+  // idle = tag-colored dots bottom-left; element or tag-menu hover = vertical
+  // stack of pills (color dot + name).
+  {
+    const tags = visibleNodeTags(layout.tags)
+    if (tags.length > 0 && parentAlpha > 0.05) {
+      const highlighted = isTagHighlighted(tags)
+      if ((isHovered || highlighted) && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
+        // Scale chips gently with the visible card, and keep them clear of its
+        // rounded corners even when the card is much larger than the editor size.
+        const chipScale = clamp(h * drawZoom / VIEW_EDITOR_NODE_H, 1, 1.6)
+        const chipUnit = chipScale / drawZoom
+        const insetX = Math.max(w * TAG_DOT_INSET_X_TO_NODE_W, 6 * chipUnit)
+        const insetY = Math.max(h * TAG_DOT_INSET_Y_TO_NODE_H, 6 * chipUnit)
+        const pillH = 18 * chipUnit
+        const pillGap = 4 * chipUnit
+        const pillPadX = 8 * chipUnit
+        const dotR = 3 * chipUnit
+        const fontSize = 10 * chipUnit
+        ctx.save()
+        ctx.font = `700 ${fontSize}px ${ZUI_FONT_FAMILY}`
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        const pillWidths = tags.map((tag) => {
+          const textW = ctx.measureText(tag).width
+          return pillPadX * 2 + dotR * 2 + 4 * chipUnit + textW
+        })
+        let pillBottom = y + h - insetY
+        for (let i = 0; i < tags.length; i += 1) {
+          const tag = tags[i]
+          const pillW = Math.min(pillWidths[i], w - insetX * 2)
+          const pillX = x + insetX
+          const pillY = pillBottom - pillH
+          if (pillY < y + insetY) break
+          ctx.globalAlpha = parentAlpha
+          ctx.beginPath()
+          ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2)
+          ctx.fillStyle = renderCtx.labelBg
+          ctx.fill()
+          ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+          ctx.lineWidth = 1 / drawZoom
+          ctx.stroke()
+          const dotCX = pillX + pillPadX + dotR
+          const dotCY = pillY + pillH / 2
+          ctx.beginPath()
+          ctx.arc(dotCX, dotCY, dotR, 0, Math.PI * 2)
+          ctx.fillStyle = tagColorFor(tag, accent)
+          ctx.fill()
+          ctx.fillStyle = '#fff'
+          const textX = dotCX + dotR + 4 * chipUnit
+          ctx.fillText(tag, textX, dotCY + 0.5 / drawZoom, Math.max(0, pillW - (textX - pillX) - pillPadX))
+          pillBottom = pillY - pillGap
+        }
+        ctx.restore()
+      } else if (drawScreenW > 50) {
+        const dotD = h * TAG_DOT_TO_NODE_H
+        const dotR = dotD / 2
+        const gap = h * TAG_DOT_GAP_TO_NODE_H
+        const insetX = w * TAG_DOT_INSET_X_TO_NODE_W
+        const insetY = h * TAG_DOT_INSET_Y_TO_NODE_H
+        const maxDots = 5
+        const shown = tags.slice(0, maxDots)
+        ctx.save()
+        ctx.globalAlpha = parentAlpha
+        shown.forEach((tag, i) => {
+          const cx = x + insetX + dotR + i * (dotD + gap)
+          const cy = y + h - insetY - dotR
+          ctx.beginPath()
+          ctx.arc(cx, cy, dotR, 0, Math.PI * 2)
+          ctx.fillStyle = tagColorFor(tag, accent)
+          ctx.fill()
+        })
+        if (tags.length > maxDots) {
+          ctx.font = `700 ${h * TAG_OVERFLOW_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
+          ctx.fillStyle = 'rgba(255,255,255,0.6)'
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(
+            `+${tags.length - maxDots}`,
+            x + insetX + dotR + maxDots * (dotD + gap),
+            y + h - insetY - dotR,
+          )
+        }
+        ctx.restore()
+      }
+    }
+  }
+
+}
+
 function drawGrid(
   ctx: CanvasRenderingContext2D,
   view: ZUIViewState,
@@ -870,6 +965,15 @@ function drawSceneNode(
 
   const isHovered = renderCtx.hoveredItem?.type === 'node' && renderCtx.hoveredItem.data === layout
   const borderColor = typeBorderColor(layout.type)
+  if (isDetailedSubElement(layout.subKind ?? layout.type, layout.subDetail, w, h, drawZoom)) {
+    const hovered = renderCtx.hoveredItem
+    const activeHandle = hovered?.type === 'node' && hovered.data === layout ? hovered.symbolHandle
+      : hovered?.type === 'edge' ? layout.subConnections?.find(connection => connection.id === hovered.data.id)?.handleId : undefined
+    const groupTag = layout.tags.find(isElementGroupTag)
+    drawSubElement(ctx, layout, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg)
+    drawNodeTags(ctx, layout, renderCtx, { x: 0, y: 0, w, h: SUB_HEADER, drawZoom, drawScreenW, parentAlpha, isHovered, accent })
+    return
+  }
 
   const traceShape = (ox = 0, oy = 0) => {
     ctx.beginPath()
@@ -1108,93 +1212,7 @@ function drawSceneNode(
     ctx.restore()
   }
 
-  // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
-  // idle = tag-colored dots bottom-left; element or tag-menu hover = vertical
-  // stack of pills (color dot + name).
-  {
-    const tags = visibleNodeTags(layout.tags)
-    if (tags.length > 0 && parentAlpha > 0.05) {
-      const highlighted = isTagHighlighted(tags)
-      if ((isHovered || highlighted) && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
-        // Scale chips gently with the visible card, and keep them clear of its
-        // rounded corners even when the card is much larger than the editor size.
-        const chipScale = clamp(h * drawZoom / VIEW_EDITOR_NODE_H, 1, 1.6)
-        const chipUnit = chipScale / drawZoom
-        const insetX = Math.max(w * TAG_DOT_INSET_X_TO_NODE_W, 6 * chipUnit)
-        const insetY = Math.max(h * TAG_DOT_INSET_Y_TO_NODE_H, 6 * chipUnit)
-        const pillH = 18 * chipUnit
-        const pillGap = 4 * chipUnit
-        const pillPadX = 8 * chipUnit
-        const dotR = 3 * chipUnit
-        const fontSize = 10 * chipUnit
-        ctx.save()
-        ctx.font = `700 ${fontSize}px ${ZUI_FONT_FAMILY}`
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'middle'
-        const pillWidths = tags.map((tag) => {
-          const textW = ctx.measureText(tag).width
-          return pillPadX * 2 + dotR * 2 + 4 * chipUnit + textW
-        })
-        let pillBottom = y + h - insetY
-        for (let i = 0; i < tags.length; i += 1) {
-          const tag = tags[i]
-          const pillW = Math.min(pillWidths[i], w - insetX * 2)
-          const pillX = x + insetX
-          const pillY = pillBottom - pillH
-          if (pillY < y + insetY) break
-          ctx.globalAlpha = parentAlpha
-          ctx.beginPath()
-          ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2)
-          ctx.fillStyle = renderCtx.labelBg
-          ctx.fill()
-          ctx.strokeStyle = 'rgba(255,255,255,0.3)'
-          ctx.lineWidth = 1 / drawZoom
-          ctx.stroke()
-          const dotCX = pillX + pillPadX + dotR
-          const dotCY = pillY + pillH / 2
-          ctx.beginPath()
-          ctx.arc(dotCX, dotCY, dotR, 0, Math.PI * 2)
-          ctx.fillStyle = tagColorFor(tag, accent)
-          ctx.fill()
-          ctx.fillStyle = '#fff'
-          const textX = dotCX + dotR + 4 * chipUnit
-          ctx.fillText(tag, textX, dotCY + 0.5 / drawZoom, Math.max(0, pillW - (textX - pillX) - pillPadX))
-          pillBottom = pillY - pillGap
-        }
-        ctx.restore()
-      } else if (drawScreenW > 50) {
-        const dotD = h * TAG_DOT_TO_NODE_H
-        const dotR = dotD / 2
-        const gap = h * TAG_DOT_GAP_TO_NODE_H
-        const insetX = w * TAG_DOT_INSET_X_TO_NODE_W
-        const insetY = h * TAG_DOT_INSET_Y_TO_NODE_H
-        const maxDots = 5
-        const shown = tags.slice(0, maxDots)
-        ctx.save()
-        ctx.globalAlpha = parentAlpha
-        shown.forEach((tag, i) => {
-          const cx = x + insetX + dotR + i * (dotD + gap)
-          const cy = y + h - insetY - dotR
-          ctx.beginPath()
-          ctx.arc(cx, cy, dotR, 0, Math.PI * 2)
-          ctx.fillStyle = tagColorFor(tag, accent)
-          ctx.fill()
-        })
-        if (tags.length > maxDots) {
-          ctx.font = `700 ${h * TAG_OVERFLOW_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
-          ctx.fillStyle = 'rgba(255,255,255,0.6)'
-          ctx.textAlign = 'left'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(
-            `+${tags.length - maxDots}`,
-            x + insetX + dotR + maxDots * (dotD + gap),
-            y + h - insetY - dotR,
-          )
-        }
-        ctx.restore()
-      }
-    }
-  }
+  drawNodeTags(ctx, layout, renderCtx, { x, y, w, h, drawZoom, drawScreenW, parentAlpha, isHovered, accent })
 
   // Change state reads as a single solid ring color-coded by line change.
   // Everything else (provenance, blast-radius context) reads through tags —
@@ -1367,7 +1385,7 @@ function drawEdges(
 
       const hasSourceChildren = node.children && node.children.length > 0
       const sourceScreenW = node.worldW * zoom
-      const sSource = (!hasSourceChildren && sourceScreenW > thresholds.end) ? thresholds.end / sourceScreenW : 1
+      const sSource = (!hasSourceChildren && !isDetailedSubElement(node.subKind ?? node.type, node.subDetail, node.worldW, node.worldH, zoom) && sourceScreenW > thresholds.end) ? thresholds.end / sourceScreenW : 1
       const effWSource = node.worldW * sSource
       const effHSource = node.worldH * sSource
       const cxSource = node.worldX + node.worldW / 2 - ox
@@ -1377,7 +1395,7 @@ function drawEdges(
 
       const hasTargetChildren = target.children && target.children.length > 0
       const targetScreenW = target.worldW * zoom
-      const sTarget = (!hasTargetChildren && targetScreenW > thresholds.end) ? thresholds.end / targetScreenW : 1
+      const sTarget = (!hasTargetChildren && !isDetailedSubElement(target.subKind ?? target.type, target.subDetail, target.worldW, target.worldH, zoom) && targetScreenW > thresholds.end) ? thresholds.end / targetScreenW : 1
       const effWTarget = target.worldW * sTarget
       const effHTarget = target.worldH * sTarget
       const cxTarget = target.worldX + target.worldW / 2 - ox
@@ -1396,6 +1414,10 @@ function drawEdges(
         false, sTarget,
       )
 
+      const sourceAnchor = subNodeHandleAnchor(node, edge.sourceHandle, zoom)
+      const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, zoom)
+      if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x; sH.y = effYSource + sourceAnchor.y; sH.pos = sourceAnchor.side }
+      if (targetAnchor) { tH.x = effXTarget + targetAnchor.x; tH.y = effYTarget + targetAnchor.y; tH.pos = targetAnchor.side }
       ctx.save()
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
@@ -1430,8 +1452,8 @@ function drawEdges(
         const dx = Math.abs(tH.x - sH.x)
         const dy = Math.abs(tH.y - sH.y)
 
-        const minStemSH = (sH.pos === 'left' || sH.pos === 'right') ? effWSource * 0.5 : effHSource * 0.5
-        const minStemTH = (tH.pos === 'left' || tH.pos === 'right') ? effWTarget * 0.5 : effHTarget * 0.5
+        const minStemSH = (sH.pos === 'left' || sH.pos === 'right' ? subRouteDimension(node.subKind ?? node.type, effWSource, dx) : subRouteDimension(node.subKind ?? node.type, effHSource, dy)) * 0.5
+        const minStemTH = (tH.pos === 'left' || tH.pos === 'right' ? subRouteDimension(target.subKind ?? target.type, effWTarget, dx) : subRouteDimension(target.subKind ?? target.type, effHTarget, dy)) * 0.5
 
         if (sH.pos === 'left' || sH.pos === 'right') {
           const stem = Math.max(dx * curvature, minStemSH)

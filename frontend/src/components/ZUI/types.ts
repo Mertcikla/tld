@@ -1,5 +1,7 @@
 // src/components/ZUI/types.ts
 
+import type { SubDetail } from '../../utils/subElements'
+import type { PlacedElement } from '../../types'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import type { ZUIEdgeChange } from './edgeChange'
 
@@ -69,9 +71,15 @@ export interface LayoutNode {
   type: string
   /** Explicit authored element kind; null/empty when unspecified. */
   kind?: string | null
+  subConnectedHandles?: string[]
+  subConnections?: Array<{ id: number; handleId: string }>
+  subDetail?: SubDetail
+  subKind?: 'code' | null
+  sourceLink?: Pick<PlacedElement, 'repo' | 'repository_id' | 'branch' | 'file_path' | 'language'>
   logoUrl: string | null
   description: string | null
   technology: string | null
+  technologyText?: string | null
   tags: string[]
   isCircular?: boolean
   ancestorElementIds: number[]
@@ -193,7 +201,7 @@ export interface ZUILayout {
 }
 
 export type HoveredItem =
-  | { type: 'node'; data: LayoutNode; absX: number; absY: number; absW: number; absH: number }
+  | { type: 'node'; data: LayoutNode; symbolHandle?: string; absX: number; absY: number; absW: number; absH: number }
   | {
     type: 'edge';
     /** Hit-tested route in world coordinates. */

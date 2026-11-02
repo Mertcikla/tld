@@ -1,3 +1,5 @@
+import { subscribeSubScroll } from './subElements'
+import { subscribeSubSources } from '../../utils/subElementSource'
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
@@ -156,8 +158,10 @@ export function useZUIRenderLoop({
   }, [invalidate])
 
   useEffect(() => {
+    const unsubscribeScroll = subscribeSubScroll(invalidate)
+    const unsubscribeSources = subscribeSubSources(invalidate)
     setOnImageLoadCallback(invalidate)
-    return () => setOnImageLoadCallback(null)
+    return () => { unsubscribeScroll(); unsubscribeSources(); setOnImageLoadCallback(null) }
   }, [invalidate])
 
   useEffect(() => subscribeElementNameFontsChanged(invalidate), [invalidate])
@@ -344,7 +348,9 @@ export function useZUIRenderLoop({
       ctx.restore()
       ctx.restore()
       lastViewRef.current = currentView
-      needsRedrawRef.current = false
+      const hover = hoveredItemRef.current
+      const animateSymbol = hover?.type === 'node' && !!hover.symbolHandle && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      needsRedrawRef.current = panLowDetailFramesRef.current > 0 || animateSymbol
 
       if (needsRedrawRef.current) {
         requestFrame()

@@ -383,3 +383,63 @@ body {
     box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25);
     pointer-events: none;
 }
+
+/* Dense code/member ports use a smaller hit area than ordinary element handles. */
+.react-flow__handle.sub-element-handle::before { inset: -5px; }
+
+.sub-element-resize {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    z-index: 8;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #a0adbd;
+    cursor: nwse-resize;
+    touch-action: none;
+}
+.sub-element-resize:hover, .sub-element-resize:focus-visible {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.12);
+}
+.sub-element-resize:focus-visible { outline: 1px solid var(--accent); }
+.sub-element-resize[aria-busy="true"] { cursor: wait; opacity: 0.5; }
+
+.sub-symbol-region {
+    transition: background-color 160ms, border-color 160ms, box-shadow 160ms;
+}
+.sub-symbol-region[data-active="true"] {
+    animation: sub-symbol-selection-pulse 1.4s ease-in-out infinite;
+}
+.sub-symbol-stem { opacity: 0.55; transition: opacity 160ms; }
+.sub-symbol-stem[data-active="true"] {
+    opacity: 1;
+    stroke-dasharray: 6 4;
+    animation: sub-symbol-flow 900ms linear infinite;
+}
+.react-flow__handle.sub-symbol-port {
+    transition: opacity 160ms, box-shadow 160ms;
+}
+.react-flow__handle.sub-symbol-port::before { inset: -7px; }
+.react-flow__handle.sub-symbol-port[data-active="true"] {
+    animation: sub-symbol-selection-pulse 1.4s ease-in-out infinite;
+}
+@keyframes sub-symbol-selection-pulse {
+    0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--symbol-color) 20%, transparent); }
+    50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--symbol-color) 12%, transparent); }
+}
+@keyframes sub-symbol-flow { to { stroke-dashoffset: -20; } }
+[data-canvas-moving] .sub-symbol-region,
+[data-canvas-moving] .sub-symbol-stem,
+[data-canvas-moving] .react-flow__handle.sub-symbol-port {
+    animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+    .sub-symbol-region[data-active="true"], .sub-symbol-stem[data-active="true"],
+    .react-flow__handle.sub-symbol-port[data-active="true"] { animation: none; }
+}
