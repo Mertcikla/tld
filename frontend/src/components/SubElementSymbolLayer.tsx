@@ -1,5 +1,5 @@
 import { Fragment, type CSSProperties, type MouseEvent } from 'react'
-import { Box, Text } from '@chakra-ui/react'
+import { Box, HStack, Text } from '@chakra-ui/react'
 import { getSmoothStepPath, Handle, Position } from 'reactflow'
 import { symbolStems, type SymbolArea, type SymbolEndpoint, type SymbolOverflow, type SymbolPresentation } from '../utils/subElementSymbols'
 import { groupHighlightColors } from '../utils/elementGroups'
@@ -54,23 +54,31 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
     {(['above', 'below'] as const).map(direction => {
       const overflow: SymbolOverflow = presentation[direction]
       const count = overflow.areas.length
-      const label = [count ? `${count} ${count === 1 ? 'symbol' : 'symbols'}` : '', overflow.connectionCount ? `${overflow.connectionCount} connections` : ''].filter(Boolean).join(' · ')
-      const names = overflow.areas.map(area => area.symbol.name).join(', ')
+      const symbolLabel = count ? `${count} ${count === 1 ? 'symbol' : 'symbols'} ${direction}` : ''
+      const connectionLabel = overflow.connectionCount ? `${overflow.connectionCount} ${overflow.connectionCount === 1 ? 'connection' : 'connections'}` : ''
+      const label = [symbolLabel, connectionLabel].filter(Boolean).join(' · ')
+      const names = overflow.areas.slice(0, 4).map(area => area.symbol.name).join(', ') + (count > 4 ? `, +${count - 4} more` : '')
       const representative = overflow.representative?.area
       if (!label) return null
-      return <Box key={direction} data-testid={`sub-symbol-ellipsis-${direction}`} data-symbol-handle={overflow.representative?.id}
+      return <Box as="button" type="button" disabled={!count} className="nodrag nopan" aria-label={count ? `Show ${label}` : label} key={direction} data-testid={`sub-symbol-ellipsis-${direction}`} data-symbol-handle={overflow.representative?.id}
         position="absolute" top={direction === 'above' ? `${SUB_HEADER}px` : undefined} bottom={direction === 'below' ? 0 : undefined} left={0} right={0} h={`${SUB_ELLIPSIS}px`}
-        bg="var(--bg-source-preview, #232732)" borderTop={label ? '1px solid' : undefined} borderBottom={label && direction === 'above' ? '1px solid' : undefined} borderColor="whiteAlpha.100" zIndex={6}
+        bg="var(--bg-source-preview, #232732)" borderTop="1px solid" borderBottom={direction === 'above' ? '1px solid' : undefined} borderColor="var(--border-main)" zIndex={6} w="100%" p={0}
+        transition="background-color 120ms, border-color 120ms"
+        _hover={count ? { bg: 'color-mix(in srgb, var(--bg-source-preview, #232732) 94%, var(--accent))', borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}
+        _focusVisible={{ outline: '1px solid var(--accent)', outlineOffset: '-2px' }}
         borderBottomRadius={direction === 'below' ? 'calc(var(--chakra-radii-lg) - 1px)' : undefined} overflow="hidden"
-        cursor={count ? 'pointer' : 'default'} title={names || label || undefined}
-        onClick={event => {
+        cursor={count ? 'pointer' : 'default'} title={names ? `${label}\n${names}` : label}
+        onClick={(event: MouseEvent<HTMLButtonElement>) => {
           event.stopPropagation()
           if (data.interactionSourceId && representative && canEdit) interactions.onActivate(representative, event)
           else if (count) onReveal((direction === 'above' ? overflow.areas[count - 1] : overflow.areas[0]).start)
         }}>
-        {label && <Text fontFamily="mono" fontSize="9px" lineHeight={`${SUB_ELLIPSIS - 2}px`} color={overflow.color} textAlign="center" isTruncated px={12}>
-          ⋯ {label} ⋯
-        </Text>}
+        <HStack h="100%" justify="center" spacing="6px" px={8} fontSize="9px" lineHeight={1} color="gray.400" pointerEvents="none" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {count > 0 && <Box as="svg" boxSize="8px" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" flexShrink={0}><path d={direction === 'above' ? 'M1 5l3-3 3 3' : 'M1 2l3 3 3-3'} /></Box>}
+          {symbolLabel && <Text isTruncated>{symbolLabel}</Text>}
+          {symbolLabel && connectionLabel && <Text color="whiteAlpha.300">·</Text>}
+          {connectionLabel && <Text color="var(--accent)" fontWeight="600" flexShrink={0}>{connectionLabel}</Text>}
+        </HStack>
       </Box>
     })}
     {[...presentation.endpoints.values()].map(endpoint => {

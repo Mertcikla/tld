@@ -148,12 +148,25 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   for (const [direction, overflow] of [['above', model.above], ['below', model.below]] as const) {
     const y = direction === 'above' ? SUB_HEADER : h - SUB_ELLIPSIS
     const count = overflow.areas.length
-    const label = [count ? `${count} ${count === 1 ? 'symbol' : 'symbols'}` : '', overflow.connectionCount ? `${overflow.connectionCount} connections` : ''].filter(Boolean).join(' · ')
-    if (!label) continue
+    const symbolLabel = count ? `${count} ${count === 1 ? 'symbol' : 'symbols'} ${direction}` : ''
+    const connectionLabel = overflow.connectionCount ? `${overflow.connectionCount} ${overflow.connectionCount === 1 ? 'connection' : 'connections'}` : ''
+    if (!symbolLabel && !connectionLabel) continue
     ctx.fillStyle = bodyBg; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
-    ctx.strokeStyle = '#455263'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
-    ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = symbolAccent
-    ctx.fillText(`⋯ ${label} ⋯`, w / 2, overflow.y, w - 50)
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
+    ctx.font = '9px system-ui'; ctx.textAlign = 'left'
+    const separator = symbolLabel && connectionLabel ? ' · ' : ''
+    const arrowWidth = count ? 14 : 0
+    const labelWidth = ctx.measureText(symbolLabel + separator + connectionLabel).width + arrowWidth
+    let x = Math.max(24, (w - labelWidth) / 2)
+    ctx.fillStyle = '#a0adbd'; ctx.strokeStyle = '#a0adbd'
+    if (count) {
+      const sign = direction === 'above' ? -1 : 1
+      ctx.beginPath(); ctx.moveTo(x, overflow.y - sign * 2); ctx.lineTo(x + 3, overflow.y + sign); ctx.lineTo(x + 6, overflow.y - sign * 2); ctx.stroke()
+      x += arrowWidth
+    }
+    ctx.fillText(symbolLabel + separator, x, overflow.y)
+    x += ctx.measureText(symbolLabel + separator).width
+    ctx.fillStyle = symbolAccent; ctx.fillText(connectionLabel, x, overflow.y, Math.max(0, w - x - 24))
   }
   for (const endpoint of model.endpoints.values()) if (endpoint.visible && (endpoint.connected || (endpoint.area && active(endpoint.area.leftId, endpoint.area.rightId)))) {
     ctx.fillStyle = symbolAccent; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()

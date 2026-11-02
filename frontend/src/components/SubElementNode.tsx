@@ -16,7 +16,7 @@ import type { NodeData } from './ElementNode'
 import { useSubElementLayout } from '../hooks/useSubElementLayout'
 import SubElementLayoutButtons from './SubElementLayoutButtons'
 import SubElementResizeHandle from './SubElementResizeHandle'
-import { isSubElement, SUB_HEADER, subEditorSize, subElementKind, type SubDetail } from '../utils/subElements'
+import { isSubElement, SUB_ELLIPSIS, SUB_HEADER, subEditorSize, subElementKind, type SubDetail } from '../utils/subElements'
 import { peekSubSource, requestSubSource, subscribeSubSources } from '../utils/subElementSource'
 import { expandCodeTabs, expandCodeTokens, SUB_CODE_FONT_FAMILY } from '../utils/subElementText'
 import { elementTechnologyText, resolveElementIconUrl } from '../utils/elementIcon'
@@ -30,7 +30,7 @@ import { getVisualHandleStyle } from '../utils/edgeDistribution'
 export default function SubElementNode({ data, selected, renderCard }: { data: NodeData; selected: boolean; renderCard: (onOpenSource: () => void) => ReactNode }) {
   const kind = subElementKind(data)!
   const [draftSize, setDraftSize] = useState<{ width: number; height: number; detail: SubDetail } | null>(null)
-  const { canEdit, viewId, isConnectingConnector, selectedConnector } = useViewEditorContext()
+  const { canEdit, viewId, isConnectingConnector, selectedConnector, connectorDragSource } = useViewEditorContext()
   const { detail: savedDetail, setDetail } = useSubElementLayout(viewId ?? data.view_id, data.element_id, isSubElement(data.kind) ? 'code' : 'overview')
   const detail = draftSize?.detail ?? savedDetail
   const appearance = useSyncExternalStore(subscribeSourcePreviewAppearance, () => readSourcePreviewAppearance(viewId ?? data.view_id, data.element_id), () => readSourcePreviewAppearance(viewId ?? data.view_id, data.element_id))
@@ -108,10 +108,12 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const first = Math.min(rowCount, Math.max(0, Math.floor(scrollTop / rowHeight) - 1))
   const last = Math.min(rowCount, first + Math.ceil(visibleHeight / rowHeight) + 3)
   const connecting = nativeConnecting || isConnectingConnector || data.isCreateConnectMode || data.isClickConnectMode || data.interactionSourceId != null
+  const dragSourceHandle = nativeSourceHandle ?? (connectorDragSource?.nodeId === String(data.element_id) ? connectorDragSource.handleId : null)
+  const isDragSource = (area: SymbolArea) => !!dragSourceHandle && (area.leftId === dragSourceHandle || area.rightId === dragSourceHandle || presentation.endpoints.get(dragSourceHandle)?.area?.key === area.key)
   const interactions: SymbolInteractions = {
-    showHighlight: area => area.connected || hoveredSymbol === area.key,
+    showHighlight: area => area.connected || hoveredSymbol === area.key || isDragSource(area),
     showStem: endpoint => endpoint.connected || hoveredSymbol === endpoint.area?.key || connecting,
-    isActive: area => hoveredSymbol === area.key || selectedSymbol === area.key || [nativeSourceHandle, data.interactionSourceHandleId, ...(data.selectedHandleIds ?? [])].some(id => id && (id === area.leftId || id === area.rightId || presentation.endpoints.get(id)?.area?.key === area.key)),
+    isActive: area => hoveredSymbol === area.key || selectedSymbol === area.key || [dragSourceHandle, data.interactionSourceHandleId, ...(data.selectedHandleIds ?? [])].some(id => id && (id === area.leftId || id === area.rightId || presentation.endpoints.get(id)?.area?.key === area.key)),
     onHover: setHoveredSymbol,
     onActivate: (area: SymbolArea, event: MouseEvent<HTMLElement>) => {
       event.stopPropagation()
@@ -163,7 +165,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
         <Box h="100%" bg="var(--accent)" transformOrigin="left" animation="preview-hover-progress 1s linear forwards" sx={{ '@keyframes preview-hover-progress': { from: { transform: 'scaleX(0)' }, to: { transform: 'scaleX(1)' } } }} />
       </Box>
     </Box></Portal>}
-    <Box ref={scrollRef} onPointerEnter={previewInteraction.onPointerEnter} onPointerMove={previewInteraction.onPointerMove} onPointerLeave={previewInteraction.onPointerLeave} className={`source-preview-scroll nodrag${previewInteraction.phase === 'ready' ? ' nowheel nopan' : ''}`} h={`${visibleHeight}px`} overflow={previewInteraction.phase === 'ready' ? 'auto' : 'hidden'} overscrollBehavior="none" onScroll={e => {
+    <Box ref={scrollRef} onPointerEnter={previewInteraction.onPointerEnter} onPointerMove={previewInteraction.onPointerMove} onPointerLeave={previewInteraction.onPointerLeave} className={`source-preview-scroll nodrag${previewInteraction.phase === 'ready' ? ' nowheel nopan' : ''}`} sx={canEdit && previewInteraction.phase === 'ready' ? { '& [data-symbol-handle]': { cursor: 'crosshair' } } : undefined} h={`${visibleHeight}px`} overflow={previewInteraction.phase === 'ready' ? 'auto' : 'hidden'} overscrollBehavior="none" onScroll={e => {
       const top = e.currentTarget.scrollTop, left = e.currentTarget.scrollLeft
       if (top === scrollTop && left === scrollLeft) return
       // The pinned scene and connector overlay advance together, rather than native content leading.
@@ -200,7 +202,9 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
       </Box>
     }))}
     <SubElementSymbolPorts data={data} presentation={presentation} width={width} height={height} scrollTop={scrollTop} scrollLeft={scrollLeft} canEdit={canEdit} interactions={interactions} onReveal={index => {
-      if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight)
+      // Overflow rows overlay the document: leave room for the top band so the
+      // revealed symbol doesn't remain hidden behind the same control.
+      if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight - SUB_ELLIPSIS)
     }} />
     </ElementContainer>}
     <SubElementLayoutButtons detail={detail} onChange={setDetail} />

@@ -1827,19 +1827,25 @@ export function useCanvasInteractions({
     }
   }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onConnectorCreatePreviewActiveChange, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, showAddingElementAt, suppressImmediatePaneClick, viewIdRef])
 
-  // ── Alt-drag to connect ─────────────────────────────────────────────────────
-  const startAltConnectorDrag = useCallback((sourceNode: RFNode, event: PointerEvent) => {
+  // ── Body drag to connect (Alt on cards, activated source symbols) ────────────
+  const startConnectorBodyDrag = useCallback((sourceNode: RFNode, event: PointerEvent, symbolSourceHandle?: string) => {
     const sourceElementId = resolveElementIdFromNode(sourceNode)
     if (sourceElementId === null) return
 
     const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
     const { sourceHandle } = findClosestHandleToPoint(sourceNode, flowPos.x, flowPos.y)
     const visualSourceHandle = ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
+    const sourceElement = isDomElement(event.target) ? event.target.closest('.react-flow__node') : null
+    const resolveSourceHandle = (clientX: number) => {
+      if (!symbolSourceHandle || !sourceElement) return visualSourceHandle
+      const bounds = sourceElement.getBoundingClientRect()
+      return symbolSourceHandle.replace(/^(left|right)-/, clientX <= bounds.left + bounds.width / 2 ? 'left-' : 'right-')
+    }
     const pointerId = event.pointerId
 
     syncAltConnectorDrag({
       sourceNodeId: sourceNode.id,
-      sourceHandle: visualSourceHandle,
+      sourceHandle: resolveSourceHandle(event.clientX),
       cursorPos: { x: event.clientX, y: event.clientY },
       hoveredNodeId: undefined,
       hoveredHandleId: null,
@@ -1850,7 +1856,7 @@ export function useCanvasInteractions({
 
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return
-      if (!moveEvent.altKey) {
+      if (!symbolSourceHandle && !moveEvent.altKey) {
         clearAltConnectorDrag()
         return
       }
@@ -1871,6 +1877,7 @@ export function useCanvasInteractions({
       )
       syncAltConnectorDrag({
         ...current,
+        sourceHandle: resolveSourceHandle(moveEvent.clientX),
         cursorPos: { x: moveEvent.clientX, y: moveEvent.clientY },
         hoveredNodeId: target?.node.id,
         hoveredHandleId: target?.handleId ?? null,
@@ -1886,7 +1893,7 @@ export function useCanvasInteractions({
       const current = altConnectorDragRef.current
       clearAltConnectorDrag()
       swallowNextClick()
-      if (!current || !upEvent.altKey || viewId === null) return
+      if (!current || upEvent.type === 'pointercancel' || (!symbolSourceHandle && !upEvent.altKey) || viewId === null) return
 
       const interactionNodes = getInteractionNodes()
       const sourceNodeCurrent = interactionNodes.find((node) => node.id === current.sourceNodeId)
@@ -1912,7 +1919,7 @@ export function useCanvasInteractions({
         targetHandleId = ensureVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
       }
       const { sourceHandle: resolvedSourceHandle, targetHandle: resolvedTargetHandle } =
-        resolveConnectorDragAttachHandles(current.sourceHandle, targetHandleId)
+        resolveConnectorDragAttachHandles(resolveSourceHandle(upEvent.clientX), targetHandleId)
 
       api.workspace.connectors.create(viewId, {
         source_element_id: sourceElementId,
@@ -1936,10 +1943,15 @@ export function useCanvasInteractions({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (!canEdit || !event.altKey || event.button !== 0) return
+      if (!canEdit || event.button !== 0) return
       if (event.pointerType === 'touch') return
       const target = event.target
       if (!isDomElement(target)) return
+      const activatedBody = target.closest('[data-preview-interaction="ready"] .source-preview-scroll')
+      const symbolSourceHandle = activatedBody && !interactionSourceIdRef.current && !clickConnectModeRef.current
+        && !target.closest('.react-flow__handle, button')
+        ? symbolDropHandle(target, event.clientX) : null
+      if (!event.altKey && !symbolSourceHandle) return
       if (getHandleReconnectZoneAtPoint(event.clientX, event.clientY)) return
       const nodeElement = target.closest('.react-flow__node')
       const nodeId = nodeElement?.getAttribute('data-id')
@@ -1949,12 +1961,12 @@ export function useCanvasInteractions({
 
       event.preventDefault()
       event.stopPropagation()
-      startAltConnectorDrag(node, event)
+      startConnectorBodyDrag(node, event, symbolSourceHandle ?? undefined)
     }
 
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [canEdit, getInteractionNodes, startAltConnectorDrag])
+  }, [canEdit, getInteractionNodes, interactionSourceIdRef, startConnectorBodyDrag])
 
   useEffect(() => () => {
     clearAltConnectorListeners()

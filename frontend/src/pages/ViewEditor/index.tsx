@@ -4557,7 +4557,8 @@ function ViewEditorInner({
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
-      isConnectingConnector: isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!reconnectPicking || !!clickConnectMode || interactionSourceId !== null,
+      isConnectingConnector: isConnectorCreatePreviewActive || !!canvas.altConnectorDrag || !!canvas.handleReconnectDrag || !!reconnectPicking || !!clickConnectMode || interactionSourceId !== null,
+      connectorDragSource: canvas.altConnectorDrag ? { nodeId: canvas.altConnectorDrag.sourceNodeId, handleId: canvas.altConnectorDrag.sourceHandle } : undefined,
       leftPanelOffset: storyPanelOffset,
       isMarkdownOpen, markdownPaneWidth, sidePanelStyle: flatPanels ? 'flat' : undefined
     }}>
@@ -4679,7 +4680,7 @@ function ViewEditorInner({
                 clearHoveredEdge()
                 clearHoveredElement()
               }}
-              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
+              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.altConnectorDrag || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
               h="full"

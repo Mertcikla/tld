@@ -14,6 +14,7 @@ export interface ViewEditorContextValue {
   selectedElement: LibraryElement | null
   selectedConnector: Connector | null
   isConnectingConnector?: boolean
+  connectorDragSource?: { nodeId: string; handleId: string }
   isMarkdownOpen?: boolean
   markdownPaneWidth?: number
   leftPanelOffset?: number

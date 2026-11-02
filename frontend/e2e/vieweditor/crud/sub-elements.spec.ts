@@ -144,7 +144,7 @@ test('protobuf symbol ports connect through source areas and share overflow hand
   await expect(targetNode.locator('[data-handleid="right-symbol-message%3AM0"]')).toHaveCSS('opacity', '0')
   await targetNode.getByRole('button', { name: 'Collapsed symbols layout', exact: true }).click()
   await sourceNode.locator('.source-preview-scroll').evaluate(element => element.scrollTop = element.scrollHeight)
-  await expect(sourceNode.getByTestId('sub-symbol-ellipsis-above')).toContainText('1 connections')
+  await expect(sourceNode.getByTestId('sub-symbol-ellipsis-above')).toContainText('1 connection')
   await expect(sourceNode.locator('[data-symbol-overflow="above"][data-symbol-port="true"]')).toHaveCount(1)
   await expect(sourceNode.getByTestId('sub-symbol-stem')).toHaveCount(0)
   // Offscreen endpoints use the shared ellipsis port's pickup area.
@@ -158,6 +158,100 @@ test('protobuf symbol ports connect through source areas and share overflow hand
   await dragEndpoint('target', await symbolLeft(targetNode.locator('.sub-symbol-text').first()))
   await expectConnector(page, { id: connector.id, sourceHandle: 'right-symbol-message%3AM19', targetHandle: 'left-symbol-message%3AM0' }, true, view.id)
   await expect(pickup('source')).toBeVisible()
+})
+
+test('top overflow clicks reveal symbols beneath the band and keep progressing upward', async ({ page }) => {
+  const content = Array.from({ length: 40 }, (_, index) => `message M${index} { string id = 1; }`).join('\n')
+  await page.route('**/GetWorktreeSource', route => route.fulfill({ json: { content } }))
+  const view = await createApiView(page, 'Overflow navigation')
+  const element = await createPlacedElement(page, view.id, { name: 'Overflow proto', kind: 'class', repo: '/test/repo', filePath: 'overflow.proto' }, 100, 100)
+  await previewSize(page, view.id, element.id, 520, 240)
+  await gotoView(page, view.id)
+  const node = nodeByName(page, 'Overflow proto')
+  await node.getByTestId('vieweditor-node-source-link').click()
+  const scroller = node.locator('.source-preview-scroll')
+  const banner = node.getByTestId('sub-symbol-ellipsis-above')
+  for (const [layout, rowHeight] of [['Full layout', 15], ['Collapsed symbols layout', 23]] as const) {
+    await node.getByRole('button', { name: layout, exact: true }).click()
+    // M10's start is within the overlay, despite its row starting below scrollTop.
+    const initialTop = rowHeight * 10 - 1
+    await scroller.evaluate((element, top) => { element.scrollTop = top }, initialTop)
+    await expect(banner).toContainText('11 symbols above')
+    await banner.click()
+    await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBeLessThan(initialTop)
+    await expect(node.locator('[data-handleid="right-symbol-message%3AM10"]')).not.toHaveAttribute('data-symbol-overflow')
+    const previousTop = await scroller.evaluate(element => element.scrollTop)
+    await banner.focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBeLessThan(previousTop)
+    await expect(node.locator('[data-handleid="right-symbol-message%3AM9"]')).not.toHaveAttribute('data-symbol-overflow')
+  }
+})
+
+test('activated symbol bodies drag connectors with a ghost from the nearest side', async ({ page }) => {
+  await page.route('**/GetWorktreeSource', route => route.fulfill({ json: { content: 'message First { string id = 1; }\nmessage Second { string id = 1; }' } }))
+  const view = await createApiView(page, 'Symbol body drags')
+  const source = await createPlacedElement(page, view.id, { name: 'Drag source', kind: 'class', repo: '/test/repo', filePath: 'source.proto' }, 500, 100)
+  const left = await createPlacedElement(page, view.id, { name: 'Left consumer', kind: 'service' }, 100, 100)
+  const right = await createPlacedElement(page, view.id, { name: 'Right symbols', kind: 'class', repo: '/test/repo', filePath: 'target.proto' }, 1200, 100)
+  for (const element of [source, right]) await previewSize(page, view.id, element.id, 520, 240)
+  await gotoView(page, view.id)
+  const node = nodeByName(page, source.name), target = nodeByName(page, right.name)
+  for (const preview of [node, target]) await preview.getByTestId('vieweditor-node-source-link').click()
+  const ghost = page.getByTestId('alt-connector-connector')
+  for (const layout of ['Full layout', 'Collapsed symbols layout']) {
+    await node.getByRole('button', { name: layout, exact: true }).click()
+    const body = node.locator('.sub-symbol-text').first()
+    await page.mouse.move(10, 10)
+    await body.hover()
+    await page.mouse.down()
+    await expect(ghost).toHaveCount(0)
+    await page.mouse.up()
+    await expect(node).toHaveAttribute('data-preview-interaction', 'ready')
+    await expect(body).toHaveCSS('cursor', 'crosshair')
+    await page.mouse.down()
+    await expect(ghost).toBeVisible()
+    const targetPort = target.locator('[data-handleid="left-symbol-message%3ASecond"]')
+    await expect(targetPort).toHaveCSS('opacity', '1')
+    const destination = await locatorCenter(targetPort)
+    await page.mouse.move(destination.x, destination.y, { steps: 12 })
+    await expect(node.getByTestId('sub-symbol-region').first()).toHaveAttribute('data-highlighted', 'true')
+    await expect(node.getByTestId('sub-symbol-region').first()).toHaveAttribute('data-active', 'true')
+    const sourcePort = node.locator('[data-handleid="right-symbol-message%3AFirst"]')
+    await expect.poll(async () => {
+      const origin = await ghost.locator('path').evaluate(element => {
+        const point = (element as SVGPathElement).getPointAtLength(0)
+        return { x: point.x, y: point.y }
+      })
+      const port = await locatorCenter(sourcePort)
+      return Math.hypot(origin.x - port.x, origin.y - port.y)
+    }).toBeLessThan(2)
+    await page.mouse.up()
+    await expect(ghost).toHaveCount(0)
+    await expectConnector(page, { sourceElementId: source.id, targetElementId: right.id, sourceHandle: 'right-symbol-message%3AFirst', targetHandle: 'left-symbol-message%3ASecond' }, true, view.id)
+
+    await body.hover()
+    await expect(node).toHaveAttribute('data-preview-interaction', 'ready')
+    await page.mouse.down()
+    const leftDestination = await locatorCenter(nodeByName(page, left.name))
+    await page.mouse.move(leftDestination.x, leftDestination.y, { steps: 12 })
+    await expect(ghost).toBeVisible()
+    await page.mouse.up()
+    await expectConnector(page, { sourceElementId: source.id, targetElementId: left.id, sourceHandle: 'left-symbol-message%3AFirst' }, true, view.id)
+  }
+  // Cancelling the gesture removes its ghost without creating a connector.
+  const count = (await listConnectors(page, view.id)).length
+  await node.locator('.sub-symbol-text').nth(1).hover()
+  await expect(node).toHaveAttribute('data-preview-interaction', 'ready')
+  await page.mouse.down()
+  await expect(ghost).toBeVisible()
+  await page.mouse.move(10, 10)
+  await expect(node.getByTestId('sub-symbol-region').nth(1)).toHaveAttribute('data-highlighted', 'true')
+  await page.keyboard.press('Escape')
+  await expect(ghost).toHaveCount(0)
+  await expect(node.getByTestId('sub-symbol-region').nth(1)).not.toHaveAttribute('data-highlighted')
+  await page.mouse.up()
+  expect(await listConnectors(page, view.id)).toHaveLength(count)
 })
 
 test('symbol handles reveal as click-connect targets in full and collapsed layouts', async ({ page }) => {
@@ -371,7 +465,7 @@ test('connected source stems track horizontal scrolling and fold into ellipsis r
   await scroller.evaluate((element, scroll) => { element.scrollLeft = scroll - 4 }, endScroll)
   await expect.poll(() => stems.evaluate(element => (element as SVGPathElement).getPointAtLength(0).x)).toBeCloseTo(originalX + 4, 0)
   await scroller.evaluate(element => { element.scrollLeft = 0; element.scrollTop = 120 })
-  await expect(node.getByTestId('sub-symbol-ellipsis-above')).toContainText('1 connections')
+  await expect(node.getByTestId('sub-symbol-ellipsis-above')).toContainText('1 connection')
   await expect(node.locator('[data-symbol-overflow="above"][data-symbol-port="true"]')).toHaveCount(1)
   await expect(stems).toHaveCount(0)
   // The external connector must follow the shared ellipsis port, then return to its symbol.
