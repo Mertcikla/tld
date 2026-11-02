@@ -10,8 +10,8 @@ const layouts: Array<{ value: SubDetail; label: string; path: string }> = [
 export default function SubElementLayoutButtons({ detail, onChange }: {
   detail: SubDetail; onChange: (detail: SubDetail) => void
 }) {
-  return <HStack className="nodrag nopan" position="absolute" top="calc(100% + 6px)" right={0} spacing="1px" zIndex={12}
-    bg="#20252d" borderRadius="5px" p="1px" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+  return <HStack className="nodrag nopan" position="absolute" top="calc(100% + 4px)" right={1} spacing="1px" zIndex={12}
+    bg="#20252d" borderRadius="5px" p={1} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
     {layouts.map(layout => <Tooltip key={layout.value} label={layout.label} openDelay={350}>
       <IconButton aria-label={layout.label} aria-pressed={detail === layout.value} variant="ghost" minW="20px" w="20px" h="20px" borderRadius="3px"
         color={detail === layout.value ? 'var(--accent)' : 'gray.500'} bg={detail === layout.value ? 'whiteAlpha.100' : 'transparent'}

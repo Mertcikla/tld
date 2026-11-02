@@ -2861,6 +2861,7 @@ export function useCanvasInteractions({
   }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition, _rfEdgesRef, replaceConnector, selectedConnector, setSelectedEdge, onConnectorSaved, onConnectorUpdated])
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
+    if (isDomElement(e.target) && e.target.closest('[data-preview-interaction="ready"] .source-preview-scroll')) return
     if (touchStateRef.current.touches.size === 2) return
     if (!isNotchedWheelGesture(e)) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
     const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
@@ -2869,7 +2870,7 @@ export function useCanvasInteractions({
     const target = gestureTargetRef?.current ?? containerRef.current
     if (!target) return
 
-    if (e.cancelable) e.preventDefault()
+    if (e.cancelable && !e.defaultPrevented) e.preventDefault()
     e.stopPropagation()
 
     const rect = target.getBoundingClientRect()

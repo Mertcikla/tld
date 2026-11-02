@@ -4,6 +4,7 @@ export const SUB_CODE_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Monaco
 export const SUB_CODE_TEXT_X = 54
 export const SUB_SYMBOL_PADDING = 8
 export const SUB_SYMBOL_CONNECTOR_GAP = 64
+export const subCodeLineHeight = (size = 12) => Math.round(size * 1.5)
 export const subCodeFont = (size = 12) => `${size}px ${SUB_CODE_FONT_FAMILY}`
 
 export function expandCodeTabs(text: string, startColumn = 0) {

@@ -27,11 +27,11 @@ describe('sub-element geometry and semantic handles', () => {
     expect(isSubHandle(handle)).toBe(true)
     expect(ensureVisualHandleId(handle, 'left')).toBe(handle)
     expect(getHandleSlotOffsetFromId(handle)).toBe(0)
-    expect(subHandleY(handle, detail)).toBe(96)
+    expect(subHandleY(handle, detail)).toBe(93)
   })
   it('anchors lines relative to the source range and clamps missing endpoints', () => {
-    expect(subHandleY(lineHandle('left', 12), null, 12)).toBe(96)
-    expect(subHandleY(lineHandle('right', 15), null, 12)).toBe(168)
+    expect(subHandleY(lineHandle('left', 12), null, 12)).toBe(93)
+    expect(subHandleY(lineHandle('right', 15), null, 12)).toBe(147)
     expect(subHandleY(lineHandle('right', 1000), null, 12, 360)).toBe(352)
   })
   it('switches detail in discrete steps', () => {
@@ -45,8 +45,8 @@ it('keeps symbol connections attached when source lines move', () => {
   const symbol = { name: 'find', qualifiedName: 'User.find', type: 'method', startLine: 12, endLine: 15 }
   const handle = symbolHandle('right', symbol)
   expect(ensureVisualHandleId(handle, 'left')).toBe(handle)
-  expect(subHandleY(handle, null, 12, 360, [symbol])).toBe(96)
-  expect(subHandleY(handle, null, 12, 360, [{ ...symbol, startLine: 13, endLine: 16 }])).toBe(120)
+  expect(subHandleY(handle, null, 12, 360, [symbol])).toBe(93)
+  expect(subHandleY(handle, null, 12, 360, [{ ...symbol, startLine: 13, endLine: 16 }])).toBe(111)
 })
 
 it('keeps saved dimensions stable as an element changes detail with screen size', () => {
@@ -72,7 +72,7 @@ it('folds nested symbols and anchors their endpoints to the enclosing row', asyn
   const source = { status: 'ready', startLine: 1, endLine: 20, symbols: [method, fn, outer, outer] }
   const rows = collapsedSymbols(source, 'users.ts')
   expect(rows).toEqual([outer, fn])
-  expect(outlineHandleY(symbolHandle('right', method), rows, source.symbols, 164)).toBe(96)
-  expect(outlineHandleY(lineHandle('left', 18), rows, source.symbols, 164)).toBe(120)
+  expect(outlineHandleY(symbolHandle('right', method), rows, source.symbols, 164)).toBe(93)
+  expect(outlineHandleY(lineHandle('left', 18), rows, source.symbols, 164)).toBe(111)
   expect(collapsedSymbols({ ...source, symbols: [] }, 'users.sql')).toEqual([{ name: 'users.sql', startLine: 1, endLine: 20 }])
 })

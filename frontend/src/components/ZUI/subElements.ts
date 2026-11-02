@@ -1,4 +1,5 @@
-import { expandCodeTabs, expandCodeTokens, subCodeFont, SUB_CODE_TEXT_X } from '../../utils/subElementText'
+import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
+import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
 import { isSubElement, isSubHandle, SUB_HEADER, SUB_ELLIPSIS, SUB_CONTENT_TOP, subDetail } from '../../utils/subElements'
 import { buildSymbolPresentation, symbolStems, type SymbolPresentation } from '../../utils/subElementSymbols'
@@ -10,17 +11,19 @@ const scrollListeners = new Set<() => void>()
 export const subscribeSubScroll = (fn: () => void) => { scrollListeners.add(fn); return () => { scrollListeners.delete(fn) } }
 const scrollKey = (node: LayoutNode, zoom: number) => `${node.id}:${node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)}`
 const firstRow = (node: LayoutNode, zoom: number) => scrollRows.get(scrollKey(node, zoom)) ?? 0
-const presentations = new WeakMap<LayoutNode, { detail: string; first: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation }>()
+const presentations = new WeakMap<LayoutNode, { detail: string; first: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
   const source = node.sourceLink ? peekSubSource(node.sourceLink) : undefined
   const detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom), first = firstRow(node, zoom)
+  const appearance = readSourcePreviewAppearance(node.diagramId, node.elementId)
+  const lineNumbers = appearance.lineNumbers ?? detail === 'code'
   const cached = presentations.get(node)
-  if (cached && cached.detail === detail && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
+  if (cached && cached.appearance === appearance && cached.detail === detail && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const base = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected })
-  const model = first ? buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * base.rowHeight }) : base
-  presentations.set(node, { detail, first, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
+  const base = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, fontSize: appearance.fontSize, lineNumbers })
+  const model = first ? buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * base.rowHeight, fontSize: appearance.fontSize, lineNumbers }) : base
+  presentations.set(node, { appearance, detail, first, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
 
@@ -42,7 +45,7 @@ export function subNodeHandleAnchor(node: LayoutNode, handle: string | null, zoo
   if (!endpoint) {
     const source = node.sourceLink ? peekSubSource(node.sourceLink) : undefined
     endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom), width: node.worldW, height: node.worldH,
-      connected: [handle!], scrollTop: firstRow(node, zoom) * subNodeSymbols(node, zoom).rowHeight }).endpoints.get(handle!)
+      ...readSourcePreviewAppearance(node.diagramId, node.elementId), connected: [handle!], scrollTop: firstRow(node, zoom) * subNodeSymbols(node, zoom).rowHeight }).endpoints.get(handle!)
   }
   return endpoint ? { x: endpoint.side === 'left' ? 0 : node.worldW, y: endpoint.y, side: endpoint.side } : null
 }
@@ -68,7 +71,7 @@ function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: 
 }
 
 /** Cached text/tokens and visible symbol regions only; animation redraws while active. */
-export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748') {
+export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent) {
   const w = node.worldW, h = node.worldH, detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
   const source = (node.subKind ?? node.type) === 'code' && node.sourceLink
     ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined
@@ -102,20 +105,22 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   for (const area of model.areas) {
     const y = SUB_HEADER + area.contentTop - offset
     if (y + area.height < model.viewportTop || y > model.viewportBottom) continue
-    const isActive = active(area.leftId, area.rightId), color = groupColor ?? area.color
+    const isActive = active(area.leftId, area.rightId), color = symbolAccent
+    if (!isActive && !area.connected) continue
     ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 1 / zoom
-    ctx.beginPath(); ctx.roundRect(area.x, y, area.width, area.height, Math.min(8, area.height / 2))
+    ctx.beginPath(); ctx.roundRect(area.x, y, area.width, area.height, Math.min(8, area.height / 2, model.rowHeight / 2 - model.highlightInset))
     ctx.globalAlpha = alpha * (isActive ? 0.18 : 0.10); ctx.fill()
     ctx.globalAlpha = alpha * (isActive ? pulse : 0.52); ctx.stroke()
   }
   ctx.globalAlpha = alpha
   for (let row = 0; row < rows; row++) {
-    const index = first + row, cy = SUB_CONTENT_TOP + (row + 0.5) * model.rowHeight
-    ctx.fillStyle = '#e1e6ed'; ctx.font = subCodeFont()
+    const index = first + row, cy = SUB_CONTENT_TOP + model.contentInset + (row + 0.5) * model.rowHeight
+    ctx.fillStyle = '#e1e6ed'; ctx.font = subCodeFont(model.fontSize)
+    if (model.lineNumbers) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(String(detail === 'outline' ? model.areas[index]?.symbol.startLine ?? '' : (source?.startLine ?? 1) + index), 12, cy) }
     if (detail === 'outline') {
       const area = model.areas[index]
       if (area?.signature) {
-        let x = 14
+        let x = model.textX
         for (const token of area.signature.tokens) {
           ctx.fillStyle = token.color; ctx.fillText(token.text, x, cy)
           x += ctx.measureText(token.text).width
@@ -123,8 +128,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
         }
       }
     } else {
-      ctx.fillStyle = '#7f8b9c'; ctx.fillText(String((source?.startLine ?? 1) + index), 12, cy)
-      let tx = SUB_CODE_TEXT_X
+      let tx = model.textX
       if (source?.tokens[index]?.length) for (const token of expandCodeTokens(source.tokens[index])) {
         ctx.fillStyle = token.color; ctx.fillText(token.text, tx, cy)
         tx += ctx.measureText(token.text).width
@@ -135,7 +139,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   ctx.restore()
   for (const { endpoint, area, sourceX, sourceY, targetX, targetY } of symbolStems(model, w, h, offset)) {
     if (!endpoint.connected && !active(area.leftId, area.rightId)) continue
-    ctx.strokeStyle = groupColor ?? area.color; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (active(area.leftId, area.rightId) ? pulse : 0.55)
+    ctx.strokeStyle = symbolAccent; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (active(area.leftId, area.rightId) ? pulse : 0.55)
     if (active(area.leftId, area.rightId)) { ctx.setLineDash([6 / zoom, 4 / zoom]); ctx.lineDashOffset = -performance.now() / 50 / zoom }
     roundedStep(ctx, sourceX, sourceY, targetX, targetY)
     ctx.setLineDash([])
@@ -148,11 +152,11 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     if (!label) continue
     ctx.fillStyle = '#20252d'; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
     ctx.strokeStyle = '#455263'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
-    ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = groupColor ?? overflow.color
+    ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = symbolAccent
     ctx.fillText(`⋯ ${label} ⋯`, w / 2, overflow.y, w - 50)
   }
   for (const endpoint of model.endpoints.values()) if (endpoint.visible && (endpoint.connected || (endpoint.area && active(endpoint.area.leftId, endpoint.area.rightId)))) {
-    ctx.fillStyle = groupColor ?? endpoint.color; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = symbolAccent; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()
   }
   ctx.restore()
 }

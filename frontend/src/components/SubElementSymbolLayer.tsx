@@ -10,6 +10,7 @@ import { compareReconnectCandidates } from './elementReconnect'
 
 export interface SymbolInteractions {
   isActive: (area: SymbolArea) => boolean
+  showHighlight: (area: SymbolArea) => boolean
   showStem: (endpoint: SymbolEndpoint) => boolean
   onHover: (key: string | null) => void
   onActivate: (area: SymbolArea, event: MouseEvent<HTMLElement>) => void
@@ -22,11 +23,12 @@ export function SubElementSymbolRegions({ presentation, scrollTop, interactions 
   presentation: SymbolPresentation; scrollTop: number; interactions: SymbolInteractions
 }) {
   return <>{presentation.areas.filter(area => SUB_HEADER + area.contentTop + area.height - scrollTop >= presentation.viewportTop && SUB_HEADER + area.contentTop - scrollTop <= presentation.viewportBottom).map(area => {
-    const active = interactions.isActive(area)
+    const highlighted = interactions.showHighlight(area)
+    const active = highlighted && interactions.isActive(area)
     const colors = groupHighlightColors(area.color, active)
-    return <Box key={area.key} data-testid="sub-symbol-region" data-symbol-key={area.key} data-symbol-handle={area.leftId} data-active={active ? 'true' : undefined}
+    return <Box key={area.key} data-testid="sub-symbol-region" data-symbol-key={area.key} data-symbol-handle={area.leftId} data-highlighted={highlighted ? 'true' : undefined} data-active={active ? 'true' : undefined}
       className="sub-symbol-region nodrag" position="absolute" left={`${area.x}px`} top={`${area.contentTop}px`} w={`${area.width}px`} h={`${area.height}px`}
-      border="1px solid" borderColor={colors.borderColor} bg={colors.bg} borderRadius="8px" style={symbolStyle(area.color)}
+      border="1px solid" borderColor={highlighted ? colors.borderColor : 'transparent'} bg={highlighted ? colors.bg : 'transparent'} borderRadius={`${Math.min(8, area.height / 2, presentation.rowHeight / 2 - presentation.highlightInset)}px`} style={symbolStyle(area.color)}
       onMouseEnter={() => interactions.onHover(area.key)} onMouseLeave={() => interactions.onHover(null)} onClick={event => interactions.onActivate(area, event)} />
   })}</>
 }
@@ -59,7 +61,7 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
       return <Box key={direction} data-testid={`sub-symbol-ellipsis-${direction}`} data-symbol-handle={overflow.representative?.id}
         position="absolute" top={direction === 'above' ? `${SUB_HEADER}px` : undefined} bottom={direction === 'below' ? 0 : undefined} left={0} right={0} h={`${SUB_ELLIPSIS}px`}
         bg="#20252d" borderTop={label ? '1px solid' : undefined} borderBottom={label && direction === 'above' ? '1px solid' : undefined} borderColor="whiteAlpha.100" zIndex={6}
-        borderBottomRadius={direction === 'below' ? '9px' : undefined} overflow="hidden"
+        borderBottomRadius={direction === 'below' ? 'calc(var(--chakra-radii-lg) - 1px)' : undefined} overflow="hidden"
         cursor={count ? 'pointer' : 'default'} title={names || label || undefined}
         onClick={event => {
           event.stopPropagation()

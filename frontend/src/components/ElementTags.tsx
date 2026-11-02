@@ -10,8 +10,8 @@ export default function ElementTags({ tags = [], tagColors, forceShowTagPopup, i
   return visibleTags.length ? (
     <Box
       position="absolute"
-      bottom="8px"
-      left="8px"
+      bottom={2}
+      left={2.5}
       zIndex={10}
       role="group"
     >

@@ -1,3 +1,4 @@
+import { sourcePreviewAppearanceRevision, subscribeSourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { sourcePreviewSizeRevision, subscribeSourcePreviewSizes } from '../../utils/sourcePreviewSize'
@@ -112,13 +113,14 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
+  const appearanceRevision = useSyncExternalStore(subscribeSourcePreviewAppearance, sourcePreviewAppearanceRevision, () => 0)
   const previewRevision = useSyncExternalStore(subscribeSourcePreviewSizes, sourcePreviewSizeRevision, () => 0)
   const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   // Preview sizes are stored outside the workspace graph and invalidate its layout.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, changeOverlays, previewRevision])
+  }, [data, changeOverlays, previewRevision, appearanceRevision])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])

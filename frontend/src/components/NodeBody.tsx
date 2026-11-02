@@ -2,6 +2,12 @@ import type { ReactNode } from 'react'
 import { Box, Flex, Text, FlexProps } from '@chakra-ui/react'
 import { TYPE_COLORS } from '../types'
 
+export function ElementHeaderIcon({ src, hidden = false }: { src?: string | null; hidden?: boolean }) {
+  return <Flex boxSize="28px" justify="center" align="center" minW={0} pointerEvents="none">
+    {!hidden && src && <Box as="img" src={src} alt="technology icon" maxW="100%" maxH="130%" objectFit="contain" opacity={0.95} />}
+  </Flex>
+}
+
 interface ElementBodyProps extends FlexProps {
   name: string
   nameContent?: ReactNode

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSymbolPresentation, symbolGroupColor, symbolStems } from './subElementSymbols'
+import { buildSymbolPresentation, symbolStems } from './subElementSymbols'
 import type { SubSource } from './subElementSource'
 import { lineHandle, symbolHandle } from './subElements'
 import { expandCodeTabs, measureSubText, SUB_CODE_TEXT_X, SUB_SYMBOL_PADDING } from './subElementText'
@@ -18,13 +18,13 @@ describe('symbol selection areas and semantic ports', () => {
     expect(model.viewportBottom).toBe(135)
     expect(model.above.areas).toHaveLength(0)
     expect(model.below.areas).toHaveLength(0)
-    expect(model.areas[0].contentTop).toBe(2)
+    expect(model.areas[0].contentTop).toBe(4)
     expect(model.areas.every(area => area.visible)).toBe(true)
-    expect(symbolStems(model, 600, 135)[0]).toMatchObject({ targetY: 96, sourceY: 96 })
+    expect(symbolStems(model, 600, 135)[0]).toMatchObject({ targetY: 99, sourceY: 99 })
   })
 
   it('aggregates anchors beneath an active overflow band while keeping raw line connections', () => {
-    const model = buildSymbolPresentation({ ...base, detail: 'outline', height: 135, scrollTop: 24, connected: [symbolHandle('right', outer)] })
+    const model = buildSymbolPresentation({ ...base, detail: 'outline', height: 135, scrollTop: 32, connected: [symbolHandle('right', outer)] })
     expect(model.viewportTop).toBe(100)
     expect(model.above.areas.map(area => area.symbol)).toEqual([outer, find])
     expect(model.above.representative?.visible).toBe(true)
@@ -35,10 +35,10 @@ describe('symbol selection areas and semantic ports', () => {
     expect(lines.below.representative?.visible).toBe(true)
   })
 
-  it('uses stable group colors and respects an explicit group tag color', () => {
-    expect(symbolGroupColor('save')).toBe(symbolGroupColor('save'))
-    expect(symbolGroupColor('save', '#123456')).toBe('#123456')
-    expect(buildSymbolPresentation({ ...base, groupColor: '#123456' }).areas.every(area => area.color === '#123456')).toBe(true)
+  it('uses the application accent for all symbols and endpoints', () => {
+    const model = buildSymbolPresentation(base)
+    expect(model.areas.every(area => area.color === 'var(--accent)')).toBe(true)
+    expect([...model.endpoints.values()].every(endpoint => endpoint.color === 'var(--accent)')).toBe(true)
   })
 
   it('pads nested symbol ranges and anchors both sides to their start line', () => {
@@ -47,16 +47,16 @@ describe('symbol selection areas and semantic ports', () => {
     const area = model.areas.find(candidate => candidate.symbol.name === 'save')!
     expect(area.depth).toBe(1)
     expect(area.x).toBeGreaterThan(model.areas[0].x)
-    expect(area.height).toBe(5 * 24 - 4)
+    expect(area.height).toBe(5 * 18 + 4)
     expect(area.width).toBeGreaterThan(source.lines[7].trimStart().length * 7.2)
-    expect(model.endpoints.get(left)).toMatchObject({ y: 264, side: 'left', visible: true, color: area.color })
-    expect(model.endpoints.get(right)).toMatchObject({ y: 264, side: 'right', visible: true, color: area.color })
+    expect(model.endpoints.get(left)).toMatchObject({ y: 221, side: 'left', visible: true, color: area.color })
+    expect(model.endpoints.get(right)).toMatchObject({ y: 221, side: 'right', visible: true, color: area.color })
   })
 
   it('aggregates off-screen connections without losing their IDs or counts', () => {
     const above = symbolHandle('left', outer), below = symbolHandle('right', find)
     const raw = lineHandle('left', 28)
-    const model = buildSymbolPresentation({ ...base, scrollTop: 120, connected: [above, above, below, raw] })
+    const model = buildSymbolPresentation({ ...base, scrollTop: 30, connected: [above, above, below, raw] })
     expect(model.above.connectionCount).toBe(2)
     expect(model.below.connectionCount).toBe(2)
     expect(model.endpoints.get(above)).toMatchObject({ y: 92, side: 'left', overflow: 'above', visible: true })
@@ -70,7 +70,7 @@ describe('symbol selection areas and semantic ports', () => {
     const id = symbolHandle('right', save)
     const model = buildSymbolPresentation({ ...base, detail: 'outline', height: 164, connected: [id] })
     expect(model.areas.map(area => area.symbol.name)).toEqual(['User', 'find'])
-    expect(model.endpoints.get(id)).toMatchObject({ y: 96, area: { symbol: outer } })
+    expect(model.endpoints.get(id)).toMatchObject({ y: 99, area: { symbol: outer } })
     expect(buildSymbolPresentation({ ...base, detail: 'overview' }).endpoints.size).toBe(0)
   })
 
@@ -113,7 +113,7 @@ describe('symbol selection areas and semantic ports', () => {
     const model = buildSymbolPresentation({ ...base, connected: [id, id] })
     const stem = symbolStems(model, 600, 360).find(candidate => candidate.endpoint.id === id)
     expect(stem?.area.symbol).toBe(outer)
-    expect(stem?.targetY).toBe(168)
+    expect(stem?.targetY).toBe(149)
     expect(stem?.sourceY).toBe(stem?.targetY)
   })
 
@@ -151,4 +151,19 @@ describe('symbol selection areas and semantic ports', () => {
     const outline = buildSymbolPresentation({ ...base, source: doc, detail: 'outline', width: 400, height: 240 })
     expect(outline.contentWidth).toBeGreaterThan(measureSubText(doc.symbols[0].name))
   })
+})
+
+
+it('keeps symbol bounds and anchors in sync with font size and the line-number gutter', () => {
+  const id = symbolHandle('right', outer)
+  const small = buildSymbolPresentation({ ...base, connected: [id] })
+  const large = buildSymbolPresentation({ ...base, connected: [id], fontSize: 24 })
+  expect(large.rowHeight).toBe(36)
+  expect(large.areas[0].width - 16).toBeCloseTo((small.areas[0].width - 16) * 2)
+  expect(large.endpoints.get(id)?.y).toBe(140)
+  const hidden = buildSymbolPresentation({ ...base, connected: [id], fontSize: 24, lineNumbers: false })
+  expect(hidden.textX).toBe(14)
+  expect(hidden.areas[0].x).toBeLessThan(large.areas[0].x)
+  expect(hidden.endpoints.get(id)?.y).toBe(large.endpoints.get(id)?.y)
+  expect(buildSymbolPresentation({ ...base }).areas[0].width).toBe(small.areas[0].width)
 })

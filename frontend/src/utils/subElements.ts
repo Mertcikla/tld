@@ -1,8 +1,9 @@
+import { subCodeLineHeight } from './subElementText'
 import type { SourcePreviewSize } from './sourcePreviewSize'
 import { sourceLinkKind } from './sourceLinks'
 
 export const SUB_HEADER = 84
-export const SUB_ROW = 24
+export const SUB_ROW = subCodeLineHeight()
 export const SUB_ELLIPSIS = 16
 export const SUB_CONTENT_TOP = SUB_HEADER
 export type SubDetail = 'overview' | 'outline' | 'code'
