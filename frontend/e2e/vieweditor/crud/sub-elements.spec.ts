@@ -135,6 +135,7 @@ test('protobuf symbol ports connect through source areas and share overflow hand
     // Reveal all target symbols before the pointer reaches the preview, including
     // unused symbols while an existing connector is being moved.
     for (const index of [0, 1]) await expect(targetNode.locator(`[data-handleid="right-symbol-message%3AM${index}"]`)).toHaveCSS('opacity', '1')
+    await expect(targetNode.getByTestId('sub-symbol-region').nth(1)).toHaveAttribute('data-highlighted', 'true')
     await page.mouse.move(destination.x, destination.y, { steps: 12 })
     await page.mouse.up()
   }
@@ -271,6 +272,7 @@ test('symbol handles reveal as click-connect targets in full and collapsed layou
   const body = await symbolLeft(targetNode.locator('.sub-symbol-text').first())
   await page.mouse.move(dragStart.x, dragStart.y)
   await page.mouse.down()
+  await expect(targetNode.getByTestId('sub-symbol-region').nth(1)).toHaveAttribute('data-highlighted', 'true')
   await page.mouse.move(body.x, body.y, { steps: 12 })
   await page.mouse.up()
   await expectConnector(page, { sourceElementId: rightSource.id, targetElementId: target.id, targetHandle: 'right-symbol-message%3AFirst' }, true, view.id)
@@ -282,8 +284,10 @@ test('symbol handles reveal as click-connect targets in full and collapsed layou
     await page.mouse.move(10, 10)
     await expect(port).toHaveCSS('opacity', '1')
     await expect(port).toHaveAttribute('data-symbol-port', 'true')
+    await expect(targetNode.getByTestId('sub-symbol-region').nth(1)).toHaveAttribute('data-highlighted', 'true')
     await page.keyboard.press('Escape')
     await expect(port).toHaveCSS('opacity', '0')
+    await expect(targetNode.getByTestId('sub-symbol-region').nth(1)).not.toHaveAttribute('data-highlighted')
   }
   for (const [origin, side] of [[sourceNode, 'left'], [nodeByName(page, 'Right source'), 'right']] as const) {
     await origin.click()

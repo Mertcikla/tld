@@ -111,7 +111,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const dragSourceHandle = nativeSourceHandle ?? (connectorDragSource?.nodeId === String(data.element_id) ? connectorDragSource.handleId : null)
   const isDragSource = (area: SymbolArea) => !!dragSourceHandle && (area.leftId === dragSourceHandle || area.rightId === dragSourceHandle || presentation.endpoints.get(dragSourceHandle)?.area?.key === area.key)
   const interactions: SymbolInteractions = {
-    showHighlight: area => area.connected || hoveredSymbol === area.key || isDragSource(area),
+    showHighlight: area => area.connected || hoveredSymbol === area.key || isDragSource(area) || !!connecting,
     showStem: endpoint => endpoint.connected || hoveredSymbol === endpoint.area?.key || connecting,
     isActive: area => hoveredSymbol === area.key || selectedSymbol === area.key || [dragSourceHandle, data.interactionSourceHandleId, ...(data.selectedHandleIds ?? [])].some(id => id && (id === area.leftId || id === area.rightId || presentation.endpoints.get(id)?.area?.key === area.key)),
     onHover: setHoveredSymbol,
