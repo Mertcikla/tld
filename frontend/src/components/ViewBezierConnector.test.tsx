@@ -209,3 +209,19 @@ it.each(['bezier', 'straight', 'step', 'smoothstep'])('keeps %s endpoints fixed 
     act(() => renderer.unmount())
   }
 })
+
+
+it.each(['code', 'class', 'service'].flatMap(kind => [180, 400, 720].map(width => ({ kind, width }))))('routes $kind elements at width $width exactly like regular elements', ({ kind, width }) => {
+  const source = { id: '1', position: { x: 0, y: 0 }, width: 180, height: 85, data: { kind: 'service' } } as Node
+  const target = { ...source, id: '2', position: { x: 0, y: 500 } }
+  state.nodes.set('1', source); state.nodes.set('2', target)
+  const props = { sourceX: 0, sourceY: 42.5, targetX: 0, targetY: 542.5, sourcePosition: Position.Left, targetPosition: Position.Left }
+  const regular = render(props)
+  const path = regular.root.findAllByType('path')[0].props.path
+  state.nodes.set('1', { ...source, width, height: 360, data: { kind, repo: '/repo', file_path: 'file.proto' } })
+  state.nodes.set('2', { ...target, width, height: 360, data: { kind, repo: '/repo', file_path: 'file.proto' } })
+  const linked = render(props)
+  expect(linked.root.findAllByType('path')[0].props.path).toBe(path)
+  expect(path).toContain('C -90,')
+  act(() => { regular.unmount(); linked.unmount() })
+})

@@ -1,5 +1,5 @@
 import React from 'react'
-import { nodeHandleFlowPosition } from '../../../utils/subElementDom'
+import { nodeConnectorRouteSize, nodeHandleFlowPosition } from '../../../utils/subElementDom'
 import { useViewport, type Node as RFNode } from 'reactflow'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -52,7 +52,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
       {clickConnectMode && clickConnectCursorPos && (() => {
         const sourceNode = rfNodes.find((n) => n.id === clickConnectMode.sourceNodeId)
         if (!sourceNode) return null
-        const w = sourceNode.width ?? 180; const h = sourceNode.height ?? 80
+        const { width: w, height: h } = nodeConnectorRouteSize(sourceNode, 180, 80)
         const { x: fx, y: fy, side: sourceSide } = nodeHandleFlowPosition(
           sourceNode,
           ensureVisualHandleId(clickConnectMode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
@@ -63,8 +63,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         const sx = fx * viewportState.zoom + viewportState.x + rfX
         const sy = fy * viewportState.zoom + viewportState.y + rfY
         const targetNode = rfNodes.find(node => node.id === clickConnectMode.targetNodeId)
-        const targetWidth = targetNode?.width ?? 180
-        const targetHeight = targetNode?.height ?? 85
+        const { width: targetWidth, height: targetHeight } = nodeConnectorRouteSize(targetNode)
         const targetOrigin = targetNode?.positionAbsolute ?? targetNode?.position
         const targetPoint = targetOrigin && clickConnectMode.targetHandle
           ? nodeHandleFlowPosition(targetNode!, clickConnectMode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
@@ -105,7 +104,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
       {altConnectorDrag && (() => {
         const sourceNode = rfNodes.find((n) => n.id === altConnectorDrag.sourceNodeId)
         if (!sourceNode) return null
-        const w = sourceNode.width ?? 180; const h = sourceNode.height ?? 80
+        const { width: w, height: h } = nodeConnectorRouteSize(sourceNode, 180, 80)
         const { x: fx, y: fy, side: sourceSide } = nodeHandleFlowPosition(
           sourceNode,
           ensureVisualHandleId(altConnectorDrag.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE),
@@ -127,7 +126,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         let targetHeight = 80 * viewportState.zoom
 
         if (hoveredNode) {
-          const hw = hoveredNode.width ?? 180; const hh = hoveredNode.height ?? 80
+          const { width: hw, height: hh } = nodeConnectorRouteSize(hoveredNode, 180, 80)
           const closest = findClosestHandles(sourceNode, hoveredNode)
           const targetHandle = ensureVisualHandleId(altConnectorDrag.hoveredHandleId ?? closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
           const target = nodeHandleFlowPosition(hoveredNode, targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
@@ -171,8 +170,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
       {handleReconnectDrag && (() => {
         const fixedNode = rfNodes.find((n) => n.id === handleReconnectDrag.fixedNodeId)
         if (!fixedNode) return null
-        const w = fixedNode.width ?? 180
-        const h = fixedNode.height ?? 80
+        const { width: w, height: h } = nodeConnectorRouteSize(fixedNode, 180, 80)
         const { x: fx, y: fy, side: fixedSide } = nodeHandleFlowPosition(
           fixedNode,
           handleReconnectDrag.fixedHandle,
@@ -203,8 +201,9 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         ) ?? (handleReconnectDrag.endpoint === 'source' ? DEFAULT_SOURCE_HANDLE_SIDE : DEFAULT_TARGET_HANDLE_SIDE)
         const sourceSide = handleReconnectDrag.endpoint === 'source' ? movingSide : fixedSide
         const targetSide = handleReconnectDrag.endpoint === 'source' ? fixedSide : movingSide
-        const movingWidth = (movingNode?.width ?? 180) * viewportState.zoom
-        const movingHeight = (movingNode?.height ?? 80) * viewportState.zoom
+        const movingSize = nodeConnectorRouteSize(movingNode, 180, 80)
+        const movingWidth = movingSize.width * viewportState.zoom
+        const movingHeight = movingSize.height * viewportState.zoom
         const fixedWidth = w * viewportState.zoom
         const fixedHeight = h * viewportState.zoom
         const { path } = buildViewConnectorPath({

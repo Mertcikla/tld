@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ensureVisualHandleId, getHandleSlotOffsetFromId } from './edgeDistribution'
-import { isSubElement, isSubHandle, lineHandle, memberHandle, subDetail, subEditorSize, subElementKind, subHandleY, subSize, symbolHandle, subRouteDimension } from './subElements'
+import { isSubElement, isSubHandle, lineHandle, memberHandle, subDetail, subEditorSize, subElementKind, subHandleY, subSize, symbolHandle } from './subElements'
 
 it('enables source layouts for repo files and symbols without changing their authored kind', () => {
   const element = { kind: 'service', repo: 'owner/repo', file_path: 'src/api.ts#function_declaration:find' }
@@ -47,12 +47,6 @@ it('keeps symbol connections attached when source lines move', () => {
   expect(ensureVisualHandleId(handle, 'left')).toBe(handle)
   expect(subHandleY(handle, null, 12, 360, [symbol])).toBe(96)
   expect(subHandleY(handle, null, 12, 360, [{ ...symbol, startLine: 13, endLine: 16 }])).toBe(120)
-})
-
-it('bounds connector stems for large detail cards without changing existing element routes', () => {
-  expect(subRouteDimension('code', 600, 60)).toBe(60)
-  expect(subRouteDimension('code', 600, 0)).toBe(24)
-  expect(subRouteDimension('service', 180, 60)).toBe(180)
 })
 
 it('keeps saved dimensions stable as an element changes detail with screen size', () => {

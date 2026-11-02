@@ -1,6 +1,11 @@
 import { Position } from 'reactflow'
 import type { LogicalHandleSide } from './edgeDistribution'
 
+/** Source previews retain the ordinary card's control-point footprint as they grow. */
+export function connectorRouteSize(width: number, height: number, sourcePreview = false) {
+  return sourcePreview ? { width: Math.min(width, 180), height: Math.min(height, 85) } : { width, height }
+}
+
 const CURVATURE = 0.5
 
 export type ConnectorRouteStyle = 'bezier' | 'straight' | 'step' | 'smoothstep'

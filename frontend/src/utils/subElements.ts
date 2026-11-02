@@ -24,8 +24,6 @@ export function subEditorSize(kind: string | null | undefined, value: SourcePrev
   return subSize(kind, value)
 }
 
-// Large cards should not force connector control points across nearby cards.
-export const subRouteDimension = (kind: string | null | undefined, size: number, gap: number) => isSubElement(kind) ? Math.min(size, Math.max(24, gap)) : size
 export function subRowHeight() { return SUB_ROW }
 export const memberHandle = (side: 'left' | 'right', id: string) => `${side}-member-${encodeURIComponent(id)}`
 export const lineHandle = (side: 'left' | 'right', line: number) => `${side}-line-${line}`

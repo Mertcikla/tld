@@ -801,6 +801,7 @@ export function useCanvasInteractions({
     touchMove: (event: TouchEvent) => void
   } | null>(null)
   const connectingSourceRef = useRef<string | null>(null)
+  const nativeConnectPointRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const connectWasValidRef = useRef(false)
   const connectorDragLastUpdateRef = useRef(0)
   const isReconnectingRef = useRef(false)
@@ -1665,7 +1666,16 @@ export function useCanvasInteractions({
       return
     }
     try {
-      const { sourceHandle, targetHandle } = resolveConnectorDragAttachHandles(params.sourceHandle, params.targetHandle)
+      const point = nativeConnectPointRef.current
+      let bodyHandle: string | null = null
+      if (point) for (const target of elementsFromClientPoint(point.clientX, point.clientY) ?? []) {
+        if (target.closest('.react-flow__handle')) break
+        if (target.closest('.react-flow__node')?.getAttribute('data-id') !== params.target) continue
+        bodyHandle = symbolDropHandle(target, point.clientX, params.source)
+        if (bodyHandle) break
+      }
+      // React Flow may snap to a nearby port before our body-drop fallback runs.
+      const { sourceHandle, targetHandle } = resolveConnectorDragAttachHandles(params.sourceHandle, bodyHandle ?? params.targetHandle)
       const newConnector = await api.workspace.connectors.create(viewId, {
         source_element_id: sourceId, target_element_id: targetId,
         source_handle: sourceHandle, target_handle: targetHandle,
@@ -1699,7 +1709,9 @@ export function useCanvasInteractions({
       : event.touches[0]
         ? { clientX: event.touches[0].clientX, clientY: event.touches[0].clientY }
         : null
+    nativeConnectPointRef.current = startPoint ? { clientX: startPoint.clientX, clientY: startPoint.clientY } : null
     const updateFromPoint = (clientX: number, clientY: number) => {
+      nativeConnectPointRef.current = { clientX, clientY }
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now

@@ -1,5 +1,4 @@
-import { subElementKind, subRouteDimension } from '../utils/subElements'
-import { subHandleFlowPosition, symbolHandleAtFlowPoint } from '../utils/subElementDom'
+import { nodeConnectorRouteSize, subHandleFlowPosition, symbolHandleAtFlowPoint } from '../utils/subElementDom'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode, Position } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
@@ -67,10 +66,10 @@ export function ViewConnectorConnectionLine({
     targetY: bodySnap?.y ?? toY,
     sourcePosition: positionForHandleSide(sourceSide),
     targetPosition: positionForHandleSide(targetSide),
-    sourceWidth: fromNode?.width ?? 200,
-    sourceHeight: fromNode?.height ?? 100,
-    targetWidth: targetNode?.width ?? 200,
-    targetHeight: targetNode?.height ?? 100,
+    sourceWidth: nodeConnectorRouteSize(fromNode, 200, 100).width,
+    sourceHeight: nodeConnectorRouteSize(fromNode, 200, 100).height,
+    targetWidth: nodeConnectorRouteSize(targetNode, 200, 100).width,
+    targetHeight: nodeConnectorRouteSize(targetNode, 200, 100).height,
   })
 
   return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
@@ -131,10 +130,8 @@ function ViewBezierConnector({
   const finalTargetX = targetEndpoint.x
   const finalTargetY = targetEndpoint.y
 
-  const srcW = subRouteDimension(subElementKind(sourceNode?.data), sourceNode?.width ?? 200, Math.abs(finalTargetX - finalSourceX))
-  const srcH = subRouteDimension(subElementKind(sourceNode?.data), sourceNode?.height ?? 100, Math.abs(finalTargetY - finalSourceY))
-  const tgtW = subRouteDimension(subElementKind(targetNode?.data), targetNode?.width ?? 200, Math.abs(finalTargetX - finalSourceX))
-  const tgtH = subRouteDimension(subElementKind(targetNode?.data), targetNode?.height ?? 100, Math.abs(finalTargetY - finalSourceY))
+  const { width: srcW, height: srcH } = nodeConnectorRouteSize(sourceNode, 200, 100)
+  const { width: tgtW, height: tgtH } = nodeConnectorRouteSize(targetNode, 200, 100)
 
   const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
   const { path, labelX, labelY } = buildViewConnectorPath({

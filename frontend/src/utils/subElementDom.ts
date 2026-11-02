@@ -1,9 +1,14 @@
+import { connectorRouteSize } from './connectorRoute'
 import type { Node } from 'reactflow'
-import { isSubHandle } from './subElements'
+import { isSubHandle, subElementKind } from './subElements'
 import { getHandleFlowPosition, type LogicalHandleSide } from './edgeDistribution'
 
 function nodeElement(node: Node) {
   return document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(node.id)}"]`)
+}
+
+export function nodeConnectorRouteSize(node: Node | undefined, width = 180, height = 85) {
+  return connectorRouteSize(node?.width ?? width, node?.height ?? height, !!subElementKind(node?.data))
 }
 
 /** Use the mounted port geometry, including scrolled and aggregated endpoints. */

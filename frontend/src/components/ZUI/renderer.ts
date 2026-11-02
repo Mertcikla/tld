@@ -1,4 +1,4 @@
-import { isDetailedSubElement, subRouteDimension, SUB_HEADER } from '../../utils/subElements'
+import { isDetailedSubElement, SUB_HEADER } from '../../utils/subElements'
 import { drawSubElement, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
@@ -6,7 +6,7 @@ import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import { CHANGE_RING_COLORS } from './changeOverlay'
 import { EDGE_CHANGE_META } from './edgeChange'
-import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
+import { connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
@@ -1452,8 +1452,11 @@ function drawEdges(
         const dx = Math.abs(tH.x - sH.x)
         const dy = Math.abs(tH.y - sH.y)
 
-        const minStemSH = (sH.pos === 'left' || sH.pos === 'right' ? subRouteDimension(node.subKind ?? node.type, effWSource, dx) : subRouteDimension(node.subKind ?? node.type, effHSource, dy)) * 0.5
-        const minStemTH = (tH.pos === 'left' || tH.pos === 'right' ? subRouteDimension(target.subKind ?? target.type, effWTarget, dx) : subRouteDimension(target.subKind ?? target.type, effHTarget, dy)) * 0.5
+
+        const sourceSize = connectorRouteSize(effWSource, effHSource, (node.subKind ?? node.type) === 'code')
+        const targetSize = connectorRouteSize(effWTarget, effHTarget, (target.subKind ?? target.type) === 'code')
+        const minStemSH = (sH.pos === 'left' || sH.pos === 'right' ? sourceSize.width : sourceSize.height) * 0.5
+        const minStemTH = (tH.pos === 'left' || tH.pos === 'right' ? targetSize.width : targetSize.height) * 0.5
 
         if (sH.pos === 'left' || sH.pos === 'right') {
           const stem = Math.max(dx * curvature, minStemSH)

@@ -1,9 +1,9 @@
-import { isDetailedSubElement, isSubHandle, subRouteDimension } from '../../utils/subElements'
+import { isDetailedSubElement, isSubHandle } from '../../utils/subElements'
 import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
 import { getExpandThresholds, transitionT } from './layoutEngine'
-import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
+import { connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -152,13 +152,17 @@ export function buildEdgeRoutePoints(
   if (type === 'bezier') {
     const dx = Math.abs(targetPoint.x - sourcePoint.x)
     const dy = Math.abs(targetPoint.y - sourcePoint.y)
+
+
+    const sourceSize = connectorRouteSize(source.worldW, source.worldH, (source.subKind ?? source.type) === 'code')
+    const targetSize = connectorRouteSize(target.worldW, target.worldH, (target.subKind ?? target.type) === 'code')
     const sourceStem = Math.max(
       (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? dx : dy) * 0.5,
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? subRouteDimension(source.subKind ?? source.type, source.worldW, dx) : subRouteDimension(source.subKind ?? source.type, source.worldH, dy)) * 0.5,
+      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? sourceSize.width : sourceSize.height) * 0.5,
     )
     const targetStem = Math.max(
       (targetPoint.side === 'left' || targetPoint.side === 'right' ? dx : dy) * 0.5,
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? subRouteDimension(target.subKind ?? target.type, target.worldW, dx) : subRouteDimension(target.subKind ?? target.type, target.worldH, dy)) * 0.5,
+      (targetPoint.side === 'left' || targetPoint.side === 'right' ? targetSize.width : targetSize.height) * 0.5,
     )
     const cp1 = {
       x: sourcePoint.x + (sourcePoint.side === 'left' ? -sourceStem : sourcePoint.side === 'right' ? sourceStem : 0),

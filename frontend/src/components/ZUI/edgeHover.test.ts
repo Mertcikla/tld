@@ -210,3 +210,12 @@ it('routes source line handles on previews without stored element detail', async
   expect(buildEdgeRoutePoints(source, target, edge).points[0]).toMatchObject({ x: 520, y: 144 })
   expect(scrollSubElement(source, 24, 0.2)).toBe(false)
 })
+
+
+it.each(['overview', 'outline', 'code'] as const)('uses regular curves for source-linked %s nodes', detail => {
+  const source = node('source', 1, 0, 0, { worldW: 180, worldH: 85 })
+  const target = node('target', 2, 0, 500, { worldW: 180, worldH: 85 })
+  const edge = { id: 1, sourceId: source.id, targetId: target.id, label: '', direction: 'forward', sourceHandle: 'left-2', targetHandle: 'left-2', type: 'bezier' }
+  const regular = buildEdgeRoutePoints(source, target, edge)
+  expect(buildEdgeRoutePoints({ ...source, worldW: 720, worldH: 360, worldY: source.worldY - 137.5, subKind: 'code', subDetail: detail }, { ...target, worldW: 720, worldH: 360, worldY: target.worldY - 137.5, subKind: 'code', subDetail: detail }, edge)).toEqual(regular)
+})
