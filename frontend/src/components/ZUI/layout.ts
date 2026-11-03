@@ -12,7 +12,7 @@ import type {
 } from '../../types'
 import { elementTechnologyText, resolveElementIconUrl } from '../../utils/elementIcon'
 import { readSourcePreviewSize } from '../../utils/sourcePreviewSize'
-import { isSubElement, subElementKind, subSize } from '../../utils/subElements'
+import { subElementKind, subSize } from '../../utils/subElements'
 import { connectorChangeFromTags } from './edgeChange'
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -23,8 +23,7 @@ const GROUP_PAD = 80         // padding inside a diagram group box
 const GROUP_SPACING = 400    // horizontal gap between root diagrams
 const CHILD_PAD = 4         // padding inside a node when rendering children
 
-const hasSavedSize = (element: PlacedElement) => !!readSourcePreviewSize(element.view_id, element.element_id)
-const displaySize = (element: PlacedElement) => subSize(isSubElement(element.kind) || hasSavedSize(element) ? subElementKind(element) ?? element.kind : element.kind, readSourcePreviewSize(element.view_id, element.element_id))
+const displaySize = (element: PlacedElement) => subSize(subElementKind(element) ?? element.kind, readSourcePreviewSize(element.view_id, element.element_id))
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -197,7 +196,6 @@ function buildNodes(
         ...(edge.target_element_id === obj.element_id && edge.target_handle ? [{ id: edge.id, handleId: edge.target_handle }] : []),
       ]),
       subKind: subElementKind(obj),
-      subDetail: !isSubElement(obj.kind) && !hasSavedSize(obj) ? 'overview' : undefined,
       sourceLink: { repo: obj.repo, repository_id: obj.repository_id, branch: obj.branch, file_path: obj.file_path, language: obj.language },
       label: obj.name,
       type: obj.kind ?? 'system',
