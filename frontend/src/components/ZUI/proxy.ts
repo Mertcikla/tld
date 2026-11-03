@@ -7,7 +7,8 @@ import {
 } from '../../crossBranch/resolve'
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
-import { getExpandThresholds } from './layoutEngine'
+import { subDetail } from '../../utils/subElements'
+import { getExpandThresholds, leafScreenWidthLimit } from './layoutEngine'
 import { connectorLabelFitsEndpoints, connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
@@ -29,6 +30,7 @@ export interface VisibleNodeAnchor {
   pathDepth: number
   renderAlpha: number
   nativeRendered: boolean
+  diffReading?: boolean
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -120,7 +122,7 @@ function collectVisibleAnchorForNode(
   const parentAlpha = inheritedAlpha * (1 - t)
   const childAlpha = inheritedAlpha * t
   const selfDrawn = !hasChildren || t <= 0.95
-  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, thresholds)
+  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, { ...thresholds, end: leafScreenWidthLimit(node, thresholds.end) })
 
   if (selfDrawn) {
     registerVisibleAnchor(node, visibleAnchors, byNodeId, {
@@ -134,6 +136,7 @@ function collectVisibleAnchorForNode(
       pathDepth: node.pathElementIds.length,
       renderAlpha: hasChildren ? zoomableNodeConnectorAlpha(inheritedAlpha, parentAlpha) : inheritedAlpha,
       nativeRendered: true,
+      diffReading: !!node.sourceLink?.comparisonDiff && subDetail(visualRect.worldW * view.zoom, visualRect.worldH * view.zoom) === 'code',
     })
   }
 
@@ -658,6 +661,7 @@ export function drawVisibleProxyConnectors(
     const highlightColor = connectorTagHighlightColor(connector.details.connectors.flatMap((leaf) => leaf.connector.tags ?? []), accent)
     ctx.strokeStyle = highlightColor ?? accent
     const isHovered = hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details?.key === connector.key
+    const diffReading = source.diffReading || target.diffReading
     ctx.lineWidth = (isHovered || highlightColor ? 3 : 1) / zoom
     ctx.lineCap = 'round'
     ctx.setLineDash(isHovered ? [] : [1 / zoom, 4 / zoom])
@@ -666,7 +670,7 @@ export function drawVisibleProxyConnectors(
     ctx.lineTo(targetPoint.x, targetPoint.y)
     ctx.stroke()
     ctx.setLineDash([])
-    if (showBadges) {
+    if (showBadges && (!diffReading || isHovered)) {
       const badge = measureProxyBadge(ctx, label, zoom)
       if (!connectorLabelFitsEndpoints(
         { width: badge.badgeCssW, height: badge.badgeCssH },

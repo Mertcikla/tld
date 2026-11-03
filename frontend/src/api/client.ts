@@ -280,6 +280,12 @@ export interface RepositoryImpactMermaid {
 }
 // RepositoryImpactSymbol is one changed symbol of an overlay. It keeps the
 // portable identity of the change, not the underlying snapshot fact.
+export interface RepositorySourceDiffLine {
+  change: string
+  oldLine: number
+  newLine: number
+  text: string
+}
 export interface RepositoryImpactSymbol {
   change: SnapshotSourceChange['change'] | 'unchanged'
   name: string
@@ -2447,6 +2453,10 @@ export const api = {
     stopWatch: (repositoryId: string): Promise<RepositoryWatchStatus> => rpc(async () => {
       const result = await codeIndexRepositoryClient.stopWatch({ id: repositoryId })
       return mapWatchStatus(result)
+    }),
+    impactSource: (repositoryId: string, comparisonKey: string, filePath: string, side: 'base' | 'head', includeDiff = false): Promise<{ content: string; path: string; diffLines: RepositorySourceDiffLine[]; baseContent: string; headContent: string }> => rpc(async () => {
+      const response = await codeIndexClient.getImpactSource({ repositoryId, comparisonKey, filePath, side, includeDiff })
+      return { content: response.content, path: response.path, diffLines: response.diffLines, baseContent: response.baseContent, headContent: response.headContent }
     }),
     impactScene: (repositoryId: string, comparisonKey: string, signal?: AbortSignal, options: { debugProvenance?: boolean; plain?: boolean } = {}): Promise<RepositoryImpactScene> => rpc(async () => {
       const response = await codeIndexClient.getImpactScene({ repositoryId, comparisonKey, debugProvenance: options.debugProvenance ?? false, plain: options.plain ?? false }, { signal })

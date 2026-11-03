@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { peekSubSource, requestSubSource, subscribeSubSources } from './subElementSource'
 
-const mocks = vi.hoisted(() => ({ source: vi.fn(), symbols: vi.fn(), find: vi.fn() }))
-vi.mock('../api/client', () => ({ api: { editor: { source: mocks.source } } }))
+const mocks = vi.hoisted(() => ({ captured: vi.fn(), source: vi.fn(), symbols: vi.fn(), find: vi.fn() }))
+vi.mock('../api/client', () => ({ api: { editor: { source: mocks.source }, repositories: { impactSource: mocks.captured } } }))
 vi.mock('./repositoryResolver', () => ({ listIndexedRepositories: async () => [], resolveElementRepository: () => null }))
+vi.mock('web-tree-sitter', () => ({ default: class {} }))
 vi.mock('./treesitter', () => ({
   detectLanguage: () => 'typescript',
   getParser: async () => ({ parse: () => ({ delete: vi.fn() }) }),
@@ -17,6 +18,8 @@ beforeEach(() => {
   mocks.symbols.mockReturnValue([{ name: 'find', startLine: 2, endLine: 4 }])
   mocks.find.mockReturnValue({ name: 'find', startLine: 2, endLine: 4 })
 })
+
+afterEach(async () => { await vi.dynamicImportSettled() })
 
 describe('cached source documents', () => {
   it('deduplicates loads and preserves file line numbers for range handles', async () => {
@@ -51,4 +54,19 @@ describe('cached source documents', () => {
     await vi.waitFor(() => expect(retry.status).toBe('ready'))
     expect(peekSubSource(link)).toBe(retry)
   })
+})
+
+
+it('loads comparison source independently of worktree and other comparison sides', async () => {
+  mocks.captured.mockReset().mockImplementation(async (_repo, _comparison, path, side) => ({ path, content: `function ${side}() {}` }))
+  const link = { repository_id: 'snapshot-repo', repo: '/checkout', file_path: 'saved.ts', comparisonKey: 'comparison-one', comparisonSide: 'head' as const }
+  const head = requestSubSource(link)
+  const base = requestSubSource({ ...link, comparisonSide: 'base' })
+  const other = requestSubSource({ ...link, comparisonKey: 'comparison-two' })
+  await vi.waitFor(() => expect([head.status, base.status, other.status]).toEqual(['ready', 'ready', 'ready']))
+  expect(head.lines).toEqual(['function head() {}'])
+  expect(base.lines).toEqual(['function base() {}'])
+  expect(head).not.toBe(other)
+  expect(mocks.captured).toHaveBeenCalledWith('snapshot-repo', 'comparison-one', 'saved.ts', 'head')
+  expect(mocks.source).not.toHaveBeenCalled()
 })

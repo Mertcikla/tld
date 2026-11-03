@@ -292,3 +292,21 @@ it('uses fractional text metrics in Explore while preserving the editor layout',
   expect(continuous.textX).toBeCloseTo(14 + Math.max(SUB_CODE_TEXT_X - 14, measured + 12))
   expect(editor.textX).toBe(14 + Math.max(SUB_CODE_TEXT_X - 14, Math.ceil(measured) + 12))
 })
+
+
+it('keeps added and removed Git rows visible and maps Head anchors past deletions', () => {
+  const doc: SubSource = { status: 'ready', startLine: 1, endLine: 3, lines: ['same', 'new', 'last'], tokens: [], symbols: [],
+    diff: { side: 'head', baseTokens: [], headTokens: [], lines: [
+      { change: 'unchanged', oldLine: 1, newLine: 1, text: 'same' },
+      { change: 'removed', oldLine: 2, newLine: 0, text: 'old' },
+      { change: 'added', oldLine: 0, newLine: 2, text: 'new' },
+      { change: 'unchanged', oldLine: 3, newLine: 3, text: 'last' },
+    ] } }
+  const model = buildSymbolPresentation({ ...base, source: doc, detail: 'code', connectedOnly: true, connected: [lineHandle('left', 3)] })
+  expect(model.rows.map(row => row.diff?.change)).toEqual(['unchanged', 'removed', 'added', 'unchanged'])
+  expect(model.rows.map(row => row.sourceIndex)).toEqual([0, -1, 1, 2])
+  expect(model.endpoints.get(lineHandle('left', 3))?.y).toBe(84 + 2 + 3.5 * model.rowHeight)
+  const ordinary = buildSymbolPresentation({ ...base, source: { ...doc, diff: undefined }, detail: 'code' })
+  expect(ordinary.rows).toHaveLength(3)
+  expect(ordinary.rows.every(row => !row.diff)).toBe(true)
+})

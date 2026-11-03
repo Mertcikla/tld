@@ -124,3 +124,73 @@ func (s *codeIndexService) GetImpactScene(ctx context.Context, req *connect.Requ
 	}
 	return connect.NewResponse(impact.PublicScene(scene, req.Msg.GetDebugProvenance())), nil
 }
+
+// GetImpactSource reads only the snapshots pinned by the frozen comparison.
+// It never consults the current checkout or follows an arbitrary blob hash.
+func (s *codeIndexService) GetImpactSource(ctx context.Context, req *connect.Request[pb.GetImpactSourceRequest]) (*connect.Response[pb.GetImpactSourceResponse], error) {
+	input := req.Msg
+	if input.GetRepositoryId() == "" || input.GetComparisonKey() == "" || input.GetFilePath() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id, comparison key and file path are required"))
+	}
+	if input.GetSide() != "" && input.GetSide() != "head" && input.GetSide() != "base" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("side must be base or head"))
+	}
+	diagram, err := s.store.Impact(ctx, input.GetRepositoryId(), input.GetComparisonKey())
+	if err != nil {
+		return nil, impactLookupError(err)
+	}
+	if diagram.Scene == nil {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("comparison has no captured scene"))
+	}
+	included := false
+	for _, file := range diagram.Scene.Files {
+		if file.GetPath() == input.GetFilePath() {
+			included = true
+			break
+		}
+	}
+	if !included {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("file is outside this comparison"))
+	}
+	if input.GetIncludeDiff() {
+		before, err := s.capturedImpactSource(ctx, input.GetRepositoryId(), diagram.Scene.BaseSnapshotId, input.GetFilePath(), true)
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		after, err := s.capturedImpactSource(ctx, input.GetRepositoryId(), diagram.Scene.HeadSnapshotId, input.GetFilePath(), true)
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		rows, err := impactSourceDiff(ctx, before, after)
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		content := after
+		if input.GetSide() == "base" {
+			content = before
+		}
+		return connect.NewResponse(&pb.GetImpactSourceResponse{Content: content, Path: input.GetFilePath(), DiffLines: rows, BaseContent: before, HeadContent: after}), nil
+	}
+	snapshotID := diagram.Scene.HeadSnapshotId
+	if input.GetSide() == "base" {
+		snapshotID = diagram.Scene.BaseSnapshotId
+	}
+	snapshot, err := s.store.Snapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, impactLookupError(err)
+	}
+	if snapshot.GetRepositoryId() != input.GetRepositoryId() {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("snapshot is outside this repository"))
+	}
+	for _, source := range snapshot.GetSources() {
+		if source.GetPath() != input.GetFilePath() {
+			continue
+		}
+		content, err := s.store.Source(ctx, source.GetHash())
+		if err != nil {
+			return nil, impactLookupError(err)
+		}
+		return connect.NewResponse(&pb.GetImpactSourceResponse{Content: string(content), Path: source.GetPath()}), nil
+	}
+	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("source was not captured on this side of the comparison"))
+}

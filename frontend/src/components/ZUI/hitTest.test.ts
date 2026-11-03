@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { buildSceneGraph } from './sceneGraph'
+import { subDetail as codeDetail } from '../../utils/subElements'
 import { updateScene } from './layoutEngine'
 import { getExpandThresholds } from './layoutEngine'
 import { hitTestZUIRenderedNode } from './hitTest'
-import { isZUIPanMouseButton, shouldZoomZUIWheel, zoomAround } from './useZUIInteraction'
+import { calculateMaxZoom, isZUIPanMouseButton, shouldZoomZUIWheel, zoomAround } from './useZUIInteraction'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import type { WheelDeltaLike } from '../../utils/wheel'
 
@@ -121,16 +122,16 @@ describe('ZUI node hit testing', () => {
     expect(hit?.node.id).toBe('top')
   })
   it.each(['outline', 'code'] as const)('caps detailed %s cards and keeps their hit bounds aligned', subDetail => {
-    const leaf = node('code', 1, 0, 0, { type: 'class', subKind: 'code', subDetail, worldW: 520, worldH: 360 })
+    const leaf: LayoutNode = { ...node('code', 1, 0, 0, { worldW: 520, worldH: 360 }), type: 'class', subKind: 'code', subDetail }
     const groups = [group([leaf])]
     const view = { x: -2400, y: -1600, zoom: 10 }
     const graph = buildSceneGraph({ groups, bbox: { minX: 0, minY: 0, maxX: 520, maxY: 360 } })
     updateScene(graph, view, 1000, 600, thresholds)
     const state = graph.nodeById.get(leaf.id)!.state
     expect(state.isLeafCapped).toBe(true)
-    expect(state.screenW).toBe(thresholds.end)
+    expect(state.screenW).toBe(520)
     const hit = hitTestZUIRenderedNode(260, 180, groups, view, thresholds)!
-    expect(hit.absW * view.zoom).toBe(thresholds.end)
+    expect(hit.absW * view.zoom).toBe(520)
     expect(hit.visualScale * view.zoom).toBeCloseTo(state.drawZoom)
     expect(hit.cumulativeScale).toBe(1)
     expect(hitTestZUIRenderedNode(10, 10, groups, view, thresholds)).toBeNull()
@@ -192,4 +193,20 @@ describe('ZUI wheel gestures', () => {
     expect(shouldZoomZUIWheel(wheel({ deltaX: 8, deltaY: 20 }), false)).toBe(false)
     expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), true)).toBe(false)
   })
+})
+
+
+it.each([320, 800])('allows full code detail on a %spx canvas with aligned hit bounds', canvasW => {
+  const leaf: LayoutNode = { ...node('source', 1, 0, 0, { worldW: 520, worldH: 360 }), type: 'code', subKind: 'code' }
+  const groups = [group([leaf])]
+  const thresholds = getExpandThresholds(canvasW)
+  const maxZoom = calculateMaxZoom(groups, canvasW, { x: 0, y: 0, zoom: 0.5 }, 600)
+  const view = { x: canvasW / 2 - 260 * maxZoom, y: 300 - 180 * maxZoom, zoom: maxZoom }
+  const graph = buildSceneGraph({ groups, bbox: { minX: 0, minY: 0, maxX: 520, maxY: 360 } })
+  updateScene(graph, view, canvasW, 600, thresholds)
+  const state = graph.nodeById.get(leaf.id)!.state
+  expect(codeDetail(leaf.worldW * state.drawZoom, leaf.worldH * state.drawZoom)).toBe('code')
+  const hit = hitTestZUIRenderedNode(260, 180, groups, view, thresholds)!
+  expect(hit.visualScale * view.zoom).toBeCloseTo(state.drawZoom)
+  expect(hit.absW * view.zoom).toBeCloseTo(state.screenW)
 })

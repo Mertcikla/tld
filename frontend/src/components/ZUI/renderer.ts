@@ -11,6 +11,7 @@ import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
   getCameraRebase,
+  leafScreenWidthLimit,
   isVisible,
 } from './layoutEngine'
 import {
@@ -1406,7 +1407,8 @@ function drawEdges(
 
       const hasSourceChildren = node.children && node.children.length > 0
       const sourceScreenW = node.worldW * zoom
-      const sSource = (!hasSourceChildren && sourceScreenW > thresholds.end) ? thresholds.end / sourceScreenW : 1
+      const sourceLimit = leafScreenWidthLimit(node, thresholds.end)
+      const sSource = (!hasSourceChildren && sourceScreenW > sourceLimit) ? sourceLimit / sourceScreenW : 1
       const effWSource = node.worldW * sSource
       const effHSource = node.worldH * sSource
       const cxSource = node.worldX + node.worldW / 2 - ox
@@ -1416,7 +1418,8 @@ function drawEdges(
 
       const hasTargetChildren = target.children && target.children.length > 0
       const targetScreenW = target.worldW * zoom
-      const sTarget = (!hasTargetChildren && targetScreenW > thresholds.end) ? thresholds.end / targetScreenW : 1
+      const targetLimit = leafScreenWidthLimit(target, thresholds.end)
+      const sTarget = (!hasTargetChildren && targetScreenW > targetLimit) ? targetLimit / targetScreenW : 1
       const effWTarget = target.worldW * sTarget
       const effHTarget = target.worldH * sTarget
       const cxTarget = target.worldX + target.worldW / 2 - ox
@@ -1444,6 +1447,8 @@ function drawEdges(
       ctx.strokeStyle = strokeColor
       const isHovered = hoveredItem?.type === 'edge' && !hoveredItem.data.isProxy &&
         hoveredItem.data.id === edge.id && hoveredItem.data.diagramId === node.diagramId
+      const diffReading = (node.sourceLink?.comparisonDiff && subDetail(effWSource * zoom, effHSource * zoom) === 'code') ||
+        (target.sourceLink?.comparisonDiff && subDetail(effWTarget * zoom, effHTarget * zoom) === 'code')
       ctx.lineWidth = (isHovered ? 4 : edge.tagHighlighted ? 3 : CONNECTOR_LINE_PX) / zoom
 
       if (edge.change === 'removed') {
@@ -1583,7 +1588,7 @@ function drawEdges(
         drawArrowHead(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize, strokeColor)
       }
 
-      if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, sourceDetailScreenW, targetDetailScreenW)) {
+      if ((!diffReading || isHovered) && !lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, sourceDetailScreenW, targetDetailScreenW)) {
         const screenFontSize = 12
         const worldFontSize = screenFontSize / zoom
         ctx.font = `${worldFontSize}px ${ZUI_FONT_FAMILY}`

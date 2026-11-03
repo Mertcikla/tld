@@ -1,4 +1,4 @@
-import { api } from '../api/client'
+import { api, type RepositorySourceDiffLine } from '../api/client'
 import type { LibraryElement, PlacedElement } from '../types'
 import { githubBranchName, parseSourceLink } from './sourceLinks'
 import { parseRepoSlug } from './url'
@@ -10,6 +10,7 @@ import { protobufSymbols } from './protobufSymbols'
 export interface SourceToken { text: string; color: string }
 export type SourceSymbol = SubSymbol
 export interface SubSource {
+  diff?: { lines: RepositorySourceDiffLine[]; side: 'base' | 'head'; baseTokens: SourceToken[][]; headTokens: SourceToken[][] }
   status: 'loading' | 'ready' | 'error'
   error?: string
   lines: string[]
@@ -18,15 +19,20 @@ export interface SubSource {
   startLine: number
   endLine: number
 }
-type Link = Pick<LibraryElement | PlacedElement, 'repo' | 'repository_id' | 'branch' | 'file_path' | 'language'>
+export type SubSourceLink = Pick<LibraryElement | PlacedElement, 'repo' | 'repository_id' | 'branch' | 'file_path' | 'language'> & { comparisonKey?: string; comparisonSide?: 'base' | 'head'; comparisonDiff?: boolean }
+type Link = SubSourceLink
 const cache = new Map<string, SubSource>()
 const listeners = new Set<() => void>()
 export const subscribeSubSources = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } }
-export const subSourceKey = (link: Link) => JSON.stringify([link.repository_id, link.repo, link.branch, link.file_path, link.language])
+export const subSourceKey = (link: Link) => JSON.stringify([link.repository_id, link.repo, link.branch, link.file_path, link.language, link.comparisonKey, link.comparisonSide, link.comparisonDiff])
 export function peekSubSource(link: Link) { return cache.get(subSourceKey(link)) }
 const notify = () => listeners.forEach(fn => fn())
 
 async function loadText(link: Link, path: string): Promise<string> {
+  if (link.comparisonKey) {
+    if (!link.repository_id) throw new Error('A repository is required for captured source')
+    return (await api.repositories.impactSource(link.repository_id, link.comparisonKey, path, link.comparisonSide ?? 'head')).content
+  }
   if (typeof window !== 'undefined' && window.__TLD_VSCODE_API__) {
     const chunk = (offset: number): Promise<{ content: string; start: number }> => new Promise((resolve, reject) => {
       const requestId = `sub-source-${Math.random().toString(36).slice(2)}`
@@ -76,7 +82,10 @@ export function requestSubSource(link: Link, retry = false): SubSource {
     try {
       const { basePath, anchor } = parseSourceLink(link.file_path)
       if (!basePath || /[\\/]$/.test(basePath)) throw new Error('Link a source file to display code')
-      const text = await loadText(link, basePath)
+      const capturedDiff = link.comparisonDiff && link.comparisonKey && link.repository_id
+        ? await api.repositories.impactSource(link.repository_id, link.comparisonKey, basePath, link.comparisonSide ?? 'head', true) : null
+      const text = capturedDiff?.content ?? await loadText(link, basePath)
+      if (capturedDiff) result.diff = { lines: capturedDiff.diffLines, side: link.comparisonSide ?? 'head', baseTokens: [], headTokens: [] }
       const lines = text.split('\n')
       let start = anchor.kind === 'line' ? anchor.startLine : 1
       let end = anchor.kind === 'line' ? anchor.endLine : lines.length
@@ -90,6 +99,13 @@ export function requestSubSource(link: Link, retry = false): SubSource {
         try {
           const { highlightSource } = await import('./subElementSyntax')
           result.tokens = await highlightSource(text, basePath, start, end)
+          if (capturedDiff && result.diff) {
+            const [baseTokens, headTokens] = await Promise.all([
+              highlightSource(capturedDiff.baseContent, basePath, 1, capturedDiff.baseContent.split('\n').length),
+              highlightSource(capturedDiff.headContent, basePath, 1, capturedDiff.headContent.split('\n').length),
+            ])
+            result.diff = { ...result.diff, baseTokens, headTokens }
+          }
           notify()
         } catch { /* Plain text remains usable if an optional grammar cannot load. */ }
       }

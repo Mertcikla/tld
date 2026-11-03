@@ -3,7 +3,7 @@ import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../..
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
 import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, SUB_ELLIPSIS, SUB_CONTENT_TOP, subDetail } from '../../utils/subElements'
-import { buildSymbolPresentation, symbolStems, type SymbolPresentation } from '../../utils/subElementSymbols'
+import { buildSymbolPresentation, symbolStems, symbolPresentationRowHeight, type SymbolPresentation } from '../../utils/subElementSymbols'
 import { peekSubSource, requestSubSource, type SubSource } from '../../utils/subElementSource'
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
 import { elementTechnologyText } from '../../utils/elementIcon'
@@ -20,9 +20,15 @@ const scrollKey = (node: LayoutNode, zoom: number) => {
   const detail = nodeDetail(node, zoom)
   // Structure reveals summary text in place, including after scrolling.
   const layout = detail === 'structure' ? 'summary' : detail
-  return `${node.id}:${layout}:${node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly ?? false}:${node.subConnectedHandles?.join('|') ?? ''}`
+  return `${node.id}:${node.sourceLink?.comparisonKey ?? ''}:${layout}:${node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly ?? false}:${node.subConnectedHandles?.join('|') ?? ''}`
 }
-const firstRow = (node: LayoutNode, zoom: number) => scrollRows.get(scrollKey(node, zoom)) ?? 0
+const firstRow = (node: LayoutNode, zoom: number) => {
+  const saved = scrollRows.get(scrollKey(node, zoom))
+  if (saved !== undefined) return saved
+  const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
+  if (nodeDetail(node, zoom) !== 'code' || !source?.diff) return 0
+  return Math.max(0, source.diff.lines.findIndex(line => line.change === 'added' || line.change === 'removed') - 3)
+}
 const presentations = new WeakMap<LayoutNode, { detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
@@ -34,8 +40,8 @@ export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentati
   const cached = presentations.get(node)
   if (cached && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const base = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
-  const model = first ? buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * base.rowHeight, fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly }) : base
+  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
+
   presentations.set(node, { appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
@@ -46,6 +52,7 @@ export function scrollSubElement(node: LayoutNode, delta: number, zoom: number):
   const max = Math.max(0, model.rowCount - Math.floor((node.worldH - SUB_HEADER) / model.rowHeight))
   if (max === 0) return false
   const next = Math.max(0, Math.min(max, firstRow(node, zoom) + Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / model.rowHeight))))
+  if (next === firstRow(node, zoom)) return true
   scrollRows.set(scrollKey(node, zoom), next)
   if (scrollRows.size > 128) scrollRows.delete(scrollRows.keys().next().value!)
   scrollListeners.forEach(fn => fn())
@@ -91,6 +98,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   const source = node.subSource ?? ((node.subKind ?? node.type) === 'code' && node.sourceLink
     ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined)
   const model = subNodeSymbols(node, zoom)
+  const diffMode = detail === 'code' && !!source?.diff
   const pulse = activeHandle ? 0.75 + Math.sin(performance.now() / 220) * 0.2 : 0.5
   const active = (left: string, right: string) => activeHandle === left || activeHandle === right || (!!activeHandle && model.endpoints.get(activeHandle)?.area?.key === right)
   ctx.save(); ctx.globalAlpha = alpha
@@ -125,7 +133,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     ctx.fillText(name.lines[0], w / 2, nameY)
     ctx.font = `${9 * unit}px ${ELEMENT_NAME_FONT_FAMILY}`
     ctx.fillStyle = node.type === 'code' ? '#0bc5ea' : node.type === 'class' ? '#38b2ac' : '#a0aec0'
-    ctx.fillText(node.type.toUpperCase(), w / 2, nameY + (nameHeight + kindHeight) / 2, textWidth)
+    ctx.fillText(diffMode ? 'GIT DIFF · − BASE / + HEAD' : node.type.toUpperCase(), w / 2, nameY + (nameHeight + kindHeight) / 2, textWidth)
     ctx.font = `${10 * unit}px ${ELEMENT_NAME_FONT_FAMILY}`; ctx.fillStyle = '#718096'
     if (metadata) ctx.fillText(`[${metadata}]`, w / 2, stackCenter + stackHeight / 2 - metadataHeight / 2, textWidth)
   }
@@ -144,13 +152,35 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     if (!change && !isActive && !area.connected && detail !== 'structure') continue
     ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 1 / zoom
     ctx.beginPath(); ctx.roundRect(area.x, y, area.width, area.height, Math.min(8, area.height / 2, model.rowHeight / 2 - model.highlightInset))
-    ctx.globalAlpha = alpha * (isActive ? 0.18 : 0.10); ctx.fill()
-    ctx.globalAlpha = alpha * (isActive ? pulse : 0.52); ctx.stroke()
+    if (!diffMode) { ctx.globalAlpha = alpha * (isActive ? 0.18 : 0.10); ctx.fill() }
+    ctx.globalAlpha = alpha * (isActive ? pulse : diffMode ? 0.3 : 0.52); ctx.stroke()
   }
   ctx.globalAlpha = alpha
   for (let row = 0; detail !== 'structure' && row < rows; row++) {
     const index = first + row, displayRow = model.rows[index], sourceIndex = displayRow.sourceIndex, cy = SUB_CONTENT_TOP + model.contentInset + (row + 0.5) * model.rowHeight
     ctx.fillStyle = '#e1e6ed'; ctx.font = subCodeFont(model.fontSize)
+    if (displayRow.diff) {
+      const diff = displayRow.diff
+      const added = diff.change === 'added', removed = diff.change === 'removed'
+      if (added || removed) {
+        ctx.strokeStyle = added ? 'rgba(46,160,67,0.30)' : 'rgba(248,81,73,0.30)'
+        ctx.lineWidth = 1 / zoom
+        const inset = ctx.lineWidth / 2
+        ctx.strokeRect(inset, cy - model.rowHeight / 2 + inset, w - ctx.lineWidth, model.rowHeight - ctx.lineWidth)
+      }
+      ctx.fillStyle = added ? '#7ee787' : removed ? '#ffa198' : '#7f8b9c'
+      ctx.textAlign = 'right'
+      if (diff.oldLine) ctx.fillText(String(diff.oldLine), (model.textX - 28) / 2, cy)
+      if (diff.newLine) ctx.fillText(String(diff.newLine), model.textX - 28, cy)
+      ctx.textAlign = 'left'
+      ctx.fillText(added ? '+' : removed ? '−' : '', model.textX - 16, cy)
+      const tokens = removed ? source?.diff?.baseTokens[diff.oldLine - 1] : source?.diff?.headTokens[diff.newLine - 1]
+      let x = model.textX
+      for (const token of tokens?.length ? expandCodeTokens(tokens) : [{ text: expandCodeTabs(diff.text), color: added ? '#7ee787' : removed ? '#ffa198' : '#e1e6ed' }]) {
+        ctx.fillStyle = token.color; ctx.fillText(token.text, x, cy); x += ctx.measureText(token.text).width
+      }
+      continue
+    }
     if (displayRow.collapsed) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(`⋯ ${displayRow.collapsed} ${isSymbolDetail(detail) ? 'symbols' : 'lines'} collapsed`, model.textX, cy); continue }
     const rowArea = isSymbolDetail(detail) ? model.areas.find(area => area.start === index) : undefined
     if (model.lineNumbers) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(String(isSymbolDetail(detail) ? rowArea?.symbol.startLine ?? '' : (source?.startLine ?? 1) + sourceIndex), 12, cy) }
@@ -176,7 +206,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   ctx.restore()
   for (const { endpoint, area, sourceX, sourceY, targetX, targetY } of symbolStems(model, w, h, offset)) {
     if (!endpoint.connected && !active(area.leftId, area.rightId)) continue
-    ctx.strokeStyle = symbolAccent; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (active(area.leftId, area.rightId) ? pulse : 0.55)
+    ctx.strokeStyle = symbolAccent; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (diffMode ? 0.3 : active(area.leftId, area.rightId) ? pulse : 0.55)
     if (active(area.leftId, area.rightId)) { ctx.setLineDash([6 / zoom, 4 / zoom]); ctx.lineDashOffset = -performance.now() / 50 / zoom }
     roundedStep(ctx, sourceX, sourceY, targetX, targetY)
     ctx.setLineDash([])
@@ -184,9 +214,10 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   ctx.globalAlpha = alpha
   for (const [direction, overflow] of [['above', model.above], ['below', model.below]] as const) {
     const y = direction === 'above' ? SUB_HEADER : h - SUB_ELLIPSIS
-    const count = overflow.areas.length
-    const symbolLabel = count ? `${count} ${count === 1 ? 'symbol' : 'symbols'} ${direction}` : ''
-    const connectionLabel = overflow.connectionCount ? `${overflow.connectionCount} ${overflow.connectionCount === 1 ? 'connection' : 'connections'}` : ''
+    const count = diffMode ? direction === 'above' ? first : Math.max(0, model.rowCount - first - rows) : overflow.areas.length
+    const unit = diffMode ? count === 1 ? 'line' : 'lines' : count === 1 ? 'symbol' : 'symbols'
+    const symbolLabel = count ? `${count} ${unit} ${direction}` : ''
+    const connectionLabel = !diffMode && overflow.connectionCount ? `${overflow.connectionCount} ${overflow.connectionCount === 1 ? 'connection' : 'connections'}` : ''
     if (!symbolLabel && !connectionLabel) continue
     ctx.fillStyle = bodyBg; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
     ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
@@ -211,6 +242,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   ctx.globalAlpha = alpha
   // Paint the complete outline above header/content fills, matching regular Explore cards.
   drawBorder()
+  ctx.globalAlpha = alpha
   for (const endpoint of model.endpoints.values()) if (endpoint.visible && (endpoint.connected || (endpoint.area && active(endpoint.area.leftId, endpoint.area.rightId)))) {
     ctx.fillStyle = symbolAccent; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()
   }

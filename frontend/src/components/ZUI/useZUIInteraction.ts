@@ -6,7 +6,7 @@ import { subscribeSubSources } from '../../utils/subElementSource'
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIObjectSelection, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
-import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
+import { leafScreenWidthLimit, getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes, type ZUIHitTestNodeResult } from './hitTest'
 import { getHoverScreenRect, isWithinHoverSafeArea, preserveHoverAnchor } from './hoverFeedback'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
@@ -72,7 +72,7 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
 
   let hasVisibleExpandable = !view
   let anyVisible = !view
-  let minVisibleAbsW = Infinity
+  let visibleZoomLimit = 0
 
   function visitNodes(nodes: LayoutNode[], cumulativeScale: number,
     parentAbsX: number, parentAbsY: number,
@@ -82,7 +82,7 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
       const absW = node.worldW * cumulativeScale
 
       if (!node.children || node.children.length === 0) {
-        const neededZoom = thresholds.end / absW
+        const neededZoom = leafScreenWidthLimit(node, thresholds.end) / absW
         if (neededZoom > maxPossibleZoom) {
           maxPossibleZoom = neededZoom
         }
@@ -102,7 +102,7 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
         const sh = node.worldH * cumulativeScale * view.zoom
         if (sx + sw > 0 && sy + sh > 0 && sx < canvasW && sy < cH) {
           anyVisible = true
-          if (absW < minVisibleAbsW) minVisibleAbsW = absW
+          visibleZoomLimit = Math.max(visibleZoomLimit, leafScreenWidthLimit(node, thresholds.end) / absW)
           if (node.children && node.children.length > 0 && sw < thresholds.end) {
             hasVisibleExpandable = true
           }
@@ -119,9 +119,8 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
     if (!anyVisible) {
       return view.zoom
     }
-    if (!hasVisibleExpandable && minVisibleAbsW < Infinity) {
-      const capZoom = thresholds.end / minVisibleAbsW
-      return Math.min(maxPossibleZoom, capZoom)
+    if (!hasVisibleExpandable && visibleZoomLimit > 0) {
+      return Math.min(maxPossibleZoom, visibleZoomLimit)
     }
   }
 
@@ -295,19 +294,26 @@ export function useZUIInteraction(
   const groupsRef = useRef<DiagramGroupLayout[]>(groups)
   const hiddenTagsRef = useRef<ReadonlySet<string>>(new Set(hiddenTags))
   const edgeSpatialIndexRef = useRef<EdgeSpatialIndex | null>(null)
-  const [symbolGeometryVersion, setSymbolGeometryVersion] = useState(0)
+  const edgeInputsRef = useRef({ groups, zoom: viewState.zoom, canvasWidth, hiddenTags })
+  const edgeInputs = edgeInputsRef.current
+  if (edgeInputs.groups !== groups || edgeInputs.zoom !== viewState.zoom || edgeInputs.canvasWidth !== canvasWidth || edgeInputs.hiddenTags !== hiddenTags) {
+    edgeInputsRef.current = { groups, zoom: viewState.zoom, canvasWidth, hiddenTags }
+    edgeSpatialIndexRef.current = null
+  }
   useEffect(() => {
-    const invalidate = () => setSymbolGeometryVersion(version => version + 1)
+    // Scrolling invalidates routes without rerendering the entire React canvas.
+    const invalidate = () => { edgeSpatialIndexRef.current = null }
     const unsubscribeScroll = subscribeSubScroll(invalidate)
     const unsubscribeSource = subscribeSubSources(invalidate)
     return () => { unsubscribeScroll(); unsubscribeSource() }
   }, [])
-  const edgeSpatialIndex = useMemo(() => {
-    // Endpoint positions change when source symbols load or their rows scroll.
-    void symbolGeometryVersion
-    return buildEdgeSpatialIndex(groups, viewState.zoom, getExpandThresholds(canvasWidth || 1200), new Set(hiddenTags))
-  }, [groups, viewState.zoom, canvasWidth, hiddenTags, symbolGeometryVersion])
-  edgeSpatialIndexRef.current = edgeSpatialIndex
+  const getEdgeSpatialIndex = useCallback(() => {
+    if (!edgeSpatialIndexRef.current) {
+      const { groups, zoom, canvasWidth, hiddenTags } = edgeInputsRef.current
+      edgeSpatialIndexRef.current = buildEdgeSpatialIndex(groups, zoom, getExpandThresholds(canvasWidth || 1200), new Set(hiddenTags))
+    }
+    return edgeSpatialIndexRef.current
+  }, [])
   const bboxRef = useRef<BBox | undefined>(bbox)
   const onZoomRef = useRef(onZoom)
   const onPanRef = useRef(onPan)
@@ -643,7 +649,7 @@ export function useZUIInteraction(
           setHoveredItem(proxyEdge)
           return
         }
-        const edge = findHoveredEdge(worldX, worldY, edgeSpatialIndexRef.current!, view)
+        const edge = findHoveredEdge(worldX, worldY, getEdgeSpatialIndex(), view)
         if (edge) {
           setHoveredItem(edge)
         } else {
@@ -672,7 +678,7 @@ export function useZUIInteraction(
         onNodeClickRef.current?.(hit)
         return
       }
-      const edge = resolveHoveredProxyItem?.(x, y, view, rect.width) ?? findHoveredEdge(x, y, edgeSpatialIndexRef.current!, view)
+      const edge = resolveHoveredProxyItem?.(x, y, view, rect.width) ?? findHoveredEdge(x, y, getEdgeSpatialIndex(), view)
       if (edge?.type === 'edge' && edge.data.id != null) { onSelectRef.current?.({ kind: 'connector', viewId: edge.data.diagramId, resourceId: edge.data.id }); return }
       const group = findHoveredGroup(x, y, groupsRef.current, view)
       onSelectRef.current?.(group ? { kind: 'view', viewId: group.diagramId, resourceId: group.diagramId } : null)
@@ -888,7 +894,7 @@ export function useZUIInteraction(
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, clearHoverTimeout, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem]) // groupsRef handles groups updates without re-binding!
+  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, clearHoverTimeout, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem, getEdgeSpatialIndex]) // groupsRef handles groups updates without re-binding!
 
   return { viewState, viewStateRef, setViewState, fitView, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement }
 }

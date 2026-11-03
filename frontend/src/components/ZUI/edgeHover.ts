@@ -2,7 +2,7 @@ import { isSubHandle } from '../../utils/subElements'
 import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
-import { getExpandThresholds, transitionT } from './layoutEngine'
+import { getExpandThresholds, transitionT, leafScreenWidthLimit } from './layoutEngine'
 import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -276,15 +276,20 @@ export function buildEdgeSpatialIndex(
       }
     }
 
+    const visualNodes = new Map<LayoutNode, LayoutNode>()
     function visualNode(node: LayoutNode): LayoutNode {
-      const cap = node.children.length === 0 ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
-      return {
+      const cached = visualNodes.get(node)
+      if (cached) return cached
+      const cap = node.children.length === 0 ? Math.min(1, leafScreenWidthLimit(node, thresholds.end) / (node.worldW * scale * zoom)) : 1
+      const visual = {
         ...node,
         worldX: node.worldX + node.worldW * (1 - cap) / 2,
         worldY: node.worldY + node.worldH * (1 - cap) / 2,
         worldW: node.worldW * cap,
         worldH: node.worldH * cap,
       }
+      visualNodes.set(node, visual)
+      return visual
     }
 
     for (const [i, edge] of edges.entries()) {

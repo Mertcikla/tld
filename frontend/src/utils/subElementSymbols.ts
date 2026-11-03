@@ -1,4 +1,4 @@
-import { connectedSourceRows, sourceCodeRows, type SourceDisplayRow } from './subElementFolding'
+import { connectedSourceRows, sourceCodeRows, sourceDiffRows, type SourceDisplayRow } from './subElementFolding'
 import type { SubSource } from './subElementSource'
 import { symbolSignature, type SymbolSignature } from './subElementSignatures'
 import { expandCodeTabs, measureSubText, subCodeLineHeight, SUB_CODE_TEXT_X, SUB_SYMBOL_CONNECTOR_GAP, SUB_SYMBOL_PADDING } from './subElementText'
@@ -52,33 +52,44 @@ function documentSymbols(source: SubSource, path: string, fontSize: number, text
   return document
 }
 
-export function buildSymbolPresentation({ kind, source, path = '', detail, width, height, scrollTop = 0, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false }: {
+export interface SymbolPresentationOptions {
   kind: string | null; source?: SubSource; path?: string; detail: SubDetail
-  connectedOnly?: boolean; fractionalMetrics?: boolean;
+  connectedOnly?: boolean; fractionalMetrics?: boolean
   width: number; height: number; scrollTop?: number; connected?: readonly string[]; connectionCounts?: Readonly<Record<string, number>>; fontSize?: number; lineNumbers?: boolean
-}): SymbolPresentation {
+}
+type SymbolGeometry = Pick<SymbolPresentation, 'rows' | 'rowHeight' | 'highlightInset' | 'contentInset' | 'rowCount' | 'contentWidth' | 'fontSize' | 'lineNumbers' | 'textX'> & {
+  areas: SymbolArea[]; connections: Array<{ id: string; area?: SymbolArea; index: number; count: number }>; detail: SubDetail; height: number
+}
+
+export function symbolPresentationRowHeight(detail: SubDetail, fontSize: number, fractionalMetrics = false) {
+  return (fractionalMetrics ? fontSize * 1.5 : subCodeLineHeight(fontSize)) + (isSymbolDetail(detail) ? detail === 'outline' ? 8 : 4 : 0)
+}
+
+function buildSymbolGeometry({ kind, source, path = '', detail, width, height, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false }: SymbolPresentationOptions): SymbolGeometry {
   const outline = collapsedSymbols(source, path)
   const symbolDetail = isSymbolDetail(detail)
   const signature = (symbol: SubSymbol): SymbolSignature => (detail === 'summary' || detail === 'structure')
     ? { text: symbol.name, tokens: [{ text: symbol.name, color: '#61afef' }] }
     : symbolSignature(source!, symbol)
-  const rowHeight = (fractionalMetrics ? fontSize * 1.5 : subCodeLineHeight(fontSize)) + (symbolDetail ? (detail !== 'outline' ? 4 : 8) : 0)
+  const rowHeight = symbolPresentationRowHeight(detail, fontSize, fractionalMetrics)
   const contentInset = 2
   // Full-code bounds expand around line boxes; outline rows reserve their own gap.
   const highlightInset = symbolDetail ? 2 : -2
-  const lineNumberWidth = measureSubText(String(source?.endLine ?? 1), fontSize)
+  const diffMode = detail === 'code' && !!source?.diff
+  const diffMaxLine = source?.diff?.lines.reduce((max, line) => Math.max(max, line.oldLine, line.newLine), 1) ?? 1
+  const lineNumberWidth = measureSubText(String(diffMode ? diffMaxLine : source?.endLine ?? 1), fontSize)
   const gutter = Math.max(SUB_CODE_TEXT_X - 14, (fractionalMetrics ? lineNumberWidth : Math.ceil(lineNumberWidth)) + 12)
-  const textX = lineNumbers ? 14 + gutter : 14
-  const folded = connectedOnly && source?.status === 'ready' && detail !== 'overview'
+  const textX = diffMode ? 32 + (lineNumberWidth + 10) * 2 : lineNumbers ? 14 + gutter : 14
+  const folded = !diffMode && connectedOnly && source?.status === 'ready' && detail !== 'overview'
     ? connectedSourceRows(source, connected.filter(id => (connectionCounts?.[id] ?? 1) > 0), symbolDetail) : undefined
   const rows: SourceDisplayRow[] = folded?.rows ?? (symbolDetail
     ? outline.map(symbol => ({ sourceIndex: symbol.startLine - (source?.startLine ?? 1), symbol }))
-    : source ? sourceCodeRows(source.lines) : [])
+    : source ? diffMode ? sourceDiffRows(source) : sourceCodeRows(source.lines) : [])
   const rowCount = rows.length
   const displayIndex = (line: number) => {
     const index = line - (source?.startLine ?? 1)
-    if (!folded) return index
-    const exact = rows.findIndex(row => !row.collapsed && row.sourceIndex === index)
+    if (!folded && !diffMode) return index
+    const exact = rows.findIndex(row => !row.collapsed && (!row.diff || row.sourceIndex >= 0) && row.sourceIndex === index)
     if (exact >= 0) return exact
     return Math.max(0, rows.findIndex(row => row.collapsed && index >= row.sourceIndex && index < row.sourceIndex + row.collapsed))
   }
@@ -99,7 +110,7 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     const leftId = symbolHandle('left', symbol)
     const rightId = symbolHandle('right', symbol)
     const x = readingCode ? textX + indent - SUB_SYMBOL_PADDING : textX - 4
-    const y = SUB_CONTENT_TOP + contentInset + (start + 0.5) * rowHeight - scrollTop
+    const y = SUB_CONTENT_TOP + contentInset + (start + 0.5) * rowHeight
     return { key: rightId, symbol, color: 'var(--accent)', leftId, rightId, start, end, x,
       signature: kind === 'code' && symbolDetail && source ? signature(symbol) : undefined,
       width: Math.max(40, readingCode ? textWidth - indent + SUB_SYMBOL_PADDING * 2 : textWidth + 20),
@@ -120,6 +131,23 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     const index = symbolDetail || (named && area) ? area?.start ?? 0 : Number.isFinite(line) ? displayIndex(line) : area?.start ?? 0
     return { id, area, index, count: connectionCounts?.[id] ?? counts.get(id) ?? 1 }
   })
+  const symbolContentWidth = kind === 'code' ? areas.reduce((end, area) => Math.max(end, area.x + area.width + SUB_SYMBOL_CONNECTOR_GAP), 0) : 0
+  // Include long member labels and signatures in the horizontal scroll extent.
+  const rowContentWidth = readingCode ? 0 : entries.reduce((end, { textWidth }) => Math.max(end, textWidth + textX + 34), 0)
+  const documentWidth = diffMode
+    ? rows.reduce((end, row) => Math.max(end, textX + measureSubText(expandCodeTabs(row.diff?.text ?? ''), fontSize) + SUB_SYMBOL_PADDING * 2), 0)
+    : folded && source && readingCode
+    ? rows.reduce((end, row) => row.collapsed ? end : Math.max(end, textX + measureSubText(expandCodeTabs(source.lines[row.sourceIndex]), fontSize) + SUB_SYMBOL_PADDING * 2), 0)
+    : document?.contentWidth ?? 0
+  return { rows, areas, connections, detail, height, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth: Math.max(width - 2, documentWidth, symbolContentWidth, rowContentWidth) }
+}
+
+// Scroll frames only move cached geometry and recompute visible ports/overflow.
+function positionSymbolGeometry(geometry: SymbolGeometry, scrollTop: number): SymbolPresentation {
+  const { rows, detail, height, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth } = geometry
+  const areas = geometry.areas.map(area => ({ ...area, y: area.y - scrollTop }))
+  const areaCopies = new Map(geometry.areas.map((area, index) => [area, areas[index]]))
+  const connections = geometry.connections.map(connection => ({ ...connection, area: connection.area ? areaCopies.get(connection.area) : undefined }))
   // Overflow bands overlay the content only when an anchor is outside the full viewport.
   // They never add padding or alter the document's scroll height.
   const positions = [...areas.map(area => area.y), ...connections.filter(connection => connection.count > 0).map(connection => SUB_CONTENT_TOP + contentInset + (connection.index + 0.5) * rowHeight - scrollTop)]
@@ -170,14 +198,36 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     }
   }
   for (const endpoint of endpoints.values()) if (endpoint.connected && endpoint.area) endpoint.area.connected = true
-  const symbolContentWidth = kind === 'code' ? areas.reduce((end, area) => Math.max(end, area.x + area.width + SUB_SYMBOL_CONNECTOR_GAP), 0) : 0
-  // Include long member labels and signatures in the horizontal scroll extent.
-  const rowContentWidth = readingCode ? 0 : entries.reduce((end, { textWidth }) => Math.max(end, textWidth + textX + 34), 0)
-  const documentWidth = folded && source && readingCode
-    ? rows.reduce((end, row) => row.collapsed ? end : Math.max(end, textX + measureSubText(expandCodeTabs(source.lines[row.sourceIndex]), fontSize) + SUB_SYMBOL_PADDING * 2), 0)
-    : document?.contentWidth ?? 0
-  return { rows, areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth: Math.max(width - 2, documentWidth, symbolContentWidth, rowContentWidth) }
+  return { rows, areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth }
 }
+
+type CachedSymbolGeometry = {
+  lines: SubSource['lines']; symbols: SubSource['symbols']; tokens: SubSource['tokens']; diffLines?: unknown
+  status: SubSource['status']; start: number; end: number; variants: Map<string, SymbolGeometry>
+}
+const symbolGeometries = new WeakMap<SubSource, CachedSymbolGeometry>()
+
+export function buildSymbolPresentation(options: SymbolPresentationOptions): SymbolPresentation {
+  const { source } = options
+  let geometry: SymbolGeometry
+  if (!source) geometry = buildSymbolGeometry(options)
+  else {
+    let cached = symbolGeometries.get(source)
+    if (!cached || cached.lines !== source.lines || cached.symbols !== source.symbols || cached.tokens !== source.tokens || cached.diffLines !== source.diff?.lines || cached.status !== source.status || cached.start !== source.startLine || cached.end !== source.endLine) {
+      cached = { lines: source.lines, symbols: source.symbols, tokens: source.tokens, diffLines: source.diff?.lines, status: source.status, start: source.startLine, end: source.endLine, variants: new Map() }
+      symbolGeometries.set(source, cached)
+    }
+    const key = JSON.stringify([options.kind, options.path, options.detail, options.width, options.height, options.fontSize, options.lineNumbers, options.connectedOnly, options.fractionalMetrics, options.connected, options.connectionCounts])
+    const existing = cached.variants.get(key)
+    geometry = existing ?? buildSymbolGeometry(options)
+    if (!existing) {
+      cached.variants.set(key, geometry)
+      if (cached.variants.size > 8) cached.variants.delete(cached.variants.keys().next().value!)
+    }
+  }
+  return positionSymbolGeometry(geometry, options.scrollTop ?? 0)
+}
+
 
 /** Inner stems only join visible regions to their own in-bounds ports. */
 export function symbolStems(presentation: SymbolPresentation, width: number, _height: number, scrollTop = 0, scrollLeft = 0) {

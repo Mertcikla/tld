@@ -1,3 +1,4 @@
+import type { LayoutNode } from './types'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUIViewState } from './types'
 
@@ -17,6 +18,12 @@ function clamp(v: number, min: number, max: number): number {
 
 export function transitionT(screenW: number, start: number, end: number): number {
   return clamp((screenW - start) / (end - start), 0, 1)
+}
+
+/** Code leaves must reach the full-code detail stage before their size is capped. */
+export function leafScreenWidthLimit(node: Pick<LayoutNode, 'worldW' | 'worldH' | 'type' | 'subKind'>, overviewLimit: number): number {
+  if ((node.subKind ?? node.type) !== 'code') return overviewLimit
+  return Math.max(overviewLimit, 520, 281 * node.worldW / node.worldH)
 }
 
 export function getExpandThresholds(canvasW: number) {
@@ -198,10 +205,11 @@ function updateNodeStateRecursive(
   let isLeafCapped = false
   let leafCapScale = 1
 
-  if (!hasChildren && screenW > thresholds.end) {
-    leafCapScale = thresholds.end / screenW
+  const leafLimit = leafScreenWidthLimit(layout, thresholds.end)
+  if (!hasChildren && screenW > leafLimit) {
+    leafCapScale = leafLimit / screenW
     drawZoom = drawZoom * leafCapScale
-    drawScreenW = thresholds.end
+    drawScreenW = leafLimit
     isLeafCapped = true
   }
 

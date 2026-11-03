@@ -1,5 +1,5 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
-import { transitionT } from './layoutEngine'
+import { transitionT, leafScreenWidthLimit } from './layoutEngine'
 
 export interface ZUIHitTestNodeResult {
   node: LayoutNode
@@ -168,7 +168,7 @@ function hitTestNodes(
 
     if (selfAlpha < SELF_HOVER_ALPHA_MIN) continue
 
-    const cap = !hasChildren ? Math.min(1, thresholds.end / screenW) : 1
+    const cap = !hasChildren ? Math.min(1, leafScreenWidthLimit(node, thresholds.end) / screenW) : 1
     const visualW = absW * cap
     const visualH = absH * cap
     const visualX = absX + (absW - visualW) / 2

@@ -2,7 +2,7 @@ import type { RepositoryImpactScene } from '../api/client'
 import type { ExploreData } from '../types'
 import type { ZUIChangeOverlay } from '../components/ZUI/types'
 import { CHANGE_RING_COLORS } from '../components/ZUI/changeOverlay'
-import type { SubSource } from './subElementSource'
+import type { SubSource, SubSourceLink } from './subElementSource'
 import { subElementKind } from './subElements'
 import { PROVENANCE_META } from '../components/ZUI/provenance'
 
@@ -20,6 +20,7 @@ export const REPOSITORY_TAG_COLORS: Record<string, string> = {
 // The backend selects membership and display mode before freezing the scene.
 // This adapter supplies code-card presentation, spacing, and annotations.
 export function repositoryChangeScene(scene: RepositoryImpactScene) {
+  const codeSourceLinks: Record<number, SubSourceLink> = {}
   const codeSources: Record<number, SubSource> = {}
   const overlays: Record<number, ZUIChangeOverlay> = {}
   const data: ExploreData = { tree: scene.tree, views: {}, navigations: scene.navigations }
@@ -44,6 +45,10 @@ export function repositoryChangeScene(scene: RepositoryImpactScene) {
       // File leaves use the same code cards as the editor. Containers retain
       // their hierarchy and authored appearance. This is a presentation copy.
       const code = !element.has_view && subElementKind(element) === 'code'
+      if (code) codeSourceLinks[element.element_id] = {
+        repo: element.repo, repository_id: scene.repositoryId, file_path: element.file_path, language: element.language,
+        comparisonKey: scene.comparisonKey, comparisonDiff: true, comparisonSide: overlay?.change === 'removed' ? 'base' : 'head',
+      }
       return { ...element, kind: code ? 'code' : element.kind, tags }
     }) }
   }
@@ -55,5 +60,5 @@ export function repositoryChangeScene(scene: RepositoryImpactScene) {
       ...element, position_x: element.position_x * 3, position_y: element.position_y * 4.5,
     }))
   }
-  return { data, overlays, codeSources }
+  return { data, overlays, codeSources, codeSourceLinks }
 }

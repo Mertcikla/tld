@@ -57,6 +57,7 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  codeSourceLinks?: Record<number, import('../../utils/subElementSource').SubSourceLink>
   codeSources?: Record<number, import('../../utils/subElementSource').SubSource>
   connectedCodeOnly?: boolean
   editorLinksEnabled?: boolean
@@ -83,6 +84,7 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  codeSourceLinks,
   codeSources,
   connectedCodeOnly,
   editorLinksEnabled = true,
@@ -124,13 +126,14 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     const setCodeFilter = (nodes: LayoutNode[]) => nodes.forEach(node => {
       node.subConnectedOnly = connectedCodeOnly
       node.subSource = codeSources?.[node.elementId]
+      node.sourceLink = codeSourceLinks?.[node.elementId] ?? node.sourceLink
       setCodeFilter(node.children)
     })
     base.groups.forEach(group => setCodeFilter(group.nodes))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   // Preview sizes are stored outside the workspace graph and invalidate its layout.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, changeOverlays, previewRevision, appearanceRevision, connectedCodeOnly, codeSources])
+  }, [data, changeOverlays, previewRevision, appearanceRevision, connectedCodeOnly, codeSources, codeSourceLinks])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])

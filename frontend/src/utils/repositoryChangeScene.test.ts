@@ -199,3 +199,11 @@ it('renders file leaves as spaced code cards without mutating the frozen scene',
   expect(node.worldW).toBe(520)
   expect(node.subDetail).toBeUndefined()
 })
+
+
+it('pins comparison code to Head, using Base for removed files', () => {
+  const input = { ...scene, overlays: { ...scene.overlays, 1: overlay('removed', 'a.go', 0) } }
+  const result = repositoryChangeScene(input)
+  expect(result.codeSourceLinks[1]).toMatchObject({ repository_id: scene.repositoryId, comparisonKey: scene.comparisonKey, comparisonSide: 'base', file_path: 'a.go' })
+  expect(result.codeSourceLinks[2].comparisonSide).toBe('head')
+})

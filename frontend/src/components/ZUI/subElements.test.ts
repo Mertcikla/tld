@@ -197,3 +197,28 @@ it('preserves fractional metrics after scrolling', () => {
   expect(model.rowHeight).toBeCloseTo(model.fontSize * 1.5 + 4)
   expect(Number.isInteger(model.rowHeight)).toBe(false)
 })
+
+
+it('draws the repository diff with translucent line borders, no highlight fill, and both revisions’ line numbers', () => {
+  const text: string[] = [], backgrounds: string[] = [], borders: string[] = []
+  const context = {
+    font: '12px sans-serif', fillStyle: '', strokeStyle: '',
+    fillText(value: string) { text.push(value) },
+    fillRect() { backgrounds.push(this.fillStyle) },
+    strokeRect() { borders.push(this.strokeStyle) },
+    measureText(value: string) { return { width: value.length * 7 } },
+    save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, rect() {},
+  }
+  const diffNode = { ...node, subSource: { status: 'ready' as const, startLine: 1, endLine: 1, lines: ['new'], tokens: [], symbols: [],
+    diff: { side: 'head' as const, baseTokens: [], headTokens: [], lines: [
+      { change: 'removed', oldLine: 1, newLine: 0, text: 'old' },
+      { change: 'added', oldLine: 0, newLine: 1, text: 'new' },
+    ] } } }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, diffNode, 1, 1, '#63b3ed', false)
+  expect(text).toContain('GIT DIFF · − BASE / + HEAD')
+  expect(text).toContain('old'); expect(text).toContain('new')
+  expect(text).toContain('−'); expect(text).toContain('+')
+  expect(text.filter(value => value === '1')).toHaveLength(2)
+  expect(borders).toEqual(['rgba(248,81,73,0.30)', 'rgba(46,160,67,0.30)'])
+  expect(backgrounds).toEqual(['#2d3748'])
+})

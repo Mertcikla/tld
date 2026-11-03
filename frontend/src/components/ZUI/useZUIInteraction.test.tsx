@@ -1,6 +1,9 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useZUIInteraction, type ZUIInteraction } from './useZUIInteraction'
+import * as edgeHover from './edgeHover'
+import { scrollSubElement } from './subElements'
+import type { LayoutNode } from './types'
 import { hitTestZUIRenderedNode } from './hitTest'
 
 vi.mock('./hitTest', () => ({ hitTestZUIRenderedNode: vi.fn(), warmZUIHitTestIndexes: vi.fn() }))
@@ -43,6 +46,27 @@ describe('ZUI hover over overlays', () => {
     act(() => renderer.unmount())
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('rebuilds connector hit testing lazily after source scrolling', () => {
+    const build = vi.spyOn(edgeHover, 'buildEdgeSpatialIndex')
+    vi.mocked(hitTestZUIRenderedNode).mockReturnValue(null)
+    const code = {
+      id: 'lazy-scroll-index', elementId: 991, diagramId: 1, type: 'code', subKind: 'code', subDetail: 'code',
+      worldW: 520, worldH: 160, edgesOut: [], children: [],
+      subSource: { status: 'ready', startLine: 1, endLine: 100, lines: Array<string>(100).fill('source line'), symbols: [], tokens: [] },
+    } as unknown as LayoutNode
+    try {
+      move(canvasRef.current)
+      expect(build).toHaveBeenCalledOnce()
+      move(canvasRef.current)
+      expect(build).toHaveBeenCalledOnce()
+      act(() => { expect(scrollSubElement(code, 24, 1)).toBe(true) })
+      // Scrolling schedules paint only; it must not rebuild every connector.
+      expect(build).toHaveBeenCalledOnce()
+      move(canvasRef.current)
+      expect(build).toHaveBeenCalledTimes(2)
+    } finally { build.mockRestore() }
   })
 
   it('does not hit-test canvas nodes underneath a panel or its controls', () => {

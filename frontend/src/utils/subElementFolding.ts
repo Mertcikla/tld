@@ -1,7 +1,7 @@
 import type { SubSource } from './subElementSource'
 import { displaySymbols, symbolForHandle, type SubSymbol } from './subElements'
 
-export interface SourceDisplayRow { sourceIndex: number; symbol?: SubSymbol; collapsed?: number }
+export interface SourceDisplayRow { diff?: import('../api/client').RepositorySourceDiffLine; sourceIndex: number; symbol?: SubSymbol; collapsed?: number }
 
 const codeRows = new WeakMap<string[], SourceDisplayRow[]>()
 export function sourceCodeRows(lines: string[]) {
@@ -80,4 +80,16 @@ export function connectedSourceRows(source: SubSource, connected: readonly strin
   cached.variants.set(key, result)
   if (cached.variants.size > 8) cached.variants.delete(cached.variants.keys().next().value!)
   return result
+}
+
+
+const diffRows = new WeakMap<SubSource, { lines: unknown; rows: SourceDisplayRow[] }>()
+export function sourceDiffRows(source: SubSource): SourceDisplayRow[] {
+  const cached = diffRows.get(source)
+  if (cached?.lines === source.diff?.lines) return cached?.rows ?? []
+  const rows = (source.diff?.lines ?? []).map(diff => ({ diff,
+    sourceIndex: (source.diff?.side === 'base' ? diff.oldLine : diff.newLine) - source.startLine,
+  }))
+  diffRows.set(source, { lines: source.diff?.lines, rows })
+  return rows
 }
