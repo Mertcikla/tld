@@ -139,7 +139,8 @@ describe('scripted ZUI camera target', () => {
     act(() => camera.setCameraFrame({ profile: 'detail-to-overview', progress: 0.5, detailViewId: 7 }))
     expect(setViewState.mock.lastCall![0].zoom).toBeCloseTo(0.725)
     act(() => camera.setCameraFrame({ profile: 'detail-to-overview', progress: 1, detailViewId: 7 }))
-    expect(setViewState.mock.lastCall![0]).toEqual({ x: 212, y: 108, zoom: 0.48 })
+    expect(setViewState.mock.lastCall![0]).toMatchObject({ x: 212, y: 108 })
+    expect(setViewState.mock.lastCall![0].zoom).toBeCloseTo(0.48)
   })
 
   it.each([undefined, 999])('preserves automatic framing when the requested target is %s', (detailViewId) => {

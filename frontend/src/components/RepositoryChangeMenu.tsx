@@ -6,6 +6,8 @@ import { TagsIcon } from './Icons'
 export type RepositoryChangeViewMode = 'standard' | 'plain'
 
 export default function RepositoryChangeMenu({
+  connectedCodeOnly = false,
+  onConnectedCodeOnlyChange,
   showViewMode = true,
   busy = false,
   viewMode,
@@ -20,6 +22,8 @@ export default function RepositoryChangeMenu({
   onHoverTag,
   onToggleTagVisibility,
 }: {
+  connectedCodeOnly?: boolean
+  onConnectedCodeOnlyChange?: (value: boolean) => void
   showViewMode?: boolean
   busy?: boolean
   viewMode: RepositoryChangeViewMode
@@ -57,6 +61,9 @@ export default function RepositoryChangeMenu({
         px={1.5}
         py={1.5}
       >
+        {onConnectedCodeOnlyChange && <Button size="xs" h="28px" aria-pressed={connectedCodeOnly}
+          onClick={() => onConnectedCodeOnlyChange(!connectedCodeOnly)}
+          variant={connectedCodeOnly ? 'solid' : 'ghost'}>Connected symbols</Button>}
         {showViewMode && <HStack spacing={1} align="center" data-testid="repositories-view-mode" px={1}>
           {(['standard', 'plain'] as const).map((option) => (
             <Button

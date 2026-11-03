@@ -501,8 +501,8 @@ func TestSceneAttachesOrphansToAuthoredNeighbourViews(t *testing.T) {
 	for _, connector := range content.GetConnectors() {
 		if connector.GetSourceElementId() == transientID && connector.GetTargetElementId() == int32(cover.ID) {
 			wired = true
-			if label := connector.GetLabel(); label != "" {
-				t.Fatalf("attachment connector should be unlabeled: %q", label)
+			if label := connector.GetLabel(); label != "calls" {
+				t.Fatalf("attachment connector should describe the captured call: %q", label)
 			}
 		}
 	}

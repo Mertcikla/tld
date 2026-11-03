@@ -1801,7 +1801,7 @@ export default function Repositories() {
                         </Flex>
                         <Box position={{ base: 'relative', lg: 'absolute' }} top={{ lg: '40px' }} bottom={{ lg: 0 }} w="full" overflowY="auto">
                           {filesTab === 'symbols' ? (
-                            <RepositorySymbols key={`${selectedId}:${selectedPath}:${diff?.fromSnapshotId}:${diff?.toSnapshotId}`} repositoryRoot={selected.root} path={selectedPath} diagram={shownImpact} />
+                            <RepositorySymbols key={`${selectedId}:${selectedPath}:${diff?.fromSnapshotId}:${diff?.toSnapshotId}`} repositoryRoot={selected.root} path={selectedPath} diagram={shownImpact} onSelectPath={setSelectedPath} />
                           ) : diff ? (
                             <FileTree files={diff.sources} onSelect={setSelectedPath} diagram={shownImpact!} repositoryRoot={selected.root} />
                           ) : (

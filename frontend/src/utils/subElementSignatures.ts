@@ -61,7 +61,7 @@ export function symbolSignature(source: SubSource, symbol: SubSymbol): SymbolSig
     }
     offset += lines[index].length + 1
   }
-  const expanded = expandCodeTokens(tokens)
+  const expanded = tokens.length ? expandCodeTokens(tokens) : [{ text: symbol.name, color: '#61afef' }]
   const signature = { text: expanded.map(token => token.text).join('') || symbol.name, tokens: expanded }
   if (!expanded.length) expanded.push({ text: signature.text, color: '#abb2bf' })
   document.signatures.set(key, signature)

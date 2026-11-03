@@ -52,9 +52,9 @@ function documentSymbols(source: SubSource, path: string, fontSize: number, text
   return document
 }
 
-export function buildSymbolPresentation({ kind, source, path = '', detail, width, height, scrollTop = 0, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false }: {
+export function buildSymbolPresentation({ kind, source, path = '', detail, width, height, scrollTop = 0, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false }: {
   kind: string | null; source?: SubSource; path?: string; detail: SubDetail
-  connectedOnly?: boolean;
+  connectedOnly?: boolean; fractionalMetrics?: boolean;
   width: number; height: number; scrollTop?: number; connected?: readonly string[]; connectionCounts?: Readonly<Record<string, number>>; fontSize?: number; lineNumbers?: boolean
 }): SymbolPresentation {
   const outline = collapsedSymbols(source, path)
@@ -62,11 +62,12 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
   const signature = (symbol: SubSymbol): SymbolSignature => (detail === 'summary' || detail === 'structure')
     ? { text: symbol.name, tokens: [{ text: symbol.name, color: '#61afef' }] }
     : symbolSignature(source!, symbol)
-  const rowHeight = subCodeLineHeight(fontSize) + (symbolDetail ? (detail !== 'outline' ? 4 : 8) : 0)
+  const rowHeight = (fractionalMetrics ? fontSize * 1.5 : subCodeLineHeight(fontSize)) + (symbolDetail ? (detail !== 'outline' ? 4 : 8) : 0)
   const contentInset = 2
   // Full-code bounds expand around line boxes; outline rows reserve their own gap.
   const highlightInset = symbolDetail ? 2 : -2
-  const gutter = Math.max(SUB_CODE_TEXT_X - 14, Math.ceil(measureSubText(String(source?.endLine ?? 1), fontSize)) + 12)
+  const lineNumberWidth = measureSubText(String(source?.endLine ?? 1), fontSize)
+  const gutter = Math.max(SUB_CODE_TEXT_X - 14, (fractionalMetrics ? lineNumberWidth : Math.ceil(lineNumberWidth)) + 12)
   const textX = lineNumbers ? 14 + gutter : 14
   const folded = connectedOnly && source?.status === 'ready' && detail !== 'overview'
     ? connectedSourceRows(source, connected.filter(id => (connectionCounts?.[id] ?? 1) > 0), symbolDetail) : undefined

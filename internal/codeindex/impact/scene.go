@@ -309,8 +309,17 @@ func adjustSceneConnectorHandles(placements []*model.Placement, connectors []*di
 			continue
 		}
 		sourceHandle, targetHandle := layout.ChooseConnectorHandles(source, target)
-		connector.SourceHandle = proto.String(sourceHandle)
-		connector.TargetHandle = proto.String(targetHandle)
+		codeSource, codeTarget := layout.ChooseCodeConnectorHandles(source, target)
+		if isSymbolHandle(connector.GetSourceHandle()) {
+			connector.SourceHandle = proto.String(codeSource + connector.GetSourceHandle()[strings.IndexByte(connector.GetSourceHandle(), '-'):])
+		} else {
+			connector.SourceHandle = proto.String(sourceHandle)
+		}
+		if isSymbolHandle(connector.GetTargetHandle()) {
+			connector.TargetHandle = proto.String(codeTarget + connector.GetTargetHandle()[strings.IndexByte(connector.GetTargetHandle(), '-'):])
+		} else {
+			connector.TargetHandle = proto.String(targetHandle)
+		}
 	}
 }
 
@@ -359,4 +368,16 @@ func pruneScopedSceneTree(nodes []*diagv1.View, kept map[string]map[int32]bool) 
 		out = append(out, view)
 	}
 	return out
+}
+
+// Symbol and line handles retain their semantic identity when layout changes sides.
+func isSymbolHandle(handle string) bool {
+	for _, side := range []string{"left-", "right-"} {
+		for _, kind := range []string{"line-", "symbol-", "member-"} {
+			if strings.HasPrefix(handle, side+kind) {
+				return true
+			}
+		}
+	}
+	return false
 }

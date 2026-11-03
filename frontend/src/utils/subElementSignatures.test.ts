@@ -42,6 +42,7 @@ it('uses a source line for unparsed ranges and falls back to the symbol name whe
   const symbol = { name: 'users.sql', startLine: 2, endLine: 5 }
   expect(symbolSignature(source, symbol).text).toBe('CREATE TABLE users (')
   expect(symbolSignature(document([]), symbol).text).toBe('users.sql')
+  expect(symbolSignature(document([]), symbol).tokens.map(token => token.text).join('')).toBe('users.sql')
 })
 
 it('encloses long collapsed signatures and keeps their original semantic connection IDs', () => {

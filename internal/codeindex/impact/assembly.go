@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const PipelineVersion = "12"
+const PipelineVersion = "14"
 
 func PlacementKey(viewID, elementID int64) string {
 	return fmt.Sprintf("placement|%d|%d", viewID, elementID)
@@ -222,6 +222,9 @@ func assemble(ctx context.Context, service Service, diagram *model.Diagram, work
 	a.expandDependencies()
 	a.finishHierarchy()
 	a.projectRelationships()
+	if err := a.projectSymbolRelationships(); err != nil {
+		return nil, err
+	}
 	a.placeAdditions()
 	if err := a.validate(); err != nil {
 		return nil, err

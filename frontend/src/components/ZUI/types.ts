@@ -75,6 +75,7 @@ export interface LayoutNode {
   subConnections?: Array<{ id: number; handleId: string }>
   subConnectedOnly?: boolean
   subDetail?: SubDetail
+  subSource?: import('../../utils/subElementSource').SubSource
   subKind?: 'code' | null
   sourceLink?: Pick<PlacedElement, 'repo' | 'repository_id' | 'branch' | 'file_path' | 'language'>
   logoUrl: string | null
@@ -142,6 +143,7 @@ export interface ZUIChangeOverlay {
   linesAdded?: number
   linesRemoved?: number
   symbols: string[]
+  symbolDetails?: Array<{ change: 'added' | 'removed' | 'modified' | 'unchanged'; name: string; anchor?: { path: string; startLine: number; endLine: number } }>
   /** Why the element carries an overlay; roll-ups render softer. */
   reason: 'direct' | 'contained'
 }

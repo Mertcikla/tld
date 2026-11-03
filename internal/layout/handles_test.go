@@ -25,3 +25,24 @@ func TestChooseConnectorHandlesFacesNodes(t *testing.T) {
 		})
 	}
 }
+
+func TestChooseCodeConnectorHandles(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		source, target     Placement
+		outgoing, incoming string
+	}{
+		{"target right", Placement{}, Placement{X: 500}, HandleRight, HandleLeft},
+		{"target left", Placement{X: 500}, Placement{}, HandleLeft, HandleRight},
+		{"aligned below", Placement{}, Placement{Y: 500}, HandleRight, HandleLeft},
+		{"aligned above", Placement{Y: 500}, Placement{}, HandleRight, HandleLeft},
+		{"same card", Placement{}, Placement{}, HandleRight, HandleLeft},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outgoing, incoming := ChooseCodeConnectorHandles(tc.source, tc.target)
+			if outgoing != tc.outgoing || incoming != tc.incoming {
+				t.Fatalf("got %s/%s, want %s/%s", outgoing, incoming, tc.outgoing, tc.incoming)
+			}
+		})
+	}
+}

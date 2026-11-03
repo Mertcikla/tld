@@ -25,7 +25,7 @@ export function connectedSourceRows(source: SubSource, connected: readonly strin
   if (previous) return previous
   const symbols = [...displaySymbols(source.symbols)]
   const used = new Set<SubSymbol>()
-  const looseLines: number[] = []
+  const looseLines = new Set<number>()
   for (const id of connected) {
     const named = symbolForHandle(id, source.symbols)
     let member = id.match(/-member-(.*)$/)?.[1]
@@ -36,7 +36,7 @@ export function connectedSourceRows(source: SubSource, connected: readonly strin
       : member ? symbols.find(symbol => symbol.name === member || symbol.qualifiedName === member)
         : Number.isFinite(line) ? [...symbols].reverse().find(symbol => line >= symbol.startLine && line <= symbol.endLine) : undefined
     if (selected) used.add(selected)
-    else if (Number.isFinite(line)) looseLines.push(line)
+    else if (Number.isFinite(line)) looseLines.add(line)
   }
   const rows: SourceDisplayRow[] = []
   if (outline) {

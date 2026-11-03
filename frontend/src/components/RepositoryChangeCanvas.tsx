@@ -1,5 +1,6 @@
 import { focusMapChanges, type MapChangeFocusRequest } from '../utils/repositoryChangeFocus'
 import type { RepositoryFollowMode } from '../utils/repositoryWatcher'
+import { peekSubSource, requestSubSource } from '../utils/subElementSource'
 import { changedScenePlacements } from '../utils/liveSceneChanges'
 import { computeLayout } from './ZUI/layout'
 import { filterLayoutByTags, visiblePlacementKeys } from './ZUI/tagVisibility'
@@ -49,6 +50,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [selectedKey, setSelectedKey] = useState('')
   const [inspectorEnabled] = useState(() => !embedded && new URLSearchParams(typeof window !== 'undefined' ? window.location?.search ?? '' : '').get('debugImpact') === '1')
   const [debug, setDebug] = useState(inspectorEnabled)
+  const [connectedCodeOnly, setConnectedCodeOnly] = useState(false)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [tagColors, setTagColors] = useState<Record<string, Tag>>(seedTagColors)
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
@@ -86,6 +88,21 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     return () => { active = false; controller.abort() }
   }, [repositoryId, comparisonKey, version, debug, displayMode, embedded, diagram?.scene, live, onLiveScene])
   const view = useMemo(() => scene ? repositoryChangeScene(scene) : null, [scene])
+  const previewVersion = useRef('')
+  useEffect(() => {
+    if (!live || embedded || !scene || !view) return
+    const revision = `${scene.repositoryId}:${scene.version}`
+    if (previewVersion.current === revision) return
+    previewVersion.current = revision
+    for (const content of Object.values(view.data.views)) {
+      for (const element of content.placements) {
+        const overlay = view.overlays[element.element_id]
+        if (element.kind === 'code' && overlay?.reason === 'direct' && overlay.change !== 'unchanged' && peekSubSource(element)) {
+          requestSubSource(element, true)
+        }
+      }
+    }
+  }, [live, embedded, scene, view])
   useEffect(() => {
     if (!diagram || embedded) return
     let cancelled = false
@@ -201,8 +218,10 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!(embedded ? embedded.scene.files?.length : diagram?.nodes.length) }
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate animateUpdates onPan={pauseFollow} onZoom={pauseFollow} highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={() => { focusHistory(); if (selectedPath) focusSelected(); else if (followMode === 'following' && !followSuppressed.current) canvas.current?.followElements(pendingFollow.current) }} onSelectObject={(selection) => { if (selection) pauseFollow(); if (inspectorEnabled) setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') }} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas codeSources={live && !embedded ? undefined : view.codeSources} connectedCodeOnly={connectedCodeOnly} ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate animateUpdates onPan={pauseFollow} onZoom={pauseFollow} highlightedTags={highlightedTags} hiddenTags={hiddenTags} selectedTags={selectedTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={() => { focusHistory(); if (selectedPath) focusSelected(); else if (followMode === 'following' && !followSuppressed.current) canvas.current?.followElements(pendingFollow.current) }} onSelectObject={(selection) => { if (selection) pauseFollow(); if (inspectorEnabled) setSelectedKey(selection ? selection.kind === 'view' ? `view|${selection.viewId}` : `${selection.kind}|${selection.viewId}|${selection.resourceId}` : '') }} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
+              connectedCodeOnly={connectedCodeOnly}
+              onConnectedCodeOnlyChange={setConnectedCodeOnly}
               showViewMode={!embedded}
               busy={busy}
               viewMode={displayMode}

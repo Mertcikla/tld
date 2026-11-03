@@ -168,3 +168,32 @@ it.each([
   expect(paints.filter(paint => paint.type === 'border')).toHaveLength(1)
   expect(stack).toHaveLength(0)
 })
+
+it.each(['structure', 'summary'] as const)('keeps %s row positions continuous across a font-rounding boundary', subDetail => {
+  const symbols = Array.from({ length: 30 }, (_, index) => ({ name: `fn${index}`, type: 'function', startLine: index + 1, endLine: index + 1 }))
+  const sourceNode: LayoutNode = { ...node, id: `smooth-${subDetail}`, worldH: 5000, subDetail,
+    subSource: { status: 'ready', symbols, lines: symbols.map(symbol => `function ${symbol.name}() {}`), tokens: [], startLine: 1, endLine: 30 } }
+  const boundary = 27 / 49 // 9 / zoom * 1.5 crosses the old 24.5 rounding boundary.
+  const before = subNodeSymbols(sourceNode, boundary - 0.000001)
+  const after = subNodeSymbols(sourceNode, boundary + 0.000001)
+  expect(Math.abs(after.rowHeight - before.rowHeight)).toBeLessThan(0.001)
+  expect(Math.abs(after.areas[25].y - before.areas[25].y)).toBeLessThan(0.01)
+  const handle = symbolHandle('right', symbols[25])
+  expect(Math.abs(after.endpoints.get(handle)!.y - before.endpoints.get(handle)!.y)).toBeLessThan(0.01)
+})
+
+it.each([1.41, 1.45, 1.47, 1.52, 2.01])('keeps capped code rows at a smooth screen height at zoom %s', zoom => {
+  const model = subNodeSymbols(node, zoom)
+  expect(model.fontSize * zoom).toBeCloseTo(14)
+  expect(model.rowHeight * zoom).toBeCloseTo(21)
+})
+
+it('preserves fractional metrics after scrolling', () => {
+  const symbols = Array.from({ length: 30 }, (_, index) => ({ name: `fn${index}`, type: 'function', startLine: index + 1, endLine: index + 1 }))
+  const sourceNode: LayoutNode = { ...node, id: 'smooth-scrolled-summary', subDetail: 'summary', worldH: 180,
+    subSource: { status: 'ready', symbols, lines: symbols.map(symbol => `function ${symbol.name}() {}`), tokens: [], startLine: 1, endLine: 30 } }
+  expect(scrollSubElement(sourceNode, 20, 0.55)).toBe(true)
+  const model = subNodeSymbols(sourceNode, 0.55)
+  expect(model.rowHeight).toBeCloseTo(model.fontSize * 1.5 + 4)
+  expect(Number.isInteger(model.rowHeight)).toBe(false)
+})

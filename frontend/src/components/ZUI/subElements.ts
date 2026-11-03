@@ -1,3 +1,4 @@
+import { CHANGE_RING_COLORS } from './changeOverlay'
 import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
@@ -7,11 +8,16 @@ import { peekSubSource, requestSubSource, type SubSource } from '../../utils/sub
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
 import { elementTechnologyText } from '../../utils/elementIcon'
 
+const nodeDetail = (node: LayoutNode, zoom: number) => {
+  const detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
+  return node.subSource && !node.subSource.lines.length && detail === 'code' ? 'outline' : detail
+}
+
 const scrollRows = new Map<string, number>()
 const scrollListeners = new Set<() => void>()
 export const subscribeSubScroll = (fn: () => void) => { scrollListeners.add(fn); return () => { scrollListeners.delete(fn) } }
 const scrollKey = (node: LayoutNode, zoom: number) => {
-  const detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
+  const detail = nodeDetail(node, zoom)
   // Structure reveals summary text in place, including after scrolling.
   const layout = detail === 'structure' ? 'summary' : detail
   return `${node.id}:${layout}:${node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly ?? false}:${node.subConnectedHandles?.join('|') ?? ''}`
@@ -20,22 +26,22 @@ const firstRow = (node: LayoutNode, zoom: number) => scrollRows.get(scrollKey(no
 const presentations = new WeakMap<LayoutNode, { detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
-  const source = node.sourceLink ? peekSubSource(node.sourceLink) : undefined
-  const detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom), first = firstRow(node, zoom)
+  const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
+  const detail = nodeDetail(node, zoom), first = firstRow(node, zoom)
   const appearance = readSourcePreviewAppearance(node.diagramId, node.elementId)
   const fontSize = Math.min(Math.max(appearance.fontSize ?? 12, detail === 'summary' || detail === 'structure' ? 9 / zoom : 0), 14 / zoom)
   const lineNumbers = appearance.lineNumbers ?? detail === 'code'
   const cached = presentations.get(node)
   if (cached && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const base = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, fontSize, lineNumbers, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
-  const model = first ? buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * base.rowHeight, fontSize, lineNumbers, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly }) : base
+  const base = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
+  const model = first ? buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * base.rowHeight, fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly }) : base
   presentations.set(node, { appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
 
 export function scrollSubElement(node: LayoutNode, delta: number, zoom: number): boolean {
-  if ((node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)) === 'overview') return false
+  if ((nodeDetail(node, zoom)) === 'overview') return false
   const model = subNodeSymbols(node, zoom)
   const max = Math.max(0, model.rowCount - Math.floor((node.worldH - SUB_HEADER) / model.rowHeight))
   if (max === 0) return false
@@ -47,21 +53,21 @@ export function scrollSubElement(node: LayoutNode, delta: number, zoom: number):
 }
 
 export function subNodeHandleAnchor(node: LayoutNode, handle: string | null, zoom: number): { x: number; y: number; side: 'left' | 'right' } | null {
-  if (!isSubElement(node.subKind ?? node.type) || !isSubHandle(handle) || (node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)) === 'overview') return null
+  if (!isSubElement(node.subKind ?? node.type) || !isSubHandle(handle) || (nodeDetail(node, zoom)) === 'overview') return null
   const model = subNodeSymbols(node, zoom)
   let endpoint = model.endpoints.get(handle!)
   if (!endpoint) {
-    const source = node.sourceLink ? peekSubSource(node.sourceLink) : undefined
-    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom), width: node.worldW, height: node.worldH,
+    const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
+    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: nodeDetail(node, zoom), width: node.worldW, height: node.worldH,
       ...readSourcePreviewAppearance(node.diagramId, node.elementId), connectedOnly: node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly,
-      fontSize: model.fontSize, lineNumbers: model.lineNumbers, connected: [handle!], scrollTop: firstRow(node, zoom) * model.rowHeight }).endpoints.get(handle!)
+      fontSize: model.fontSize, lineNumbers: model.lineNumbers, fractionalMetrics: true, connected: [handle!], scrollTop: firstRow(node, zoom) * model.rowHeight }).endpoints.get(handle!)
   }
   return endpoint ? { x: endpoint.side === 'left' ? 0 : node.worldW, y: endpoint.y, side: endpoint.side } : null
 }
 export function subNodeHandleY(node: LayoutNode, handle: string | null, zoom: number) { return subNodeHandleAnchor(node, handle, zoom)?.y ?? null }
 
 export function subSymbolAtPoint(node: LayoutNode, zoom: number, x: number, y: number): string | undefined {
-  if (!isSubElement(node.subKind ?? node.type) || (node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)) === 'overview') return
+  if (!isSubElement(node.subKind ?? node.type) || (nodeDetail(node, zoom)) === 'overview') return
   const model = subNodeSymbols(node, zoom)
   if (y < SUB_HEADER) return
   if (y < model.viewportTop) return model.above.representative?.area?.key
@@ -81,9 +87,9 @@ function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: 
 
 /** Cached text/tokens and visible symbol regions only; animation redraws while active. */
 export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent, bodyBg = '#232732') {
-  const w = node.worldW, h = node.worldH, detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
-  const source = (node.subKind ?? node.type) === 'code' && node.sourceLink
-    ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined
+  const w = node.worldW, h = node.worldH, detail = nodeDetail(node, zoom)
+  const source = node.subSource ?? ((node.subKind ?? node.type) === 'code' && node.sourceLink
+    ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined)
   const model = subNodeSymbols(node, zoom)
   const pulse = activeHandle ? 0.75 + Math.sin(performance.now() / 220) * 0.2 : 0.5
   const active = (left: string, right: string) => activeHandle === left || activeHandle === right || (!!activeHandle && model.endpoints.get(activeHandle)?.area?.key === right)
@@ -131,8 +137,11 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   for (const area of model.areas) {
     const y = SUB_HEADER + area.contentTop - offset
     if (y + area.height < model.viewportTop || y > model.viewportBottom) continue
-    const isActive = active(area.leftId, area.rightId), color = symbolAccent
-    if (!isActive && !area.connected && detail !== 'structure') continue
+    const change = node.changeOverlay?.symbolDetails?.find(change =>
+      change.change !== 'unchanged' && change.name === area.symbol.name &&
+      (!change.anchor || change.anchor.startLine + 1 === area.symbol.startLine))
+    const isActive = active(area.leftId, area.rightId), color = change ? CHANGE_RING_COLORS[change.change] : symbolAccent
+    if (!change && !isActive && !area.connected && detail !== 'structure') continue
     ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 1 / zoom
     ctx.beginPath(); ctx.roundRect(area.x, y, area.width, area.height, Math.min(8, area.height / 2, model.rowHeight / 2 - model.highlightInset))
     ctx.globalAlpha = alpha * (isActive ? 0.18 : 0.10); ctx.fill()

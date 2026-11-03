@@ -169,6 +169,26 @@ it('keeps symbol bounds and anchors in sync with font size and the line-number g
 })
 
 describe('connected parts layout', () => {
+  it('shows one fallback signature per source line while retaining every connection', () => {
+    const doc: SubSource = { status: 'ready', startLine: 1, endLine: 3, tokens: [], symbols: [],
+      lines: ['export default function RepositoryChangeCanvas() {', 'const view = useMemo(() => scene, [scene])', '}'] }
+    const outgoing = lineHandle('right', 1), incoming = lineHandle('left', 1)
+    const second = lineHandle('left', 2)
+    const connected = [...Array<string>(8).fill(outgoing), incoming, second, second]
+    const model = buildSymbolPresentation({ ...base, source: doc, detail: 'outline', connectedOnly: true, connected })
+    expect(model.rows.filter(row => !row.collapsed).map(row => row.sourceIndex)).toEqual([0, 1])
+    expect(model.areas.map(area => area.signature?.text)).toEqual([
+      'export default function RepositoryChangeCanvas()', 'const view = useMemo(() => scene, [scene])',
+    ])
+    expect(model.endpoints.get(outgoing)?.area).toBe(model.areas[0])
+    expect(model.endpoints.get(incoming)?.area).toBe(model.areas[0])
+    expect(model.endpoints.get(second)?.area).toBe(model.areas[1])
+    expect(model.endpoints.get(outgoing)?.y).toBe(model.endpoints.get(incoming)?.y)
+    expect(model.areas.every(area => area.connected)).toBe(true)
+    const overflow = buildSymbolPresentation({ ...base, source: doc, height: 90, detail: 'outline', connectedOnly: true, connected })
+    expect(overflow.below.connectionCount).toBe(11)
+  })
+
   it('exposes connected nested methods in compact layout instead of their unused class', () => {
     const id = symbolHandle('right', save)
     const model = buildSymbolPresentation({ ...base, detail: 'outline', connectedOnly: true, connected: [id] })
@@ -259,4 +279,16 @@ it('preserves semantic anchors in the text-free structure stage', () => {
   expect(model.endpoints.get(id)?.area?.symbol).toBe(save)
   expect(model.endpoints.get(id)?.overflow).toBeUndefined()
   expect(symbolStems(model, 600, 360).some(stem => stem.endpoint.id === id)).toBe(true)
+})
+
+it('uses fractional text metrics in Explore while preserving the editor layout', () => {
+  const doc = { ...source, endLine: 1234567 }
+  const fontSize = 10.34
+  const continuous = buildSymbolPresentation({ ...base, source: doc, fontSize, fractionalMetrics: true })
+  const editor = buildSymbolPresentation({ ...base, source: doc, fontSize })
+  expect(continuous.rowHeight).toBeCloseTo(15.51)
+  expect(editor.rowHeight).toBe(16)
+  const measured = measureSubText(String(doc.endLine), fontSize)
+  expect(continuous.textX).toBeCloseTo(14 + Math.max(SUB_CODE_TEXT_X - 14, measured + 12))
+  expect(editor.textX).toBe(14 + Math.max(SUB_CODE_TEXT_X - 14, Math.ceil(measured) + 12))
 })

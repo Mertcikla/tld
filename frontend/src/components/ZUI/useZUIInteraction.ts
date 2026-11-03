@@ -1,3 +1,4 @@
+import { MIN_ZUI_ZOOM } from './camera'
 import { isSubElement } from '../../utils/subElements'
 import { scrollSubElement, subscribeSubScroll, subSymbolAtPoint } from './subElements'
 import { subscribeSubSources } from '../../utils/subElementSource'
@@ -127,7 +128,6 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
   return maxPossibleZoom
 }
 
-const MIN_ZOOM = 0.4
 const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
 
 function recordZuiTestInteraction(interaction: ZUITestInteraction) {
@@ -163,8 +163,8 @@ function clampZoom(z: number, prevZ: number, maxZ: number): number {
     // Zooming IN: cap at maxZ (but don't force down if already above)
     return Math.min(z, Math.max(prevZ, maxZ))
   } else {
-    // Zooming OUT: ignore maxZ (only cap at global MIN_ZOOM)
-    return Math.max(z, MIN_ZOOM)
+    // Zooming OUT: ignore maxZ (only cap at global MIN_ZUI_ZOOM)
+    return Math.max(z, MIN_ZUI_ZOOM)
   }
 }
 
@@ -212,7 +212,7 @@ export interface ZUIInteraction {
 
 export function useZUIInteraction(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
-  initialView: ZUIViewState = { x: 0, y: 0, zoom: 0.3 },
+  initialView: ZUIViewState = { x: 0, y: 0, zoom: MIN_ZUI_ZOOM },
   groups: DiagramGroupLayout[] = [],
   bbox?: BBox,
   onZoom?: () => void,
@@ -429,7 +429,7 @@ export function useZUIInteraction(
       if (bboxW <= 0 || bboxH <= 0) return
 
       const currentMaxZ = calculateMaxZoom(groupsRef.current, canvasW)
-      const zoom = Math.max(MIN_ZOOM, Math.min(currentMaxZ,
+      const zoom = Math.max(MIN_ZUI_ZOOM, Math.min(currentMaxZ,
         Math.min(
           (canvasW * (1 - padding * 2)) / bboxW,
           (canvasH * (1 - padding * 2)) / bboxH,
