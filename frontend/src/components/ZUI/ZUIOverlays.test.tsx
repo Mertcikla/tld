@@ -1,9 +1,12 @@
 import React from 'react'
 import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import SourceLinkActions from '../SourceLinkActions'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
 import type { PathItem } from './camera'
 import type { HoveredItem, LayoutNode } from './types'
+
+vi.mock('../SourceLinkActions', () => ({ default: () => <div data-testid="source-link-actions" /> }))
 
 vi.mock('@chakra-ui/icons', () => ({
   ExternalLinkIcon: () => React.createElement('span'),
@@ -494,5 +497,26 @@ describe('ZUIHoverPopover safe corridor bounds', () => {
     expect(onPopoverElement).toHaveBeenLastCalledWith(element)
     act(() => { renderer.unmount() })
     expect(onPopoverElement).toHaveBeenLastCalledWith(null)
+  })
+})
+
+describe('Explore card source actions', () => {
+  it.each([
+    { repo: 'https://github.com/owner/repo', branch: 'release/v2', file_path: 'src/api.ts#L12-L20', language: 'typescript' },
+    { repository_id: 'indexed-repo', repo: '/workspace/repo', file_path: 'src/api.ts#function_declaration:find', language: 'typescript' },
+  ])('reuses the editor actions for source-linked cards without requiring other details', sourceLink => {
+    const item = hoveredNode()
+    if (item.type !== 'node') throw new Error('expected node')
+    item.data = { ...item.data, subKind: 'code', sourceLink }
+    const renderer = create(<ZUIHoverPopover hoveredItem={item} hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }} isHoveredItemFullyVisible onHoverLock={() => {}} />)
+    expect(renderer.root.findByType(SourceLinkActions).props.element).toEqual({ ...sourceLink, url: null })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'source-link-actions' })).toHaveLength(1)
+    act(() => renderer.unmount())
+  })
+
+  it('does not add source buttons to ordinary cards with no repository', () => {
+    const renderer = create(renderPopover(true, () => {}))
+    expect(renderer.root.findAllByType(SourceLinkActions)).toHaveLength(0)
+    act(() => renderer.unmount())
   })
 })

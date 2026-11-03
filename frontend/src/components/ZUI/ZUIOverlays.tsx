@@ -26,6 +26,7 @@ import {
 import type { HoveredItem } from './types'
 import type { ZUIHiddenProxyBadge } from '../../crossBranch/resolve'
 import type { PathItem } from './camera'
+import SourceLinkActions from '../SourceLinkActions'
 import { EDGE_CHANGE_META } from './edgeChange'
 import { ConnectorNameButton, ConnectorRouteCard, ConnectorSummaryCard, UnderlyingConnectors } from '../ConnectorDetails'
 
@@ -338,7 +339,10 @@ export function ZUIHoverPopover({
           onMouseLeave={() => onHoverLock(false)}
         >
           {hoveredItem?.type === 'node' && (() => {
+            const sourceElement = hoveredItem.data.sourceLink
+            const hasSourceActions = Boolean(sourceElement?.repo || sourceElement?.repository_id)
             const hasNodeDetails = Boolean(
+              hasSourceActions ||
               hoveredItem.data.changeOverlay ||
               hoveredItem.data.technology ||
               hoveredItem.data.description,
@@ -426,6 +430,11 @@ export function ZUIHoverPopover({
                         <Text fontSize="11px" color="gray.400" noOfLines={3} lineHeight="1.4">
                           {hoveredItem.data.description}
                         </Text>
+                      )}
+                      {hasSourceActions && sourceElement && (
+                        <HStack justify="flex-end">
+                          <SourceLinkActions element={{ ...sourceElement, url: null }} />
+                        </HStack>
                       )}
                     </VStack>
                   </PopoverBody>

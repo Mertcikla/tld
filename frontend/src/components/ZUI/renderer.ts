@@ -1,4 +1,4 @@
-import { isDetailedSubElement, SUB_HEADER } from '../../utils/subElements'
+import { isDetailedSubElement, isSubElement, subDetail, SUB_HEADER } from '../../utils/subElements'
 import { drawSubElement, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
@@ -741,6 +741,13 @@ function drawGroupLabel(
 export function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderCtx: RenderContext, { x, y, w, h, drawZoom, drawScreenW, parentAlpha, isHovered, accent }: {
   x: number; y: number; w: number; h: number; drawZoom: number; drawScreenW: number; parentAlpha: number; isHovered: boolean; accent: string
 }) {
+  const sourceCard = isSubElement(layout.subKind ?? layout.type)
+  if (sourceCard || layout.type === 'class') {
+    const detail = sourceCard ? layout.subDetail ?? subDetail(layout.worldW * drawZoom, layout.worldH * drawZoom) : 'overview'
+    if (detail === 'overview' || detail === 'structure') return
+    // Summary tags belong to the body; signature and full-code views keep header tags.
+    if (detail === 'summary') h = layout.worldH
+  }
   // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
   // idle = tag-colored dots bottom-left; element or tag-menu hover = vertical
   // stack of pills (color dot + name).

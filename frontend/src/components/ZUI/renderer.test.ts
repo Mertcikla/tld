@@ -331,3 +331,49 @@ describe('Explore tag alignment with the editor', () => {
     expect(y + height).toBe(80)
   })
 })
+
+describe('code preview tags across zoom stages', () => {
+  const renderContext: RenderContext = {
+    canvasBg: '#000', nodeBg: '#222', accent: '#facc15', labelBg: '#111', canvasW: 1200, canvasH: 800,
+    thresholds: { start: 300, end: 600 }, lowDetail: false, groupLayersByDiagram: new Map(),
+  }
+  const context = () => ({ save() {}, restore() {}, beginPath() {}, fill() {}, stroke() {},
+    measureText: (value: string) => ({ width: value.length * 6 }), arc: vi.fn(), roundRect: vi.fn(), fillText: vi.fn() })
+  const card = { ...layoutNode('code-tags', 1), type: 'code', worldW: 520, worldH: 360, tags: ['a'] }
+  const bounds = { x: 0, y: 0, w: 520, h: 84, drawZoom: 1, drawScreenW: 520, parentAlpha: 1, isHovered: false, accent: '#facc15' }
+
+  it('places summary tag dots at the bottom left of the body', () => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail: 'summary' }, renderContext, bounds)
+    expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 349, 3])
+  })
+
+  it('anchors expanded summary tags at the bottom left of the body', () => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail: 'summary' }, renderContext, { ...bounds, isHovered: true })
+    const [x, y, , height] = ctx.roundRect.mock.calls[0]
+    expect(x).toBe(6)
+    expect(y + height).toBe(356)
+  })
+
+  it.each(['overview', 'structure'] as const)('hides tags in %s even on hover', subDetail => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail }, renderContext, { ...bounds, isHovered: true })
+    expect(ctx.arc).not.toHaveBeenCalled()
+    expect(ctx.roundRect).not.toHaveBeenCalled()
+    expect(ctx.fillText).not.toHaveBeenCalled()
+  })
+
+  it.each(['outline', 'code'] as const)('keeps header tags in %s', subDetail => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail }, renderContext, bounds)
+    expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 73, 3])
+  })
+
+  it.each([0.1, 0.25, 0.4])('uses the actual zoom stage for tag placement at zoom %s', drawZoom => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, card, renderContext, { ...bounds, drawZoom, drawScreenW: card.worldW * drawZoom })
+    if (drawZoom < 0.4) expect(ctx.arc).not.toHaveBeenCalled()
+    else expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 349, 3])
+  })
+})
