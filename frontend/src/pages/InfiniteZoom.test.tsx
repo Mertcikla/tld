@@ -98,3 +98,11 @@ describe('Explore flow controls', () => {
     expect(renderer.root.findByType(FlowPanel).props.open).toBe(false)
   })
 })
+
+it.each([undefined, 'shared-token'])('always folds unused code in Explore without a toolbar toggle (share: %s)', sharedToken => {
+  // A previously saved opt-out must not disable Explore's default presentation.
+  vi.stubGlobal('localStorage', { getItem: () => 'false' })
+  mount(sharedToken)
+  expect(renderer.root.findByType('canvas').props.connectedCodeOnly).toBe(true)
+  expect(renderer.root.findAllByType('button').some(node => node.children.includes('Connected parts only'))).toBe(false)
+})

@@ -1,4 +1,3 @@
-import { isDetailedSubElement } from '../../utils/subElements'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUIViewState } from './types'
 
@@ -199,7 +198,7 @@ function updateNodeStateRecursive(
   let isLeafCapped = false
   let leafCapScale = 1
 
-  if (!hasChildren && !isDetailedSubElement(layout.subKind ?? layout.type, layout.subDetail, layout.worldW, layout.worldH, zoom * parentAbsScale) && screenW > thresholds.end) {
+  if (!hasChildren && screenW > thresholds.end) {
     leafCapScale = thresholds.end / screenW
     drawZoom = drawZoom * leafCapScale
     drawScreenW = thresholds.end

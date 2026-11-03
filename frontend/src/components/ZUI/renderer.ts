@@ -6,7 +6,7 @@ import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import { CHANGE_RING_COLORS } from './changeOverlay'
 import { EDGE_CHANGE_META } from './edgeChange'
-import { connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
+import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
@@ -48,11 +48,6 @@ const VIEW_EDITOR_NODE_W = 180
 const NAME_FONT_TO_NODE_H = 20 / VIEW_EDITOR_NODE_H
 const TYPE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
 const RADIUS_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
-const TAG_DOT_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
-const TAG_DOT_GAP_TO_NODE_H = 4 / VIEW_EDITOR_NODE_H
-const TAG_DOT_INSET_X_TO_NODE_W = 8 / VIEW_EDITOR_NODE_W
-const TAG_DOT_INSET_Y_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
-const TAG_OVERFLOW_FONT_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
 const BADGE_H_TO_NODE_H = 16 / VIEW_EDITOR_NODE_H
 const BADGE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
 const BADGE_PAD_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
@@ -609,17 +604,19 @@ function clipConnectorTip(ctx: CanvasRenderingContext2D, x: number, y: number, a
   const transform = ctx.getTransform()
   const cos = Math.cos(angle)
   const sin = Math.sin(angle)
-  const halfWidth = size * 0.6 + ctx.lineWidth / 2
-  const front = ctx.lineWidth / 2
+  const unit = size * 0.15
+  const halfWidth = unit * 4.5 + ctx.lineWidth / 2
+  const front = unit / 2 + ctx.lineWidth / 2
+  const back = -unit * 5.5
   const mask = new Path2D()
   mask.rect(0, 0, ctx.canvas.width, ctx.canvas.height)
 
   // Stop the stroke at the arrow's base without changing the underlying route.
   const corners = [
-    [-size * 1.6, -halfWidth],
+    [back, -halfWidth],
     [front, -halfWidth],
     [front, halfWidth],
-    [-size * 1.6, halfWidth],
+    [back, halfWidth],
   ]
   corners.forEach(([along, across], index) => {
     const localX = x + along * cos - across * sin
@@ -636,17 +633,25 @@ function clipConnectorTip(ctx: CanvasRenderingContext2D, x: number, y: number, a
   ctx.setTransform(transform)
 }
 
-function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string): void {
+export function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string): void {
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(angle)
   ctx.beginPath()
-  ctx.moveTo(0, 0)
-  ctx.lineTo(-size * 1.6, -size * 0.6)
-  ctx.lineTo(-size * 1.6, size * 0.6)
+  // React Flow's ArrowClosed marker: a filled -5,-4 → 0,0 → -5,4
+  // triangle with a matching stroke and round joins/caps.
+  const unit = size * 0.15
+  ctx.moveTo(-5 * unit, -4 * unit)
+  ctx.lineTo(0, 0)
+  ctx.lineTo(-5 * unit, 4 * unit)
   ctx.closePath()
   ctx.fillStyle = color
+  ctx.strokeStyle = color
+  ctx.lineWidth = unit
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
   ctx.fill()
+  ctx.stroke()
   ctx.restore()
 }
 
@@ -656,6 +661,12 @@ type LabelSize = { width: number; height: number }
 export function connectorLabelFitsEndpoints(label: LabelSize, source: LabelSize, target: LabelSize): boolean {
   return label.width <= Math.min(source.width, target.width) * 0.75 &&
     label.height <= Math.min(source.height, target.height) * 0.5
+}
+
+/** Preview body width must not make arrows appear earlier than on ordinary cards. */
+export function connectorDetailScreenWidth(node: Pick<LayoutNode, 'worldW' | 'type' | 'subKind'>, visualScreenWidth: number): number {
+  const codeCard = node.subKind === 'code' || node.type === 'code' || node.type === 'class'
+  return codeCard ? visualScreenWidth * Math.min(1, VIEW_EDITOR_NODE_W / node.worldW) : visualScreenWidth
 }
 
 export function shouldDrawConnectorDetailLabel(direction: string | null | undefined, visualSourceScreenW: number, visualTargetScreenW: number): boolean {
@@ -727,7 +738,7 @@ function drawGroupLabel(
   ctx.restore()
 }
 
-function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderCtx: RenderContext, { x, y, w, h, drawZoom, drawScreenW, parentAlpha, isHovered, accent }: {
+export function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderCtx: RenderContext, { x, y, w, h, drawZoom, drawScreenW, parentAlpha, isHovered, accent }: {
   x: number; y: number; w: number; h: number; drawZoom: number; drawScreenW: number; parentAlpha: number; isHovered: boolean; accent: string
 }) {
   // ViewEditor-style tag chrome (replaces the old glow+dim highlight):
@@ -738,12 +749,11 @@ function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderC
     if (tags.length > 0 && parentAlpha > 0.05) {
       const highlighted = isTagHighlighted(tags)
       if ((isHovered || highlighted) && !renderCtx.lowDetail && drawScreenW > 90 && parentAlpha > 0.1) {
-        // Scale chips gently with the visible card, and keep them clear of its
-        // rounded corners even when the card is much larger than the editor size.
+        // Keep expanded labels readable, anchored to ElementTags' fixed offsets.
         const chipScale = clamp(h * drawZoom / VIEW_EDITOR_NODE_H, 1, 1.6)
         const chipUnit = chipScale / drawZoom
-        const insetX = Math.max(w * TAG_DOT_INSET_X_TO_NODE_W, 6 * chipUnit)
-        const insetY = Math.max(h * TAG_DOT_INSET_Y_TO_NODE_H, 6 * chipUnit)
+        const insetX = 6
+        const insetY = 4
         const pillH = 18 * chipUnit
         const pillGap = 4 * chipUnit
         const pillPadX = 8 * chipUnit
@@ -785,11 +795,11 @@ function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderC
         }
         ctx.restore()
       } else if (drawScreenW > 50) {
-        const dotD = h * TAG_DOT_TO_NODE_H
+        const dotD = 6
         const dotR = dotD / 2
-        const gap = h * TAG_DOT_GAP_TO_NODE_H
-        const insetX = w * TAG_DOT_INSET_X_TO_NODE_W
-        const insetY = h * TAG_DOT_INSET_Y_TO_NODE_H
+        const gap = 4
+        const insetX = 10
+        const insetY = 8
         const maxDots = 5
         const shown = tags.slice(0, maxDots)
         ctx.save()
@@ -803,7 +813,7 @@ function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, renderC
           ctx.fill()
         })
         if (tags.length > maxDots) {
-          ctx.font = `700 ${h * TAG_OVERFLOW_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
+          ctx.font = `700 8px ${ZUI_FONT_FAMILY}`
           ctx.fillStyle = 'rgba(255,255,255,0.6)'
           ctx.textAlign = 'left'
           ctx.textBaseline = 'middle'
@@ -897,12 +907,12 @@ export function computeNodeNameLayout(options: {
   const nameY = showType ? h * (0.42 + baseOffset) : h * (0.5 + baseOffset)
   const maxLines = !showLogo && showType && !childrenAnimating ? 2 : 1
 
-  const typeFontSize = h * TYPE_FONT_TO_NODE_H
+  const typeFontSize = Math.min(h * TYPE_FONT_TO_NODE_H, 12 / drawZoom)
   const bandTop = h * 0.06
   const bandBottom = h * (0.62 + baseOffset) - typeFontSize * 0.8 - 2
 
   const fontSizes = ELEMENT_NAME_FONT_STEPS
-    .map((size) => (size / VIEW_EDITOR_NODE_H) * h)
+    .map((size) => Math.min((size / VIEW_EDITOR_NODE_H) * h, (size / 20) * 24 / drawZoom))
     .filter((size) => size * drawZoom >= 6)
 
   const fit = fontSizes.length > 0
@@ -916,7 +926,7 @@ export function computeNodeNameLayout(options: {
         measureKey: 'zui',
         measure,
       })
-    : { lines: [label], fontSize: h * NAME_FONT_TO_NODE_H, truncated: false }
+    : { lines: [label], fontSize: Math.min(h * NAME_FONT_TO_NODE_H, 24 / drawZoom), truncated: false }
 
   return {
     lines: fit.lines,
@@ -1050,7 +1060,7 @@ function drawSceneNode(
       ctx.save()
       ctx.globalAlpha = parentAlpha * 1
 
-      const logoMaxDim = h * 0.35
+      const logoMaxDim = Math.min(h * 0.35, 32 / drawZoom)
       const topOffset = h * 0.06
 
       const intrinsicW = img.naturalWidth || img.width
@@ -1103,7 +1113,7 @@ function drawSceneNode(
       const showLogo = !!layout.logoUrl && drawScreenW > 60
       const showType = drawScreenW > BADGE_THRESHOLD
       const baseOffset = showLogo ? 0.15 : 0
-      const typeFontSize = h * TYPE_FONT_TO_NODE_H
+      const typeFontSize = Math.min(h * TYPE_FONT_TO_NODE_H, 12 / drawZoom)
 
       const name = computeNodeNameLayout({
         label: layout.label,
@@ -1389,7 +1399,7 @@ function drawEdges(
 
       const hasSourceChildren = node.children && node.children.length > 0
       const sourceScreenW = node.worldW * zoom
-      const sSource = (!hasSourceChildren && !isDetailedSubElement(node.subKind ?? node.type, node.subDetail, node.worldW, node.worldH, zoom) && sourceScreenW > thresholds.end) ? thresholds.end / sourceScreenW : 1
+      const sSource = (!hasSourceChildren && sourceScreenW > thresholds.end) ? thresholds.end / sourceScreenW : 1
       const effWSource = node.worldW * sSource
       const effHSource = node.worldH * sSource
       const cxSource = node.worldX + node.worldW / 2 - ox
@@ -1399,7 +1409,7 @@ function drawEdges(
 
       const hasTargetChildren = target.children && target.children.length > 0
       const targetScreenW = target.worldW * zoom
-      const sTarget = (!hasTargetChildren && !isDetailedSubElement(target.subKind ?? target.type, target.subDetail, target.worldW, target.worldH, zoom) && targetScreenW > thresholds.end) ? thresholds.end / targetScreenW : 1
+      const sTarget = (!hasTargetChildren && targetScreenW > thresholds.end) ? thresholds.end / targetScreenW : 1
       const effWTarget = target.worldW * sTarget
       const effHTarget = target.worldH * sTarget
       const cxTarget = target.worldX + target.worldW / 2 - ox
@@ -1418,10 +1428,10 @@ function drawEdges(
         false, sTarget,
       )
 
-      const sourceAnchor = subNodeHandleAnchor(node, edge.sourceHandle, zoom)
-      const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, zoom)
-      if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x; sH.y = effYSource + sourceAnchor.y; sH.pos = sourceAnchor.side }
-      if (targetAnchor) { tH.x = effXTarget + targetAnchor.x; tH.y = effYTarget + targetAnchor.y; tH.pos = targetAnchor.side }
+      const sourceAnchor = subNodeHandleAnchor(node, edge.sourceHandle, zoom * sSource)
+      const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, zoom * sTarget)
+      if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x * sSource; sH.y = effYSource + sourceAnchor.y * sSource; sH.pos = sourceAnchor.side }
+      if (targetAnchor) { tH.x = effXTarget + targetAnchor.x * sTarget; tH.y = effYTarget + targetAnchor.y * sTarget; tH.pos = targetAnchor.side }
       ctx.save()
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
@@ -1440,9 +1450,11 @@ function drawEdges(
 
       const visualTargetScreenW = effWTarget * zoom
       const visualSourceScreenW = effWSource * zoom
+      const targetDetailScreenW = connectorDetailScreenWidth(target, visualTargetScreenW)
+      const sourceDetailScreenW = connectorDetailScreenWidth(node, visualSourceScreenW)
       const ARROW_SIZE_BASE = 10
-      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
-      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const targetConnectorDetailVisible = targetDetailScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const sourceConnectorDetailVisible = sourceDetailScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
       const drawTargetArrow = (dir === 'forward' || dir === 'both' || dir === 'bidirectional') && targetConnectorDetailVisible
       const drawSourceArrow = (dir === 'backward' || dir === 'both' || dir === 'bidirectional') && sourceConnectorDetailVisible
       const targetArrowSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2) / zoom
@@ -1451,32 +1463,13 @@ function drawEdges(
       // Keep route geometry independent of arrow visibility.
       const connectorPath = new Path2D()
       if (type === 'bezier') {
-        const curvature = 0.5
-        let cp1x = sH.x, cp1y = sH.y, cp2x = tH.x, cp2y = tH.y
-        const dx = Math.abs(tH.x - sH.x)
-        const dy = Math.abs(tH.y - sH.y)
-
-
         const sourceSize = connectorRouteSize(effWSource, effHSource, (node.subKind ?? node.type) === 'code')
         const targetSize = connectorRouteSize(effWTarget, effHTarget, (target.subKind ?? target.type) === 'code')
-        const minStemSH = (sH.pos === 'left' || sH.pos === 'right' ? sourceSize.width : sourceSize.height) * 0.5
-        const minStemTH = (tH.pos === 'left' || tH.pos === 'right' ? targetSize.width : targetSize.height) * 0.5
-
-        if (sH.pos === 'left' || sH.pos === 'right') {
-          const stem = Math.max(dx * curvature, minStemSH)
-          cp1x += sH.pos === 'left' ? -stem : stem
-        } else {
-          const stem = Math.max(dy * curvature, minStemSH)
-          cp1y += sH.pos === 'top' ? -stem : stem
-        }
-
-        if (tH.pos === 'left' || tH.pos === 'right') {
-          const stem = Math.max(dx * curvature, minStemTH)
-          cp2x += tH.pos === 'left' ? -stem : stem
-        } else {
-          const stem = Math.max(dy * curvature, minStemTH)
-          cp2y += tH.pos === 'top' ? -stem : stem
-        }
+        const { control1, control2 } = connectorBezierGeometry(
+          { x: sH.x, y: sH.y, side: sH.pos }, { x: tH.x, y: tH.y, side: tH.pos }, sourceSize, targetSize,
+        )
+        const { x: cp1x, y: cp1y } = control1
+        const { x: cp2x, y: cp2y } = control2
 
         midX = 0.125 * sH.x + 0.375 * cp1x + 0.375 * cp2x + 0.125 * tH.x
         midY = 0.125 * sH.y + 0.375 * cp1y + 0.375 * cp2y + 0.125 * tH.y
@@ -1583,7 +1576,7 @@ function drawEdges(
         drawArrowHead(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize, strokeColor)
       }
 
-      if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {
+      if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, sourceDetailScreenW, targetDetailScreenW)) {
         const screenFontSize = 12
         const worldFontSize = screenFontSize / zoom
         ctx.font = `${worldFontSize}px ${ZUI_FONT_FAMILY}`

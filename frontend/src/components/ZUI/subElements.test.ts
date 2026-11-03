@@ -1,0 +1,170 @@
+import { describe, expect, it, vi } from 'vitest'
+import { drawSubElement, subNodeSymbols, scrollSubElement } from './subElements'
+import * as subSources from '../../utils/subElementSource'
+import { symbolHandle } from '../../utils/subElements'
+import type { LayoutNode } from './types'
+
+vi.mock('../../utils/subElementSource', () => ({
+  peekSubSource: () => ({ status: 'ready', lines: ['class Checkout {}'], tokens: [], symbols: [{ name: 'Checkout', type: 'class', startLine: 1, endLine: 1 }], startLine: 1, endLine: 1 }),
+  requestSubSource: vi.fn(),
+}))
+
+const node: LayoutNode = {
+  id: 'code', elementId: 1, diagramId: 1, worldX: 0, worldY: 0, worldW: 520, worldH: 360,
+  label: 'Checkout', type: 'class', subKind: 'code', subDetail: 'code',
+  sourceLink: { repo: 'example/repo', file_path: 'checkout.ts' },
+  logoUrl: null, description: null, technology: 'TypeScript', tags: [], ancestorElementIds: [], pathElementIds: [1],
+  children: [], childScale: 1, childOffsetX: 0, childOffsetY: 0, edgesOut: [],
+}
+
+describe('Explore source cards', () => {
+  it.each([1, 2, 8])('caps header and body text at zoom %s', zoom => {
+    const text: { value: string; screenFont: number }[] = []
+    // Capture actual canvas font assignments to cover both the header and code rows.
+    const context = {
+      font: '12px sans-serif',
+      fillText(value: string) { text.push({ value, screenFont: Number(this.font.match(/([\d.]+)px/)![1]) * zoom }) },
+      measureText(value: string) { return { width: value.length * Number(this.font.match(/([\d.]+)px/)![1]) * 0.6 } },
+      save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, fillRect() {}, rect() {},
+    }
+    drawSubElement(context as unknown as CanvasRenderingContext2D, node, zoom, 1, '#63b3ed', false)
+    expect(text.find(item => item.value === 'Checkout')!.screenFont).toBeLessThanOrEqual(20)
+    expect(text.find(item => item.value === 'CLASS')!.screenFont).toBeLessThanOrEqual(12)
+    expect(text.find(item => item.value === 'class Checkout {}')!.screenFont).toBeLessThanOrEqual(14)
+    expect(subNodeSymbols(node, zoom).fontSize * zoom).toBeLessThanOrEqual(14)
+  })
+})
+
+it.each([0.1, 1, 4])('draws complete border ports outside the content clip at zoom %s', zoom => {
+  let clipped = false
+  const stack: boolean[] = []
+  const ports: boolean[] = []
+  const context = {
+    font: '12px sans-serif',
+    save() { stack.push(clipped) }, restore() { clipped = stack.pop()! }, clip() { clipped = true },
+    arc(_x: number, _y: number, _radius: number, start: number, end: number) {
+      expect(end - start).toBe(Math.PI * 2)
+      ports.push(clipped)
+    },
+    measureText(value: string) { return { width: value.length * 6 } },
+    fillText() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, fillRect() {}, rect() {}, moveTo() {}, lineTo() {}, setLineDash() {},
+  }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, { ...node, subConnectedHandles: ['right-line-1'] }, zoom, 0.8, '#63b3ed', false)
+  expect(ports.length).toBeGreaterThan(0)
+  expect(ports.every(underClip => !underClip)).toBe(true)
+  expect(stack).toHaveLength(0)
+})
+
+it.each([1, 4])('centers the editor-style icon and text stack at zoom %s', zoom => {
+  const text: { value: string; x: number; y: number; align: string; color: string }[] = []
+  const context = {
+    font: '12px sans-serif', textAlign: '', fillStyle: '',
+    fillText(value: string, x: number, y: number) { text.push({ value, x, y, align: this.textAlign, color: this.fillStyle }) },
+    measureText(value: string) { return { width: value.length * 6 } }, drawImage: vi.fn(),
+    save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, fillRect() {}, rect() {},
+  }
+  const icon = { naturalWidth: 20, naturalHeight: 28 } as HTMLImageElement
+  drawSubElement(context as unknown as CanvasRenderingContext2D, node, zoom, 1, '#63b3ed', false, undefined, undefined, icon)
+  const title = text.find(row => row.value === 'Checkout')!
+  const kind = text.find(row => row.value === 'CLASS')!
+  const metadata = text.find(row => row.value === '[TypeScript]')!
+  for (const row of [title, kind, metadata]) {
+    expect(row.x).toBe(node.worldW / 2)
+    expect(row.align).toBe('center')
+  }
+  expect(kind.color).toBe('#38b2ac')
+  expect(title.y).toBeLessThan(kind.y)
+  expect(kind.y).toBeLessThan(metadata.y)
+  const [, x, y, width, height] = context.drawImage.mock.calls[0]
+  expect(x + width / 2).toBe(node.worldW / 2)
+  expect(y + height).toBeLessThan(title.y)
+  expect(Math.max(width, height) * zoom).toBeLessThanOrEqual(32)
+})
+
+it('keeps summary labels readable before outline detail appears', () => {
+  const model = subNodeSymbols({ ...node, subDetail: 'summary' }, 0.5)
+  expect(model.areas[0].signature?.text).toBe('Checkout')
+  expect(model.fontSize * 0.5).toBeGreaterThanOrEqual(9)
+  expect(model.fontSize * 0.5).toBeLessThanOrEqual(14)
+})
+
+it('renders connected shapes and ports without any text in the structure stage', () => {
+  const context = {
+    font: '12px sans-serif', fillText: vi.fn(), roundRect: vi.fn(), arc: vi.fn(),
+    measureText(value: string) { return { width: value.length * 6 } },
+    save() {}, restore() {}, beginPath() {}, fill() {}, stroke() {}, clip() {}, fillRect() {}, rect() {}, moveTo() {}, lineTo() {}, setLineDash() {},
+  }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, { ...node, subDetail: 'structure', subConnectedOnly: true, subConnectedHandles: ['right-line-1'] }, 0.25, 1, '#63b3ed', false)
+  expect(context.fillText).not.toHaveBeenCalled()
+  expect(context.roundRect.mock.calls.length).toBeGreaterThan(1)
+  expect(context.arc).toHaveBeenCalled()
+})
+
+it('keeps lower-zoom summary names readable', () => {
+  const model = subNodeSymbols({ ...node, subDetail: 'summary' }, 0.35)
+  expect(model.fontSize * 0.35).toBeGreaterThanOrEqual(9)
+})
+
+it.each([0.25, 0.4, 1, 2])('matches structure and summary geometry at zoom %s', zoom => {
+  const sourceNode = { ...node, subConnectedOnly: true, subConnectedHandles: ['right-line-1'] }
+  const structure = subNodeSymbols({ ...sourceNode, subDetail: 'structure' }, zoom)
+  const summary = subNodeSymbols({ ...sourceNode, subDetail: 'summary' }, zoom)
+  expect(structure).toEqual(summary)
+  // The larger layouts retain their own signature/code bounds and spacing.
+  expect(subNodeSymbols({ ...sourceNode, subDetail: 'outline' }, zoom).rowHeight).not.toBe(summary.rowHeight)
+  expect(subNodeSymbols({ ...sourceNode, subDetail: 'code' }, zoom).areas[0].width).not.toBe(summary.areas[0].width)
+})
+
+it('draws identical highlighted shapes and ports before and after summary text is revealed', () => {
+  const context = () => ({
+    font: '12px sans-serif', roundRect: vi.fn(), arc: vi.fn(), fillText: vi.fn(),
+    measureText(value: string) { return { width: value.length * 6 } },
+    save() {}, restore() {}, beginPath() {}, fill() {}, stroke() {}, clip() {}, fillRect() {}, rect() {}, moveTo() {}, lineTo() {}, setLineDash() {},
+  })
+  const sourceNode = { ...node, subConnectedOnly: true, subConnectedHandles: ['right-line-1'] }
+  const structure = context(), summary = context()
+  drawSubElement(structure as unknown as CanvasRenderingContext2D, { ...sourceNode, subDetail: 'structure' }, 0.4, 1, '#63b3ed', false)
+  drawSubElement(summary as unknown as CanvasRenderingContext2D, { ...sourceNode, subDetail: 'summary' }, 0.4, 1, '#63b3ed', false)
+  expect(structure.roundRect.mock.calls).toEqual(summary.roundRect.mock.calls)
+  expect(structure.arc.mock.calls).toEqual(summary.arc.mock.calls)
+  expect(structure.fillText).not.toHaveBeenCalled()
+  expect(summary.fillText).toHaveBeenCalled()
+})
+
+it('shares scroll position only between structure and summary', () => {
+  const symbols = Array.from({ length: 10 }, (_, index) => ({ name: `fn${index}`, type: 'function', startLine: index + 1, endLine: index + 1 }))
+  const spy = vi.spyOn(subSources, 'peekSubSource').mockReturnValue({ status: 'ready', symbols, lines: symbols.map(symbol => `function ${symbol.name}() {}`), tokens: [], startLine: 1, endLine: 10 })
+  try {
+    const sourceNode = { ...node, id: 'shared-summary-scroll', worldH: 180, subConnectedOnly: true, subConnectedHandles: symbols.map(symbol => symbolHandle('right', symbol)) }
+    expect(scrollSubElement({ ...sourceNode, subDetail: 'structure' }, 19, 1)).toBe(true)
+    const structure = subNodeSymbols({ ...sourceNode, subDetail: 'structure' }, 1)
+    const summary = subNodeSymbols({ ...sourceNode, subDetail: 'summary' }, 1)
+    expect(structure).toEqual(summary)
+    expect(summary.above.areas.length).toBeGreaterThan(0)
+    expect(subNodeSymbols({ ...sourceNode, subDetail: 'outline' }, 1).above.areas).toHaveLength(0)
+    expect(subNodeSymbols({ ...sourceNode, subDetail: 'code' }, 1).above.areas).toHaveLength(0)
+  } finally { spy.mockRestore() }
+})
+
+it.each([
+  { zoom: 0.05, lowDetail: false },
+  { zoom: 0.5, lowDetail: false },
+  { zoom: 1, lowDetail: true },
+  { zoom: 4, lowDetail: false },
+])('keeps a complete 1.5-pixel border above content at zoom $zoom (low detail: $lowDetail)', ({ zoom, lowDetail }) => {
+  let clipped = false
+  const stack: boolean[] = []
+  const paints: { type: string; width?: number; clipped?: boolean }[] = []
+  const context = {
+    font: '12px sans-serif', lineWidth: 0,
+    save() { stack.push(clipped) }, restore() { clipped = stack.pop()! }, clip() { clipped = true },
+    fillRect() { paints.push({ type: 'content' }) },
+    stroke() { paints.push({ type: 'border', width: this.lineWidth * zoom, clipped }) },
+    measureText(value: string) { return { width: value.length * 6 } },
+    fillText() {}, beginPath() {}, roundRect() {}, fill() {}, rect() {},
+  }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, node, zoom, 1, '#63b3ed', lowDetail)
+  expect(paints.at(-1)).toEqual({ type: 'border', width: 1.5, clipped: false })
+  expect(paints.filter(paint => paint.type === 'border')).toHaveLength(1)
+  expect(stack).toHaveLength(0)
+})

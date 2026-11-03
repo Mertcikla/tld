@@ -33,7 +33,8 @@ export function SubElementSymbolRegions({ presentation, scrollTop, interactions 
   })}</>
 }
 
-export function SubElementSymbolPorts({ data, presentation, width, height, scrollTop, scrollLeft, canEdit, interactions, onReveal }: {
+export function SubElementSymbolPorts({ textless = false, data, presentation, width, height, scrollTop, scrollLeft, canEdit, interactions, onReveal }: {
+  textless?: boolean;
   data: NodeData; presentation: SymbolPresentation; width: number; height: number; scrollTop: number; scrollLeft: number; canEdit: boolean; interactions: SymbolInteractions
   onReveal: (index: number) => void
 }) {
@@ -75,9 +76,9 @@ export function SubElementSymbolPorts({ data, presentation, width, height, scrol
         }}>
         <HStack h="100%" justify="center" spacing="6px" px={8} fontSize="9px" lineHeight={1} color="gray.400" pointerEvents="none" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {count > 0 && <Box as="svg" boxSize="8px" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" flexShrink={0}><path d={direction === 'above' ? 'M1 5l3-3 3 3' : 'M1 2l3 3 3-3'} /></Box>}
-          {symbolLabel && <Text isTruncated>{symbolLabel}</Text>}
-          {symbolLabel && connectionLabel && <Text color="whiteAlpha.300">·</Text>}
-          {connectionLabel && <Text color="var(--accent)" fontWeight="600" flexShrink={0}>{connectionLabel}</Text>}
+          {!textless && symbolLabel && <Text isTruncated>{symbolLabel}</Text>}
+          {!textless && symbolLabel && connectionLabel && <Text color="whiteAlpha.300">·</Text>}
+          {!textless && connectionLabel && <Text color="var(--accent)" fontWeight="600" flexShrink={0}>{connectionLabel}</Text>}
         </HStack>
       </Box>
     })}

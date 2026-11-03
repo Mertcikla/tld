@@ -35,8 +35,10 @@ describe('sub-element geometry and semantic handles', () => {
     expect(subHandleY(lineHandle('right', 1000), null, 12, 360)).toBe(352)
   })
   it('switches detail in discrete steps', () => {
-    expect([[280, 160], [400, 240], [600, 360]].map(([width, height]) => subDetail(width, height))).toEqual(['overview', 'outline', 'code'])
-    expect(subDetail(1000, 150)).toBe('overview')
+    expect([[90, 50], [140, 85], [200, 110], [400, 240], [600, 360]].map(([width, height]) => subDetail(width, height))).toEqual(['overview', 'structure', 'summary', 'outline', 'code'])
+    expect(subDetail(1000, 50)).toBe('overview')
+    expect(subDetail(1000, 85)).toBe('structure')
+    expect(subDetail(1000, 150)).toBe('summary')
     expect(subDetail(600, 240)).toBe('outline')
   })
 })
@@ -52,13 +54,15 @@ it('keeps symbol connections attached when source lines move', () => {
 it('keeps saved dimensions stable as an element changes detail with screen size', () => {
   const config = { width: 720, height: 600 }
   const size = subSize('code', config)
-  expect([0.3, 0.5, 1].map(zoom => subDetail(size.width * zoom, size.height * zoom))).toEqual(['overview', 'outline', 'code'])
+  expect([0.1, 0.2, 0.3, 0.5, 1].map(zoom => subDetail(size.width * zoom, size.height * zoom))).toEqual(['overview', 'structure', 'summary', 'outline', 'code'])
   expect(size).toEqual(config)
 })
 
 it('keeps cards fixed and preserves preview sizes independently of layout', () => {
   const config = { width: 900, height: 700 }
   expect(subEditorSize('code', config, 'overview')).toEqual({ width: 180, height: 85 })
+  expect(subEditorSize('code', config, 'structure')).toEqual(config)
+  expect(subEditorSize('code', config, 'summary')).toEqual(config)
   expect(subEditorSize('code', config, 'outline')).toEqual(config)
   expect(subEditorSize('code', config, 'code')).toEqual(config)
   expect(config).toEqual({ width: 900, height: 700 })
@@ -75,4 +79,17 @@ it('folds nested symbols and anchors their endpoints to the enclosing row', asyn
   expect(outlineHandleY(symbolHandle('right', method), rows, source.symbols, 164)).toBe(93)
   expect(outlineHandleY(lineHandle('left', 18), rows, source.symbols, 164)).toBe(111)
   expect(collapsedSymbols({ ...source, symbols: [] }, 'users.sql')).toEqual([{ name: 'users.sql', startLine: 1, endLine: 20 }])
+})
+
+it('adds a summary zoom band without moving the existing outline and full-code thresholds', () => {
+  const size = subSize('code')
+  expect([0.15, 0.25, 0.4, 0.7, 1].map(zoom => subDetail(size.width * zoom, size.height * zoom))).toEqual(['overview', 'structure', 'summary', 'outline', 'code'])
+  expect(subDetail(99, 180)).toBe('overview')
+  expect(subDetail(100, 60)).toBe('structure')
+  expect(subDetail(179, 180)).toBe('structure')
+  expect(subDetail(180, 100)).toBe('summary')
+  expect(subDetail(240, 130)).toBe('summary')
+  expect(subDetail(320, 180)).toBe('outline')
+  expect(subDetail(440, 280)).toBe('code')
+  expect(subEditorSize('code', null, 'summary')).toEqual({ width: 320, height: 180 })
 })

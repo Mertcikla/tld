@@ -4,7 +4,7 @@ import type { SubDetail } from '../utils/subElements'
 function readLayout(key: string, fallback: SubDetail): SubDetail {
   try {
     const value = localStorage.getItem(key)
-    if (value === 'overview' || value === 'outline' || value === 'code') return value
+    if (value === 'overview' || value === 'structure' || value === 'summary' || value === 'outline' || value === 'code') return value
   } catch { /* Layout preferences are optional in embedded viewers. */ }
   return fallback
 }

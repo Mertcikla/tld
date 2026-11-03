@@ -473,7 +473,7 @@ export function useZUIInteraction(
       if (e.altKey && !e.ctrlKey) {
         const view = viewStateRef.current
         const hit = hitTestZUIRenderedNode(screenToWorldX(e.clientX - rect.left, view), screenToWorldY(e.clientY - rect.top, view), groupsRef.current, view, getExpandThresholds(rect.width), hiddenTagsRef.current)
-        if (hit && isSubElement(hit.node.type) && scrollSubElement(hit.node, e.deltaY * (e.deltaMode === 1 ? 24 : 1), view.zoom * hit.cumulativeScale)) {
+        if (hit && isSubElement(hit.node.type) && scrollSubElement(hit.node, e.deltaY * (e.deltaMode === 1 ? 24 : 1), view.zoom * hit.visualScale)) {
           e.preventDefault()
           return
         }
@@ -631,7 +631,7 @@ export function useZUIInteraction(
         setHoveredItem({
           type: 'node',
           data: node,
-          symbolHandle: subSymbolAtPoint(node, view.zoom * deepest.cumulativeScale, (worldX - absX) / deepest.cumulativeScale, (worldY - absY) / deepest.cumulativeScale),
+          symbolHandle: subSymbolAtPoint(node, view.zoom * deepest.visualScale, (worldX - absX) / deepest.visualScale, (worldY - absY) / deepest.visualScale),
           absX,
           absY,
           absW,

@@ -8,7 +8,8 @@ const layouts: Array<{ value: SubDetail; label: string; path: string }> = [
   { value: 'code', label: 'Full layout', path: 'm7 5-5 5 5 5 M13 5l5 5-5 5' },
 ]
 
-export default function SubElementLayoutButtons({ detail, onChange }: {
+export default function SubElementLayoutButtons({ detail, onChange, connectedOnly = false, onConnectedOnlyChange }: {
+  connectedOnly?: boolean; onConnectedOnlyChange?: () => void
   detail: SubDetail; onChange: (detail: SubDetail) => void
 }) {
   return <HStack className="nodrag nopan" position="absolute" top="calc(100% + 4px)" right={0} spacing="1px" zIndex={12}
@@ -18,5 +19,10 @@ export default function SubElementLayoutButtons({ detail, onChange }: {
         onClick={() => onChange(layout.value)}
         icon={<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true"><path d={layout.path} /></svg>} />
     </Tooltip>)}
+    {detail !== 'overview' && onConnectedOnlyChange && <Tooltip label="Connected parts only" openDelay={350}>
+      <IconButton aria-label="Connected parts only" aria-pressed={connectedOnly} {...subElementControlButton}
+        onClick={onConnectedOnlyChange}
+        icon={<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 4h14l-5 6v5l-4 2v-7z" /></svg>} />
+    </Tooltip>}
   </HStack>
 }

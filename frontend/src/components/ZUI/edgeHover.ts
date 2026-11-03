@@ -1,9 +1,9 @@
-import { isDetailedSubElement, isSubHandle } from '../../utils/subElements'
+import { isSubHandle } from '../../utils/subElements'
 import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
 import { getExpandThresholds, transitionT } from './layoutEngine'
-import { connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
+import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -135,10 +135,10 @@ export function buildEdgeRoutePoints(
     edge.targetHandle,
     DEFAULT_TARGET_HANDLE_SIDE,
   )
-  const sourceAnchor = subNodeHandleAnchor(source, edge.sourceHandle, detailZoom)
-  const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, detailZoom)
-  if (sourceAnchor) { sourcePoint.x = source.worldX + sourceAnchor.x; sourcePoint.y = source.worldY + sourceAnchor.y; sourcePoint.side = sourceAnchor.side }
-  if (targetAnchor) { targetPoint.x = target.worldX + targetAnchor.x; targetPoint.y = target.worldY + targetAnchor.y; targetPoint.side = targetAnchor.side }
+  const sourceAnchor = subNodeHandleAnchor({ ...source, worldW: source.worldW / sourceSlotScale, worldH: source.worldH / sourceSlotScale }, edge.sourceHandle, detailZoom * sourceSlotScale)
+  const targetAnchor = subNodeHandleAnchor({ ...target, worldW: target.worldW / targetSlotScale, worldH: target.worldH / targetSlotScale }, edge.targetHandle, detailZoom * targetSlotScale)
+  if (sourceAnchor) { sourcePoint.x = source.worldX + sourceAnchor.x * sourceSlotScale; sourcePoint.y = source.worldY + sourceAnchor.y * sourceSlotScale; sourcePoint.side = sourceAnchor.side }
+  if (targetAnchor) { targetPoint.x = target.worldX + targetAnchor.x * targetSlotScale; targetPoint.y = target.worldY + targetAnchor.y * targetSlotScale; targetPoint.side = targetAnchor.side }
   for (const [point, handle, slotScale] of [
     [sourcePoint, edge.sourceHandle, sourceSlotScale],
     [targetPoint, edge.targetHandle, targetSlotScale],
@@ -150,32 +150,11 @@ export function buildEdgeRoutePoints(
   const type = normalizeEdgeRouteType(edge.type)
 
   if (type === 'bezier') {
-    const dx = Math.abs(targetPoint.x - sourcePoint.x)
-    const dy = Math.abs(targetPoint.y - sourcePoint.y)
-
-
     const sourceSize = connectorRouteSize(source.worldW, source.worldH, (source.subKind ?? source.type) === 'code')
     const targetSize = connectorRouteSize(target.worldW, target.worldH, (target.subKind ?? target.type) === 'code')
-    const sourceStem = Math.max(
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? dx : dy) * 0.5,
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? sourceSize.width : sourceSize.height) * 0.5,
-    )
-    const targetStem = Math.max(
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? dx : dy) * 0.5,
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? targetSize.width : targetSize.height) * 0.5,
-    )
-    const cp1 = {
-      x: sourcePoint.x + (sourcePoint.side === 'left' ? -sourceStem : sourcePoint.side === 'right' ? sourceStem : 0),
-      y: sourcePoint.y + (sourcePoint.side === 'top' ? -sourceStem : sourcePoint.side === 'bottom' ? sourceStem : 0),
-    }
-    const cp2 = {
-      x: targetPoint.x + (targetPoint.side === 'left' ? -targetStem : targetPoint.side === 'right' ? targetStem : 0),
-      y: targetPoint.y + (targetPoint.side === 'top' ? -targetStem : targetPoint.side === 'bottom' ? targetStem : 0),
-    }
-    const p0 = { x: sourcePoint.x, y: sourcePoint.y }
-    const p3 = { x: targetPoint.x, y: targetPoint.y }
-    const points = Array.from({ length: 17 }, (_, index) => cubicBezierPoint(p0, cp1, cp2, p3, index / 16))
-    const mid = cubicBezierPoint(p0, cp1, cp2, p3, 0.5)
+    const { control1, control2 } = connectorBezierGeometry(sourcePoint, targetPoint, sourceSize, targetSize)
+    const points = Array.from({ length: 17 }, (_, index) => cubicBezierPoint(sourcePoint, control1, control2, targetPoint, index / 16))
+    const mid = cubicBezierPoint(sourcePoint, control1, control2, targetPoint, 0.5)
     return { points, midX: mid.x, midY: mid.y }
   }
 
@@ -298,7 +277,7 @@ export function buildEdgeSpatialIndex(
     }
 
     function visualNode(node: LayoutNode): LayoutNode {
-      const cap = node.children.length === 0 && !isDetailedSubElement(node.subKind ?? node.type, node.subDetail, node.worldW, node.worldH, zoom * scale) ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
+      const cap = node.children.length === 0 ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
       return {
         ...node,
         worldX: node.worldX + node.worldW * (1 - cap) / 2,

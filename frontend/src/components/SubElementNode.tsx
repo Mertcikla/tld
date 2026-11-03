@@ -62,8 +62,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const source = kind === 'code' ? peekSubSource(data) : undefined
   useEffect(() => kind === 'code' && detail !== 'overview' ? subscribeSubSources(refresh) : undefined, [kind, detail])
   useEffect(() => { if (kind === 'code' && detail !== 'overview') requestSubSource(sourceLink) }, [kind, sourceLink, detail])
-  useEffect(() => { setScrollTop(0); setScrollLeft(0); if (scrollRef.current) { scrollRef.current.scrollTop = 0; scrollRef.current.scrollLeft = 0 } }, [sourceIdentity, detail])
-  const startLine = source?.startLine ?? 1
+  useEffect(() => { setScrollTop(0); setScrollLeft(0); if (scrollRef.current) { scrollRef.current.scrollTop = 0; scrollRef.current.scrollLeft = 0 } }, [sourceIdentity, detail, appearance.connectedOnly])
   const iconUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors)
   const technology = elementTechnologyText(data.technology, data.technology_connectors, !!iconUrl)
   const metadata = source?.status !== 'ready' ? source?.error || 'Loading source…' : technology
@@ -72,10 +71,10 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const connectionCounts: Record<string, number> = {}
   for (const candidate of data.reconnectCandidates ?? []) connectionCounts[candidate.handleId] = (connectionCounts[candidate.handleId] ?? 0) + 1
   for (const id of data.tagHiddenHandleIds ?? []) connectionCounts[id] = 0
-  const presentation = buildSymbolPresentation({ kind, source, path: data.file_path ?? '', detail, width, height, scrollTop, connected: data.connectedHandleIds, connectionCounts, fontSize: appearance.fontSize, lineNumbers })
+  const presentation = buildSymbolPresentation({ kind, source, path: data.file_path ?? '', detail, width, height, scrollTop, connected: data.connectedHandleIds, connectionCounts, fontSize: appearance.fontSize, lineNumbers, connectedOnly: appearance.connectedOnly })
   const { rowHeight, rowCount } = presentation
   useEffect(() => {
-    const key = JSON.stringify([detail, sourceIdentity, selectedConnector?.id, data.selectedHandleIds])
+    const key = JSON.stringify([detail, sourceIdentity, appearance.connectedOnly, selectedConnector?.id, data.selectedHandleIds])
     if (detail === 'overview' || !data.selectedHandleIds?.length) { revealedSelection.current = ''; return }
     if (revealedSelection.current === key) return
     const scroller = scrollRef.current
@@ -89,7 +88,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
     const nextLeft = area.x < scroller.scrollLeft || area.x > scroller.scrollLeft + scroller.clientWidth - 16
       ? Math.max(0, area.x - 12) : scroller.scrollLeft
     scroller.scrollTo({ top: nextTop, left: nextLeft, behavior: 'auto' })
-  }, [detail, sourceIdentity, selectedConnector?.id, data.selectedHandleIds, presentation, rowHeight])
+  }, [detail, sourceIdentity, appearance.connectedOnly, selectedConnector?.id, data.selectedHandleIds, presentation, rowHeight])
   useLayoutEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
@@ -111,7 +110,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const dragSourceHandle = nativeSourceHandle ?? (connectorDragSource?.nodeId === String(data.element_id) ? connectorDragSource.handleId : null)
   const isDragSource = (area: SymbolArea) => !!dragSourceHandle && (area.leftId === dragSourceHandle || area.rightId === dragSourceHandle || presentation.endpoints.get(dragSourceHandle)?.area?.key === area.key)
   const interactions: SymbolInteractions = {
-    showHighlight: area => area.connected || hoveredSymbol === area.key || isDragSource(area) || !!connecting,
+    showHighlight: area => detail === 'structure' || area.connected || hoveredSymbol === area.key || isDragSource(area) || !!connecting,
     showStem: endpoint => endpoint.connected || hoveredSymbol === endpoint.area?.key || connecting,
     isActive: area => hoveredSymbol === area.key || selectedSymbol === area.key || [dragSourceHandle, data.interactionSourceHandleId, ...(data.selectedHandleIds ?? [])].some(id => id && (id === area.leftId || id === area.rightId || presentation.endpoints.get(id)?.area?.key === area.key)),
     onHover: setHoveredSymbol,
@@ -152,8 +151,8 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
     else data.onSelect(data)
   }}>
     <Box data-testid="sub-element-header" h={`${SUB_HEADER}px`} position="relative" bg="var(--bg-element)" borderTopRadius="calc(var(--chakra-radii-lg) - 1px)">
-      <ElementBody name={data.name} type={data.kind ?? ''} nameSize="18px" nameNoOfLines={1} typeSize="9px" h={`${SUB_HEADER - 1}px`} px={12} pt={iconUrl ? 9 : 2} pb={2}>
-        {metadata && <Text fontSize="10px" color="gray.500" lineHeight={1.1} noOfLines={1} maxW="100%" title={metadata}>[{metadata}]</Text>}
+      <ElementBody name={detail === 'structure' ? '' : data.name} type={detail === 'structure' ? '' : data.kind ?? ''} nameSize="18px" nameNoOfLines={1} typeSize="9px" h={`${SUB_HEADER - 1}px`} px={12} pt={iconUrl ? 9 : 2} pb={2}>
+        {detail !== 'structure' && metadata && <Text fontSize="10px" color="gray.500" lineHeight={1.1} noOfLines={1} maxW="100%" title={metadata}>[{metadata}]</Text>}
       </ElementBody>
       <ElementTags tags={data.tags} tagColors={data.tagColors} forceShowTagPopup={data.forceShowTagPopup} isCanvasMoving={data.isCanvasMoving} />
       <ElementNavigation data={data}><ElementHeaderIcon src={iconUrl} /></ElementNavigation>
@@ -176,16 +175,18 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
             same commit updates its translation, connector paths, ports, and external edges. */}
         <Box data-testid="sub-element-scroll-viewport" position="sticky" top={0} left={0} w={`${viewportWidth}px`} h={`${viewportHeight}px`} overflow="clip">
           <Box h={`${rowCount * rowHeight + presentation.contentInset * 2}px`} w={`${presentation.contentWidth}px`} position="absolute" left={0} top={0} transform={`translate(${-scrollLeft}px, ${-scrollTop}px)`}>
-      {kind === 'code' && source?.status === 'error' && <Button size="xs" m={3} onClick={() => { requestSubSource(data, true); refresh() }}>Retry source</Button>}
+      {detail !== 'structure' && kind === 'code' && source?.status === 'error' && <Button size="xs" m={3} onClick={() => { requestSubSource(data, true); refresh() }}>Retry source</Button>}
         <SubElementSymbolRegions presentation={presentation} scrollTop={scrollTop} interactions={interactions} />
-        {Array.from({ length: last - first }, (_, offset) => {
+        {detail !== 'structure' && Array.from({ length: last - first }, (_, offset) => {
           const index = first + offset
-          const line = startLine + index
+          const displayRow = presentation.rows[index]
+          const sourceIndex = displayRow.sourceIndex
+          const line = (source?.startLine ?? 1) + sourceIndex
           const area = [...presentation.areas].reverse().find(group => index >= group.start && index <= group.end)
           return <Box key={index} position="absolute" top={`${index * rowHeight + presentation.contentInset}px`} left={0} minW={`${width - 2}px`} h={`${rowHeight}px`} px="14px" fontFamily={SUB_CODE_FONT_FAMILY} fontWeight="400" style={{ fontVariantLigatures: 'none' }} fontSize={`${appearance.fontSize}px`} lineHeight={`${rowHeight}px`} whiteSpace="pre" pointerEvents="none" zIndex={1}>
-            {kind === 'code' && lineNumbers && <Text data-testid="source-code-line-number" as="span" display="inline-block" w={`${presentation.textX - 14}px`} color="gray.500">{reading ? line : area?.symbol.startLine}</Text>}
+            {kind === 'code' && lineNumbers && !displayRow.collapsed && <Text data-testid="source-code-line-number" as="span" display="inline-block" w={`${presentation.textX - 14}px`} color="gray.500">{reading ? line : area?.symbol.startLine}</Text>}
             <span data-symbol-handle={area?.leftId} data-symbol-key={area?.key} className="sub-symbol-text" style={{ pointerEvents: 'auto', display: 'inline-block', minWidth: area && !(kind === 'code' && reading) ? Math.max(0, area.width - 12) : undefined }} onMouseEnter={() => interactions.onHover(area?.key ?? null)} onMouseLeave={() => interactions.onHover(null)} onClick={event => area && interactions.onActivate(area, event)}>
-            {reading ? <>{source?.tokens[index]?.length ? expandCodeTokens(source.tokens[index]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[index] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
+            {displayRow.collapsed ? <Text as="span" color="gray.500">⋯ {displayRow.collapsed} {reading ? 'lines' : 'symbols'} collapsed</Text> : reading ? <>{source?.tokens[sourceIndex]?.length ? expandCodeTokens(source.tokens[sourceIndex]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[sourceIndex] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
             </span>
           </Box>
         })}
@@ -201,14 +202,15 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
         <ElementReconnectZone candidate={reconnectCandidates.find(candidate => candidate.handleId === id)} position={position} anchorStyle={anchorStyle} zIndex={10} />
       </Box>
     }))}
-    <SubElementSymbolPorts data={data} presentation={presentation} width={width} height={height} scrollTop={scrollTop} scrollLeft={scrollLeft} canEdit={canEdit} interactions={interactions} onReveal={index => {
+    <SubElementSymbolPorts textless={detail === 'structure'} data={data} presentation={presentation} width={width} height={height} scrollTop={scrollTop} scrollLeft={scrollLeft} canEdit={canEdit} interactions={interactions} onReveal={index => {
       // Overflow rows overlay the document: leave room for the top band so the
       // revealed symbol doesn't remain hidden behind the same control.
       if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight - SUB_ELLIPSIS)
     }} />
     </ElementContainer>}
-    <SubElementLayoutButtons detail={detail} onChange={setDetail} />
-    {detail !== 'overview' && <SubElementTextControls fontSize={appearance.fontSize} lineNumbers={lineNumbers}
+    <SubElementLayoutButtons detail={detail} onChange={setDetail} connectedOnly={appearance.connectedOnly}
+      onConnectedOnlyChange={() => writeSourcePreviewAppearance(viewId ?? data.view_id, data.element_id, { ...appearance, connectedOnly: !appearance.connectedOnly })} />
+    {detail !== 'overview' && detail !== 'structure' && <SubElementTextControls fontSize={appearance.fontSize} lineNumbers={lineNumbers}
       onFontSize={fontSize => writeSourcePreviewAppearance(viewId ?? data.view_id, data.element_id, { ...appearance, fontSize })}
       onLineNumbers={() => writeSourcePreviewAppearance(viewId ?? data.view_id, data.element_id, { ...appearance, lineNumbers: !lineNumbers })} />}
     {detail === 'overview' && (data.connectedHandleIds ?? []).filter(id => /-(member|line|symbol)-/.test(id)).map(id => <Handle key={id} id={id} type="source" position={id.startsWith('left') ? Position.Left : Position.Right} style={{ top: height / 2, opacity: 0, pointerEvents: 'none' }} />)}

@@ -18,7 +18,7 @@ import { viewportForElements } from './focus'
 import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
-import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
+import type { LayoutNode, DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
 import type { ZUIHitTestNodeResult } from './hitTest'
 import { useZUICamera } from './useZUICamera'
@@ -57,6 +57,7 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  connectedCodeOnly?: boolean
   editorLinksEnabled?: boolean
   /** Optional story presentation controlled by the Explore page. */
   flowFocus?: FlowFocus | null
@@ -81,6 +82,7 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  connectedCodeOnly,
   editorLinksEnabled = true,
   flowFocus = null,
   breadcrumbBoundaryRef,
@@ -117,10 +119,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const previewRevision = useSyncExternalStore(subscribeSourcePreviewSizes, sourcePreviewSizeRevision, () => 0)
   const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
+    const setCodeFilter = (nodes: LayoutNode[]) => nodes.forEach(node => {
+      node.subConnectedOnly = connectedCodeOnly
+      setCodeFilter(node.children)
+    })
+    base.groups.forEach(group => setCodeFilter(group.nodes))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
   // Preview sizes are stored outside the workspace graph and invalidate its layout.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, changeOverlays, previewRevision, appearanceRevision])
+  }, [data, changeOverlays, previewRevision, appearanceRevision, connectedCodeOnly])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])

@@ -1,4 +1,3 @@
-import { isDetailedSubElement } from '../../utils/subElements'
 import {
   resolveZUIProxyConnectors,
   type ZUIHiddenProxyBadge,
@@ -56,9 +55,8 @@ function visualRectForNode(
   hasChildren: boolean,
   screenW: number,
   thresholds: { start: number; end: number },
-  uncapped = false,
 ) {
-  if (!hasChildren && !uncapped && screenW > thresholds.end) {
+  if (!hasChildren && screenW > thresholds.end) {
     const scale = thresholds.end / screenW
     const visualW = absW * scale
     const visualH = absH * scale
@@ -122,7 +120,7 @@ function collectVisibleAnchorForNode(
   const parentAlpha = inheritedAlpha * (1 - t)
   const childAlpha = inheritedAlpha * t
   const selfDrawn = !hasChildren || t <= 0.95
-  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, thresholds, isDetailedSubElement(node.subKind ?? node.type, node.subDetail, node.worldW, node.worldH, view.zoom * absScale))
+  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, thresholds)
 
   if (selfDrawn) {
     registerVisibleAnchor(node, visibleAnchors, byNodeId, {

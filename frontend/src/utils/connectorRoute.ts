@@ -64,6 +64,19 @@ function controlPoint(
 
 export type RoutePoint = { x: number; y: number }
 
+/** Shared cubic curve geometry for editor SVG paths and the Explore canvas. */
+export function connectorBezierGeometry(
+  source: RoutePoint & { side: LogicalHandleSide },
+  target: RoutePoint & { side: LogicalHandleSide },
+  sourceSize: { width: number; height: number },
+  targetSize: { width: number; height: number },
+) {
+  const horizontal = (side: LogicalHandleSide) => side === 'left' || side === 'right'
+  const [x1, y1] = controlPoint(source.x, source.y, target.x, target.y, positionForHandleSide(source.side), (horizontal(source.side) ? sourceSize.width : sourceSize.height) * 0.5)
+  const [x2, y2] = controlPoint(target.x, target.y, source.x, source.y, positionForHandleSide(target.side), (horizontal(target.side) ? targetSize.width : targetSize.height) * 0.5)
+  return { control1: { x: x1, y: y1 }, control2: { x: x2, y: y2 } }
+}
+
 export function edgePathFromPoints(points: RoutePoint[], borderRadius = 0) {
   if (points.length === 0) return ''
   const commands = [`M ${points[0].x},${points[0].y}`]
@@ -369,13 +382,13 @@ export function buildViewConnectorPath(args: {
     }
   }
 
-  const sourceMinStem = (sourcePosition === Position.Left || sourcePosition === Position.Right)
-    ? sourceWidth * 0.5 : sourceHeight * 0.5
-  const targetMinStem = (targetPosition === Position.Left || targetPosition === Position.Right)
-    ? targetWidth * 0.5 : targetHeight * 0.5
-
-  const [cp1x, cp1y] = controlPoint(sourceX, sourceY, targetX, targetY, sourcePosition, sourceMinStem)
-  const [cp2x, cp2y] = controlPoint(targetX, targetY, sourceX, sourceY, targetPosition, targetMinStem)
+  const { control1, control2 } = connectorBezierGeometry(
+    { x: sourceX, y: sourceY, side: handleSideForPosition(sourcePosition, 'right') },
+    { x: targetX, y: targetY, side: handleSideForPosition(targetPosition, 'left') },
+    { width: sourceWidth, height: sourceHeight }, { width: targetWidth, height: targetHeight },
+  )
+  const { x: cp1x, y: cp1y } = control1
+  const { x: cp2x, y: cp2y } = control2
 
   return {
     path: `M ${sourceX},${sourceY} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${targetX},${targetY}`,

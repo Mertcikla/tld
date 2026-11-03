@@ -73,6 +73,7 @@ export interface LayoutNode {
   kind?: string | null
   subConnectedHandles?: string[]
   subConnections?: Array<{ id: number; handleId: string }>
+  subConnectedOnly?: boolean
   subDetail?: SubDetail
   subKind?: 'code' | null
   sourceLink?: Pick<PlacedElement, 'repo' | 'repository_id' | 'branch' | 'file_path' | 'language'>

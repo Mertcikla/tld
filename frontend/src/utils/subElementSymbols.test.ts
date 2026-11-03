@@ -167,3 +167,96 @@ it('keeps symbol bounds and anchors in sync with font size and the line-number g
   expect(hidden.endpoints.get(id)?.y).toBe(large.endpoints.get(id)?.y)
   expect(buildSymbolPresentation({ ...base }).areas[0].width).toBe(small.areas[0].width)
 })
+
+describe('connected parts layout', () => {
+  it('exposes connected nested methods in compact layout instead of their unused class', () => {
+    const id = symbolHandle('right', save)
+    const model = buildSymbolPresentation({ ...base, detail: 'outline', connectedOnly: true, connected: [id] })
+    expect(model.areas.map(area => area.symbol.name)).toEqual(['save'])
+    expect(model.rows.filter(row => row.collapsed).map(row => row.collapsed)).toEqual([1, 1])
+    expect(model.endpoints.get(id)?.area?.symbol).toBe(save)
+    expect(model.areas[0].signature?.text).toBeTruthy()
+  })
+
+  it('folds unused code while retaining original source indices and line ports', () => {
+    const id = lineHandle('right', 10)
+    const model = buildSymbolPresentation({ ...base, connectedOnly: true, connected: [id] })
+    expect(model.rows.filter(row => !row.collapsed).map(row => row.sourceIndex)).toEqual([7, 8, 9, 10, 11])
+    expect(model.rowCount).toBe(7)
+    expect(model.areas.map(area => area.symbol.name)).toEqual(['save'])
+    expect(model.endpoints.get(id)).toMatchObject({ y: 149, visible: true, area: { symbol: save } })
+    expect(symbolStems(model, 600, 360).find(stem => stem.endpoint.id === id)?.targetY).toBe(149)
+    expect(buildSymbolPresentation(base).rowCount).toBe(source.lines.length)
+    expect(source.lines).toHaveLength(30)
+  })
+
+  it('folds unused class members even when their enclosing class is connected', () => {
+    const model = buildSymbolPresentation({ ...base, connectedOnly: true, connected: [symbolHandle('left', outer)] })
+    expect(model.rows.some(row => !row.collapsed && row.sourceIndex === save.startLine - 1)).toBe(false)
+    expect(model.rows.some(row => !row.collapsed && row.sourceIndex === outer.startLine - 1)).toBe(true)
+    expect(model.areas.map(area => area.symbol.name)).toEqual(['User'])
+  })
+
+  it('keeps selected class members and folds unused long lines out of horizontal sizing', () => {
+    const lines = [...source.lines]; lines[find.startLine - 1] = 'x'.repeat(2000)
+    const doc = { ...source, lines }
+    const full = buildSymbolPresentation({ ...base, source: doc })
+    const folded = buildSymbolPresentation({ ...base, source: doc, connectedOnly: true, connected: [symbolHandle('right', save)] })
+    expect(folded.contentWidth).toBeLessThan(full.contentWidth)
+    expect(buildSymbolPresentation({ ...base, source: doc }).contentWidth).toBe(full.contentWidth)
+    const both = buildSymbolPresentation({ ...base, connectedOnly: true, connected: [symbolHandle('right', outer), symbolHandle('left', save)] })
+    expect(both.rows.some(row => !row.collapsed && row.sourceIndex === save.startLine - 1)).toBe(true)
+  })
+
+  it.each(['outline', 'code'] as const)('collapses everything unused in %s, retaining hidden and stale handle IDs', detail => {
+    const hidden = symbolHandle('right', find), stale = 'left-symbol-deleted'
+    const model = buildSymbolPresentation({ ...base, detail, connectedOnly: true, connected: [hidden, stale], connectionCounts: { [hidden]: 0 } })
+    expect(model.areas).toHaveLength(0)
+    expect(model.rows).toHaveLength(1)
+    expect(model.rows[0].collapsed).toBeGreaterThan(0)
+    expect(model.endpoints.has(hidden)).toBe(true)
+    expect(model.endpoints.has(stale)).toBe(true)
+  })
+
+  it.each(['outline', 'code'] as const)('supports direct line connections outside symbols in %s with nonzero file offsets', detail => {
+    const doc = { ...source, symbols: [], startLine: 101, endLine: 130 }
+    const id = lineHandle('left', 120)
+    const model = buildSymbolPresentation({ ...base, source: doc, detail, connectedOnly: true, connected: [id] })
+    expect(model.rows.some(row => !row.collapsed && row.sourceIndex === 19)).toBe(true)
+    const endpoint = model.endpoints.get(id)!
+    expect(endpoint.overflow).toBeUndefined()
+    expect([...model.endpoints.values()].some(candidate => candidate.visible && candidate.y === endpoint.y && candidate.side === endpoint.side)).toBe(true)
+    expect(model.rowCount).toBeLessThan(doc.lines.length)
+  })
+})
+
+describe('intermediate symbol summaries', () => {
+  it('shows connected nested symbol names without signatures or source bodies', () => {
+    const id = symbolHandle('right', save)
+    const summary = buildSymbolPresentation({ ...base, detail: 'summary', width: 320, height: 180, connectedOnly: true, connected: [id] })
+    const outline = buildSymbolPresentation({ ...base, detail: 'outline', connectedOnly: true, connected: [id] })
+    expect(summary.areas.map(area => area.signature?.text)).toEqual(['save'])
+    expect(summary.areas[0].width).toBeLessThan(outline.areas[0].width)
+    expect(summary.rowHeight).toBeLessThan(outline.rowHeight)
+    expect(summary.rows.filter(row => row.collapsed)).toHaveLength(2)
+    expect(summary.endpoints.get(id)?.area?.symbol).toBe(save)
+    expect(summary.endpoints.get(id)?.overflow).toBeUndefined()
+    expect(symbolStems(summary, 320, 180).some(stem => stem.endpoint.id === id)).toBe(true)
+  })
+
+  it('keeps saved line aliases attached to the compact symbol row', () => {
+    const id = lineHandle('left', 10)
+    const summary = buildSymbolPresentation({ ...base, detail: 'summary', connectedOnly: true, connected: [id] })
+    expect(summary.endpoints.get(id)?.area?.symbol).toBe(save)
+    expect(summary.endpoints.get(id)?.y).toBe(summary.areas[0].y)
+  })
+})
+
+it('preserves semantic anchors in the text-free structure stage', () => {
+  const id = symbolHandle('right', save)
+  const model = buildSymbolPresentation({ ...base, detail: 'structure', connectedOnly: true, connected: [id] })
+  expect(model.areas.map(area => area.symbol.name)).toEqual(['save'])
+  expect(model.endpoints.get(id)?.area?.symbol).toBe(save)
+  expect(model.endpoints.get(id)?.overflow).toBeUndefined()
+  expect(symbolStems(model, 600, 360).some(stem => stem.endpoint.id === id)).toBe(true)
+})

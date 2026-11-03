@@ -6,12 +6,13 @@ export const SUB_HEADER = 84
 export const SUB_ROW = subCodeLineHeight()
 export const SUB_ELLIPSIS = 16
 export const SUB_CONTENT_TOP = SUB_HEADER
-export type SubDetail = 'overview' | 'outline' | 'code'
+export type SubDetail = 'overview' | 'structure' | 'summary' | 'outline' | 'code'
+export const isSymbolDetail = (detail: SubDetail) => detail === 'structure' || detail === 'summary' || detail === 'outline'
 export const isSubElement = (kind?: string | null) => kind === 'code'
 export function subElementKind(element?: { kind?: string | null; repo?: string | null; repository_id?: string | null; file_path?: string | null } | null) {
   return (element?.repo || element?.repository_id) && sourceLinkKind(element.file_path) === 'file' ? 'code' : null
 }
-export const subDetail = (width: number, height: number): SubDetail => width < 320 || height < 180 ? 'overview' : width < 440 || height < 280 ? 'outline' : 'code'
+export const subDetail = (width: number, height: number): SubDetail => width < 100 || height < 60 ? 'overview' : width < 180 || height < 100 ? 'structure' : width < 320 || height < 180 ? 'summary' : width < 440 || height < 280 ? 'outline' : 'code'
 export function subSize(kind?: string | null, value?: SourcePreviewSize | null) {
   if (!isSubElement(kind)) return { width: 180, height: 85 }
   return {
@@ -21,6 +22,8 @@ export function subSize(kind?: string | null, value?: SourcePreviewSize | null) 
 }
 export function subEditorSize(kind: string | null | undefined, value: SourcePreviewSize | null | undefined, detail: SubDetail) {
   if (detail === 'overview') return { width: 180, height: 85 }
+  if (detail === 'structure' && !value) return { width: 280, height: 160 }
+  if (detail === 'summary' && !value) return { width: 320, height: 180 }
   if (detail === 'outline' && !value) return { width: 400, height: 240 }
   return subSize(kind, value)
 }

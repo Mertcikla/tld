@@ -24,3 +24,11 @@ it('bounds font sizes and remains usable when browser storage fails', () => {
     expect(readSourcePreviewAppearance(5001, 1).fontSize).toBe(expected)
   }
 })
+
+it('persists and restores the connected-parts preference', () => {
+  const values = new Map([['tld:source-preview-appearance:5002:1', '{"fontSize":10,"connectedOnly":true}']])
+  vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) })
+  expect(readSourcePreviewAppearance(5002, 1).connectedOnly).toBe(true)
+  writeSourcePreviewAppearance(5002, 1, { fontSize: 10, connectedOnly: false })
+  expect(JSON.parse(values.get('tld:source-preview-appearance:5002:1')!).connectedOnly).toBe(false)
+})

@@ -1,4 +1,4 @@
-export interface SourcePreviewAppearance { fontSize: number; lineNumbers?: boolean }
+export interface SourcePreviewAppearance { fontSize: number; lineNumbers?: boolean; connectedOnly?: boolean }
 const defaults: SourcePreviewAppearance = { fontSize: 10 }
 const preferences = new Map<string, SourcePreviewAppearance>()
 const listeners = new Set<() => void>()
@@ -13,7 +13,8 @@ export function readSourcePreviewAppearance(viewId: number, elementId: number): 
   try {
     const value = JSON.parse(localStorage.getItem(key) || 'null')
     if (value) result = { fontSize: Number.isFinite(value.fontSize) ? Math.max(8, Math.min(14, Math.round(value.fontSize))) : 10,
-      lineNumbers: typeof value.lineNumbers === 'boolean' ? value.lineNumbers : undefined }
+      lineNumbers: typeof value.lineNumbers === 'boolean' ? value.lineNumbers : undefined,
+      connectedOnly: typeof value.connectedOnly === 'boolean' ? value.connectedOnly : undefined }
   } catch { /* Browser preferences are optional. */ }
   preferences.set(key, result)
   return result

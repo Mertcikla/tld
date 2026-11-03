@@ -1,4 +1,3 @@
-import { isDetailedSubElement } from '../../utils/subElements'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { transitionT } from './layoutEngine'
 
@@ -8,6 +7,7 @@ export interface ZUIHitTestNodeResult {
   absY: number
   absW: number
   absH: number
+  visualScale: number
   cumulativeScale: number
 }
 
@@ -168,7 +168,7 @@ function hitTestNodes(
 
     if (selfAlpha < SELF_HOVER_ALPHA_MIN) continue
 
-    const cap = !hasChildren && !isDetailedSubElement(node.type, node.subDetail, node.worldW, node.worldH, view.zoom * parentAbsScale) ? Math.min(1, thresholds.end / screenW) : 1
+    const cap = !hasChildren ? Math.min(1, thresholds.end / screenW) : 1
     const visualW = absW * cap
     const visualH = absH * cap
     const visualX = absX + (absW - visualW) / 2
@@ -177,7 +177,7 @@ function hitTestNodes(
     const localX = parentAbsX + (worldX - parentChildOffsetX) * parentAbsScale
     const localY = parentAbsY + (worldY - parentChildOffsetY) * parentAbsScale
     if (localX < visualX || localX > visualX + visualW || localY < visualY || localY > visualY + visualH) continue
-    return { node, absX: visualX, absY: visualY, absW: visualW, absH: visualH, cumulativeScale: parentAbsScale }
+    return { node, absX: visualX, absY: visualY, absW: visualW, absH: visualH, cumulativeScale: parentAbsScale, visualScale: parentAbsScale * cap }
   }
 
   return null

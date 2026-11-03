@@ -1,7 +1,8 @@
+import { connectedSourceRows, sourceCodeRows, type SourceDisplayRow } from './subElementFolding'
 import type { SubSource } from './subElementSource'
 import { symbolSignature, type SymbolSignature } from './subElementSignatures'
 import { expandCodeTabs, measureSubText, subCodeLineHeight, SUB_CODE_TEXT_X, SUB_SYMBOL_CONNECTOR_GAP, SUB_SYMBOL_PADDING } from './subElementText'
-import { collapsedSymbols, displaySymbols, isSubHandle, SUB_CONTENT_TOP, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
+import { isSymbolDetail, collapsedSymbols, displaySymbols, isSubHandle, SUB_CONTENT_TOP, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
 
 
 export interface SymbolArea {
@@ -14,6 +15,7 @@ export interface SymbolArea {
 export interface SymbolEndpoint { id: string; y: number; side: 'left' | 'right'; color: string; visible: boolean; connected: boolean; area?: SymbolArea; overflow?: 'above' | 'below' }
 export interface SymbolOverflow { areas: SymbolArea[]; endpoints: SymbolEndpoint[]; connectionCount: number; y: number; representative?: SymbolEndpoint; color: string }
 export interface SymbolPresentation {
+  rows: SourceDisplayRow[]
   areas: SymbolArea[]; endpoints: Map<string, SymbolEndpoint>
   above: SymbolOverflow; below: SymbolOverflow
   rowHeight: number; highlightInset: number; contentInset: number; rowCount: number; contentWidth: number; fontSize: number; lineNumbers: boolean; textX: number
@@ -50,30 +52,55 @@ function documentSymbols(source: SubSource, path: string, fontSize: number, text
   return document
 }
 
-export function buildSymbolPresentation({ kind, source, path = '', detail, width, height, scrollTop = 0, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code' }: {
+export function buildSymbolPresentation({ kind, source, path = '', detail, width, height, scrollTop = 0, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false }: {
   kind: string | null; source?: SubSource; path?: string; detail: SubDetail
+  connectedOnly?: boolean;
   width: number; height: number; scrollTop?: number; connected?: readonly string[]; connectionCounts?: Readonly<Record<string, number>>; fontSize?: number; lineNumbers?: boolean
 }): SymbolPresentation {
   const outline = collapsedSymbols(source, path)
-  const rowHeight = subCodeLineHeight(fontSize) + (detail === 'outline' ? 8 : 0)
+  const symbolDetail = isSymbolDetail(detail)
+  const signature = (symbol: SubSymbol): SymbolSignature => (detail === 'summary' || detail === 'structure')
+    ? { text: symbol.name, tokens: [{ text: symbol.name, color: '#61afef' }] }
+    : symbolSignature(source!, symbol)
+  const rowHeight = subCodeLineHeight(fontSize) + (symbolDetail ? (detail !== 'outline' ? 4 : 8) : 0)
   const contentInset = 2
   // Full-code bounds expand around line boxes; outline rows reserve their own gap.
-  const highlightInset = detail === 'outline' ? 2 : -2
+  const highlightInset = symbolDetail ? 2 : -2
   const gutter = Math.max(SUB_CODE_TEXT_X - 14, Math.ceil(measureSubText(String(source?.endLine ?? 1), fontSize)) + 12)
   const textX = lineNumbers ? 14 + gutter : 14
-  const rowCount = detail === 'outline' ? outline.length : source?.lines.length ?? 0
+  const folded = connectedOnly && source?.status === 'ready' && detail !== 'overview'
+    ? connectedSourceRows(source, connected.filter(id => (connectionCounts?.[id] ?? 1) > 0), symbolDetail) : undefined
+  const rows: SourceDisplayRow[] = folded?.rows ?? (symbolDetail
+    ? outline.map(symbol => ({ sourceIndex: symbol.startLine - (source?.startLine ?? 1), symbol }))
+    : source ? sourceCodeRows(source.lines) : [])
+  const rowCount = rows.length
+  const displayIndex = (line: number) => {
+    const index = line - (source?.startLine ?? 1)
+    if (!folded) return index
+    const exact = rows.findIndex(row => !row.collapsed && row.sourceIndex === index)
+    if (exact >= 0) return exact
+    return Math.max(0, rows.findIndex(row => row.collapsed && index >= row.sourceIndex && index < row.sourceIndex + row.collapsed))
+  }
   const readingCode = kind === 'code' && detail === 'code'
   const document = readingCode && source?.status === 'ready' ? documentSymbols(source, path, fontSize, textX) : undefined
-  const entries = !source || source.status !== 'ready' ? [] : detail === 'outline' ? outline.map(symbol => ({ symbol, depth: 0, textWidth: measureSubText(symbolSignature(source, symbol).text, fontSize), indent: 0 })) : document?.entries ?? []
+  const entries = !source || source.status !== 'ready' ? [] : symbolDetail ? (folded ? rows.flatMap(row => row.symbol ? [row.symbol] : []) : outline).map(symbol => ({ symbol, depth: 0, textWidth: measureSubText(signature(symbol).text, fontSize), indent: 0 })) : (folded ? document?.entries.filter(entry => folded.used.has(entry.symbol)).map(entry => ({ ...entry })) : document?.entries) ?? []
+  if (folded && readingCode && source) for (const entry of entries) {
+    const visible = rows.filter(row => !row.collapsed && row.sourceIndex + source.startLine >= entry.symbol.startLine && row.sourceIndex + source.startLine <= entry.symbol.endLine)
+      .map(row => expandCodeTabs(source.lines[row.sourceIndex]))
+    // Do not let folded-out lines retain their old horizontal footprint.
+    entry.textWidth = visible.reduce((end, line) => Math.max(end, measureSubText(line, fontSize)), 0)
+    const indents = visible.filter(line => line.trim()).map(line => measureSubText(line.match(/^ */)?.[0] ?? '', fontSize))
+    entry.indent = indents.length ? indents.reduce((min, indent) => Math.min(min, indent), Infinity) : 0
+  }
   const areas: SymbolArea[] = entries.map(({ symbol, depth, textWidth, indent }, index) => {
-    const start = detail === 'outline' ? index : symbol.startLine - (source?.startLine ?? 1)
-    const end = detail === 'outline' ? index : symbol.endLine - (source?.startLine ?? 1)
+    const start = symbolDetail ? (folded ? rows.findIndex(row => row.symbol === symbol) : index) : displayIndex(symbol.startLine)
+    const end = symbolDetail ? start : displayIndex(symbol.endLine)
     const leftId = symbolHandle('left', symbol)
     const rightId = symbolHandle('right', symbol)
     const x = readingCode ? textX + indent - SUB_SYMBOL_PADDING : textX - 4
     const y = SUB_CONTENT_TOP + contentInset + (start + 0.5) * rowHeight - scrollTop
     return { key: rightId, symbol, color: 'var(--accent)', leftId, rightId, start, end, x,
-      signature: kind === 'code' && detail === 'outline' && source ? symbolSignature(source, symbol) : undefined,
+      signature: kind === 'code' && symbolDetail && source ? signature(symbol) : undefined,
       width: Math.max(40, readingCode ? textWidth - indent + SUB_SYMBOL_PADDING * 2 : textWidth + 20),
       contentTop: start * rowHeight + contentInset + highlightInset,
       height: (end - start + 1) * rowHeight - highlightInset * 2,
@@ -89,7 +116,7 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
     const line = named?.startLine ?? Number(id.match(/-line-(\d+)$/)?.[1])
     if (!area && Number.isFinite(line)) area = [...areas].reverse().find(candidate => line >= candidate.symbol.startLine && line <= candidate.symbol.endLine)
     if (!area && named) area = areas.find(candidate => candidate.symbol.startLine >= named.startLine && candidate.symbol.endLine <= named.endLine)
-    const index = detail === 'outline' || (named && area) ? area?.start ?? 0 : Number.isFinite(line) ? line - (source?.startLine ?? 1) : area?.start ?? 0
+    const index = symbolDetail || (named && area) ? area?.start ?? 0 : Number.isFinite(line) ? displayIndex(line) : area?.start ?? 0
     return { id, area, index, count: connectionCounts?.[id] ?? counts.get(id) ?? 1 }
   })
   // Overflow bands overlay the content only when an anchor is outside the full viewport.
@@ -145,7 +172,10 @@ export function buildSymbolPresentation({ kind, source, path = '', detail, width
   const symbolContentWidth = kind === 'code' ? areas.reduce((end, area) => Math.max(end, area.x + area.width + SUB_SYMBOL_CONNECTOR_GAP), 0) : 0
   // Include long member labels and signatures in the horizontal scroll extent.
   const rowContentWidth = readingCode ? 0 : entries.reduce((end, { textWidth }) => Math.max(end, textWidth + textX + 34), 0)
-  return { areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth: Math.max(width - 2, document?.contentWidth ?? 0, symbolContentWidth, rowContentWidth) }
+  const documentWidth = folded && source && readingCode
+    ? rows.reduce((end, row) => row.collapsed ? end : Math.max(end, textX + measureSubText(expandCodeTabs(source.lines[row.sourceIndex]), fontSize) + SUB_SYMBOL_PADDING * 2), 0)
+    : document?.contentWidth ?? 0
+  return { rows, areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth: Math.max(width - 2, documentWidth, symbolContentWidth, rowContentWidth) }
 }
 
 /** Inner stems only join visible regions to their own in-bounds ports. */
