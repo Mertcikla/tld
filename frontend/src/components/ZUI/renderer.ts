@@ -1,5 +1,5 @@
-import { isSubElement, subDetail, SUB_HEADER } from '../../utils/subElements'
-import { drawSubElement, nodeDetail, sourceCardScale, subNodeHandleAnchor } from './subElements'
+import { isSubElement, subDetail } from '../../utils/subElements'
+import { drawSubElement, nodeDetail, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
@@ -11,7 +11,9 @@ import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
   getCameraRebase,
-  leafScreenWidthLimit,
+  getExpandThresholds,
+  nodeVisualGeometry,
+  nodeVisualLayout,
   isVisible,
 } from './layoutEngine'
 import {
@@ -993,8 +995,10 @@ function drawSceneNode(
     const activeHandle = hovered?.type === 'node' && hovered.data === layout ? hovered.symbolHandle
       : hovered?.type === 'edge' ? layout.subConnections?.find(connection => connection.id === hovered.data.id)?.handleId : undefined
     const groupTag = layout.tags.find(isElementGroupTag)
-    drawSubElement(ctx, layout, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg, accent, renderCtx.sourcePreviewBg)
-    drawNodeTags(ctx, layout, renderCtx, { x: 0, y: 0, w, h: SUB_HEADER * sourceCardScale(layout), drawZoom, drawScreenW, parentAlpha, isHovered, accent })
+    const geometry = nodeVisualGeometry(layout, drawZoom / state.leafCapScale, getExpandThresholds(canvasW).end)
+    const preview = nodeVisualLayout(layout, geometry)
+    drawSubElement(ctx, preview, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg, accent, renderCtx.sourcePreviewBg)
+    drawNodeTags(ctx, preview, renderCtx, { x: 0, y: 0, w, h: geometry.headerHeight, drawZoom, drawScreenW, parentAlpha, isHovered, accent })
     return
   }
 
@@ -1411,27 +1415,15 @@ function drawEdges(
       const dir = edge.direction ?? 'forward'
       const type = normalizeEdgeRouteType(edge.type)
 
-      const hasSourceChildren = node.children && node.children.length > 0
-      const sourceScreenW = node.worldW * zoom
-      const sourceLimit = leafScreenWidthLimit(node, thresholds.end)
-      const sSource = (!hasSourceChildren && sourceScreenW > sourceLimit) ? sourceLimit / sourceScreenW : 1
-      const effWSource = node.worldW * sSource
-      const effHSource = node.worldH * sSource
-      const cxSource = node.worldX + node.worldW / 2 - ox
-      const cySource = node.worldY + node.worldH / 2 - oy
-      const effXSource = cxSource - effWSource / 2
-      const effYSource = cySource - effHSource / 2
-
-      const hasTargetChildren = target.children && target.children.length > 0
-      const targetScreenW = target.worldW * zoom
-      const targetLimit = leafScreenWidthLimit(target, thresholds.end)
-      const sTarget = (!hasTargetChildren && targetScreenW > targetLimit) ? targetLimit / targetScreenW : 1
-      const effWTarget = target.worldW * sTarget
-      const effHTarget = target.worldH * sTarget
-      const cxTarget = target.worldX + target.worldW / 2 - ox
-      const cyTarget = target.worldY + target.worldH / 2 - oy
-      const effXTarget = cxTarget - effWTarget / 2
-      const effYTarget = cyTarget - effHTarget / 2
+      const sourceGeometry = nodeVisualGeometry(node, zoom, thresholds.end)
+      const targetGeometry = nodeVisualGeometry(target, zoom, thresholds.end)
+      const sSource = sourceGeometry.scale, sTarget = targetGeometry.scale
+      const effWSource = sourceGeometry.width, effHSource = sourceGeometry.height
+      const effXSource = node.worldX - ox + sourceGeometry.offsetX
+      const effYSource = node.worldY - oy + sourceGeometry.offsetY
+      const effWTarget = targetGeometry.width, effHTarget = targetGeometry.height
+      const effXTarget = target.worldX - ox + targetGeometry.offsetX
+      const effYTarget = target.worldY - oy + targetGeometry.offsetY
 
       const sH = getHandlePos(
         effXSource, effYSource, effWSource, effHSource,
@@ -1444,8 +1436,8 @@ function drawEdges(
         false, sTarget,
       )
 
-      const sourceAnchor = subNodeHandleAnchor(node, edge.sourceHandle, zoom * sSource)
-      const targetAnchor = subNodeHandleAnchor(target, edge.targetHandle, zoom * sTarget)
+      const sourceAnchor = subNodeHandleAnchor(nodeVisualLayout(node, sourceGeometry), edge.sourceHandle, zoom * sSource)
+      const targetAnchor = subNodeHandleAnchor(nodeVisualLayout(target, targetGeometry), edge.targetHandle, zoom * sTarget)
       if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x * sSource; sH.y = effYSource + sourceAnchor.y * sSource; sH.pos = sourceAnchor.side }
       if (targetAnchor) { tH.x = effXTarget + targetAnchor.x * sTarget; tH.y = effYTarget + targetAnchor.y * sTarget; tH.pos = targetAnchor.side }
       ctx.save()

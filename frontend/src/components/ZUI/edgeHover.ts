@@ -2,7 +2,7 @@ import { isSubHandle } from '../../utils/subElements'
 import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
-import { getExpandThresholds, transitionT, leafScreenWidthLimit } from './layoutEngine'
+import { getExpandThresholds, transitionT, nodeVisualGeometry } from './layoutEngine'
 import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -135,8 +135,8 @@ export function buildEdgeRoutePoints(
     edge.targetHandle,
     DEFAULT_TARGET_HANDLE_SIDE,
   )
-  const sourceAnchor = subNodeHandleAnchor({ ...source, worldW: source.worldW / sourceSlotScale, worldH: source.worldH / sourceSlotScale }, edge.sourceHandle, detailZoom * sourceSlotScale)
-  const targetAnchor = subNodeHandleAnchor({ ...target, worldW: target.worldW / targetSlotScale, worldH: target.worldH / targetSlotScale }, edge.targetHandle, detailZoom * targetSlotScale)
+  const sourceAnchor = subNodeHandleAnchor({ ...source, worldW: source.worldW / sourceSlotScale, worldH: source.worldH / sourceSlotScale, subHeaderHeight: source.subHeaderHeight === undefined ? undefined : source.subHeaderHeight / sourceSlotScale }, edge.sourceHandle, detailZoom * sourceSlotScale)
+  const targetAnchor = subNodeHandleAnchor({ ...target, worldW: target.worldW / targetSlotScale, worldH: target.worldH / targetSlotScale, subHeaderHeight: target.subHeaderHeight === undefined ? undefined : target.subHeaderHeight / targetSlotScale }, edge.targetHandle, detailZoom * targetSlotScale)
   if (sourceAnchor) { sourcePoint.x = source.worldX + sourceAnchor.x * sourceSlotScale; sourcePoint.y = source.worldY + sourceAnchor.y * sourceSlotScale; sourcePoint.side = sourceAnchor.side }
   if (targetAnchor) { targetPoint.x = target.worldX + targetAnchor.x * targetSlotScale; targetPoint.y = target.worldY + targetAnchor.y * targetSlotScale; targetPoint.side = targetAnchor.side }
   for (const [point, handle, slotScale] of [
@@ -280,13 +280,14 @@ export function buildEdgeSpatialIndex(
     function visualNode(node: LayoutNode): LayoutNode {
       const cached = visualNodes.get(node)
       if (cached) return cached
-      const cap = node.children.length === 0 ? Math.min(1, leafScreenWidthLimit(node, thresholds.end) / (node.worldW * scale * zoom)) : 1
+      const geometry = nodeVisualGeometry(node, scale * zoom, thresholds.end)
       const visual = {
         ...node,
-        worldX: node.worldX + node.worldW * (1 - cap) / 2,
-        worldY: node.worldY + node.worldH * (1 - cap) / 2,
-        worldW: node.worldW * cap,
-        worldH: node.worldH * cap,
+        worldX: node.worldX + geometry.offsetX,
+        worldY: node.worldY + geometry.offsetY,
+        worldW: geometry.width,
+        worldH: geometry.height,
+        subHeaderHeight: geometry.headerHeight * geometry.scale,
       }
       visualNodes.set(node, visual)
       return visual

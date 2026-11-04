@@ -1,3 +1,4 @@
+import PreviewInteractionHint from './PreviewInteractionHint'
 import SubElementTextControls from './SubElementTextControls'
 import { readSourcePreviewAppearance, writeSourcePreviewAppearance, subscribeSourcePreviewAppearance } from '../utils/sourcePreviewAppearance'
 import { ElementContainer } from './NodeContainer'
@@ -6,7 +7,7 @@ import ElementNavigation from './ElementNavigation'
 import { symbolDropHandle } from '../utils/symbolDropHandle'
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
-import { Box, Button, Portal, Text } from '@chakra-ui/react'
+import { Box, Button, Text } from '@chakra-ui/react'
 import { Handle, Position, useStore, useStoreApi } from 'reactflow'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import { readSourcePreviewSize, subscribeSourcePreviewSizes } from '../utils/sourcePreviewSize'
@@ -152,12 +153,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
       <ElementNavigation data={data}><ElementHeaderIcon src={iconUrl} /></ElementNavigation>
       {(data.repo || data.repository_id || data.url) && <Box position="absolute" bottom={1} right={1}><SourceLinkActions element={data} source={source} /></Box>}
     </Box>
-    {previewInteraction.phase === 'waiting' && <Portal><Box ref={previewInteraction.hintRef} position="fixed" left={0} top={0} transform="translate(-50%, calc(-100% - 16px))" w="130px" p="6px" bg="#1b222d" border="1px solid" borderColor="whiteAlpha.200" borderRadius="6px" boxShadow="lg" zIndex={10000} pointerEvents="none">
-      <Text fontSize="10px" lineHeight="10px" color="gray.300" textAlign="center" mb="3px">Keep hovering to interact</Text>
-      <Box role="progressbar" aria-label="Activating preview interaction" aria-valuemin={0} aria-valuemax={2} h="5px" bg="whiteAlpha.200" overflow="hidden" borderRadius="full">
-        <Box h="100%" bg="var(--accent)" transformOrigin="left" animation="preview-hover-progress 1s linear forwards" sx={{ '@keyframes preview-hover-progress': { from: { transform: 'scaleX(0)' }, to: { transform: 'scaleX(1)' } } }} />
-      </Box>
-    </Box></Portal>}
+    <PreviewInteractionHint interaction={previewInteraction} />
     <Box ref={scrollRef} onPointerEnter={previewInteraction.onPointerEnter} onPointerMove={previewInteraction.onPointerMove} onPointerLeave={previewInteraction.onPointerLeave} className={`source-preview-scroll nodrag${previewInteraction.phase === 'ready' ? ' nowheel nopan' : ''}`} sx={canEdit && previewInteraction.phase === 'ready' ? { '& [data-symbol-handle]': { cursor: 'crosshair' } } : undefined} h={`${visibleHeight}px`} overflow={previewInteraction.phase === 'ready' ? 'auto' : 'hidden'} overscrollBehavior="none" onScroll={e => {
       const top = e.currentTarget.scrollTop, left = e.currentTarget.scrollLeft
       if (top === scrollTop && left === scrollLeft) return

@@ -2,7 +2,7 @@ import { connectedSourceRows, sourceCodeRows, sourceDiffRows, type SourceDisplay
 import type { SubSource } from './subElementSource'
 import { symbolSignature, type SymbolSignature } from './subElementSignatures'
 import { expandCodeTabs, measureSubText, subCodeLineHeight, SUB_CODE_TEXT_X, SUB_SYMBOL_CONNECTOR_GAP, SUB_SYMBOL_PADDING } from './subElementText'
-import { isSymbolDetail, expandLineHandles, firstHandleLine, collapsedSymbols, displaySymbols, isSubHandle, SUB_CONTENT_TOP, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
+import { isSymbolDetail, expandLineHandles, firstHandleLine, collapsedSymbols, displaySymbols, isSubHandle, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
 
 
 export interface SymbolArea {
@@ -15,6 +15,7 @@ export interface SymbolArea {
 export interface SymbolEndpoint { id: string; y: number; side: 'left' | 'right'; color: string; visible: boolean; connected: boolean; area?: SymbolArea; overflow?: 'above' | 'below' }
 export interface SymbolOverflow { areas: SymbolArea[]; endpoints: SymbolEndpoint[]; connectionCount: number; y: number; representative?: SymbolEndpoint; color: string }
 export interface SymbolPresentation {
+  headerHeight: number
   rows: SourceDisplayRow[]
   areas: SymbolArea[]; endpoints: Map<string, SymbolEndpoint>
   above: SymbolOverflow; below: SymbolOverflow
@@ -54,18 +55,19 @@ function documentSymbols(source: SubSource, path: string, fontSize: number, text
 
 export interface SymbolPresentationOptions {
   kind: string | null; source?: SubSource; path?: string; detail: SubDetail
+  headerHeight?: number
   connectedOnly?: boolean; fractionalMetrics?: boolean
   width: number; height: number; scrollTop?: number; connected?: readonly string[]; connectionCounts?: Readonly<Record<string, number>>; fontSize?: number; lineNumbers?: boolean
 }
 type SymbolGeometry = Pick<SymbolPresentation, 'rows' | 'rowHeight' | 'highlightInset' | 'contentInset' | 'rowCount' | 'contentWidth' | 'fontSize' | 'lineNumbers' | 'textX'> & {
-  areas: SymbolArea[]; connections: Array<{ id: string; area?: SymbolArea; index: number; count: number }>; detail: SubDetail; height: number
+  areas: SymbolArea[]; connections: Array<{ id: string; area?: SymbolArea; index: number; count: number }>; detail: SubDetail; height: number; headerHeight: number
 }
 
 export function symbolPresentationRowHeight(detail: SubDetail, fontSize: number, fractionalMetrics = false) {
   return (fractionalMetrics ? fontSize * 1.5 : subCodeLineHeight(fontSize)) + (isSymbolDetail(detail) ? detail === 'outline' ? 8 : 4 : 0)
 }
 
-function buildSymbolGeometry({ kind, source, path = '', detail, width, height, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false }: SymbolPresentationOptions): SymbolGeometry {
+function buildSymbolGeometry({ kind, source, path = '', detail, width, height, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false, headerHeight = SUB_HEADER }: SymbolPresentationOptions): SymbolGeometry {
   const outline = collapsedSymbols(source, path)
   const symbolDetail = isSymbolDetail(detail)
   const signature = (symbol: SubSymbol): SymbolSignature => (detail === 'summary' || detail === 'structure')
@@ -110,7 +112,7 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
     const leftId = symbolHandle('left', symbol)
     const rightId = symbolHandle('right', symbol)
     const x = readingCode ? textX + indent - SUB_SYMBOL_PADDING : textX - 4
-    const y = SUB_CONTENT_TOP + contentInset + (start + 0.5) * rowHeight
+    const y = headerHeight + contentInset + (start + 0.5) * rowHeight
     return { key: rightId, symbol, color: 'var(--accent)', leftId, rightId, start, end, x,
       signature: kind === 'code' && symbolDetail && source ? signature(symbol) : undefined,
       width: Math.max(40, readingCode ? textWidth - indent + SUB_SYMBOL_PADDING * 2 : textWidth + 20),
@@ -145,26 +147,26 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
     : folded && source && readingCode
     ? rows.reduce((end, row) => row.collapsed ? end : Math.max(end, textX + measureSubText(expandCodeTabs(source.lines[row.sourceIndex]), fontSize) + SUB_SYMBOL_PADDING * 2), 0)
     : document?.contentWidth ?? 0
-  return { rows, areas, connections, detail, height, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth: Math.max(width - 2, documentWidth, symbolContentWidth, rowContentWidth) }
+  return { rows, areas, connections, detail, height, headerHeight, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth: Math.max(width - 2, documentWidth, symbolContentWidth, rowContentWidth) }
 }
 
 // Scroll frames only move cached geometry and recompute visible ports/overflow.
 function positionSymbolGeometry(geometry: SymbolGeometry, scrollTop: number): SymbolPresentation {
-  const { rows, detail, height, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth } = geometry
+  const { rows, detail, height, headerHeight, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth } = geometry
   const areas = geometry.areas.map(area => ({ ...area, y: area.y - scrollTop }))
   const areaCopies = new Map(geometry.areas.map((area, index) => [area, areas[index]]))
   const connections = geometry.connections.map(connection => ({ ...connection, area: connection.area ? areaCopies.get(connection.area) : undefined }))
   // Overflow bands overlay the content only when an anchor is outside the full viewport.
   // They never add padding or alter the document's scroll height.
-  const positions = [...areas.map(area => area.y), ...connections.filter(connection => connection.count > 0).map(connection => SUB_CONTENT_TOP + contentInset + (connection.index + 0.5) * rowHeight - scrollTop)]
-  const top = SUB_CONTENT_TOP + (positions.some(y => y < SUB_CONTENT_TOP) ? SUB_ELLIPSIS : 0)
+  const positions = [...areas.map(area => area.y), ...connections.filter(connection => connection.count > 0).map(connection => headerHeight + contentInset + (connection.index + 0.5) * rowHeight - scrollTop)]
+  const top = headerHeight + (positions.some(y => y < headerHeight) ? SUB_ELLIPSIS : 0)
   const bottom = height - (positions.some(y => y > height) ? SUB_ELLIPSIS : 0)
   for (const area of areas) area.visible = area.y >= top && area.y <= bottom
-  const above: SymbolOverflow = { areas: areas.filter(area => area.y < top), endpoints: [], connectionCount: 0, y: SUB_HEADER + SUB_ELLIPSIS / 2, color: 'var(--accent)' }
+  const above: SymbolOverflow = { areas: areas.filter(area => area.y < top), endpoints: [], connectionCount: 0, y: headerHeight + SUB_ELLIPSIS / 2, color: 'var(--accent)' }
   const below: SymbolOverflow = { areas: areas.filter(area => area.y > bottom), endpoints: [], connectionCount: 0, y: height - SUB_ELLIPSIS / 2, color: 'var(--accent)' }
   const endpoints = new Map<string, SymbolEndpoint>()
   const addEndpoint = (id: string, area: SymbolArea | undefined, index: number, visible = false) => {
-    const rawY = SUB_CONTENT_TOP + contentInset + (index + 0.5) * rowHeight - scrollTop
+    const rawY = headerHeight + contentInset + (index + 0.5) * rowHeight - scrollTop
     const overflow = rawY < top ? 'above' : rawY > bottom ? 'below' : undefined
     const endpoint: SymbolEndpoint = { id, area, y: overflow ? (overflow === 'above' ? above.y : below.y) : rawY,
       side: id.startsWith('left') ? 'left' : 'right', color: area?.color ?? 'var(--accent)', visible: visible && !overflow, connected: false, overflow }
@@ -204,7 +206,7 @@ function positionSymbolGeometry(geometry: SymbolGeometry, scrollTop: number): Sy
     }
   }
   for (const endpoint of endpoints.values()) if (endpoint.connected && endpoint.area) endpoint.area.connected = true
-  return { rows, areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth }
+  return { headerHeight, rows, areas, endpoints, above, below, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, viewportTop: top, viewportBottom: bottom, contentWidth }
 }
 
 type CachedSymbolGeometry = {
@@ -223,7 +225,7 @@ export function buildSymbolPresentation(options: SymbolPresentationOptions): Sym
       cached = { lines: source.lines, symbols: source.symbols, tokens: source.tokens, diffLines: source.diff?.lines, status: source.status, start: source.startLine, end: source.endLine, variants: new Map() }
       symbolGeometries.set(source, cached)
     }
-    const key = JSON.stringify([options.kind, options.path, options.detail, options.width, options.height, options.fontSize, options.lineNumbers, options.connectedOnly, options.fractionalMetrics, options.connected, options.connectionCounts])
+    const key = JSON.stringify([options.headerHeight, options.kind, options.path, options.detail, options.width, options.height, options.fontSize, options.lineNumbers, options.connectedOnly, options.fractionalMetrics, options.connected, options.connectionCounts])
     const existing = cached.variants.get(key)
     geometry = existing ?? buildSymbolGeometry(options)
     if (!existing) {
@@ -241,7 +243,7 @@ export function symbolStems(presentation: SymbolPresentation, width: number, _he
     const area = endpoint.area
     if (!endpoint.visible || endpoint.overflow || !area) return []
     const left = area.x - scrollLeft, right = left + area.width
-    const top = SUB_HEADER + area.contentTop - scrollTop, bottom = top + area.height
+    const top = presentation.headerHeight + area.contentTop - scrollTop, bottom = top + area.height
     if (right <= 0 || left >= width || bottom <= presentation.viewportTop || top >= presentation.viewportBottom) return []
     const sourceX = endpoint.side === 'right' ? right : left
     if (sourceX < 0 || sourceX > width) return []

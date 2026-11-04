@@ -1,8 +1,9 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
-import { transitionT, leafScreenWidthLimit } from './layoutEngine'
+import { transitionT, nodeVisualGeometry, nodeVisualLayout } from './layoutEngine'
 
 export interface ZUIHitTestNodeResult {
   node: LayoutNode
+  visualNode?: LayoutNode
   absX: number
   absY: number
   absW: number
@@ -124,21 +125,21 @@ function hitTestNodes(
 
   for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
     const node = nodes[nodeIndex]
-    if (!candidates.has(node) || node.transitionLeaving) continue
+    const sourceLeaf = (node.subKind ?? node.type) === 'code' && node.children.length === 0
+    if ((!sourceLeaf && !candidates.has(node)) || node.transitionLeaving) continue
     if (isHiddenByTags(node, hiddenTags)) continue
-    if (
+    if (!sourceLeaf && (
       worldX < node.worldX ||
       worldX > node.worldX + node.worldW ||
       worldY < node.worldY ||
       worldY > node.worldY + node.worldH
-    ) {
+    )) {
       continue
     }
 
     const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
     const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
     const absW = node.worldW * parentAbsScale
-    const absH = node.worldH * parentAbsScale
     const screenW = absW * view.zoom
     if (screenW < 2) continue
 
@@ -168,16 +169,17 @@ function hitTestNodes(
 
     if (selfAlpha < SELF_HOVER_ALPHA_MIN) continue
 
-    const cap = !hasChildren ? Math.min(1, leafScreenWidthLimit(node, thresholds.end) / screenW) : 1
-    const visualW = absW * cap
-    const visualH = absH * cap
-    const visualX = absX + (absW - visualW) / 2
-    const visualY = absY + (absH - visualH) / 2
+    const geometry = nodeVisualGeometry(node, view.zoom * parentAbsScale, thresholds.end)
+    const cap = geometry.scale
+    const visualW = geometry.width * parentAbsScale
+    const visualH = geometry.height * parentAbsScale
+    const visualX = absX + geometry.offsetX * parentAbsScale
+    const visualY = absY + geometry.offsetY * parentAbsScale
     // Leaf cards stop growing at the detail threshold; their hit area must stop too.
     const localX = parentAbsX + (worldX - parentChildOffsetX) * parentAbsScale
     const localY = parentAbsY + (worldY - parentChildOffsetY) * parentAbsScale
     if (localX < visualX || localX > visualX + visualW || localY < visualY || localY > visualY + visualH) continue
-    return { node, absX: visualX, absY: visualY, absW: visualW, absH: visualH, cumulativeScale: parentAbsScale, visualScale: parentAbsScale * cap }
+    return { node, visualNode: nodeVisualLayout(node, geometry), absX: visualX, absY: visualY, absW: visualW, absH: visualH, cumulativeScale: parentAbsScale, visualScale: parentAbsScale * cap }
   }
 
   return null

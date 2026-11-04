@@ -8,7 +8,7 @@ import {
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { subDetail } from '../../utils/subElements'
-import { getExpandThresholds, leafScreenWidthLimit } from './layoutEngine'
+import { getExpandThresholds, nodeVisualGeometry } from './layoutEngine'
 import { connectorLabelFitsEndpoints, connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
@@ -49,35 +49,6 @@ function zoomableNodeConnectorAlpha(inheritedAlpha: number, bodyAlpha: number): 
   return Math.max(bodyAlpha, Math.min(inheritedAlpha, DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA))
 }
 
-function visualRectForNode(
-  absX: number,
-  absY: number,
-  absW: number,
-  absH: number,
-  hasChildren: boolean,
-  screenW: number,
-  thresholds: { start: number; end: number },
-) {
-  if (!hasChildren && screenW > thresholds.end) {
-    const scale = thresholds.end / screenW
-    const visualW = absW * scale
-    const visualH = absH * scale
-    return {
-      worldX: absX + (absW - visualW) / 2,
-      worldY: absY + (absH - visualH) / 2,
-      worldW: visualW,
-      worldH: visualH,
-    }
-  }
-
-  return {
-    worldX: absX,
-    worldY: absY,
-    worldW: absW,
-    worldH: absH,
-  }
-}
-
 function registerVisibleAnchor(
   node: LayoutNode,
   visibleAnchors: Map<number, VisibleNodeAnchor>,
@@ -113,7 +84,6 @@ function collectVisibleAnchorForNode(
   const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
   const absScale = parentAbsScale
   const absW = node.worldW * absScale
-  const absH = node.worldH * absScale
   const screenW = absW * view.zoom
   if (screenW < 2) return { selfDrawn: false, descendantDrawn: false }
 
@@ -122,7 +92,11 @@ function collectVisibleAnchorForNode(
   const parentAlpha = inheritedAlpha * (1 - t)
   const childAlpha = inheritedAlpha * t
   const selfDrawn = !hasChildren || t <= 0.95
-  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, { ...thresholds, end: leafScreenWidthLimit(node, thresholds.end) })
+  const geometry = nodeVisualGeometry(node, view.zoom * absScale, thresholds.end)
+  const visualRect = {
+    worldX: absX + geometry.offsetX * absScale, worldY: absY + geometry.offsetY * absScale,
+    worldW: geometry.width * absScale, worldH: geometry.height * absScale,
+  }
 
   if (selfDrawn) {
     registerVisibleAnchor(node, visibleAnchors, byNodeId, {

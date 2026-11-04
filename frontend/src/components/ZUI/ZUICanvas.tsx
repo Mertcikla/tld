@@ -1,3 +1,4 @@
+import PreviewInteractionHint from '../PreviewInteractionHint'
 import { sourcePreviewAppearanceRevision, subscribeSourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
@@ -161,7 +162,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     onPan?.()
   }, [onPan])
 
-  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
+  const { viewState, viewStateRef, setViewState, fitView, maxZoom, previewInteraction, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
     canvasRef,
     undefined,
     visibleLayout.groups,
@@ -422,6 +423,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
           touchAction: 'none',
         }}
       />
+
+      <PreviewInteractionHint interaction={previewInteraction} />
 
       <ZUIBreadcrumb
         breadcrumbBoundaryRef={breadcrumbBoundaryRef}

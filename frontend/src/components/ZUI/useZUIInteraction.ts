@@ -1,6 +1,7 @@
+import { usePreviewInteraction } from '../../hooks/usePreviewInteraction'
 import { MIN_ZUI_ZOOM } from './camera'
-import { isSubElement } from '../../utils/subElements'
-import { scrollSubElement, subscribeSubScroll, subSymbolAtPoint } from './subElements'
+import { isSubElement, SUB_HEADER } from '../../utils/subElements'
+import { panSubElement, revealSubOverflow, nodeDetail, subscribeSubScroll, subSymbolAtPoint } from './subElements'
 import { subscribeSubSources } from '../../utils/subElementSource'
 // src/components/ZUI/useZUIInteraction.ts
 
@@ -202,6 +203,7 @@ export interface ZUIInteraction {
     padding?: number,
   ) => void
   maxZoom: number
+  previewInteraction: ReturnType<typeof usePreviewInteraction>
   hoveredItem: HoveredItem | null
   setHoveredItem: (item: HoveredItem | null, force?: boolean) => void
   /** Set to true to prevent clearing hoveredItem while the mouse is over the hover popover. */
@@ -226,6 +228,16 @@ export function useZUIInteraction(
 ): ZUIInteraction {
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
+  const sourceScrollerRef = useRef<HTMLDivElement>(null)
+  const previewInteraction = usePreviewInteraction(true, false, sourceScrollerRef)
+  const previewInteractionRef = useRef(previewInteraction)
+  previewInteractionRef.current = previewInteraction
+  const sourceTargetRef = useRef<{ node: LayoutNode } | null>(null)
+  const resetSourceInteraction = useCallback(() => {
+    sourceTargetRef.current = null
+    previewInteractionRef.current.onPointerLeave()
+  }, [])
+  useEffect(() => { resetSourceInteraction() }, [viewState, groups, resetSourceInteraction])
   const hoveredItemRef = useRef<HoveredItem | null>(null)
   const nodeHoverAnchorRef = useRef<{ node: LayoutNode; x: number; y: number } | null>(null)
   const hoverPopoverRef = useRef<HTMLElement | null>(null)
@@ -414,6 +426,7 @@ export function useZUIInteraction(
     }
   }, [])
 
+  const sourcePan = useRef<{ node: LayoutNode; zoom: number; x: number; y: number } | null>(null)
   const dragging = useRef(false)
   const pointerStart = useRef<{ x: number; y: number } | null>(null)
   const dragButton = useRef<number | null>(null)
@@ -454,6 +467,17 @@ export function useZUIInteraction(
     const el = canvasRef.current
     if (!el) return
 
+    function sourceAt(clientX: number, clientY: number, existing?: ZUIHitTestNodeResult | null) {
+      const bounds = el!.getBoundingClientRect(), view = viewStateRef.current
+      const worldX = screenToWorldX(clientX - bounds.left, view), worldY = screenToWorldY(clientY - bounds.top, view)
+      const hit = existing === undefined ? hitTestZUIRenderedNode(worldX, worldY, groupsRef.current, view, getExpandThresholds(bounds.width), hiddenTagsRef.current) : existing
+      if (!hit || !isSubElement(hit.node.subKind ?? hit.node.type)) return null
+      const node = hit.visualNode ?? hit.node, zoom = view.zoom * hit.visualScale
+      const x = (worldX - hit.absX) / hit.visualScale, y = (worldY - hit.absY) / hit.visualScale
+      if (nodeDetail(node, zoom) === 'overview' || y < (node.subHeaderHeight ?? SUB_HEADER * Math.min(1, node.worldW / 520))) return null
+      return { hit, node, zoom, x, y }
+    }
+
     function onWheel(e: WheelEvent) {
       if (e.defaultPrevented) return
       if (shouldIgnoreCapturedWheel(e)) {
@@ -476,10 +500,11 @@ export function useZUIInteraction(
         e.clientY <= rect.bottom
 
       if (!isInsideCanvas) return
-      if (e.altKey && !e.ctrlKey) {
-        const view = viewStateRef.current
-        const hit = hitTestZUIRenderedNode(screenToWorldX(e.clientX - rect.left, view), screenToWorldY(e.clientY - rect.top, view), groupsRef.current, view, getExpandThresholds(rect.width), hiddenTagsRef.current)
-        if (hit && isSubElement(hit.node.type) && scrollSubElement(hit.node, e.deltaY * (e.deltaMode === 1 ? 24 : 1), view.zoom * hit.visualScale)) {
+      if (!e.ctrlKey && !e.metaKey && previewInteractionRef.current.phase === 'ready') {
+        const source = sourceAt(e.clientX, e.clientY)
+        if (source && sourceTargetRef.current?.node === source.hit.node) {
+          const unit = e.deltaMode === 1 ? 24 : e.deltaMode === 2 ? rect.height : 1
+          panSubElement(source.node, e.deltaX * unit, e.deltaY * unit, source.zoom)
           e.preventDefault()
           return
         }
@@ -505,6 +530,7 @@ export function useZUIInteraction(
       if (suppressWheelPan && !shouldZoom) return
 
       e.preventDefault()
+      resetSourceInteraction()
       setHoveredItem(null, true) // Clear popover immediately on zoom/pan
 
       if (shouldZoom) {
@@ -542,7 +568,23 @@ export function useZUIInteraction(
     }
 
     function onMouseDown(e: MouseEvent) {
+      if (previewInteractionRef.current.phase === 'ready') {
+        const source = sourceAt(e.clientX, e.clientY)
+        if (source && sourceTargetRef.current?.node === source.hit.node) {
+          if (e.button === 1 || e.button === 2) {
+            e.preventDefault()
+            sourcePan.current = { node: source.node, zoom: source.zoom, x: e.clientX, y: e.clientY }
+            el!.style.cursor = 'grabbing'
+            return
+          }
+          if (e.button === 0 && revealSubOverflow(source.node, source.zoom, source.y)) {
+            e.preventDefault()
+            return
+          }
+        }
+      }
       if (!isZUIPanMouseButton(e.button)) return
+      resetSourceInteraction()
       e.preventDefault()
       pointerStart.current = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
       dragging.current = true
@@ -555,6 +597,13 @@ export function useZUIInteraction(
     }
 
     function onMouseMove(e: MouseEvent) {
+      const pan = sourcePan.current
+      if (pan) {
+        panSubElement(pan.node, pan.x - e.clientX, pan.y - e.clientY, pan.zoom)
+        pan.x = e.clientX; pan.y = e.clientY
+        e.preventDefault()
+        return
+      }
       const start = pointerStart.current
       if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5) pointerStart.current = null
       const rect = el!.getBoundingClientRect()
@@ -583,6 +632,7 @@ export function useZUIInteraction(
       // Window-level tracking also receives moves over panels covering the canvas.
       // Keep the canvas's own popover interactive without hit-testing behind other UI.
       if (e.target !== el) {
+        resetSourceInteraction()
         if (popover && e.target instanceof Node && popover.contains(e.target)) {
           clearHoverTimeout()
           return
@@ -590,6 +640,18 @@ export function useZUIInteraction(
         setHoveredItem(null, true)
         return
       }
+
+      const view = viewStateRef.current
+      const worldX = screenToWorldX(screenX, view), worldY = screenToWorldY(screenY, view)
+      const thresholds = getExpandThresholds(rect.width)
+      const pointerHit = hitTestZUIRenderedNode(worldX, worldY, groupsRef.current, view, thresholds, hiddenTagsRef.current)
+      const source = sourceAt(e.clientX, e.clientY, pointerHit)
+      if (source) {
+        if (sourceTargetRef.current?.node !== source.hit.node) resetSourceInteraction()
+        sourceTargetRef.current = { node: source.hit.node }
+        previewInteractionRef.current.onPointerEnter(e)
+        previewInteractionRef.current.onPointerMove(e)
+      } else resetSourceInteraction()
 
       const hovered = hoveredItemRef.current
       let safeAnchor: { x: number; y: number } | null = null
@@ -624,20 +686,15 @@ export function useZUIInteraction(
         return
       }
 
-      // Hover detection
-      const view = viewStateRef.current
-      const worldX = screenToWorldX(screenX, view)
-      const worldY = screenToWorldY(screenY, view)
-      const thresholds = getExpandThresholds(rect.width)
-
-      const deepest = hitTestZUIRenderedNode(worldX, worldY, groupsRef.current, view, thresholds, hiddenTagsRef.current)
+      // Hover detection shares the same hit result as the source interaction gate.
+      const deepest = pointerHit
       if (deepest) {
         const { node, absX, absY, absW, absH } = deepest
         nodeHoverAnchorRef.current = { node, x: e.clientX, y: e.clientY }
         setHoveredItem({
           type: 'node',
           data: node,
-          symbolHandle: subSymbolAtPoint(node, view.zoom * deepest.visualScale, (worldX - absX) / deepest.visualScale, (worldY - absY) / deepest.visualScale),
+          symbolHandle: subSymbolAtPoint(deepest.visualNode ?? node, view.zoom * deepest.visualScale, (worldX - absX) / deepest.visualScale, (worldY - absY) / deepest.visualScale),
           absX,
           absY,
           absW,
@@ -685,6 +742,7 @@ export function useZUIInteraction(
     }
 
     function onMouseUp(e: MouseEvent) {
+      if (sourcePan.current) { sourcePan.current = null; el!.style.cursor = 'pointer'; return }
       const start = pointerStart.current
       if (start && dragging.current && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 5) selectAt(e.clientX, e.clientY)
       pointerStart.current = null
@@ -694,10 +752,13 @@ export function useZUIInteraction(
     }
 
     function onMouseOut() {
+      if (!sourcePan.current) resetSourceInteraction()
       if (!dragging.current) setHoveredItem(null)
     }
 
     function onDblClick(e: MouseEvent) {
+      if (previewInteractionRef.current.phase === 'ready' && sourceAt(e.clientX, e.clientY)) { e.preventDefault(); return }
+      resetSourceInteraction()
       const rect = el!.getBoundingClientRect()
       const focalX = e.clientX - rect.left
       const focalY = e.clientY - rect.top
@@ -708,6 +769,10 @@ export function useZUIInteraction(
       })
       recordZuiTestInteraction({ type: 'dblclick', mode: 'double-click-zoom' })
       onZoomRef.current?.()
+    }
+
+    function onContextMenu(e: MouseEvent) {
+      if (sourcePan.current || (previewInteractionRef.current.phase === 'ready' && sourceAt(e.clientX, e.clientY))) e.preventDefault()
     }
 
     function onAuxClick(e: MouseEvent) {
@@ -723,6 +788,7 @@ export function useZUIInteraction(
     }
 
     function onGestureStart(e: Event) {
+      resetSourceInteraction()
       e.preventDefault()
       const gestureEvent = e as SafariGestureEventLike
       const gesture = safariGestureFactor(gestureEvent, null)
@@ -781,6 +847,7 @@ export function useZUIInteraction(
     }
 
     function onTouchStart(e: TouchEvent) {
+      resetSourceInteraction()
       e.preventDefault()
       if (e.touches.length === 1) {
         pointerStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
@@ -868,6 +935,7 @@ export function useZUIInteraction(
     window.addEventListener('mouseup', onMouseUp)
     el.addEventListener('dblclick', onDblClick)
     el.addEventListener('auxclick', onAuxClick)
+    el.addEventListener('contextmenu', onContextMenu)
     el.addEventListener('gesturestart', onGestureStart, { passive: false })
     el.addEventListener('gesturechange', onGestureChange, { passive: false })
     el.addEventListener('gestureend', onGestureEnd)
@@ -886,6 +954,7 @@ export function useZUIInteraction(
       window.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('dblclick', onDblClick)
       el.removeEventListener('auxclick', onAuxClick)
+      el.removeEventListener('contextmenu', onContextMenu)
       el.removeEventListener('gesturestart', onGestureStart)
       el.removeEventListener('gesturechange', onGestureChange)
       el.removeEventListener('gestureend', onGestureEnd)
@@ -894,7 +963,7 @@ export function useZUIInteraction(
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, clearHoverTimeout, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem, getEdgeSpatialIndex]) // groupsRef handles groups updates without re-binding!
+  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, clearHoverTimeout, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem, getEdgeSpatialIndex, resetSourceInteraction]) // groupsRef handles groups updates without re-binding!
 
-  return { viewState, viewStateRef, setViewState, fitView, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement }
+  return { viewState, viewStateRef, setViewState, fitView, previewInteraction, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement }
 }

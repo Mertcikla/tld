@@ -1,4 +1,4 @@
-import { sourceDetailCapScale } from './sourceDetailScale'
+import { sourceDetailCapScale, sourceWidthCapScale } from './sourceDetailScale'
 import type { LayoutNode } from './types'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUIViewState } from './types'
@@ -25,6 +25,31 @@ export function transitionT(screenW: number, start: number, end: number): number
 export function leafScreenWidthLimit(node: Pick<LayoutNode, 'worldW' | 'worldH' | 'type' | 'subKind'>, overviewLimit: number): number {
   if ((node.subKind ?? node.type) !== 'code') return overviewLimit
   return Math.max(overviewLimit, 520 * sourceDetailCapScale, 281 * node.worldW / node.worldH * sourceDetailCapScale)
+}
+
+/** Local visual rectangle. Source leaves grow down from their capped-width top. */
+export function nodeVisualGeometry(node: LayoutNode, zoom: number, overviewLimit: number) {
+  const source = (node.subKind ?? node.type) === 'code' && node.children.length === 0
+  const baseLimit = Math.max(520, 281 * node.worldW / node.worldH)
+  const widthLimit = source ? Math.max(overviewLimit, baseLimit * sourceWidthCapScale) : overviewLimit
+  const scale = node.children.length ? 1 : Math.min(1, widthLimit / (node.worldW * zoom))
+  const heightScale = source ? Math.min(1, leafScreenWidthLimit(node, overviewLimit) / (node.worldW * zoom)) : scale
+  return {
+    scale,
+    width: node.worldW * scale,
+    height: node.worldH * heightScale,
+    offsetX: node.worldW * (1 - scale) / 2,
+    offsetY: node.worldH * (1 - scale) / 2,
+    headerHeight: 84 * Math.min(1, node.worldW / 520) * (source ? Math.min(1, baseLimit / (node.worldW * zoom * scale)) : 1),
+  }
+}
+
+const visualLayouts = new WeakMap<LayoutNode, LayoutNode>()
+export function nodeVisualLayout(node: LayoutNode, geometry: ReturnType<typeof nodeVisualGeometry>): LayoutNode {
+  let visual = visualLayouts.get(node)
+  if (!visual) { visual = { ...node }; visualLayouts.set(node, visual) }
+  Object.assign(visual, node, { worldH: geometry.height / geometry.scale, subHeaderHeight: geometry.headerHeight })
+  return visual
 }
 
 export function getExpandThresholds(canvasW: number) {
@@ -184,7 +209,6 @@ function updateNodeStateRecursive(
   const absX = parentAbsX + (layout.worldX - parentChildOffsetX) * parentAbsScale
   const absY = parentAbsY + (layout.worldY - parentChildOffsetY) * parentAbsScale
   const absW = layout.worldW * parentAbsScale
-  const absH = layout.worldH * parentAbsScale
   const screenW = absW * zoom
 
   const rebasedWorldX = absX - originX
@@ -193,7 +217,10 @@ function updateNodeStateRecursive(
   const screenXCheck = rebasedWorldX * zoom + canvasCenterX
   const screenYCheck = rebasedWorldY * zoom + canvasCenterY
 
-  const visible = screenXCheck + screenW > 0 && screenYCheck + absH * zoom > 0 && screenXCheck < canvasW && screenYCheck < canvasH
+  const visualGeometry = nodeVisualGeometry(layout, zoom * parentAbsScale, thresholds.end)
+  const visualX = screenXCheck + visualGeometry.offsetX * parentAbsScale * zoom
+  const visualY = screenYCheck + visualGeometry.offsetY * parentAbsScale * zoom
+  const visible = visualX + visualGeometry.width * parentAbsScale * zoom > 0 && visualY + visualGeometry.height * parentAbsScale * zoom > 0 && visualX < canvasW && visualY < canvasH
 
   const hasChildren = layout.children.length > 0
   const t = hasChildren ? transitionT(screenW, thresholds.start, thresholds.end) : 0
@@ -206,13 +233,11 @@ function updateNodeStateRecursive(
   let isLeafCapped = false
   let leafCapScale = 1
 
-  const leafLimit = leafScreenWidthLimit(layout, thresholds.end)
-  if (!hasChildren && screenW > leafLimit) {
-    leafCapScale = leafLimit / screenW
-    drawZoom = drawZoom * leafCapScale
-    drawScreenW = leafLimit
-    isLeafCapped = true
-  }
+  const geometry = nodeVisualGeometry(layout, zoom * parentAbsScale, thresholds.end)
+  leafCapScale = geometry.scale
+  drawZoom *= leafCapScale
+  drawScreenW *= leafCapScale
+  isLeafCapped = leafCapScale < 1
 
   const state = node.state
   state.worldX = rebasedWorldX
@@ -284,6 +309,7 @@ export function updateScene(
         0, 0, 0, 0,
       )
     }
+    group.isVisible ||= group.nodes.some(node => node.state.isVisible)
   }
 
   return transitionRebase

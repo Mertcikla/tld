@@ -3,7 +3,7 @@ import { CHANGE_RING_COLORS } from './changeOverlay'
 import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
-import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, SUB_ELLIPSIS, SUB_CONTENT_TOP, subDetail } from '../../utils/subElements'
+import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, SUB_ELLIPSIS, subDetail } from '../../utils/subElements'
 import { buildSymbolPresentation, symbolStems, symbolPresentationRowHeight, type SymbolPresentation } from '../../utils/subElementSymbols'
 import { peekSubSource, requestSubSource, type SubSource } from '../../utils/subElementSource'
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
@@ -23,6 +23,7 @@ export const nodeDetail = (node: LayoutNode, zoom: number) => {
 }
 
 const scrollRows = new Map<string, number>()
+const scrollColumns = new Map<string, number>()
 const scrollListeners = new Set<() => void>()
 export const subscribeSubScroll = (fn: () => void) => { scrollListeners.add(fn); return () => { scrollListeners.delete(fn) } }
 const scrollKey = (node: LayoutNode, zoom: number) => {
@@ -38,7 +39,7 @@ const firstRow = (node: LayoutNode, zoom: number) => {
   if (nodeDetail(node, zoom) !== 'code' || !source?.diff) return 0
   return Math.max(0, source.diff.lines.findIndex(line => line.change === 'added' || line.change === 'removed') - 3)
 }
-const presentations = new WeakMap<LayoutNode, { detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
+const presentations = new WeakMap<LayoutNode, { height: number; headerHeight?: number; detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
   const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
@@ -47,18 +48,18 @@ export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentati
   const fontSize = Math.min(Math.max(appearance.fontSize ?? 12, detail === 'summary' || detail === 'structure' ? 9 / zoom : 0), 14 / zoom)
   const lineNumbers = appearance.lineNumbers ?? detail === 'code'
   const cached = presentations.get(node)
-  if (cached && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
+  if (cached && cached.height === node.worldH && cached.headerHeight === node.subHeaderHeight && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
+  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
 
-  presentations.set(node, { appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
+  presentations.set(node, { height: node.worldH, headerHeight: node.subHeaderHeight, appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
 
 function scrollSubElementNative(node: LayoutNode, delta: number, zoom: number): boolean {
   if ((nodeDetail(node, zoom)) === 'overview') return false
   const model = subNodeSymbols(node, zoom)
-  const max = Math.max(0, model.rowCount - Math.floor((node.worldH - SUB_HEADER) / model.rowHeight))
+  const max = Math.max(0, model.rowCount - Math.floor((node.worldH - model.headerHeight) / model.rowHeight))
   if (max === 0) return false
   const next = Math.max(0, Math.min(max, firstRow(node, zoom) + Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / model.rowHeight))))
   if (next === firstRow(node, zoom)) return true
@@ -74,7 +75,7 @@ function subNodeHandleAnchorNative(node: LayoutNode, handle: string | null, zoom
   let endpoint = model.endpoints.get(handle!)
   if (!endpoint) {
     const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
-    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: nodeDetail(node, zoom), width: node.worldW, height: node.worldH,
+    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: nodeDetail(node, zoom), width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight,
       ...readSourcePreviewAppearance(node.diagramId, node.elementId), connectedOnly: node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly,
       fontSize: model.fontSize, lineNumbers: model.lineNumbers, fractionalMetrics: true, connected: [handle!], scrollTop: firstRow(node, zoom) * model.rowHeight }).endpoints.get(handle!)
   }
@@ -85,11 +86,12 @@ export function subNodeHandleY(node: LayoutNode, handle: string | null, zoom: nu
 function subSymbolAtPointNative(node: LayoutNode, zoom: number, x: number, y: number): string | undefined {
   if (!isSubElement(node.subKind ?? node.type) || (nodeDetail(node, zoom)) === 'overview') return
   const model = subNodeSymbols(node, zoom)
-  if (y < SUB_HEADER) return
+  if (y < model.headerHeight) return
   if (y < model.viewportTop) return model.above.representative?.area?.key
   if (y > model.viewportBottom) return model.below.representative?.area?.key
   const offset = firstRow(node, zoom) * model.rowHeight
-  return [...model.areas].reverse().find(area => x >= area.x && x <= area.x + area.width && y >= SUB_HEADER + area.contentTop - offset && y <= SUB_HEADER + area.contentTop + area.height - offset)?.key
+  x += scrollColumns.get(scrollKey(node, zoom)) ?? 0
+  return [...model.areas].reverse().find(area => x >= area.x && x <= area.x + area.width && y >= model.headerHeight + area.contentTop - offset && y <= model.headerHeight + area.contentTop + area.height - offset)?.key
 }
 
 function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
@@ -117,16 +119,16 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
   }
   ctx.fillStyle = bodyBg
   ctx.beginPath(); ctx.roundRect(0, 0, w, h, 10); ctx.fill(); ctx.save(); ctx.clip()
-  ctx.fillStyle = headerBg; ctx.fillRect(0.5, 0.5, w - 1, SUB_HEADER - 0.5)
+  ctx.fillStyle = headerBg; ctx.fillRect(0.5, 0.5, w - 1, model.headerHeight - 0.5)
   if (w * zoom < 50) { ctx.restore(); drawBorder(); ctx.restore(); return }
   // Match the editor header's centered icon and stacked name/kind/metadata.
   const unit = Math.min(headerScale, 20 / (18 * zoom))
-  const headerTop = (SUB_HEADER - SUB_HEADER * unit) / 2
+  const headerTop = (model.headerHeight - SUB_HEADER * unit) / 2
   const textWidth = Math.max(1, w - 96 * unit)
   if (icon) {
     const scale = 28 * unit / Math.max(icon.naturalWidth, icon.naturalHeight)
     const iconWidth = icon.naturalWidth * scale, iconHeight = icon.naturalHeight * scale
-    ctx.drawImage(icon, (w - iconWidth) / 2, detail === 'structure' ? (SUB_HEADER - iconHeight) / 2 : headerTop + 4 * unit + (28 * unit - iconHeight) / 2, iconWidth, iconHeight)
+    ctx.drawImage(icon, (w - iconWidth) / 2, detail === 'structure' ? (model.headerHeight - iconHeight) / 2 : headerTop + 4 * unit + (28 * unit - iconHeight) / 2, iconWidth, iconHeight)
   }
   if (detail !== 'structure') {
     const technology = node.technologyText === undefined ? elementTechnologyText(node.technology, [], !!node.logoUrl) : node.technologyText
@@ -147,12 +149,15 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
     if (metadata) ctx.fillText(`[${metadata}]`, w / 2, stackCenter + stackHeight / 2 - metadataHeight / 2, textWidth)
   }
   if (detail === 'overview' || lowDetail) { ctx.restore(); drawBorder(); ctx.restore(); return }
-  const first = Math.min(firstRow(node, zoom), Math.max(0, model.rowCount - 1))
-  const offset = first * model.rowHeight
-  const rows = Math.min(model.rowCount - first, Math.ceil((h - SUB_HEADER) / model.rowHeight))
+  const position = Math.min(firstRow(node, zoom), Math.max(0, model.rowCount - 1))
+  const first = Math.floor(position)
+  const offset = position * model.rowHeight
+  const rows = Math.min(model.rowCount - first, Math.ceil((h - model.headerHeight) / model.rowHeight) + 1)
+  const scrollLeft = scrollColumns.get(scrollKey(node, zoom)) ?? 0
   ctx.save(); ctx.textAlign = 'left'; ctx.beginPath(); ctx.rect(0, model.viewportTop, w, model.viewportBottom - model.viewportTop); ctx.clip()
+  if (scrollLeft) ctx.translate(-scrollLeft, 0)
   for (const area of model.areas) {
-    const y = SUB_HEADER + area.contentTop - offset
+    const y = model.headerHeight + area.contentTop - offset
     if (y + area.height < model.viewportTop || y > model.viewportBottom) continue
     const change = node.changeOverlay?.symbolDetails?.find(change =>
       change.change !== 'unchanged' && change.name === area.symbol.name &&
@@ -166,7 +171,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
   }
   ctx.globalAlpha = alpha
   for (let row = 0; detail !== 'structure' && row < rows; row++) {
-    const index = first + row, displayRow = model.rows[index], sourceIndex = displayRow.sourceIndex, cy = SUB_CONTENT_TOP + model.contentInset + (row + 0.5) * model.rowHeight
+    const index = first + row, displayRow = model.rows[index], sourceIndex = displayRow.sourceIndex, cy = model.headerHeight + model.contentInset + (row + first - position + 0.5) * model.rowHeight
     ctx.fillStyle = '#e1e6ed'; ctx.font = subCodeFont(model.fontSize)
     if (displayRow.diff) {
       const diff = displayRow.diff
@@ -213,7 +218,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
     }
   }
   ctx.restore()
-  for (const { endpoint, area, sourceX, sourceY, targetX, targetY } of symbolStems(model, w, h, offset)) {
+  for (const { endpoint, area, sourceX, sourceY, targetX, targetY } of symbolStems(model, w, h, offset, scrollLeft)) {
     if (!endpoint.connected && !active(area.leftId, area.rightId)) continue
     ctx.strokeStyle = symbolAccent; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (diffMode ? 0.3 : active(area.leftId, area.rightId) ? pulse : 0.55)
     if (active(area.leftId, area.rightId)) { ctx.setLineDash([6 / zoom, 4 / zoom]); ctx.lineDashOffset = -performance.now() / 50 / zoom }
@@ -222,7 +227,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
   }
   ctx.globalAlpha = alpha
   for (const [direction, overflow] of [['above', model.above], ['below', model.below]] as const) {
-    const y = direction === 'above' ? SUB_HEADER : h - SUB_ELLIPSIS
+    const y = direction === 'above' ? model.headerHeight : h - SUB_ELLIPSIS
     const count = diffMode ? direction === 'above' ? first : Math.max(0, model.rowCount - first - rows) : overflow.areas.length
     const unit = diffMode ? count === 1 ? 'line' : 'lines' : count === 1 ? 'symbol' : 'symbols'
     const symbolLabel = count ? `${count} ${unit} ${direction}` : ''
@@ -267,7 +272,7 @@ function sourceCard(node: LayoutNode, zoom: number) {
   if (scale === 1) return node
   let card = sourceCards.get(node)
   if (!card) { card = { ...node }; sourceCards.set(node, card) }
-  Object.assign(card, node, { worldW: node.worldW / scale, worldH: node.worldH / scale, subDetail: nodeDetail(node, zoom) })
+  Object.assign(card, node, { worldW: node.worldW / scale, worldH: node.worldH / scale, subDetail: nodeDetail(node, zoom), subHeaderHeight: node.subHeaderHeight === undefined ? undefined : node.subHeaderHeight / scale })
   return card
 }
 
@@ -289,4 +294,47 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   if (scale !== 1) { ctx.save(); ctx.scale(scale, scale) }
   drawSubElementNative(ctx, sourceCard(node, zoom), zoom * scale, alpha, accent, lowDetail, activeHandle, groupColor, icon, headerBg, symbolAccent, bodyBg, 1 / scale)
   if (scale !== 1) ctx.restore()
+}
+
+
+/** Screen-space wheel or drag deltas; the source surface owns both axes. */
+export function panSubElement(node: LayoutNode, deltaX: number, deltaY: number, zoom: number) {
+  if (nodeDetail(node, zoom) === 'overview') return false
+  const scale = sourceCardScale(node), nativeZoom = zoom * scale
+  const card = sourceCard(node, zoom), model = subNodeSymbols(card, nativeZoom)
+  const key = scrollKey(card, nativeZoom)
+  const oldLeft = scrollColumns.get(key) ?? 0
+  const left = Math.max(0, Math.min(Math.max(0, model.contentWidth - card.worldW), oldLeft + deltaX / nativeZoom))
+  const oldTop = firstRow(card, nativeZoom)
+  const top = Math.max(0, Math.min(Math.max(0, model.rowCount - (card.worldH - model.headerHeight) / model.rowHeight), oldTop + deltaY / nativeZoom / model.rowHeight))
+  if (left !== oldLeft || top !== oldTop) {
+    scrollColumns.set(key, left)
+    scrollRows.set(key, top)
+    if (scrollColumns.size > 128) scrollColumns.delete(scrollColumns.keys().next().value!)
+    if (scrollRows.size > 128) scrollRows.delete(scrollRows.keys().next().value!)
+    scrollListeners.forEach(fn => fn())
+  }
+  return true
+}
+
+/** Match the editor's overflow banners: reveal the nearest hidden symbol. */
+export function revealSubOverflow(node: LayoutNode, zoom: number, y: number) {
+  if (nodeDetail(node, zoom) === 'overview') return false
+  const scale = sourceCardScale(node), card = sourceCard(node, zoom), nativeZoom = zoom * scale
+  const model = subNodeSymbols(card, nativeZoom)
+  y /= scale
+  const direction = y >= model.headerHeight && y < model.headerHeight + SUB_ELLIPSIS ? 'above'
+    : y >= card.worldH - SUB_ELLIPSIS && y <= card.worldH ? 'below' : null
+  if (!direction) return false
+  const overflow = model[direction]
+  const area = direction === 'above' ? overflow.areas[overflow.areas.length - 1] : overflow.areas[0]
+  const diff = nodeDetail(card, nativeZoom) === 'code' && !!(card.subSource ?? (card.sourceLink ? peekSubSource(card.sourceLink) : undefined))?.diff
+  if (!area && !overflow.connectionCount && !diff) return false
+  const visibleRows = Math.max(1, Math.floor((card.worldH - model.headerHeight) / model.rowHeight))
+  const target = area ? area.start - Math.ceil(SUB_ELLIPSIS / model.rowHeight)
+    : firstRow(card, nativeZoom) + (direction === 'above' ? -visibleRows : visibleRows - 1)
+  const max = Math.max(0, model.rowCount - visibleRows)
+  scrollRows.set(scrollKey(card, nativeZoom), Math.max(0, Math.min(max, target)))
+  scrollListeners.forEach(fn => fn())
+  return true
 }

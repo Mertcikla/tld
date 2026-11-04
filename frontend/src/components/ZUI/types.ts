@@ -42,6 +42,8 @@ export interface ZUITestInteraction {
  * local coords into the node's own NODE_W × NODE_H world footprint.
  */
 export interface LayoutNode {
+  /** Explore presentation header height in node coordinates. */
+  subHeaderHeight?: number
   /** Transient scene reconciliation state; absent outside animated updates. */
   transitionOpacity?: number
   transitionLeaving?: boolean
