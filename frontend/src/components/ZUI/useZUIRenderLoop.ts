@@ -352,7 +352,7 @@ export function useZUIRenderLoop({
       ctx.restore()
       lastViewRef.current = currentView
       const hover = hoveredItemRef.current
-      const animateSymbol = hover?.type === 'node' && !!hover.symbolHandle && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const animateSymbol = ((hover?.type === 'node' && !!hover.symbolHandle) || (hover?.type === 'edge' && !hover.data.isProxy)) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
       needsRedrawRef.current = panLowDetailFramesRef.current > 0 || animateSymbol
 
       if (needsRedrawRef.current) {

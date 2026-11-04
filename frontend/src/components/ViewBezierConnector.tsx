@@ -1,4 +1,4 @@
-import { nodeConnectorRouteSize, subHandleFlowPosition, symbolHandleAtFlowPoint } from '../utils/subElementDom'
+import { nodeBundleFans, nodeConnectorRouteSize, subHandleFlowPosition, symbolHandleAtFlowPoint } from '../utils/subElementDom'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode, Position } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
@@ -121,43 +121,50 @@ function ViewBezierConnector({
   }
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
-  const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
+  const edges = useStore((s) => s.edges)
+  const edge = edges.find(candidate => candidate.id === id)
 
   const sourceEndpoint = connectorEndpoint(sourceNode, sourceX, sourceY, sourcePosition)
   const targetEndpoint = connectorEndpoint(targetNode, targetX, targetY, targetPosition)
-  const finalSourceX = sourceEndpoint.x
-  const finalSourceY = sourceEndpoint.y
-  const finalTargetX = targetEndpoint.x
-  const finalTargetY = targetEndpoint.y
+  const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
+  const sourceFan = nodeBundleFans(sourceNode, edges).get(`${id}:source`)
+  const targetFan = nodeBundleFans(targetNode, edges).get(`${id}:target`)
+  const finalSourceX = sourceFan?.x ?? sourceEndpoint.x
+  const finalSourceY = sourceFan?.y ?? sourceEndpoint.y
+  const finalTargetX = targetFan?.x ?? targetEndpoint.x
+  const finalTargetY = targetFan?.y ?? targetEndpoint.y
+  const routedSourcePosition = sourceFan ? positionForHandleSide(sourceFan.side) : sourcePosition
+  const routedTargetPosition = targetFan ? positionForHandleSide(targetFan.side) : targetPosition
 
   const { width: srcW, height: srcH } = nodeConnectorRouteSize(sourceNode, 200, 100)
   const { width: tgtW, height: tgtH } = nodeConnectorRouteSize(targetNode, 200, 100)
 
-  const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
   const { path, labelX, labelY } = buildViewConnectorPath({
     routeStyle,
     sourceX: finalSourceX,
     sourceY: finalSourceY,
     targetX: finalTargetX,
     targetY: finalTargetY,
-    sourcePosition,
-    targetPosition,
+    sourcePosition: routedSourcePosition,
+    targetPosition: routedTargetPosition,
     sourceWidth: srcW,
     sourceHeight: srcH,
     targetWidth: tgtW,
     targetHeight: tgtH,
   })
 
+  const hasSourceFork = (sourceFan?.branches.length ?? 0) > 0
+  const hasTargetFork = (targetFan?.branches.length ?? 0) > 0
   const INTERACTION_PADDING = 24
-  const interactionPath = routeStyle === 'bezier'
+  const interactionPath = !hasSourceFork && !hasTargetFork && routeStyle === 'bezier'
     ? buildViewConnectorPath({
       routeStyle,
       sourceX,
       sourceY,
       targetX,
       targetY,
-      sourcePosition,
-      targetPosition,
+      sourcePosition: routedSourcePosition,
+      targetPosition: routedTargetPosition,
       sourceWidth: Math.max(srcW - INTERACTION_PADDING * 2, 0),
       sourceHeight: Math.max(srcH - INTERACTION_PADDING * 2, 0),
       targetWidth: Math.max(tgtW - INTERACTION_PADDING * 2, 0),
@@ -180,7 +187,7 @@ function ViewBezierConnector({
   const badgeFontSize = 11
   const badgeHorizontalPadding = 7
   const badgeSize = 24
-  const labelWidth = textWidth + padding[1] * 2
+  const labelWidth = fullText ? textWidth + padding[1] * 2 : 0
   const badgeWidth = proxyBadgeText
     ? Math.max(badgeSize, measureEdgeLabel(proxyBadgeText, `600 ${badgeFontSize}px Inter, system-ui, sans-serif`) + badgeHorizontalPadding * 2)
     : 0
@@ -205,7 +212,13 @@ function ViewBezierConnector({
   const direction = data?.direction === 'bidirectional' ? 'both' : (data?.direction ?? 'forward')
   const labelCenterY = labelLayout.y - (proxyBadgeText ? (stackHeight - labelHeight) / 2 : 0)
   const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
-  const combinedInteractionPath = `${interactionPath}${labelPath}`
+  const branchPaths = [...(sourceFan?.branches ?? []), ...(targetFan?.branches ?? []), ...(sourceFan?.stems ?? []), ...(targetFan?.stems ?? [])]
+  const combinedInteractionPath = `${interactionPath}${branchPaths.length ? ` ${branchPaths.join(' ')}` : ''}${labelPath}`
+  const visibleStyle = {
+    ...style,
+    ...(isTagDraggedOver && canDropTag ? { stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : {}),
+    ...(selected ? { strokeWidth: 4 } : {}),
+  }
   const handleBadgeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -218,13 +231,9 @@ function ViewBezierConnector({
     <g {...tagDropProps} className="vieweditor-connector" data-connector-direction={direction}>
       <BaseEdge
         path={path}
-        markerStart={markerStart}
-        markerEnd={markerEnd}
-        style={{
-          ...style,
-          ...(isTagDraggedOver && canDropTag ? { stroke: tagDrag?.color || 'var(--accent)', strokeWidth: 3 } : {}),
-          ...(selected ? { strokeWidth: 4 } : {}),
-        }}
+        markerStart={sourceFan?.branches.length ? undefined : markerStart}
+        markerEnd={targetFan?.branches.length ? undefined : markerEnd}
+        style={visibleStyle}
         interactionWidth={0}
       />
       <BaseEdge
@@ -233,6 +242,15 @@ function ViewBezierConnector({
         interactionWidth={20}
         style={{ stroke: 'transparent' }}
       />
+      {/* Split bridge gaps so SVG does not put endpoint arrows on each gap. */}
+      {sourceFan?.branches.flatMap((branch, index) => branch.split(/(?=M )/).filter(Boolean).map((part, partIndex) =>
+        <BaseEdge key={`source-${index}-${partIndex}`} path={part} markerStart={partIndex === 0 ? markerStart : undefined} style={visibleStyle} interactionWidth={0} />))}
+      {targetFan?.branches.flatMap((branch, index) => {
+        const parts = branch.split(/(?=M )/).filter(Boolean)
+        return parts.map((part, partIndex) => <BaseEdge key={`target-${index}-${partIndex}`} path={part} markerEnd={partIndex === parts.length - 1 ? markerEnd : undefined} style={visibleStyle} interactionWidth={0} />)
+      })}
+      {[...(sourceFan?.stems ?? []), ...(targetFan?.stems ?? [])].map((stem, index) =>
+        <BaseEdge key={`stem-${index}`} path={stem} style={visibleStyle} interactionWidth={0} />)}
       {(fullText || proxyBadgeText) && (
         <EdgeLabelRenderer>
           <div

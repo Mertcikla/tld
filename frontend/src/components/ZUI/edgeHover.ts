@@ -1,8 +1,10 @@
+import { bundlePathPolylines, type BundlePort } from '../../utils/bundledConnector'
+import { buildZUIBundleFans } from './connectorBundles'
 import { isSubHandle } from '../../utils/subElements'
 import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
-import { getExpandThresholds, transitionT, nodeVisualGeometry } from './layoutEngine'
+import { getExpandThresholds, transitionT, nodeVisualGeometry, nodeVisualLayout } from './layoutEngine'
 import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -118,6 +120,7 @@ export function buildEdgeRoutePoints(
   sourceSlotScale = 1,
   targetSlotScale = 1,
   detailZoom = 1,
+  bundleEndpoints?: { source?: BundlePort; target?: BundlePort },
 ): { points: EdgeRoutePoint[]; midX: number; midY: number } {
   const sourcePoint = getHandleFlowPosition(
     source.worldX,
@@ -147,6 +150,8 @@ export function buildEdgeRoutePoints(
     if (point.side === 'left' || point.side === 'right') point.y += delta
     else point.x += delta
   }
+  if (bundleEndpoints?.source) Object.assign(sourcePoint, bundleEndpoints.source)
+  if (bundleEndpoints?.target) Object.assign(targetPoint, bundleEndpoints.target)
   const type = normalizeEdgeRouteType(edge.type)
 
   if (type === 'bezier') {
@@ -293,21 +298,32 @@ export function buildEdgeSpatialIndex(
       return visual
     }
 
+    const visibleEdges = edges.filter(edge => {
+      const source = nodeMap.get(edge.sourceId)
+      const target = nodeMap.get(edge.targetId)
+      return !!source && !!target && !hidden(source) && !hidden(target)
+    })
+    const fans = buildZUIBundleFans(nodes.filter(node => !hidden(node)).map(node => {
+      const geometry = nodeVisualGeometry(node, scale * zoom, thresholds.end)
+      return { node: nodeVisualLayout(node, geometry), x: node.worldX + geometry.offsetX,
+        y: node.worldY + geometry.offsetY, scale: geometry.scale }
+    }), visibleEdges, zoom * scale)
     for (const [i, edge] of edges.entries()) {
       const source = nodeMap.get(edge.sourceId)
       const target = nodeMap.get(edge.targetId)
       if (!source || !target || hidden(source) || hidden(target)) continue
+      const sourceFan = fans.get(`${edge.id}:source`), targetFan = fans.get(`${edge.id}:target`)
       const visualSource = visualNode(source)
       const visualTarget = visualNode(target)
       const route = buildEdgeRoutePoints(visualSource, visualTarget, {
         ...edge,
         sourceHandle: handles.get(`${i}:source`) ?? edge.sourceHandle,
         targetHandle: handles.get(`${i}:target`) ?? edge.targetHandle,
-      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW, zoom * scale)
+      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW, zoom * scale, { source: sourceFan, target: targetFan })
       const points = route.points.map((point) => ({ x: offsetX + point.x * scale, y: offsetY + point.y * scale }))
       const first = points[0]
       const last = points[points.length - 1]
-      addEdgeToSpatialIndex(index, {
+      const indexed: IndexedEdge = {
         kind: 'edge', x1: first.x, y1: first.y, x2: last.x, y2: last.y,
         midX: offsetX + route.midX * scale, midY: offsetY + route.midY * scale,
         points, sourceLabel: source.label, targetLabel: target.label,
@@ -317,7 +333,15 @@ export function buildEdgeSpatialIndex(
         relationship: edge.relationship ?? null,
         id: edge.id, diagramId: source.diagramId,
         sourceObjId: source.elementId, targetObjId: target.elementId, change: edge.change, clip,
-      })
+      }
+      addEdgeToSpatialIndex(index, indexed)
+      for (const fan of [sourceFan, targetFan]) if (fan) for (const branch of [...fan.branches, ...fan.stems]) {
+        for (const route of bundlePathPolylines(branch)) {
+          const branchPoints = route.map(point => ({ x: offsetX + (fan.originX + point.x * fan.scale) * scale,
+            y: offsetY + (fan.originY + point.y * fan.scale) * scale }))
+          addEdgeToSpatialIndex(index, { ...indexed, points: branchPoints })
+        }
+      }
     }
 
     for (const node of nodes) {

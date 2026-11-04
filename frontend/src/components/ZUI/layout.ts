@@ -1,3 +1,4 @@
+import { alignCodeBundleHandles } from './connectorBundles'
 // src/components/ZUI/layout.ts
 
 import type {
@@ -282,6 +283,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
       tags: e.tags,
     }))
 
+    alignCodeBundleHandles(nodes, edges)
     groups.push({
       diagramId: diag.id,
       label: diag.name,

@@ -3,7 +3,7 @@ import { CHANGE_RING_COLORS } from './changeOverlay'
 import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
-import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, subDetail } from '../../utils/subElements'
+import { expandLineHandles, isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, subDetail } from '../../utils/subElements'
 import { buildSymbolPresentation, foldBannerBounds, symbolStems, symbolPresentationRowHeight, type SymbolPresentation } from '../../utils/subElementSymbols'
 import { peekSubSource, requestSubSource, type SubSource } from '../../utils/subElementSource'
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
@@ -45,7 +45,7 @@ const firstRow = (node: LayoutNode, zoom: number) => {
   if (nodeDetail(node, zoom) !== 'code' || !source?.diff) return 0
   return Math.max(0, source.diff.lines.findIndex(line => line.change === 'added' || line.change === 'removed') - 3)
 }
-const presentations = new WeakMap<LayoutNode, { expandedFolds: readonly number[]; height: number; headerHeight?: number; detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
+const presentations = new WeakMap<LayoutNode, { expandedFolds: readonly number[]; height: number; headerHeight?: number; detail: string; first: number; fontSize: number; connectedKey: string; connectedOnly?: boolean; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
   const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
@@ -54,12 +54,14 @@ export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentati
   const appearance = readSourcePreviewAppearance(node.diagramId, node.elementId)
   const fontSize = Math.min(Math.max(appearance.fontSize ?? 12, detail === 'summary' || detail === 'structure' ? 9 / zoom : 0), 14 / zoom)
   const lineNumbers = appearance.lineNumbers ?? detail === 'code'
-  const cached = presentations.get(node)
-  if (cached && cached.expandedFolds === expandedFolds && cached.height === node.worldH && cached.headerHeight === node.subHeaderHeight && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, expandedFolds, width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
+  const connectedKey = connected.join('|')
+  const connectedOnly = node.subConnectedOnly ?? appearance.connectedOnly
+  const cached = presentations.get(node)
+  if (cached && cached.expandedFolds === expandedFolds && cached.height === node.worldH && cached.headerHeight === node.subHeaderHeight && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.connectedKey === connectedKey && cached.connectedOnly === connectedOnly && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
+  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, expandedFolds, width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly })
 
-  presentations.set(node, { expandedFolds, height: node.worldH, headerHeight: node.subHeaderHeight, appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
+  presentations.set(node, { expandedFolds, height: node.worldH, headerHeight: node.subHeaderHeight, appearance, detail, first, fontSize, connectedKey, connectedOnly, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
 
@@ -145,7 +147,15 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
   const model = subNodeSymbols(node, zoom)
   const diffMode = detail === 'code' && !!source?.diff
   const pulse = activeHandle ? 0.75 + Math.sin(performance.now() / 220) * 0.2 : 0.5
-  const active = (left: string, right: string) => activeHandle === left || activeHandle === right || (!!activeHandle && model.endpoints.get(activeHandle)?.area?.key === right)
+  const activeSet = new Set<string>()
+  if (activeHandle) {
+    for (const id of activeHandle.split('|').flatMap(raw => [raw, ...expandLineHandles(raw)])) {
+      activeSet.add(id)
+      const areaKey = model.endpoints.get(id)?.area?.key
+      if (areaKey) activeSet.add(areaKey)
+    }
+  }
+  const active = (left: string, right: string) => activeSet.size > 0 && (activeSet.has(left) || activeSet.has(right))
   ctx.save(); ctx.globalAlpha = alpha
   const drawBorder = () => {
     ctx.strokeStyle = accent; ctx.lineWidth = 1.5 / zoom
@@ -204,6 +214,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
     ctx.globalAlpha = alpha * (isActive ? pulse : diffMode ? 0.3 : 0.52); ctx.stroke()
   }
   ctx.globalAlpha = alpha
+  const areaByStartRow = isSymbolDetail(detail) ? new Map(model.areas.map(area => [area.start, area])) : undefined
   for (let row = 0; detail !== 'structure' && row < rows; row++) {
     const index = first + row, displayRow = model.rows[index], sourceIndex = displayRow.sourceIndex, cy = model.headerHeight + model.contentInset + (row + first - position + 0.5) * model.rowHeight
     ctx.fillStyle = '#e1e6ed'; ctx.font = subCodeFont(model.fontSize)
@@ -234,7 +245,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
       drawSourceBanner(ctx, scrollLeft, model.headerHeight + bounds.top - offset, w, bounds.height, zoom, `${displayRow.collapsed} ${isSymbolDetail(detail) ? 'symbols' : 'lines'} hidden`, '', 'collapsed', bodyBg, symbolAccent)
       continue
     }
-    const rowArea = isSymbolDetail(detail) ? model.areas.find(area => area.start === index) : undefined
+    const rowArea = areaByStartRow?.get(index)
     if (model.lineNumbers) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(String(isSymbolDetail(detail) ? rowArea?.symbol.startLine ?? '' : (source?.startLine ?? 1) + sourceIndex), 12, cy) }
     if (isSymbolDetail(detail)) {
       const area = rowArea
@@ -258,7 +269,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
   ctx.restore()
   for (const { endpoint, area, sourceX, sourceY, targetX, targetY } of symbolStems(model, w, h, offset, scrollLeft)) {
     if (!endpoint.connected && !active(area.leftId, area.rightId)) continue
-    ctx.strokeStyle = symbolAccent; ctx.lineWidth = 1.4 / zoom; ctx.globalAlpha = alpha * (diffMode ? 0.3 : active(area.leftId, area.rightId) ? pulse : 0.55)
+    ctx.strokeStyle = symbolAccent; ctx.lineWidth = 2 / zoom; ctx.globalAlpha = alpha * (diffMode ? 0.3 : active(area.leftId, area.rightId) ? pulse : 1)
     if (active(area.leftId, area.rightId)) { ctx.setLineDash([6 / zoom, 4 / zoom]); ctx.lineDashOffset = -performance.now() / 50 / zoom }
     roundedStep(ctx, sourceX, sourceY, targetX, targetY)
     ctx.setLineDash([])

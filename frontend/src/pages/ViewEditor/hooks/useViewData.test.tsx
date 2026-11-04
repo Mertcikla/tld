@@ -59,7 +59,7 @@ describe('editor canvas tags', () => {
     expect(node('1').style?.opacity).toBe(0.55)
     expect(node('2').style?.opacity).toBe(0.55)
     expect(node('3').style?.opacity).toBe(0.1)
-    expect(edge('10').style?.opacity).toBe(0.8)
+    expect(edge('10').style?.opacity).toBe(1)
     expect(edge('11').style?.opacity).toBe(0.1)
     expect(useStore.getState().nodes.map((node) => node.position)).toEqual(initial)
     expect(node('1').data.tags).toEqual(['api'])
@@ -78,7 +78,7 @@ describe('editor canvas tags', () => {
     expect(node('1').data.isConnectorHighlighted).toBe(false)
 
     act(() => renderer.update(render({ hovered: ['critical'] })))
-    expect(edge('10').style).toMatchObject({ stroke: '#f00', strokeWidth: 3, opacity: 0.8 })
+    expect(edge('10').style).toMatchObject({ stroke: '#f00', strokeWidth: 3, opacity: 1 })
     expect(edge('10').markerEnd).toMatchObject({ color: '#f00' })
     expect(edge('10').markerStart).toMatchObject({ color: '#f00' })
     expect(node('1').data.forceShowTagPopup).toBe(false)
@@ -92,15 +92,15 @@ describe('editor canvas tags', () => {
     // connectors dim, while new targets become interactive even if hover lingers.
     act(() => renderer.update(render({ hovered: ['critical'], dragged: ['critical'] })))
     expect(edge('10').style).toMatchObject({ opacity: 0.1, pointerEvents: 'none' })
-    expect(edge('11').style).toMatchObject({ opacity: 0.8, pointerEvents: 'auto' })
-    expect(edge('12').style).toMatchObject({ opacity: 0.8, pointerEvents: 'auto' })
+    expect(edge('11').style).toMatchObject({ opacity: 1, pointerEvents: 'auto' })
+    expect(edge('12').style).toMatchObject({ opacity: 1, pointerEvents: 'auto' })
     expect(node('1').data.tagHiddenHandleIds).toEqual([edge('10').sourceHandle])
     expect(node('2').data.tagHiddenHandleIds).toEqual([edge('10').targetHandle])
     // A layer is still useful when the connector has only some of its tags.
     act(() => renderer.update(render({ hovered: ['critical'], dragged: ['critical', 'backend'] })))
-    expect(edge('10').style).toMatchObject({ opacity: 0.8, pointerEvents: 'auto' })
+    expect(edge('10').style).toMatchObject({ opacity: 1, pointerEvents: 'auto' })
     act(() => renderer.update(render({})))
-    expect(edge('10').style).toMatchObject({ opacity: 0.8, pointerEvents: 'auto' })
+    expect(edge('10').style).toMatchObject({ opacity: 1, pointerEvents: 'auto' })
     expect(node('1').data.tagHiddenHandleIds).toEqual([])
 
     act(() => renderer.update(render({ hidden: ['critical'] })))
@@ -113,12 +113,12 @@ describe('editor canvas tags', () => {
     expect(node('2').style?.pointerEvents).toBe('none')
 
     act(() => renderer.update(render({ selected: ['api'] })))
-    expect(edge('12').style?.opacity).toBe(0.8)
+    expect(edge('12').style?.opacity).toBe(1)
     expect(edge('10').style?.opacity).toBe(0.1)
     act(() => renderer.update(render({})))
     expect(useStore.getState().nodes.every((node) => node.style === undefined && node.data.tagHiddenHandleIds.length === 0)).toBe(true)
     expect(node('1').data.reconnectCandidates).toHaveLength(3)
-    expect(useStore.getState().edges.every((edge) => edge.style?.opacity === 0.8 && edge.style.strokeWidth === 2)).toBe(true)
+    expect(useStore.getState().edges.every((edge) => edge.style?.opacity === 1 && edge.style.strokeWidth === 2)).toBe(true)
     act(() => renderer.unmount())
     client.clear()
   })
@@ -162,4 +162,28 @@ describe('connector handle placement', () => {
     act(() => renderer.unmount())
     client.clear()
   })
+})
+
+
+it('routes bundle ports toward their neighbor during moves and preserves the stored handles', () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  let renderer: ReturnType<typeof create>
+  act(() => { renderer = create(<QueryClientProvider client={client}><Harness /></QueryClientProvider>) })
+  const file = { repository_id: 'indexed', file_path: 'api.py' }
+  const link = { ...connector(10, 1, 2, []), source_handle: 'right-line-12,18,26', target_handle: 'left-line-11,35' }
+  act(() => useStore.setState({
+    viewElements: [{ ...placed(1, []), ...file, position_x: 500 }, { ...placed(2, []), ...file, position_x: 0 }],
+    connectors: [link],
+  }))
+  const handles = () => useStore.getState().edges.map(edge => [edge.sourceHandle, edge.targetHandle])
+  expect(handles()).toEqual([['left-line-12,18,26', 'right-line-11,35']])
+  const source = useStore.getState().nodes.find(node => node.id === '1')!
+  act(() => useStore.getState().setNodes(nodes => nodes.map(node => node.id === '1'
+    ? { ...node, dragging: true, position: { ...node.position, x: -500 } } : node)))
+  expect(handles()).toEqual([['right-line-12,18,26', 'left-line-11,35']])
+  expect(useStore.getState().connectors[0]).toEqual(link)
+  expect(useStore.getState().nodes.find(node => node.id === '1')!.data.connectedHandleIds).toContain('right-line-12,18,26')
+  expect(source.data.connectedHandleIds).toContain('left-line-12,18,26')
+  act(() => renderer.unmount())
+  client.clear()
 })

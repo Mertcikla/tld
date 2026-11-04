@@ -1,3 +1,4 @@
+import { buildZUIBundleFans } from './connectorBundles'
 import { isSubElement, subDetail } from '../../utils/subElements'
 import { drawSubElement, nodeDetail, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
@@ -38,7 +39,7 @@ const MIN_LABEL_PX = 12
 const MIN_DRAW_PX = 2
 const BADGE_THRESHOLD = 100
 const CONNECTOR_MIN_ALPHA = 0.32
-const CONNECTOR_MAX_ALPHA = 0.95
+const CONNECTOR_MAX_ALPHA = 1
 const CONNECTOR_LINE_PX = 2
 const CONNECTOR_ENDPOINT_MIN_ALPHA = 0.35
 const MIN_NODE_W_FOR_CONNECTOR_DETAIL = 120
@@ -993,7 +994,7 @@ function drawSceneNode(
   if (isSubElement(layout.subKind ?? layout.type) && nodeDetail(layout, drawZoom) !== 'overview') {
     const hovered = renderCtx.hoveredItem
     const activeHandle = hovered?.type === 'node' && hovered.data === layout ? hovered.symbolHandle
-      : hovered?.type === 'edge' ? layout.subConnections?.find(connection => connection.id === hovered.data.id)?.handleId : undefined
+      : hovered?.type === 'edge' ? layout.subConnections?.filter(connection => connection.id === hovered.data.id).map(connection => connection.handleId).join('|') || undefined : undefined
     const groupTag = layout.tags.find(isElementGroupTag)
     const geometry = nodeVisualGeometry(layout, drawZoom / state.leafCapScale, getExpandThresholds(canvasW).end)
     const preview = nodeVisualLayout(layout, geometry)
@@ -1354,6 +1355,17 @@ export function edgePairKey(sourceId: string, targetId: string): string {
   return JSON.stringify(sourceId < targetId ? [sourceId, targetId] : [targetId, sourceId])
 }
 
+const branchPathCache = new Map<string, Path2D>()
+function getBranchPath2D(branch: string): Path2D {
+  let cached = branchPathCache.get(branch)
+  if (!cached) {
+    cached = new Path2D(branch)
+    if (branchPathCache.size >= 512) branchPathCache.delete(branchPathCache.keys().next().value!)
+    branchPathCache.set(branch, cached)
+  }
+  return cached
+}
+
 function drawEdges(
   ctx: CanvasRenderingContext2D,
   sceneNodes: SceneNode[],
@@ -1376,6 +1388,19 @@ function drawEdges(
 
   const { nodeMap, sceneNodeMap } = getDrawEdgesLayoutMetadata(sceneNodes)
   const changeMode = sceneNodes.some((sn) => subtreeHasChangeOverlay(sn.layout))
+  const bundleEdges = sceneNodes.flatMap(sn => {
+    if (currentHiddenTags.size > 0 && isHiddenByTags(sn.layout)) return []
+    return sn.layout.edgesOut.flatMap(edge => {
+      const target = nodeMap.get(edge.targetId)
+      if (!target || (currentHiddenTags.size > 0 && isHiddenByTags(target))) return []
+      return [{ ...edge, sourceId: sn.layout.id }]
+    })
+  })
+  const fans = buildZUIBundleFans(sceneNodes.map(({ layout }) => {
+    const geometry = nodeVisualGeometry(layout, zoom, thresholds.end)
+    return { node: nodeVisualLayout(layout, geometry), x: layout.worldX - ox + geometry.offsetX,
+      y: layout.worldY - oy + geometry.offsetY, scale: geometry.scale }
+  }), bundleEdges, zoom)
 
   for (const sn of sceneNodes) {
     const node = sn.layout
@@ -1436,10 +1461,19 @@ function drawEdges(
         false, sTarget,
       )
 
-      const sourceAnchor = subNodeHandleAnchor(nodeVisualLayout(node, sourceGeometry), edge.sourceHandle, zoom * sSource)
-      const targetAnchor = subNodeHandleAnchor(nodeVisualLayout(target, targetGeometry), edge.targetHandle, zoom * sTarget)
-      if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x * sSource; sH.y = effYSource + sourceAnchor.y * sSource; sH.pos = sourceAnchor.side }
-      if (targetAnchor) { tH.x = effXTarget + targetAnchor.x * sTarget; tH.y = effYTarget + targetAnchor.y * sTarget; tH.pos = targetAnchor.side }
+      const sourceFan = fans.get(`${edge.id}:source`), targetFan = fans.get(`${edge.id}:target`)
+      if (sourceFan) {
+        sH.x = sourceFan.x; sH.y = sourceFan.y; sH.pos = sourceFan.side
+      } else {
+        const sourceAnchor = subNodeHandleAnchor(nodeVisualLayout(node, sourceGeometry), edge.sourceHandle, zoom * sSource)
+        if (sourceAnchor) { sH.x = effXSource + sourceAnchor.x * sSource; sH.y = effYSource + sourceAnchor.y * sSource; sH.pos = sourceAnchor.side }
+      }
+      if (targetFan) {
+        tH.x = targetFan.x; tH.y = targetFan.y; tH.pos = targetFan.side
+      } else {
+        const targetAnchor = subNodeHandleAnchor(nodeVisualLayout(target, targetGeometry), edge.targetHandle, zoom * sTarget)
+        if (targetAnchor) { tH.x = effXTarget + targetAnchor.x * sTarget; tH.y = effYTarget + targetAnchor.y * sTarget; tH.pos = targetAnchor.side }
+      }
       ctx.save()
       ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
       ctx.strokeStyle = strokeColor
@@ -1454,6 +1488,15 @@ function drawEdges(
         ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))
       }
 
+      const animateHover = isHovered && (typeof window === 'undefined' || !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+      if (animateHover) {
+        const time = performance.now() / 1000
+        if (dir === 'none') ctx.globalAlpha *= 0.7 + Math.sin(time * Math.PI * 2 / 1.2) * 0.3
+        else {
+          ctx.setLineDash((dir === 'both' || dir === 'bidirectional' ? [4, 4] : [8, 4]).map(value => value / zoom))
+          ctx.lineDashOffset = (dir === 'backward' ? 1 : -1) * time * 30 / zoom
+        }
+      }
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
       let finalAngleS = 0
@@ -1574,18 +1617,28 @@ function drawEdges(
         }
       }
 
+      const sourceTips = sourceFan?.branches.length ? sourceFan.ports.map(port => ({ ...port, angle: port.side === 'left' ? 0 : Math.PI })) : [{ ...sH, angle: finalAngleS }]
+      const targetTips = targetFan?.branches.length ? targetFan.ports.map(port => ({ ...port, angle: port.side === 'left' ? 0 : Math.PI })) : [{ ...tH, angle: finalAngleT }]
+      const effectiveSourceArrowSize = sourceFan?.branches.length ? Math.min(sourceArrowSize, 8 * sourceFan.scale) : sourceArrowSize
+      const effectiveTargetArrowSize = targetFan?.branches.length ? Math.min(targetArrowSize, 8 * targetFan.scale) : targetArrowSize
       ctx.save()
-      if (drawTargetArrow) clipConnectorTip(ctx, tH.x, tH.y, finalAngleT, targetArrowSize)
-      if (drawSourceArrow) clipConnectorTip(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize)
+      if (drawTargetArrow) for (const tip of targetTips) clipConnectorTip(ctx, tip.x, tip.y, tip.angle, effectiveTargetArrowSize)
+      if (drawSourceArrow) for (const tip of sourceTips) clipConnectorTip(ctx, tip.x, tip.y, tip.angle, effectiveSourceArrowSize)
       ctx.stroke(connectorPath)
+      for (const fan of [sourceFan, targetFan]) if (fan?.branches.length) {
+        ctx.save()
+        ctx.translate(fan.originX, fan.originY)
+        ctx.scale(fan.scale, fan.scale)
+        ctx.lineWidth /= fan.scale
+        ctx.setLineDash(ctx.getLineDash().map(value => value / fan.scale))
+        ctx.lineDashOffset /= fan.scale
+        for (const branch of [...fan.branches, ...fan.stems]) ctx.stroke(getBranchPath2D(branch))
+        ctx.restore()
+      }
       ctx.restore()
 
-      if (drawTargetArrow) {
-        drawArrowHead(ctx, tH.x, tH.y, finalAngleT, targetArrowSize, strokeColor)
-      }
-      if (drawSourceArrow) {
-        drawArrowHead(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize, strokeColor)
-      }
+      if (drawTargetArrow) for (const tip of targetTips) drawArrowHead(ctx, tip.x, tip.y, tip.angle, effectiveTargetArrowSize, strokeColor)
+      if (drawSourceArrow) for (const tip of sourceTips) drawArrowHead(ctx, tip.x, tip.y, tip.angle, effectiveSourceArrowSize, strokeColor)
 
       if ((!diffReading || isHovered) && !lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, sourceDetailScreenW, targetDetailScreenW)) {
         const screenFontSize = 12

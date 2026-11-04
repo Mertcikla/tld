@@ -4,7 +4,7 @@ import { Box } from '@chakra-ui/react'
 import { getSmoothStepPath, Handle, Position } from 'reactflow'
 import { foldBannerBounds, symbolStems, type SymbolArea, type SymbolEndpoint, type SymbolOverflow, type SymbolPresentation } from '../utils/subElementSymbols'
 import { groupHighlightColors } from '../utils/elementGroups'
-import { SUB_HEADER } from '../utils/subElements'
+import { expandLineHandles, SUB_HEADER } from '../utils/subElements'
 import type { NodeData } from './ElementNode'
 import ElementReconnectZone from './ElementReconnectZone'
 import { compareReconnectCandidates } from './elementReconnect'
@@ -23,7 +23,9 @@ const PORT_SIZE = 9
 export function SubElementSymbolRegions({ presentation, scrollTop, interactions }: {
   presentation: SymbolPresentation; scrollTop: number; interactions: SymbolInteractions
 }) {
-  return <>{presentation.areas.filter(area => SUB_HEADER + area.contentTop + area.height - scrollTop >= presentation.viewportTop && SUB_HEADER + area.contentTop - scrollTop <= presentation.viewportBottom).map(area => {
+  const firstRow = Math.max(0, Math.floor(scrollTop / presentation.rowHeight) - 1)
+  const lastRow = firstRow + Math.ceil((presentation.viewportBottom - presentation.headerHeight) / presentation.rowHeight) + 3
+  return <>{presentation.areas.filter(area => area.end >= firstRow && area.start <= lastRow).map(area => {
     const highlighted = interactions.showHighlight(area)
     const active = highlighted && interactions.isActive(area)
     const colors = groupHighlightColors(area.color, active)
@@ -39,6 +41,22 @@ export function SubElementSymbolPorts({ textless = false, data, presentation, wi
   data: NodeData; presentation: SymbolPresentation; width: number; height: number; scrollTop: number; scrollLeft: number; canEdit: boolean; interactions: SymbolInteractions
   onReveal: (index: number) => void
 }) {
+  const connectedSet = new Set(data.connectedHandleIds ?? [])
+  const candidateByPosition = new Map<string, NonNullable<NodeData['reconnectCandidates']>[number]>()
+  if (canEdit && data.onStartHandleReconnect && data.reconnectCandidates?.length) {
+    const hiddenSet = new Set(data.tagHiddenHandleIds ?? [])
+    const sorted = [...data.reconnectCandidates]
+      .filter(candidate => !hiddenSet.has(candidate.handleId))
+      .sort(compareReconnectCandidates)
+    for (const candidate of sorted) {
+      for (const handleId of [candidate.handleId, ...expandLineHandles(candidate.handleId)]) {
+        const anchor = presentation.endpoints.get(handleId)
+        if (!anchor) continue
+        const posKey = `${anchor.side}:${anchor.y}`
+        if (!candidateByPosition.has(posKey)) candidateByPosition.set(posKey, candidate)
+      }
+    }
+  }
   return <>
     <svg className="sub-symbol-stems" width={width} height={height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4 }} aria-hidden="true">
       <defs><clipPath id={`symbol-stems-${data.element_id}`}><rect x={0} y={SUB_HEADER} width={width} height={height - SUB_HEADER} /></clipPath></defs>
@@ -49,7 +67,7 @@ export function SubElementSymbolPorts({ textless = false, data, presentation, wi
           const targetX = edgeX - CARD_BORDER * (right ? 1.5 : 0.5)
           const path = sourceY === targetY ? `M ${sourceX} ${sourceY} H ${targetX}` : getSmoothStepPath({ sourceX, sourceY, targetX, targetY,
             sourcePosition: right ? Position.Right : Position.Left, targetPosition: right ? Position.Left : Position.Right, borderRadius: 8, offset: 10 })[0]
-          return <path key={endpoint.id} data-testid="sub-symbol-stem" data-symbol-handle={endpoint.id} className="sub-symbol-stem" data-active={interactions.isActive(area) ? 'true' : undefined} d={path} fill="none" stroke={area.color} strokeWidth={1.4} style={symbolStyle(area.color)} />
+          return <path key={endpoint.id} data-testid="sub-symbol-stem" data-symbol-handle={endpoint.id} className="sub-symbol-stem" data-active={interactions.isActive(area) ? 'true' : undefined} d={path} fill="none" stroke={area.color} strokeWidth={2} style={symbolStyle(area.color)} />
         })}
       </g>
     </svg>
@@ -72,15 +90,14 @@ export function SubElementSymbolPorts({ textless = false, data, presentation, wi
         }} />
     })}
     {[...presentation.endpoints.values()].map(endpoint => {
+      if (!endpoint.visible && !connectedSet.has(endpoint.id)) {
+        return <div key={endpoint.id} className={`react-flow__handle react-flow__handle-${endpoint.side}`} data-handleid={endpoint.id} style={{ top: endpoint.y, opacity: 0, pointerEvents: 'none', position: 'absolute' }} />
+      }
       const active = endpoint.area && interactions.isActive(endpoint.area)
       const shown = endpoint.visible && interactions.showStem(endpoint)
       // Aliases and offscreen symbols share one visible port. Pick up the selected
       // connection there while retaining its original semantic handle ID.
-      const candidate = endpoint.visible && canEdit && data.onStartHandleReconnect
-        ? [...(data.reconnectCandidates ?? [])].filter(candidate => {
-          const anchor = presentation.endpoints.get(candidate.handleId)
-          return anchor?.side === endpoint.side && anchor.y === endpoint.y && !data.tagHiddenHandleIds?.includes(candidate.handleId)
-        }).sort(compareReconnectCandidates)[0] : undefined
+      const candidate = endpoint.visible ? candidateByPosition.get(`${endpoint.side}:${endpoint.y}`) : undefined
       const position = endpoint.side === 'left' ? Position.Left : Position.Right
       return <Fragment key={endpoint.id}><Handle id={endpoint.id} type="source" position={position}
         isConnectable={canEdit} data-testid={shown ? 'sub-symbol-port' : undefined} data-symbol-port={shown ? 'true' : undefined}
