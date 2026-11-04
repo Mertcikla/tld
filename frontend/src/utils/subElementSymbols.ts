@@ -2,7 +2,7 @@ import { connectedSourceRows, sourceCodeRows, sourceDiffRows, type SourceDisplay
 import type { SubSource } from './subElementSource'
 import { symbolSignature, type SymbolSignature } from './subElementSignatures'
 import { expandCodeTabs, measureSubText, subCodeLineHeight, SUB_CODE_TEXT_X, SUB_SYMBOL_CONNECTOR_GAP, SUB_SYMBOL_PADDING } from './subElementText'
-import { isSymbolDetail, expandLineHandles, firstHandleLine, collapsedSymbols, displaySymbols, isSubHandle, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
+import { isSymbolDetail, expandLineHandles, firstHandleLine, collapsedSymbols, displaySymbols, isSubHandle, SUB_HEADER, symbolContainsLine, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
 
 
 export interface SymbolArea {
@@ -56,6 +56,7 @@ function documentSymbols(source: SubSource, path: string, fontSize: number, text
 export interface SymbolPresentationOptions {
   kind: string | null; source?: SubSource; path?: string; detail: SubDetail
   headerHeight?: number
+  expandedFolds?: readonly number[]
   connectedOnly?: boolean; fractionalMetrics?: boolean
   width: number; height: number; scrollTop?: number; connected?: readonly string[]; connectionCounts?: Readonly<Record<string, number>>; fontSize?: number; lineNumbers?: boolean
 }
@@ -67,7 +68,7 @@ export function symbolPresentationRowHeight(detail: SubDetail, fontSize: number,
   return (fractionalMetrics ? fontSize * 1.5 : subCodeLineHeight(fontSize)) + (isSymbolDetail(detail) ? detail === 'outline' ? 8 : 4 : 0)
 }
 
-function buildSymbolGeometry({ kind, source, path = '', detail, width, height, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false, headerHeight = SUB_HEADER }: SymbolPresentationOptions): SymbolGeometry {
+function buildSymbolGeometry({ kind, source, path = '', detail, width, height, connected = [], connectionCounts, fontSize = 12, lineNumbers = detail === 'code', connectedOnly = false, fractionalMetrics = false, headerHeight = SUB_HEADER, expandedFolds }: SymbolPresentationOptions): SymbolGeometry {
   const outline = collapsedSymbols(source, path)
   const symbolDetail = isSymbolDetail(detail)
   const signature = (symbol: SubSymbol): SymbolSignature => (detail === 'summary' || detail === 'structure')
@@ -83,7 +84,7 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
   const gutter = Math.max(SUB_CODE_TEXT_X - 14, (fractionalMetrics ? lineNumberWidth : Math.ceil(lineNumberWidth)) + 12)
   const textX = diffMode ? 32 + (lineNumberWidth + 10) * 2 : lineNumbers ? 14 + gutter : 14
   const folded = !diffMode && connectedOnly && source?.status === 'ready' && detail !== 'overview'
-    ? connectedSourceRows(source, connected.filter(id => (connectionCounts?.[id] ?? 1) > 0), symbolDetail) : undefined
+    ? connectedSourceRows(source, connected.filter(id => (connectionCounts?.[id] ?? 1) > 0), symbolDetail, expandedFolds) : undefined
   const rows: SourceDisplayRow[] = folded?.rows ?? (symbolDetail
     ? outline.map(symbol => ({ sourceIndex: symbol.startLine - (source?.startLine ?? 1), symbol }))
     : source ? diffMode ? sourceDiffRows(source) : sourceCodeRows(source.lines) : [])
@@ -113,11 +114,15 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
     const rightId = symbolHandle('right', symbol)
     const x = readingCode ? textX + indent - SUB_SYMBOL_PADDING : textX - 4
     const y = headerHeight + contentInset + (start + 0.5) * rowHeight
+    // Fold banners own their full row. Keep neighboring outlines inside their
+    // code rows instead of shrinking the banner and its label to make room.
+    const topInset = rows[start - 1]?.collapsed ? Math.max(1, highlightInset) : highlightInset
+    const bottomInset = rows[end + 1]?.collapsed ? Math.max(1, highlightInset) : highlightInset
     return { key: rightId, symbol, color: 'var(--accent)', leftId, rightId, start, end, x,
       signature: kind === 'code' && symbolDetail && source ? signature(symbol) : undefined,
       width: Math.max(40, readingCode ? textWidth - indent + SUB_SYMBOL_PADDING * 2 : textWidth + 20),
-      contentTop: start * rowHeight + contentInset + highlightInset,
-      height: (end - start + 1) * rowHeight - highlightInset * 2,
+      contentTop: start * rowHeight + contentInset + topInset,
+      height: (end - start + 1) * rowHeight - topInset - bottomInset,
       y, visible: true, depth, connected: false }
   })
   const byHandle = new Map<string, SymbolArea>()
@@ -134,9 +139,9 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
     let area = byHandle.get(id)
     const named = source ? symbolForHandle(id, source.symbols) : undefined
     const line = named?.startLine ?? firstHandleLine(id)
-    if (!area && Number.isFinite(line)) area = [...areas].reverse().find(candidate => line >= candidate.symbol.startLine && line <= candidate.symbol.endLine)
+    if (!area && Number.isFinite(line)) area = [...areas].reverse().find(candidate => symbolContainsLine(candidate.symbol, line))
     if (!area && named) area = areas.find(candidate => candidate.symbol.startLine >= named.startLine && candidate.symbol.endLine <= named.endLine)
-    const index = symbolDetail || (named && area) ? area?.start ?? 0 : Number.isFinite(line) ? displayIndex(line) : area?.start ?? 0
+    const index = symbolDetail || (area && (named || line < area.symbol.startLine)) ? area?.start ?? 0 : Number.isFinite(line) ? displayIndex(line) : area?.start ?? 0
     return { id, area, index, count: activeCounts.get(id) ?? 0 }
   })
   const symbolContentWidth = kind === 'code' ? areas.reduce((end, area) => Math.max(end, area.x + area.width + SUB_SYMBOL_CONNECTOR_GAP), 0) : 0
@@ -153,17 +158,18 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
 // Scroll frames only move cached geometry and recompute visible ports/overflow.
 function positionSymbolGeometry(geometry: SymbolGeometry, scrollTop: number): SymbolPresentation {
   const { rows, detail, height, headerHeight, rowHeight, highlightInset, contentInset, rowCount, fontSize, lineNumbers, textX, contentWidth } = geometry
+  const bannerHeight = foldBannerBounds(geometry, 0).height
   const areas = geometry.areas.map(area => ({ ...area, y: area.y - scrollTop }))
   const areaCopies = new Map(geometry.areas.map((area, index) => [area, areas[index]]))
   const connections = geometry.connections.map(connection => ({ ...connection, area: connection.area ? areaCopies.get(connection.area) : undefined }))
   // Overflow bands overlay the content only when an anchor is outside the full viewport.
   // They never add padding or alter the document's scroll height.
   const positions = [...areas.map(area => area.y), ...connections.filter(connection => connection.count > 0).map(connection => headerHeight + contentInset + (connection.index + 0.5) * rowHeight - scrollTop)]
-  const top = headerHeight + (positions.some(y => y < headerHeight) ? SUB_ELLIPSIS : 0)
-  const bottom = height - (positions.some(y => y > height) ? SUB_ELLIPSIS : 0)
+  const top = headerHeight + (positions.some(y => y < headerHeight) ? bannerHeight : 0)
+  const bottom = height - (positions.some(y => y > height) ? bannerHeight : 0)
   for (const area of areas) area.visible = area.y >= top && area.y <= bottom
-  const above: SymbolOverflow = { areas: areas.filter(area => area.y < top), endpoints: [], connectionCount: 0, y: headerHeight + SUB_ELLIPSIS / 2, color: 'var(--accent)' }
-  const below: SymbolOverflow = { areas: areas.filter(area => area.y > bottom), endpoints: [], connectionCount: 0, y: height - SUB_ELLIPSIS / 2, color: 'var(--accent)' }
+  const above: SymbolOverflow = { areas: areas.filter(area => area.y < top), endpoints: [], connectionCount: 0, y: headerHeight + bannerHeight / 2, color: 'var(--accent)' }
+  const below: SymbolOverflow = { areas: areas.filter(area => area.y > bottom), endpoints: [], connectionCount: 0, y: height - bannerHeight / 2, color: 'var(--accent)' }
   const endpoints = new Map<string, SymbolEndpoint>()
   const addEndpoint = (id: string, area: SymbolArea | undefined, index: number, visible = false) => {
     const rawY = headerHeight + contentInset + (index + 0.5) * rowHeight - scrollTop
@@ -225,7 +231,7 @@ export function buildSymbolPresentation(options: SymbolPresentationOptions): Sym
       cached = { lines: source.lines, symbols: source.symbols, tokens: source.tokens, diffLines: source.diff?.lines, status: source.status, start: source.startLine, end: source.endLine, variants: new Map() }
       symbolGeometries.set(source, cached)
     }
-    const key = JSON.stringify([options.headerHeight, options.kind, options.path, options.detail, options.width, options.height, options.fontSize, options.lineNumbers, options.connectedOnly, options.fractionalMetrics, options.connected, options.connectionCounts])
+    const key = JSON.stringify([options.expandedFolds, options.headerHeight, options.kind, options.path, options.detail, options.width, options.height, options.fontSize, options.lineNumbers, options.connectedOnly, options.fractionalMetrics, options.connected, options.connectionCounts])
     const existing = cached.variants.get(key)
     geometry = existing ?? buildSymbolGeometry(options)
     if (!existing) {
@@ -251,4 +257,12 @@ export function symbolStems(presentation: SymbolPresentation, width: number, _he
     const sourceY = Math.max(Math.max(presentation.viewportTop, top + inset), Math.min(Math.min(presentation.viewportBottom, bottom - inset), endpoint.y))
     return [{ endpoint, area, sourceX, sourceY, targetX: endpoint.side === 'right' ? width : 0, targetY: endpoint.y }]
   })
+}
+
+
+/** A full-height fold row keeps its label legible at every source font size. */
+export function foldBannerBounds(presentation: Pick<SymbolPresentation, 'rowHeight' | 'contentInset'>, index: number) {
+  // The first banner absorbs the body's initial padding without moving any code.
+  const inset = index === 0 ? 0 : presentation.contentInset
+  return { top: index * presentation.rowHeight + inset, height: presentation.rowHeight + presentation.contentInset - inset }
 }

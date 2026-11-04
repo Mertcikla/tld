@@ -42,7 +42,9 @@ export function expandLineHandles(id: string): string[] {
   return lines.length > 1 ? lines.map(line => lineHandle(id.startsWith('left') ? 'left' : 'right', line)) : [id]
 }
 
-export interface SubSymbol { name: string; type?: string; qualifiedName?: string; startLine: number; endLine: number }
+export interface SubSymbol { name: string; type?: string; qualifiedName?: string; startLine: number; attachmentStartLine?: number; endLine: number }
+/** Attachments use the full indexed declaration, including leading comments and decorators. */
+export const symbolContainsLine = (symbol: SubSymbol, line: number) => line >= (symbol.attachmentStartLine ?? symbol.startLine) && line <= symbol.endLine
 const symbolKey = (symbol: SubSymbol) => `${symbol.type ?? ''}:${symbol.qualifiedName || symbol.name}`
 export const symbolHandle = (side: 'left' | 'right', symbol: SubSymbol) => `${side}-symbol-${encodeURIComponent(symbolKey(symbol))}`
 export function symbolForHandle(id: string, symbols: SubSymbol[]) {

@@ -1,3 +1,4 @@
+import SubElementBanner from './SubElementBanner'
 import PreviewInteractionHint from './PreviewInteractionHint'
 import SubElementTextControls from './SubElementTextControls'
 import { readSourcePreviewAppearance, writeSourcePreviewAppearance, subscribeSourcePreviewAppearance } from '../utils/sourcePreviewAppearance'
@@ -11,13 +12,13 @@ import { Box, Button, Text } from '@chakra-ui/react'
 import { Handle, Position, useStore, useStoreApi } from 'reactflow'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import { readSourcePreviewSize, subscribeSourcePreviewSizes } from '../utils/sourcePreviewSize'
-import { buildSymbolPresentation, type SymbolArea } from '../utils/subElementSymbols'
+import { buildSymbolPresentation, foldBannerBounds, type SymbolArea } from '../utils/subElementSymbols'
 import { SubElementSymbolPorts, SubElementSymbolRegions, type SymbolInteractions } from './SubElementSymbolLayer'
 import type { NodeData } from './ElementNode'
 import { useSubElementLayout } from '../hooks/useSubElementLayout'
 import SubElementLayoutButtons from './SubElementLayoutButtons'
 import SubElementResizeHandle from './SubElementResizeHandle'
-import { isSubElement, SUB_ELLIPSIS, SUB_HEADER, subEditorSize, subElementKind, type SubDetail } from '../utils/subElements'
+import { isSubElement, SUB_HEADER, subEditorSize, subElementKind, type SubDetail } from '../utils/subElements'
 import { peekSubSource, requestSubSource, subscribeSubSources } from '../utils/subElementSource'
 import { expandCodeTabs, expandCodeTokens, SUB_CODE_FONT_FAMILY } from '../utils/subElementText'
 import { elementTechnologyText, resolveElementIconUrl } from '../utils/elementIcon'
@@ -46,18 +47,21 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const [, refresh] = useReducer(n => n + 1, 0)
   const [scrollTop, setScrollTop] = useState(0)
   const [scrollLeft, setScrollLeft] = useState(0)
+  const [expandedFolds, setExpandedFolds] = useState<number[]>([])
   const [scrollViewport, setScrollViewport] = useState<{ width: number; height: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const revealedSelection = useRef('')
   const flow = useStoreApi()
   const previewInteraction = usePreviewInteraction(detail !== 'overview', data.isCanvasMoving, scrollRef)
+  const foldIdentity = JSON.stringify([data.connectedHandleIds, data.tagHiddenHandleIds])
   const sourceIdentity = JSON.stringify([data.repo, data.repository_id, data.branch, data.file_path, data.language])
   const sourceLink = useMemo(() => ({ repo: data.repo, repository_id: data.repository_id, branch: data.branch, file_path: data.file_path, language: data.language }), [data.repo, data.repository_id, data.branch, data.file_path, data.language])
   const source = kind === 'code' ? peekSubSource(data) : undefined
   useEffect(() => kind === 'code' && detail !== 'overview' ? subscribeSubSources(refresh) : undefined, [kind, detail])
   useEffect(() => { if (kind === 'code' && detail !== 'overview') requestSubSource(sourceLink) }, [kind, sourceLink, detail])
   useEffect(() => { setScrollTop(0); setScrollLeft(0); if (scrollRef.current) { scrollRef.current.scrollTop = 0; scrollRef.current.scrollLeft = 0 } }, [sourceIdentity, detail, appearance.connectedOnly])
+  useEffect(() => { setExpandedFolds(previous => previous.length ? [] : previous) }, [sourceIdentity, detail, appearance.connectedOnly, source?.lines, source?.symbols, foldIdentity])
   const iconUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors)
   const technology = elementTechnologyText(data.technology, data.technology_connectors, !!iconUrl)
   const metadata = source?.status !== 'ready' ? source?.error || 'Loading source…' : technology
@@ -66,8 +70,9 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const connectionCounts: Record<string, number> = {}
   for (const candidate of data.reconnectCandidates ?? []) connectionCounts[candidate.handleId] = (connectionCounts[candidate.handleId] ?? 0) + 1
   for (const id of data.tagHiddenHandleIds ?? []) connectionCounts[id] = 0
-  const presentation = buildSymbolPresentation({ kind, source, path: data.file_path ?? '', detail, width, height, scrollTop, connected: data.connectedHandleIds, connectionCounts, fontSize: appearance.fontSize, lineNumbers, connectedOnly: appearance.connectedOnly })
+  const presentation = buildSymbolPresentation({ kind, source, path: data.file_path ?? '', detail, width, height, scrollTop, connected: data.connectedHandleIds, connectionCounts, fontSize: appearance.fontSize, lineNumbers, connectedOnly: appearance.connectedOnly, expandedFolds })
   const { rowHeight, rowCount } = presentation
+  const bannerHeight = foldBannerBounds(presentation, 0).height
   useEffect(() => {
     const key = JSON.stringify([detail, sourceIdentity, appearance.connectedOnly, selectedConnector?.id, data.selectedHandleIds])
     if (detail === 'overview' || !data.selectedHandleIds?.length) { revealedSelection.current = ''; return }
@@ -78,12 +83,12 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
     if (!scroller || !area) return
     revealedSelection.current = key
     const top = area.start * rowHeight, bottom = (area.end + 1) * rowHeight
-    const nextTop = top < scroller.scrollTop + 16 || bottom > scroller.scrollTop + scroller.clientHeight - 16
-      ? Math.max(0, top - 16) : scroller.scrollTop
+    const nextTop = top < scroller.scrollTop + bannerHeight || bottom > scroller.scrollTop + scroller.clientHeight - bannerHeight
+      ? Math.max(0, top - bannerHeight) : scroller.scrollTop
     const nextLeft = area.x < scroller.scrollLeft || area.x > scroller.scrollLeft + scroller.clientWidth - 16
       ? Math.max(0, area.x - 12) : scroller.scrollLeft
     scroller.scrollTo({ top: nextTop, left: nextLeft, behavior: 'auto' })
-  }, [detail, sourceIdentity, appearance.connectedOnly, selectedConnector?.id, data.selectedHandleIds, presentation, rowHeight])
+  }, [detail, sourceIdentity, appearance.connectedOnly, selectedConnector?.id, data.selectedHandleIds, presentation, rowHeight, bannerHeight])
   useLayoutEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
@@ -173,10 +178,14 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
           const sourceIndex = displayRow.sourceIndex
           const line = (source?.startLine ?? 1) + sourceIndex
           const area = [...presentation.areas].reverse().find(group => index >= group.start && index <= group.end)
+          const foldBounds = foldBannerBounds(presentation, index)
+          if (displayRow.collapsed) return <SubElementBanner key={index} data-testid="sub-source-fold-banner" direction="collapsed"
+            label={`${displayRow.collapsed} ${reading ? 'lines' : 'symbols'} hidden`} top={`${foldBounds.top}px`} left={`${scrollLeft}px`} right="auto" w={`${viewportWidth}px`} h={`${foldBounds.height}px`} fontSize={`${Math.max(1, Math.min(11, foldBounds.height - 2))}px`}
+            onClick={() => setExpandedFolds(previous => [...previous, sourceIndex])} />
           return <Box key={index} position="absolute" top={`${index * rowHeight + presentation.contentInset}px`} left={0} minW={`${width - 2}px`} h={`${rowHeight}px`} px="14px" fontFamily={SUB_CODE_FONT_FAMILY} fontWeight="400" style={{ fontVariantLigatures: 'none' }} fontSize={`${appearance.fontSize}px`} lineHeight={`${rowHeight}px`} whiteSpace="pre" pointerEvents="none" zIndex={1}>
             {kind === 'code' && lineNumbers && !displayRow.collapsed && <Text data-testid="source-code-line-number" as="span" display="inline-block" w={`${presentation.textX - 14}px`} color="gray.500">{reading ? line : area?.symbol.startLine}</Text>}
             <span data-symbol-handle={area?.leftId} data-symbol-key={area?.key} className="sub-symbol-text" style={{ pointerEvents: 'auto', display: 'inline-block', minWidth: area && !(kind === 'code' && reading) ? Math.max(0, area.width - 12) : undefined }} onMouseEnter={() => interactions.onHover(area?.key ?? null)} onMouseLeave={() => interactions.onHover(null)} onClick={event => area && interactions.onActivate(area, event)}>
-            {displayRow.collapsed ? <Text as="span" color="gray.500">⋯ {displayRow.collapsed} {reading ? 'lines' : 'symbols'} collapsed</Text> : reading ? <>{source?.tokens[sourceIndex]?.length ? expandCodeTokens(source.tokens[sourceIndex]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[sourceIndex] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
+            {reading ? <>{source?.tokens[sourceIndex]?.length ? expandCodeTokens(source.tokens[sourceIndex]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[sourceIndex] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
             </span>
           </Box>
         })}
@@ -195,7 +204,7 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
     <SubElementSymbolPorts textless={detail === 'structure'} data={data} presentation={presentation} width={width} height={height} scrollTop={scrollTop} scrollLeft={scrollLeft} canEdit={canEdit} interactions={interactions} onReveal={index => {
       // Overflow rows overlay the document: leave room for the top band so the
       // revealed symbol doesn't remain hidden behind the same control.
-      if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight - SUB_ELLIPSIS)
+      if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, index * rowHeight - bannerHeight)
     }} />
     </ElementContainer>}
     <SubElementLayoutButtons detail={detail} onChange={setDetail} connectedOnly={appearance.connectedOnly}

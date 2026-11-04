@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSymbolPresentation, symbolStems } from './subElementSymbols'
+import { buildSymbolPresentation, foldBannerBounds, symbolStems } from './subElementSymbols'
 import type { SubSource } from './subElementSource'
 import { lineHandle, symbolHandle } from './subElements'
 import { expandCodeTabs, measureSubText, SUB_CODE_TEXT_X, SUB_SYMBOL_PADDING } from './subElementText'
@@ -25,13 +25,13 @@ describe('symbol selection areas and semantic ports', () => {
 
   it('aggregates anchors beneath an active overflow band while keeping raw line connections', () => {
     const model = buildSymbolPresentation({ ...base, detail: 'outline', height: 135, scrollTop: 32, connected: [symbolHandle('right', outer)] })
-    expect(model.viewportTop).toBe(100)
+    expect(model.viewportTop).toBe(84 + foldBannerBounds(model, 0).height)
     expect(model.above.areas.map(area => area.symbol)).toEqual([outer, find])
     expect(model.above.representative?.visible).toBe(true)
     const lines = buildSymbolPresentation({ kind: 'code', detail: 'code', width: 400, height: 240, connected: [lineHandle('right', 50)] })
     expect(lines.below.areas).toHaveLength(0)
     expect(lines.below.connectionCount).toBe(1)
-    expect(lines.viewportBottom).toBe(224)
+    expect(lines.viewportBottom).toBe(240 - foldBannerBounds(lines, 0).height)
     expect(lines.below.representative?.visible).toBe(true)
   })
 
@@ -59,9 +59,9 @@ describe('symbol selection areas and semantic ports', () => {
     const model = buildSymbolPresentation({ ...base, scrollTop: 30, connected: [above, above, below, raw] })
     expect(model.above.connectionCount).toBe(2)
     expect(model.below.connectionCount).toBe(2)
-    expect(model.endpoints.get(above)).toMatchObject({ y: 92, side: 'left', overflow: 'above', visible: true })
-    expect(model.endpoints.get(below)).toMatchObject({ y: 352, side: 'right', overflow: 'below' })
-    expect(model.endpoints.get(raw)).toMatchObject({ y: 352, side: 'left', overflow: 'below' })
+    expect(model.endpoints.get(above)).toMatchObject({ y: 84 + foldBannerBounds(model, 0).height / 2, side: 'left', overflow: 'above', visible: true })
+    expect(model.endpoints.get(below)).toMatchObject({ y: 360 - foldBannerBounds(model, 0).height / 2, side: 'right', overflow: 'below' })
+    expect(model.endpoints.get(raw)).toMatchObject({ y: 360 - foldBannerBounds(model, 0).height / 2, side: 'left', overflow: 'below' })
     expect(model.below.endpoints.filter(endpoint => endpoint.visible)).toHaveLength(2)
     expect(model.endpoints.size).toBeGreaterThanOrEqual(3)
   })
@@ -320,4 +320,94 @@ it.each(['summary', 'outline', 'code'] as const)('keeps every symbol of one merg
   expect(model.endpoints.get('right-line-19')?.connected).toBe(true)
   const hidden = buildSymbolPresentation({ ...base, detail, connectedOnly: true, connected: [handle], connectionCounts: { [handle]: 0 } })
   expect(hidden.areas.filter(area => area.connected)).toHaveLength(0)
+})
+
+
+it('reveals only the chosen connected-only code fold and preserves source line ports', () => {
+  const id = lineHandle('right', 10)
+  const options = { ...base, connectedOnly: true, connected: [id] }
+  const folded = buildSymbolPresentation(options)
+  const fold = folded.rows.find(row => row.collapsed)!
+  const expanded = buildSymbolPresentation({ ...options, expandedFolds: [fold.sourceIndex] })
+  expect(expanded.rows.filter(row => row.collapsed)).toHaveLength(1)
+  expect(expanded.rows.filter(row => !row.collapsed).map(row => row.sourceIndex)).toEqual(Array.from({ length: 12 }, (_, index) => index))
+  const index = expanded.rows.findIndex(row => !row.collapsed && row.sourceIndex === 9)
+  expect(expanded.endpoints.get(id)?.y).toBeCloseTo(expanded.headerHeight + expanded.contentInset + (index + 0.5) * expanded.rowHeight)
+  expect(buildSymbolPresentation(options).rows.filter(row => row.collapsed)).toHaveLength(2)
+  expect(source.lines).toHaveLength(30)
+})
+
+it.each(['summary', 'outline'] as const)('reveals folded %s symbols without exposing the other folded ranges', detail => {
+  const id = symbolHandle('right', save)
+  const options = { ...base, detail, connectedOnly: true, connected: [id] }
+  const folded = buildSymbolPresentation(options)
+  const fold = folded.rows.find(row => row.collapsed)!
+  const expanded = buildSymbolPresentation({ ...options, expandedFolds: [fold.sourceIndex] })
+  expect(expanded.areas.map(area => area.symbol.name)).toEqual(['User', 'save'])
+  expect(expanded.rows.filter(row => row.collapsed)).toHaveLength(1)
+  expect(expanded.endpoints.get(id)?.area?.symbol).toBe(save)
+  expect(expanded.areas.find(area => area.symbol === outer)?.connected).toBe(false)
+  expect(folded.areas.map(area => area.symbol.name)).toEqual(['save'])
+})
+
+
+it.each([8, 10, 12, 14])('keeps hidden-range banners clear of adjacent code borders at font size %s', fontSize => {
+  const first = { name: 'first', startLine: 1, endLine: 2 }, last = { name: 'last', startLine: 5, endLine: 6 }
+  const doc: SubSource = { status: 'ready', startLine: 1, endLine: 6, lines: Array<string>(6).fill('code'), symbols: [first, last], tokens: [] }
+  const model = buildSymbolPresentation({ ...base, source: doc, fontSize, connectedOnly: true, connected: [symbolHandle('right', first), symbolHandle('right', last)] })
+  const index = model.rows.findIndex(row => row.collapsed)
+  const banner = foldBannerBounds(model, index)
+  expect(banner.height).toBe(model.rowHeight)
+  const before = model.areas.find(area => area.symbol === first)!, after = model.areas.find(area => area.symbol === last)!
+  expect(banner.top).toBeGreaterThan(before.contentTop + before.height + 0.5)
+  expect(banner.top + banner.height).toBeLessThan(after.contentTop - 0.5)
+})
+
+
+it('makes the leading fold banner flush with the header without shifting following code', () => {
+  const model = buildSymbolPresentation({ ...base, connectedOnly: true, connected: [lineHandle('right', 10)] })
+  expect(model.rows[0].collapsed).toBeGreaterThan(0)
+  const banner = foldBannerBounds(model, 0)
+  expect(banner.top).toBe(0)
+  expect(banner.height).toBe(model.rowHeight + model.contentInset)
+  expect(banner.top + banner.height).toBe(model.rowHeight + model.contentInset)
+  expect(foldBannerBounds(model, 1)).toEqual({ top: model.rowHeight + model.contentInset, height: model.rowHeight })
+})
+
+describe('Python decorator attachments', () => {
+  const lines = ['# module', '@router.post(', '    response_model=Dashboard,', ')', 'async def create_dashboard():', '    return service.create()', '', '# unrelated module statement']
+  const fn = { name: 'create_dashboard', type: 'function_definition', attachmentStartLine: 2, startLine: 5, endLine: 6 }
+  const doc: SubSource = { status: 'ready', startLine: 1, endLine: lines.length, lines, tokens: [], symbols: [fn] }
+
+  it.each(['structure', 'summary', 'outline', 'code'] as const)('routes saved decorator handles to the function in %s', detail => {
+    const bundle = 'right-line-2,3,5'
+    for (const connectedOnly of [false, true]) {
+      const model = buildSymbolPresentation({ ...base, source: doc, path: 'api.py', detail, connectedOnly, connected: [bundle], height: 600 })
+      expect(model.areas.map(area => area.symbol.name)).toEqual(['create_dashboard'])
+      expect(model.rows.some(row => row.symbol?.name.startsWith('Line '))).toBe(false)
+      const area = model.areas[0]
+      for (const id of [bundle, lineHandle('right', 2), lineHandle('right', 3), lineHandle('right', 5)]) {
+        expect(model.endpoints.get(id)?.area).toBe(area)
+        expect(model.endpoints.get(id)?.y).toBe(area.y)
+      }
+      expect(area.connected).toBe(true)
+      if (detail === 'outline') expect(area.signature?.text).toBe('async def create_dashboard():')
+      if (detail === 'code' && connectedOnly) {
+        expect(model.rows.filter(row => !row.collapsed).map(row => row.sourceIndex)).toEqual([1, 2, 3, 4, 5])
+      }
+    }
+  })
+
+  it('attaches method decorators to the method instead of the enclosing class', () => {
+    const method = { ...fn, qualifiedName: 'Dashboard.create_dashboard' }
+    const klass = { name: 'Dashboard', type: 'class_definition', startLine: 1, endLine: 8 }
+    const model = buildSymbolPresentation({ ...base, source: { ...doc, symbols: [klass, method] }, detail: 'outline', connectedOnly: true, connected: [lineHandle('right', 2)] })
+    expect(model.areas.map(area => area.symbol)).toEqual([method])
+    expect(model.endpoints.get(lineHandle('right', 2))?.area?.symbol).toBe(method)
+  })
+
+  it('retains Line entries for unrelated module-level attachments', () => {
+    const model = buildSymbolPresentation({ ...base, source: doc, detail: 'summary', connectedOnly: true, connected: [lineHandle('right', 8)] })
+    expect(model.areas.map(area => area.symbol.name)).toEqual(['Line 8'])
+  })
 })

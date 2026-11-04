@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { drawSubElement, subNodeSymbols, scrollSubElement, subNodeHandleAnchor, subSymbolAtPoint } from './subElements'
+import { foldBannerBounds } from '../../utils/subElementSymbols'
+import { drawSubElement, subNodeSymbols, scrollSubElement, subNodeHandleAnchor, subSymbolAtPoint, revealSubOverflow } from './subElements'
 import * as subSources from '../../utils/subElementSource'
 import { symbolHandle } from '../../utils/subElements'
 import type { LayoutNode } from './types'
@@ -238,4 +239,55 @@ it('keeps compact source ports and symbol picking aligned with the zoomed previe
   const y = (84 + area.contentTop + area.height / 2) * scale
   expect(subSymbolAtPoint(compact, zoom, x, y)).toBe(area.key)
   expect(subNodeHandleAnchor({ ...compact, subDetail: undefined }, handle, 1)).toBeNull()
+})
+
+
+it.each([1, 2, 3.3])('keeps fold banners readable at zoom %s and reveals the clicked range', zoom => {
+  const sourceNode: LayoutNode = { ...node, id: `connected-fold-banner-${zoom}`, subConnectedOnly: true, subConnectedHandles: ['right-line-10'],
+    subSource: { status: 'ready', startLine: 1, endLine: 30, lines: Array<string>(30).fill('source line'), symbols: [], tokens: [] },
+  }
+  const labels: number[] = []
+  const text: string[] = [], bands: { x: number; width: number }[] = []
+  const context = {
+    font: '12px sans-serif', textAlign: '', fillStyle: '',
+    fillText(value: string) { text.push(value); if (value.includes('hidden')) labels.push(Number(this.font.match(/([\d.]+)px/)![1]) * zoom) }, fillRect(x: number, _y: number, width: number) { bands.push({ x, width }) },
+    measureText(value: string) { return { width: value.length * 6 } },
+    save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, rect() {}, moveTo() {}, lineTo() {}, arc() {}, setLineDash() {}, quadraticCurveTo() {},
+  }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, sourceNode, zoom, 1, '#63b3ed', false)
+  expect(text).toContain('7 lines hidden')
+  expect(labels.every(size => size >= 11 && size <= 12.001)).toBe(true)
+  expect(text.some(value => value.includes('collapsed'))).toBe(false)
+  expect(bands.some(band => band.x === 0 && band.width === 520)).toBe(true)
+  const before = subNodeSymbols(sourceNode, zoom)
+  expect(revealSubOverflow(sourceNode, zoom, before.headerHeight + 0.5)).toBe(true)
+  const after = subNodeSymbols(sourceNode, zoom)
+  expect(after.rows.filter(row => row.collapsed)).toHaveLength(1)
+  expect(after.rows.filter(row => !row.collapsed).map(row => row.sourceIndex)).toEqual(Array.from({ length: 12 }, (_, index) => index))
+  expect(sourceNode.subConnectedOnly).toBe(true)
+})
+
+
+it('uses the fold banner height for painting and clicking both viewport banners', () => {
+  const sourceNode: LayoutNode = { ...node, id: 'matching-viewport-banners', worldH: 160,
+    subSource: { status: 'ready', startLine: 1, endLine: 30, lines: Array<string>(30).fill('source line'),
+      symbols: [{ name: 'first', startLine: 1, endLine: 1 }, { name: 'last', startLine: 30, endLine: 30 }], tokens: [] },
+    subConnectedHandles: ['right-line-1', 'right-line-30'],
+  }
+  scrollSubElement(sourceNode, 100, 1)
+  const model = subNodeSymbols(sourceNode, 1), height = foldBannerBounds(model, 0).height
+  const bands: { y: number; height: number }[] = []
+  const context = {
+    font: '12px sans-serif', fillText() {},
+    fillRect(x: number, y: number, width: number, height: number) { if (x === 0 && width === sourceNode.worldW) bands.push({ y, height }) },
+    measureText(value: string) { return { width: value.length * 6 } },
+    save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, rect() {}, moveTo() {}, lineTo() {}, arc() {}, setLineDash() {}, quadraticCurveTo() {},
+  }
+  drawSubElement(context as unknown as CanvasRenderingContext2D, sourceNode, 1, 1, '#63b3ed', false)
+  expect(bands).toContainEqual({ y: model.headerHeight, height })
+  expect(bands).toContainEqual({ y: sourceNode.worldH - height, height })
+  expect(revealSubOverflow(sourceNode, 1, sourceNode.worldH - height + 0.25)).toBe(true)
+  expect(subNodeSymbols(sourceNode, 1).areas[1].visible).toBe(true)
+  expect(revealSubOverflow(sourceNode, 1, model.headerHeight + height - 0.25)).toBe(true)
+  expect(subNodeSymbols(sourceNode, 1).areas[0].visible).toBe(true)
 })

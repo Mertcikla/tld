@@ -3,8 +3,8 @@ import { CHANGE_RING_COLORS } from './changeOverlay'
 import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
 import type { LayoutNode } from './types'
-import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, SUB_ELLIPSIS, subDetail } from '../../utils/subElements'
-import { buildSymbolPresentation, symbolStems, symbolPresentationRowHeight, type SymbolPresentation } from '../../utils/subElementSymbols'
+import { isSymbolDetail, isSubElement, isSubHandle, SUB_HEADER, subDetail } from '../../utils/subElements'
+import { buildSymbolPresentation, foldBannerBounds, symbolStems, symbolPresentationRowHeight, type SymbolPresentation } from '../../utils/subElementSymbols'
 import { peekSubSource, requestSubSource, type SubSource } from '../../utils/subElementSource'
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
 import { elementTechnologyText } from '../../utils/elementIcon'
@@ -24,6 +24,12 @@ export const nodeDetail = (node: LayoutNode, zoom: number) => {
 
 const scrollRows = new Map<string, number>()
 const scrollColumns = new Map<string, number>()
+const emptyFolds: readonly number[] = []
+const expandedFoldRows = new Map<string, { source?: SubSource; rows: readonly number[] }>()
+const sourceFolds = (node: LayoutNode, zoom: number, source: SubSource | undefined) => {
+  const entry = expandedFoldRows.get(scrollKey(node, zoom))
+  return entry?.source === source ? entry?.rows ?? emptyFolds : emptyFolds
+}
 const scrollListeners = new Set<() => void>()
 export const subscribeSubScroll = (fn: () => void) => { scrollListeners.add(fn); return () => { scrollListeners.delete(fn) } }
 const scrollKey = (node: LayoutNode, zoom: number) => {
@@ -39,20 +45,21 @@ const firstRow = (node: LayoutNode, zoom: number) => {
   if (nodeDetail(node, zoom) !== 'code' || !source?.diff) return 0
   return Math.max(0, source.diff.lines.findIndex(line => line.change === 'added' || line.change === 'removed') - 3)
 }
-const presentations = new WeakMap<LayoutNode, { height: number; headerHeight?: number; detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
+const presentations = new WeakMap<LayoutNode, { expandedFolds: readonly number[]; height: number; headerHeight?: number; detail: string; first: number; fontSize: number; symbols?: unknown; lines?: unknown; tokens?: unknown; status?: string; source?: SubSource; model: SymbolPresentation; appearance: SourcePreviewAppearance }>()
 
 export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentation {
   const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
   const detail = nodeDetail(node, zoom), first = firstRow(node, zoom)
+  const expandedFolds = sourceFolds(node, zoom, source)
   const appearance = readSourcePreviewAppearance(node.diagramId, node.elementId)
   const fontSize = Math.min(Math.max(appearance.fontSize ?? 12, detail === 'summary' || detail === 'structure' ? 9 / zoom : 0), 14 / zoom)
   const lineNumbers = appearance.lineNumbers ?? detail === 'code'
   const cached = presentations.get(node)
-  if (cached && cached.height === node.worldH && cached.headerHeight === node.subHeaderHeight && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
+  if (cached && cached.expandedFolds === expandedFolds && cached.height === node.worldH && cached.headerHeight === node.subHeaderHeight && cached.appearance === appearance && cached.detail === detail && cached.fontSize === fontSize && cached.first === first && cached.source === source && cached.symbols === source?.symbols && cached.lines === source?.lines && cached.tokens === source?.tokens && cached.status === source?.status) return cached.model
   const connected = node.subConnectedHandles ?? node.edgesOut.flatMap(edge => edge.sourceHandle ? [edge.sourceHandle] : [])
-  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
+  const model = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail, expandedFolds, width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight, connected, scrollTop: first * symbolPresentationRowHeight(detail, fontSize, true), fontSize, lineNumbers, fractionalMetrics: true, connectedOnly: node.subConnectedOnly ?? appearance.connectedOnly })
 
-  presentations.set(node, { height: node.worldH, headerHeight: node.subHeaderHeight, appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
+  presentations.set(node, { expandedFolds, height: node.worldH, headerHeight: node.subHeaderHeight, appearance, detail, first, fontSize, source, symbols: source?.symbols, lines: source?.lines, tokens: source?.tokens, status: source?.status, model })
   return model
 }
 
@@ -75,7 +82,7 @@ function subNodeHandleAnchorNative(node: LayoutNode, handle: string | null, zoom
   let endpoint = model.endpoints.get(handle!)
   if (!endpoint) {
     const source = node.subSource ?? (node.sourceLink ? peekSubSource(node.sourceLink) : undefined)
-    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: nodeDetail(node, zoom), width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight,
+    endpoint = buildSymbolPresentation({ kind: node.subKind ?? node.type, source, path: node.sourceLink?.file_path ?? '', detail: nodeDetail(node, zoom), expandedFolds: sourceFolds(node, zoom, source), width: node.worldW, height: node.worldH, headerHeight: node.subHeaderHeight,
       ...readSourcePreviewAppearance(node.diagramId, node.elementId), connectedOnly: node.subConnectedOnly ?? readSourcePreviewAppearance(node.diagramId, node.elementId).connectedOnly,
       fontSize: model.fontSize, lineNumbers: model.lineNumbers, fractionalMetrics: true, connected: [handle!], scrollTop: firstRow(node, zoom) * model.rowHeight }).endpoints.get(handle!)
   }
@@ -101,6 +108,33 @@ function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: 
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(mid - sx * r, y1)
   ctx.quadraticCurveTo(mid, y1, mid, y1 + sy * r); ctx.lineTo(mid, y2 - sy * r)
   ctx.quadraticCurveTo(mid, y2, mid + sx * r, y2); ctx.lineTo(x2, y2); ctx.stroke()
+}
+
+function drawSourceBanner(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, zoom: number, label: string, connectionLabel: string, direction: 'above' | 'below' | 'collapsed', bodyBg: string, accent: string, textless = false) {
+  ctx.save()
+  ctx.fillStyle = bodyBg; ctx.fillRect(x, y, width, height)
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 / zoom
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + width, y)
+  if (direction !== 'below') { ctx.moveTo(x, y + height); ctx.lineTo(x + width, y + height) }
+  ctx.stroke()
+  if (!textless) {
+    ctx.font = `${Math.max(1, Math.min(11, 12 / zoom, height - 2))}px system-ui`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+    const separator = label && connectionLabel ? ' · ' : ''
+    const arrowWidth = label ? 14 : 0
+    const labelWidth = ctx.measureText(label + separator + connectionLabel).width + arrowWidth
+    let textX = x + Math.max(24, (width - labelWidth) / 2)
+    const centerY = y + height / 2
+    ctx.fillStyle = '#a0adbd'; ctx.strokeStyle = '#a0adbd'
+    if (label) {
+      const sign = direction === 'above' ? -1 : 1
+      ctx.beginPath(); ctx.moveTo(textX, centerY - sign * 2); ctx.lineTo(textX + 3, centerY + sign); ctx.lineTo(textX + 6, centerY - sign * 2); ctx.stroke()
+      textX += arrowWidth
+    }
+    ctx.fillText(label + separator, textX, centerY)
+    textX += ctx.measureText(label + separator).width
+    if (connectionLabel) { ctx.fillStyle = accent; ctx.fillText(connectionLabel, textX, centerY, Math.max(0, x + width - textX - 24)) }
+  }
+  ctx.restore()
 }
 
 /** Cached text/tokens and visible symbol regions only; animation redraws while active. */
@@ -195,7 +229,11 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
       }
       continue
     }
-    if (displayRow.collapsed) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(`⋯ ${displayRow.collapsed} ${isSymbolDetail(detail) ? 'symbols' : 'lines'} collapsed`, model.textX, cy); continue }
+    if (displayRow.collapsed) {
+      const bounds = foldBannerBounds(model, index)
+      drawSourceBanner(ctx, scrollLeft, model.headerHeight + bounds.top - offset, w, bounds.height, zoom, `${displayRow.collapsed} ${isSymbolDetail(detail) ? 'symbols' : 'lines'} hidden`, '', 'collapsed', bodyBg, symbolAccent)
+      continue
+    }
     const rowArea = isSymbolDetail(detail) ? model.areas.find(area => area.start === index) : undefined
     if (model.lineNumbers) { ctx.fillStyle = '#7f8b9c'; ctx.fillText(String(isSymbolDetail(detail) ? rowArea?.symbol.startLine ?? '' : (source?.startLine ?? 1) + sourceIndex), 12, cy) }
     if (isSymbolDetail(detail)) {
@@ -226,30 +264,15 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
     ctx.setLineDash([])
   }
   ctx.globalAlpha = alpha
+  const bannerHeight = foldBannerBounds(model, 0).height
   for (const [direction, overflow] of [['above', model.above], ['below', model.below]] as const) {
-    const y = direction === 'above' ? model.headerHeight : h - SUB_ELLIPSIS
+    const y = direction === 'above' ? model.headerHeight : h - bannerHeight
     const count = diffMode ? direction === 'above' ? first : Math.max(0, model.rowCount - first - rows) : overflow.areas.length
     const unit = diffMode ? count === 1 ? 'line' : 'lines' : count === 1 ? 'symbol' : 'symbols'
     const symbolLabel = count ? `${count} ${unit} ${direction}` : ''
     const connectionLabel = !diffMode && overflow.connectionCount ? `${overflow.connectionCount} ${overflow.connectionCount === 1 ? 'connection' : 'connections'}` : ''
     if (!symbolLabel && !connectionLabel) continue
-    ctx.fillStyle = bodyBg; ctx.fillRect(0, y, w, SUB_ELLIPSIS)
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 / zoom; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
-    if (detail === 'structure') continue
-    ctx.font = `${Math.min(9, 11 / zoom)}px system-ui`; ctx.textAlign = 'left'
-    const separator = symbolLabel && connectionLabel ? ' · ' : ''
-    const arrowWidth = count ? 14 : 0
-    const labelWidth = ctx.measureText(symbolLabel + separator + connectionLabel).width + arrowWidth
-    let x = Math.max(24, (w - labelWidth) / 2)
-    ctx.fillStyle = '#a0adbd'; ctx.strokeStyle = '#a0adbd'
-    if (count) {
-      const sign = direction === 'above' ? -1 : 1
-      ctx.beginPath(); ctx.moveTo(x, overflow.y - sign * 2); ctx.lineTo(x + 3, overflow.y + sign); ctx.lineTo(x + 6, overflow.y - sign * 2); ctx.stroke()
-      x += arrowWidth
-    }
-    ctx.fillText(symbolLabel + separator, x, overflow.y)
-    x += ctx.measureText(symbolLabel + separator).width
-    ctx.fillStyle = symbolAccent; ctx.fillText(connectionLabel, x, overflow.y, Math.max(0, w - x - 24))
+    drawSourceBanner(ctx, 0, y, w, bannerHeight, zoom, symbolLabel, connectionLabel, direction, bodyBg, symbolAccent, detail === 'structure')
   }
   // Ports straddle the border; only the card content should be clipped.
   ctx.restore()
@@ -322,16 +345,33 @@ export function revealSubOverflow(node: LayoutNode, zoom: number, y: number) {
   if (nodeDetail(node, zoom) === 'overview') return false
   const scale = sourceCardScale(node), card = sourceCard(node, zoom), nativeZoom = zoom * scale
   const model = subNodeSymbols(card, nativeZoom)
+  const bannerHeight = foldBannerBounds(model, 0).height
   y /= scale
-  const direction = y >= model.headerHeight && y < model.headerHeight + SUB_ELLIPSIS ? 'above'
-    : y >= card.worldH - SUB_ELLIPSIS && y <= card.worldH ? 'below' : null
+  const inTop = y < model.headerHeight + bannerHeight && (model.above.areas.length || model.above.connectionCount)
+  const inBottom = y >= card.worldH - bannerHeight && (model.below.areas.length || model.below.connectionCount)
+  if (!inTop && !inBottom && y >= model.viewportTop && y <= model.viewportBottom) {
+    const index = Math.max(0, Math.floor((y - model.headerHeight - model.contentInset) / model.rowHeight + firstRow(card, nativeZoom)))
+    const row = model.rows[index]
+    const bounds = foldBannerBounds(model, index)
+    const top = model.headerHeight + bounds.top - firstRow(card, nativeZoom) * model.rowHeight
+    if (row?.collapsed && y >= top && y <= top + bounds.height) {
+      const source = card.subSource ?? (card.sourceLink ? peekSubSource(card.sourceLink) : undefined)
+      const rows = sourceFolds(card, nativeZoom, source)
+      expandedFoldRows.set(scrollKey(card, nativeZoom), { source, rows: [...rows, row.sourceIndex] })
+      if (expandedFoldRows.size > 128) expandedFoldRows.delete(expandedFoldRows.keys().next().value!)
+      scrollListeners.forEach(fn => fn())
+      return true
+    }
+  }
+  const direction = y >= model.headerHeight && y < model.headerHeight + bannerHeight ? 'above'
+    : y >= card.worldH - bannerHeight && y <= card.worldH ? 'below' : null
   if (!direction) return false
   const overflow = model[direction]
   const area = direction === 'above' ? overflow.areas[overflow.areas.length - 1] : overflow.areas[0]
   const diff = nodeDetail(card, nativeZoom) === 'code' && !!(card.subSource ?? (card.sourceLink ? peekSubSource(card.sourceLink) : undefined))?.diff
   if (!area && !overflow.connectionCount && !diff) return false
   const visibleRows = Math.max(1, Math.floor((card.worldH - model.headerHeight) / model.rowHeight))
-  const target = area ? area.start - Math.ceil(SUB_ELLIPSIS / model.rowHeight)
+  const target = area ? area.start - Math.ceil(bannerHeight / model.rowHeight)
     : firstRow(card, nativeZoom) + (direction === 'above' ? -visibleRows : visibleRows - 1)
   const max = Math.max(0, model.rowCount - visibleRows)
   scrollRows.set(scrollKey(card, nativeZoom), Math.max(0, Math.min(max, target)))
