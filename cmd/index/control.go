@@ -282,6 +282,9 @@ func runDetached(cmd *cobra.Command, opts options) error {
 	if opts.mapGraph {
 		args = append(args, "--map")
 	}
+	if opts.fullMap {
+		args = append(args, "--full-map")
+	}
 	if opts.pollInterval > 0 {
 		args = append(args, "--poll-interval", opts.pollInterval.String())
 	}

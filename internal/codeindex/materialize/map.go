@@ -46,6 +46,9 @@ type MapEdge struct {
 	ToFactID   string
 	Weight     float64
 	Kind       string
+
+	// SourceLines and TargetLines retain all connected declaration lines for file previews.
+	SourceLines, TargetLines []uint32
 }
 
 // MapImport is one external import declared by a file fact.
@@ -163,6 +166,8 @@ type mapMaterializer struct {
 	result           MapResult
 	done             int
 	total            int
+
+	fullGeneratedViews map[int64]bool
 }
 
 // placedConnector records a generated connector so its handles can be
@@ -872,6 +877,10 @@ func (m *mapMaterializer) adjustConnectorHandles() error {
 			continue
 		}
 		sourceHandle, targetHandle := layout.ChooseConnectorHandles(source, target)
+		if existing, ok := currentByView[connector.viewID][connector.id]; ok {
+			sourceHandle = preserveFullLineHandle(existing.SourceHandle, sourceHandle)
+			targetHandle = preserveFullLineHandle(existing.TargetHandle, targetHandle)
+		}
 		if existing, ok := currentByView[connector.viewID][connector.id]; ok &&
 			existing.SourceHandle != nil && *existing.SourceHandle == sourceHandle &&
 			existing.TargetHandle != nil && *existing.TargetHandle == targetHandle {

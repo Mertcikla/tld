@@ -48,6 +48,7 @@ type options struct {
 	watchOwner   string
 	jsonOut      bool
 	mapGraph     bool
+	fullMap      bool
 	dataDir      string
 	pollInterval time.Duration
 	debounce     time.Duration
@@ -72,7 +73,11 @@ For a one-time index, pass --map to group the dependency graph into
 architectural components and materialize the map view. Map grouping and
 connector budgets inherit global map.* configuration, with per-repository
 overrides configurable on the repository settings page.
-With --watch, --map refreshes the map after each scan.
+Pass --full-map to materialize the complete directory/file hierarchy, stopping
+at files. Symbol calls and references are rolled up into directed file-to-file
+connectors without connector budgets. --full-map implies mapping and cannot be
+combined with --map.
+With --watch, either map flag refreshes the map after each scan.
 
 With --watch, Git's current commit is the Base and the combined staged,
 unstaged, and nonignored untracked files are the Head. Git changes trigger
@@ -93,6 +98,7 @@ Repositories area in 'tld serve --open'. Use 'tld git compare' for a commit
 comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
 		Example: `  tld doctor
   tld index . --map
+  tld index . --full-map
   tld index . --watch --map --detach
   tld index status .
   tld index stop .`,
@@ -114,6 +120,8 @@ comparison, or 'tld index status' and 'tld index stop' to manage a watcher.`,
 	_ = c.Flags().MarkHidden("watch-owner")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
 	c.Flags().BoolVar(&opts.mapGraph, "map", false, "group the dependency graph and materialize the map view (opt-in)")
+	c.Flags().BoolVar(&opts.fullMap, "full-map", false, "materialize the directory/file hierarchy with file-to-file dependencies")
+	c.MarkFlagsMutuallyExclusive("map", "full-map")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", watch.DefaultDebounce, "delay used to batch file changes")
@@ -377,7 +385,7 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		return nil, parity.Report{}, nil, false, err
 	}
 	mapSnapshot := func() *pb.MapResult {
-		if !e.opts.mapGraph {
+		if !e.opts.mapGraph && !e.opts.fullMap {
 			return nil
 		}
 		res, err := e.mapGraph(ctx, snap, tracker)
@@ -421,6 +429,7 @@ func (e *engine) mapGraph(ctx context.Context, snap *pb.Snapshot, tracker *term.
 	}, maprun.Request{
 		RepositoryID: snap.RepositoryId,
 		SnapshotID:   snap.Id,
+		Full:         e.opts.fullMap,
 	}, func(_ string, current, total int, detail string) {
 		tracker.Report(stageMapGraph, int64(current), int64(total), detail)
 	})
@@ -761,7 +770,8 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		return nil, parity.Report{}, nil, nil, err
 	}
 	var mapRes *pb.MapResult
-	if e.opts.mapGraph && !reused {
+	// Full-map cache versions also upgrade the projection on an unchanged scan.
+	if e.opts.fullMap || (e.opts.mapGraph && !reused) {
 		if res, mapErr := e.mapGraph(ctx, snap, tracker); mapErr != nil {
 			e.warnf("map failed for %s: %v", root, mapErr)
 		} else {

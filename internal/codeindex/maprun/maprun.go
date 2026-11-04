@@ -41,6 +41,8 @@ type Deps struct {
 // Request selects which snapshot to map. External imports are controlled by
 // the repository's map configuration and are disabled by default.
 type Request struct {
+	// Full bypasses community grouping and connector budgets, preserving the directory/file hierarchy.
+	Full         bool
 	RepositoryID string
 	SnapshotID   string
 }
@@ -69,6 +71,9 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 	if err := indexer.CheckSnapshot(snapshot); err != nil {
 		return nil, false, err
+	}
+	if req.Full {
+		return runFull(ctx, deps, req, snapshot, progress)
 	}
 	overrides, err := deps.Codeindex.RepositoryMapOverrides(ctx, repositoryID)
 	if err != nil {

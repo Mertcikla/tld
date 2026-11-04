@@ -17,6 +17,8 @@ import (
 
 // GroupMapInput is a dependency-graph grouping to materialize into a workspace.
 type GroupMapInput struct {
+	// Full selects the complete directory/file hierarchy instead of community groups.
+	Full         bool
 	RepositoryID string
 	// MappingNamespace preserves ownership keys and tags across ID-format upgrades.
 	MappingNamespace string
@@ -118,23 +120,29 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	if err := m.place(workspaceRootID, topElementID); err != nil {
 		return MapResult{}, err
 	}
-	for _, group := range input.Groups {
-		if group == nil {
-			continue
-		}
-		if err := m.materializeGroup(group, rootViewID, []int64{rootViewID}, nil); err != nil {
+	if input.Full {
+		if err := m.materializeFull(rootViewID); err != nil {
 			return m.result, err
 		}
-	}
-	if err := m.materializeConnectors(); err != nil {
-		return m.result, err
-	}
-	if err := m.materializeCrossViewConnectors(); err != nil {
-		return m.result, err
-	}
-	if opts.IncludeExternalImports {
-		if err := m.materializeImports(rootViewID); err != nil {
+	} else {
+		for _, group := range input.Groups {
+			if group == nil {
+				continue
+			}
+			if err := m.materializeGroup(group, rootViewID, []int64{rootViewID}, nil); err != nil {
+				return m.result, err
+			}
+		}
+		if err := m.materializeConnectors(); err != nil {
 			return m.result, err
+		}
+		if err := m.materializeCrossViewConnectors(); err != nil {
+			return m.result, err
+		}
+		if opts.IncludeExternalImports {
+			if err := m.materializeImports(rootViewID); err != nil {
+				return m.result, err
+			}
 		}
 	}
 	if err := m.applyLayout(); err != nil {
