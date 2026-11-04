@@ -1,3 +1,4 @@
+import { sourceDetailZoom } from './sourceDetailScale'
 import { CHANGE_RING_COLORS } from './changeOverlay'
 import { readSourcePreviewAppearance, type SourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { expandCodeTabs, expandCodeTokens, subCodeFont } from '../../utils/subElementText'
@@ -8,8 +9,16 @@ import { peekSubSource, requestSubSource, type SubSource } from '../../utils/sub
 import { fitElementName, ELEMENT_NAME_FONT_FAMILY } from '../../utils/elementName'
 import { elementTechnologyText } from '../../utils/elementIcon'
 
-const nodeDetail = (node: LayoutNode, zoom: number) => {
-  const detail = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
+// Reference detail scale: level 1 = zoom 0.1, level 100 = the default
+// 180×85 leaf cap (281 / 85). Keep this fixed while tuning individual stages.
+const COLLAPSED_SYMBOLS_START_LEVEL = 40
+const collapsedSymbolsStartZoom = sourceDetailZoom(COLLAPSED_SYMBOLS_START_LEVEL)
+
+export const nodeDetail = (node: LayoutNode, zoom: number) => {
+  if (!node.subDetail && node.worldW * zoom < 180 * collapsedSymbolsStartZoom && node.worldH * zoom < 85 * collapsedSymbolsStartZoom) return 'overview'
+  const stage = node.subDetail ?? subDetail(node.worldW * zoom, node.worldH * zoom)
+  // Compact cards already show a title; retain it when source rows first appear.
+  const detail = node.worldW < 280 && stage === 'structure' ? 'summary' : stage
   return node.subSource && !node.subSource.lines.length && detail === 'code' ? 'outline' : detail
 }
 
@@ -46,7 +55,7 @@ export function subNodeSymbols(node: LayoutNode, zoom: number): SymbolPresentati
   return model
 }
 
-export function scrollSubElement(node: LayoutNode, delta: number, zoom: number): boolean {
+function scrollSubElementNative(node: LayoutNode, delta: number, zoom: number): boolean {
   if ((nodeDetail(node, zoom)) === 'overview') return false
   const model = subNodeSymbols(node, zoom)
   const max = Math.max(0, model.rowCount - Math.floor((node.worldH - SUB_HEADER) / model.rowHeight))
@@ -59,7 +68,7 @@ export function scrollSubElement(node: LayoutNode, delta: number, zoom: number):
   return true
 }
 
-export function subNodeHandleAnchor(node: LayoutNode, handle: string | null, zoom: number): { x: number; y: number; side: 'left' | 'right' } | null {
+function subNodeHandleAnchorNative(node: LayoutNode, handle: string | null, zoom: number): { x: number; y: number; side: 'left' | 'right' } | null {
   if (!isSubElement(node.subKind ?? node.type) || !isSubHandle(handle) || (nodeDetail(node, zoom)) === 'overview') return null
   const model = subNodeSymbols(node, zoom)
   let endpoint = model.endpoints.get(handle!)
@@ -73,7 +82,7 @@ export function subNodeHandleAnchor(node: LayoutNode, handle: string | null, zoo
 }
 export function subNodeHandleY(node: LayoutNode, handle: string | null, zoom: number) { return subNodeHandleAnchor(node, handle, zoom)?.y ?? null }
 
-export function subSymbolAtPoint(node: LayoutNode, zoom: number, x: number, y: number): string | undefined {
+function subSymbolAtPointNative(node: LayoutNode, zoom: number, x: number, y: number): string | undefined {
   if (!isSubElement(node.subKind ?? node.type) || (nodeDetail(node, zoom)) === 'overview') return
   const model = subNodeSymbols(node, zoom)
   if (y < SUB_HEADER) return
@@ -93,7 +102,7 @@ function roundedStep(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: 
 }
 
 /** Cached text/tokens and visible symbol regions only; animation redraws while active. */
-export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent, bodyBg = '#232732') {
+function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, _groupColor?: string, icon?: HTMLImageElement | null, headerBg = '#2d3748', symbolAccent = accent, bodyBg = '#232732', headerScale = 1) {
   const w = node.worldW, h = node.worldH, detail = nodeDetail(node, zoom)
   const source = node.subSource ?? ((node.subKind ?? node.type) === 'code' && node.sourceLink
     ? peekSubSource(node.sourceLink) ?? (!lowDetail && detail !== 'overview' && w * zoom >= 100 ? requestSubSource(node.sourceLink) : undefined) : undefined)
@@ -111,7 +120,7 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
   ctx.fillStyle = headerBg; ctx.fillRect(0.5, 0.5, w - 1, SUB_HEADER - 0.5)
   if (w * zoom < 50) { ctx.restore(); drawBorder(); ctx.restore(); return }
   // Match the editor header's centered icon and stacked name/kind/metadata.
-  const unit = Math.min(1, 20 / (18 * zoom))
+  const unit = Math.min(headerScale, 20 / (18 * zoom))
   const headerTop = (SUB_HEADER - SUB_HEADER * unit) / 2
   const textWidth = Math.max(1, w - 96 * unit)
   if (icon) {
@@ -247,4 +256,37 @@ export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, 
     ctx.fillStyle = symbolAccent; ctx.beginPath(); ctx.arc(endpoint.side === 'left' ? 0 : w, endpoint.y, 4, 0, Math.PI * 2); ctx.fill()
   }
   ctx.restore()
+}
+
+// Source metrics use editor-sized coordinates even when Explore reserves only a
+// regular card. Share this transform across drawing, ports, scrolling and picking.
+const sourceCards = new WeakMap<LayoutNode, LayoutNode>()
+export const sourceCardScale = (node: LayoutNode) => Math.min(1, node.worldW / 520)
+function sourceCard(node: LayoutNode, zoom: number) {
+  const scale = sourceCardScale(node)
+  if (scale === 1) return node
+  let card = sourceCards.get(node)
+  if (!card) { card = { ...node }; sourceCards.set(node, card) }
+  Object.assign(card, node, { worldW: node.worldW / scale, worldH: node.worldH / scale, subDetail: nodeDetail(node, zoom) })
+  return card
+}
+
+export function scrollSubElement(node: LayoutNode, delta: number, zoom: number) {
+  const scale = sourceCardScale(node)
+  return scrollSubElementNative(sourceCard(node, zoom), delta / scale, zoom * scale)
+}
+export function subNodeHandleAnchor(node: LayoutNode, handle: string | null, zoom: number) {
+  const scale = sourceCardScale(node)
+  const anchor = subNodeHandleAnchorNative(sourceCard(node, zoom), handle, zoom * scale)
+  return anchor ? { ...anchor, x: anchor.x * scale, y: anchor.y * scale } : null
+}
+export function subSymbolAtPoint(node: LayoutNode, zoom: number, x: number, y: number) {
+  const scale = sourceCardScale(node)
+  return subSymbolAtPointNative(sourceCard(node, zoom), zoom * scale, x / scale, y / scale)
+}
+export function drawSubElement(ctx: CanvasRenderingContext2D, node: LayoutNode, zoom: number, alpha: number, accent: string, lowDetail: boolean, activeHandle?: string, groupColor?: string, icon?: HTMLImageElement | null, headerBg?: string, symbolAccent?: string, bodyBg?: string) {
+  const scale = sourceCardScale(node)
+  if (scale !== 1) { ctx.save(); ctx.scale(scale, scale) }
+  drawSubElementNative(ctx, sourceCard(node, zoom), zoom * scale, alpha, accent, lowDetail, activeHandle, groupColor, icon, headerBg, symbolAccent, bodyBg, 1 / scale)
+  if (scale !== 1) ctx.restore()
 }

@@ -1,5 +1,5 @@
-import { isDetailedSubElement, isSubElement, subDetail, SUB_HEADER } from '../../utils/subElements'
-import { drawSubElement, subNodeHandleAnchor } from './subElements'
+import { isSubElement, subDetail, SUB_HEADER } from '../../utils/subElements'
+import { drawSubElement, nodeDetail, sourceCardScale, subNodeHandleAnchor } from './subElements'
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
@@ -167,6 +167,7 @@ export interface RenderContext {
   lowDetail: boolean
   groupLayersByDiagram: Map<number, ViewLayer[]>
   hoveredItem?: HoveredItem | null
+  underlyingEdgePairs?: ReadonlySet<string>
 }
 
 const imageCache = new Map<string, HTMLImageElement>()
@@ -744,7 +745,7 @@ export function drawNodeTags(ctx: CanvasRenderingContext2D, layout: LayoutNode, 
 }) {
   const sourceCard = isSubElement(layout.subKind ?? layout.type)
   if (sourceCard || layout.type === 'class') {
-    const detail = sourceCard ? layout.subDetail ?? subDetail(layout.worldW * drawZoom, layout.worldH * drawZoom) : 'overview'
+    const detail = sourceCard ? nodeDetail(layout, drawZoom) : 'overview'
     if (detail === 'overview' || detail === 'structure') return
     // Summary tags belong to the body; signature and full-code views keep header tags.
     if (detail === 'summary') h = layout.worldH
@@ -987,13 +988,13 @@ function drawSceneNode(
 
   const isHovered = renderCtx.hoveredItem?.type === 'node' && renderCtx.hoveredItem.data === layout
   const borderColor = typeBorderColor(layout.type)
-  if (isDetailedSubElement(layout.subKind ?? layout.type, layout.subDetail, w, h, drawZoom)) {
+  if (isSubElement(layout.subKind ?? layout.type) && nodeDetail(layout, drawZoom) !== 'overview') {
     const hovered = renderCtx.hoveredItem
     const activeHandle = hovered?.type === 'node' && hovered.data === layout ? hovered.symbolHandle
       : hovered?.type === 'edge' ? layout.subConnections?.find(connection => connection.id === hovered.data.id)?.handleId : undefined
     const groupTag = layout.tags.find(isElementGroupTag)
     drawSubElement(ctx, layout, drawZoom, parentAlpha, isHovered ? accent : borderColor, renderCtx.lowDetail, activeHandle, groupTag ? currentTagColors[groupTag] : undefined, getOrLoadImage(layout.logoUrl), renderCtx.nodeBg, accent, renderCtx.sourcePreviewBg)
-    drawNodeTags(ctx, layout, renderCtx, { x: 0, y: 0, w, h: SUB_HEADER, drawZoom, drawScreenW, parentAlpha, isHovered, accent })
+    drawNodeTags(ctx, layout, renderCtx, { x: 0, y: 0, w, h: SUB_HEADER * sourceCardScale(layout), drawZoom, drawScreenW, parentAlpha, isHovered, accent })
     return
   }
 
@@ -1345,6 +1346,10 @@ function getHandlePos(
   }
 }
 
+export function edgePairKey(sourceId: string, targetId: string): string {
+  return JSON.stringify(sourceId < targetId ? [sourceId, targetId] : [targetId, sourceId])
+}
+
 function drawEdges(
   ctx: CanvasRenderingContext2D,
   sceneNodes: SceneNode[],
@@ -1358,6 +1363,7 @@ function drawEdges(
   originX?: number,
   originY?: number,
   hoveredItem?: HoveredItem | null,
+  underlyingEdgePairs?: ReadonlySet<string>,
 ): void {
   if (alpha < 0.05) return
 
@@ -1449,7 +1455,8 @@ function drawEdges(
         hoveredItem.data.id === edge.id && hoveredItem.data.diagramId === node.diagramId
       const diffReading = (node.sourceLink?.comparisonDiff && subDetail(effWSource * zoom, effHSource * zoom) === 'code') ||
         (target.sourceLink?.comparisonDiff && subDetail(effWTarget * zoom, effHTarget * zoom) === 'code')
-      ctx.lineWidth = (isHovered ? 4 : edge.tagHighlighted ? 3 : CONNECTOR_LINE_PX) / zoom
+      const underlyingScale = underlyingEdgePairs?.has(edgePairKey(node.id, edge.targetId)) ? 2 : 1
+      ctx.lineWidth = (isHovered ? 4 : edge.tagHighlighted ? 3 : CONNECTOR_LINE_PX) * underlyingScale / zoom
 
       if (edge.change === 'removed') {
         ctx.setLineDash(EDGE_CHANGE_META.removed.dash.map((segment) => segment / zoom))
@@ -1682,7 +1689,7 @@ function drawNodeTree(
           renderCtx.lowDetail,
         )
       }
-      drawEdges(ctx, node.children, node.state.childAlpha * 0.8, childZoom, renderCtx.thresholds, renderCtx.accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, undefined, undefined, renderCtx.hoveredItem)
+      drawEdges(ctx, node.children, node.state.childAlpha * 0.8, childZoom, renderCtx.thresholds, renderCtx.accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, undefined, undefined, renderCtx.hoveredItem, renderCtx.underlyingEdgePairs)
     }
 
     for (const child of node.children) {
@@ -1756,7 +1763,7 @@ export function renderFrame(
       renderCtx.lowDetail,
     )
 
-    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, renderCtx.thresholds, accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, rebase.originX, rebase.originY, renderCtx.hoveredItem)
+    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, renderCtx.thresholds, accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, rebase.originX, rebase.originY, renderCtx.hoveredItem, renderCtx.underlyingEdgePairs)
 
     for (const node of group.nodes) {
       if (!node.state.isVisible) continue

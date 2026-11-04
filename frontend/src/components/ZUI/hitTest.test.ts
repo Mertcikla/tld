@@ -1,3 +1,4 @@
+import { sourceDetailCapScale } from './sourceDetailScale'
 import { describe, expect, it } from 'vitest'
 import { buildSceneGraph } from './sceneGraph'
 import { subDetail as codeDetail } from '../../utils/subElements'
@@ -129,9 +130,9 @@ describe('ZUI node hit testing', () => {
     updateScene(graph, view, 1000, 600, thresholds)
     const state = graph.nodeById.get(leaf.id)!.state
     expect(state.isLeafCapped).toBe(true)
-    expect(state.screenW).toBe(520)
+    expect(state.screenW).toBeCloseTo(520 * sourceDetailCapScale)
     const hit = hitTestZUIRenderedNode(260, 180, groups, view, thresholds)!
-    expect(hit.absW * view.zoom).toBe(520)
+    expect(hit.absW * view.zoom).toBeCloseTo(520 * sourceDetailCapScale)
     expect(hit.visualScale * view.zoom).toBeCloseTo(state.drawZoom)
     expect(hit.cumulativeScale).toBe(1)
     expect(hitTestZUIRenderedNode(10, 10, groups, view, thresholds)).toBeNull()
@@ -207,6 +208,27 @@ it.each([320, 800])('allows full code detail on a %spx canvas with aligned hit b
   const state = graph.nodeById.get(leaf.id)!.state
   expect(codeDetail(leaf.worldW * state.drawZoom, leaf.worldH * state.drawZoom)).toBe('code')
   const hit = hitTestZUIRenderedNode(260, 180, groups, view, thresholds)!
+  expect(hit.visualScale * view.zoom).toBeCloseTo(state.drawZoom)
+  expect(hit.absW * view.zoom).toBeCloseTo(state.screenW)
+})
+
+
+it.each([320, 1000, 2000])('extends compact code leaves to detail level 180 on a %spx canvas', canvasW => {
+  const leaf: LayoutNode = { ...node('compact-source', 1, 0, 0, { worldW: 180, worldH: 85 }), type: 'file', subKind: 'code' }
+  const groups = [group([leaf])]
+  // Independent reference mapping: level 100 used to cap the leaf; 180 extends it.
+  const expectedZoom = 0.1 + 179 / 99 * (281 / 85 - 0.1)
+  const maxZoom = calculateMaxZoom(groups, canvasW, { x: 0, y: 0, zoom: 1 }, 600)
+  expect(maxZoom).toBeCloseTo(expectedZoom)
+  const view = { x: canvasW / 2 - 90 * maxZoom, y: 300 - 42.5 * maxZoom, zoom: maxZoom * 2 }
+  const graph = buildSceneGraph({ groups, bbox: { minX: 0, minY: 0, maxX: 180, maxY: 85 } })
+  const thresholds = getExpandThresholds(canvasW)
+  updateScene(graph, view, canvasW, 600, thresholds)
+  const state = graph.nodeById.get(leaf.id)!.state
+  expect(state.isLeafCapped).toBe(true)
+  expect(state.screenW).toBeCloseTo(180 * expectedZoom)
+  expect(codeDetail(state.screenW, 85 * state.drawZoom)).toBe('code')
+  const hit = hitTestZUIRenderedNode(90, 42.5, groups, view, thresholds)!
   expect(hit.visualScale * view.zoom).toBeCloseTo(state.drawZoom)
   expect(hit.absW * view.zoom).toBeCloseTo(state.screenW)
 })

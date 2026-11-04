@@ -6,8 +6,8 @@ import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { ViewLayer } from '../../types'
 import type { ZUIViewportBounds } from '../../crossBranch/resolve'
 import {
-  drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
+  drawVisibleDirectProxyBadges,
   type VisibleNodeAnchor,
 } from './proxy'
 import {
@@ -18,6 +18,7 @@ import {
 } from './layoutEngine'
 import {
   renderFrame,
+  edgePairKey,
   setHighlightColor as setRendererHighlightColor,
   setHighlightedTags as setRendererHighlightedTags,
   setHiddenTags as setRendererHiddenTags,
@@ -301,6 +302,9 @@ export function useZUIRenderLoop({
         lowDetail,
         groupLayersByDiagram,
         hoveredItem: hoveredItemRef.current,
+        underlyingEdgePairs: new Set(proxyStateRef.current.hiddenProxyBadges
+          .filter(badge => badge.count > 0)
+          .map(badge => edgePairKey(badge.sourceNodeId, badge.targetNodeId))),
       }
 
       const occupiedLabelRects = renderFrame(ctx, graph, renderCtx, currentView, transitionRebaseRef.current)
@@ -335,17 +339,15 @@ export function useZUIRenderLoop({
         rebasedViewport,
         hoveredItemRef.current,
       )
-      if (!lowDetail) {
-        drawVisibleDirectProxyBadges(
-          ctx,
-          proxyStateRef.current.hiddenProxyBadges,
-          rebasedProxyAnchors,
-          cameraRebase.view.zoom,
-          labelBgRef.current,
-          occupiedLabelRects,
-          rebasedViewport,
-        )
-      }
+      drawVisibleDirectProxyBadges(
+        ctx,
+        proxyStateRef.current.hiddenProxyBadges,
+        rebasedProxyAnchors,
+        cameraRebase.view.zoom,
+        labelBgRef.current,
+        occupiedLabelRects,
+        hoveredItemRef.current,
+      )
       ctx.restore()
       ctx.restore()
       lastViewRef.current = currentView

@@ -9,7 +9,7 @@ import { flushSync } from 'react-dom'
 import { Box, Button, Portal, Text } from '@chakra-ui/react'
 import { Handle, Position, useStore, useStoreApi } from 'reactflow'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
-import { readSourcePreviewSize, subscribeSourcePreviewSizes, writeSourcePreviewSize } from '../utils/sourcePreviewSize'
+import { readSourcePreviewSize, subscribeSourcePreviewSizes } from '../utils/sourcePreviewSize'
 import { buildSymbolPresentation, type SymbolArea } from '../utils/subElementSymbols'
 import { SubElementSymbolPorts, SubElementSymbolRegions, type SymbolInteractions } from './SubElementSymbolLayer'
 import type { NodeData } from './ElementNode'
@@ -36,12 +36,6 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const appearance = useSyncExternalStore(subscribeSourcePreviewAppearance, () => readSourcePreviewAppearance(viewId ?? data.view_id, data.element_id), () => readSourcePreviewAppearance(viewId ?? data.view_id, data.element_id))
   const lineNumbers = appearance.lineNumbers ?? detail === 'code'
   const previewSize = useSyncExternalStore(subscribeSourcePreviewSizes, () => readSourcePreviewSize(viewId ?? data.view_id, data.element_id), () => null)
-  useEffect(() => {
-    if (detail !== 'overview' && !isSubElement(data.kind) && !previewSize) {
-      const size = subEditorSize(kind, null, detail)
-      writeSourcePreviewSize(viewId ?? data.view_id, data.element_id, size)
-    }
-  }, [detail, data.kind, data.view_id, data.element_id, viewId, kind, previewSize])
   const savedSize = subEditorSize(kind, previewSize, savedDetail)
   const { width, height } = draftSize ?? savedSize
   const [hoveredSymbol, setHoveredSymbol] = useState<string | null>(null)

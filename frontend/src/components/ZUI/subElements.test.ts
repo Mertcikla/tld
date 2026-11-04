@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { drawSubElement, subNodeSymbols, scrollSubElement } from './subElements'
+import { drawSubElement, subNodeSymbols, scrollSubElement, subNodeHandleAnchor, subSymbolAtPoint } from './subElements'
 import * as subSources from '../../utils/subElementSource'
 import { symbolHandle } from '../../utils/subElements'
 import type { LayoutNode } from './types'
@@ -221,4 +221,21 @@ it('draws the repository diff with translucent line borders, no highlight fill, 
   expect(text.filter(value => value === '1')).toHaveLength(2)
   expect(borders).toEqual(['rgba(248,81,73,0.30)', 'rgba(46,160,67,0.30)'])
   expect(backgrounds).toEqual(['#2d3748'])
+})
+
+it('keeps compact source ports and symbol picking aligned with the zoomed preview', () => {
+  const compact = { ...node, worldW: 180, worldH: 85 }
+  const scale = 180 / 520
+  const expanded = { ...node, worldH: 85 / scale }
+  const handle = symbolHandle('right', { name: 'Checkout', type: 'class', startLine: 1, endLine: 1 })
+  const zoom = 3.4
+  const expected = subNodeHandleAnchor(expanded, handle, zoom * scale)!
+  const actual = subNodeHandleAnchor(compact, handle, zoom)!
+  expect(actual.x).toBeCloseTo(expected.x * scale)
+  expect(actual.y).toBeCloseTo(expected.y * scale)
+  const area = subNodeSymbols(expanded, zoom * scale).areas[0]
+  const x = (area.x + area.width / 2) * scale
+  const y = (84 + area.contentTop + area.height / 2) * scale
+  expect(subSymbolAtPoint(compact, zoom, x, y)).toBe(area.key)
+  expect(subNodeHandleAnchor({ ...compact, subDetail: undefined }, handle, 1)).toBeNull()
 })

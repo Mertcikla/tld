@@ -31,6 +31,17 @@ export function subEditorSize(kind: string | null | undefined, value: SourcePrev
 export function subRowHeight() { return SUB_ROW }
 export const memberHandle = (side: 'left' | 'right', id: string) => `${side}-member-${encodeURIComponent(id)}`
 export const lineHandle = (side: 'left' | 'right', line: number) => `${side}-line-${line}`
+/** A merged file connector retains every participating declaration line. */
+export function linesForHandle(id: string): number[] {
+  const match = id.match(/^(?:left|right)-line-(\d+(?:,\d+)*)$/)
+  return match ? [...new Set(match[1].split(',').map(Number).filter(line => Number.isSafeInteger(line) && line > 0))] : []
+}
+export const firstHandleLine = (id: string) => linesForHandle(id)[0] ?? NaN
+export function expandLineHandles(id: string): string[] {
+  const lines = linesForHandle(id)
+  return lines.length > 1 ? lines.map(line => lineHandle(id.startsWith('left') ? 'left' : 'right', line)) : [id]
+}
+
 export interface SubSymbol { name: string; type?: string; qualifiedName?: string; startLine: number; endLine: number }
 const symbolKey = (symbol: SubSymbol) => `${symbol.type ?? ''}:${symbol.qualifiedName || symbol.name}`
 export const symbolHandle = (side: 'left' | 'right', symbol: SubSymbol) => `${side}-symbol-${encodeURIComponent(symbolKey(symbol))}`
@@ -43,8 +54,8 @@ export function subHandleY(id: string, _value: SourcePreviewSize | null | undefi
   let index = -1
   const symbol = symbolForHandle(id, symbols)
   if (symbol) index = symbol.startLine - startLine
-  const line = id.match(/^(?:left|right)-line-(\d+)$/)
-  if (line) index = Number(line[1]) - startLine
+  const line = firstHandleLine(id)
+  if (Number.isFinite(line)) index = line - startLine
   // Deleted members and out-of-range lines keep a visible fallback endpoint.
   const rowHeight = SUB_ROW
   return Math.max(SUB_HEADER + SUB_ELLIPSIS / 2, Math.min(height - SUB_ELLIPSIS / 2, SUB_CONTENT_TOP + (Math.max(0, index) + 0.5) * rowHeight - scrollTop))
@@ -92,7 +103,7 @@ export function collapsedSymbols(source: { symbols: SubSymbol[]; startLine: numb
 
 export function outlineHandleY(id: string, rows: SubSymbol[], allSymbols: SubSymbol[], height: number, scrollTop = 0) {
   const symbol = symbolForHandle(id, allSymbols) ?? symbolForHandle(id, rows)
-  const line = symbol ? symbol.startLine : Number(id.match(/-line-(\d+)$/)?.[1])
+  const line = symbol ? symbol.startLine : firstHandleLine(id)
   const index = rows.findIndex(row => line >= row.startLine && line <= row.endLine)
   return Math.max(SUB_HEADER + SUB_ELLIPSIS / 2, Math.min(height - SUB_ELLIPSIS / 2, SUB_CONTENT_TOP + (Math.max(0, index) + 0.5) * SUB_ROW - scrollTop))
 }

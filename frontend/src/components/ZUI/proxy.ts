@@ -704,22 +704,16 @@ export function drawVisibleDirectProxyBadges(
   zoom: number,
   labelBg: string,
   occupiedLabelRects: ScreenRect[],
-  viewport?: ZUIViewportBounds,
+  hoveredItem?: HoveredItem | null,
 ) {
-  const pointInViewport = (x: number, y: number): boolean => {
-    if (!viewport) return true
-    return x >= viewport.minX && x <= viewport.maxX && y >= viewport.minY && y <= viewport.maxY
-  }
-
-  const anchorCenterInViewport = (anchor: VisibleNodeAnchor): boolean => {
-    return pointInViewport(anchor.worldX + anchor.worldW / 2, anchor.worldY + anchor.worldH / 2)
-  }
-
   for (const badge of badges) {
+    if (hoveredItem?.type !== 'edge' || hoveredItem.data.isProxy || hoveredItem.data.isPortalConn) continue
+    const { sourceObjId, targetObjId } = hoveredItem.data
+    if (!((badge.sourceAnchorElementId === sourceObjId && badge.targetAnchorElementId === targetObjId) ||
+      (badge.targetAnchorElementId === sourceObjId && badge.sourceAnchorElementId === targetObjId))) continue
     const source = visibleAnchorsByNodeId.get(badge.sourceNodeId)
     const target = visibleAnchorsByNodeId.get(badge.targetNodeId)
     if (!source || !target) continue
-    if (viewport && !anchorCenterInViewport(source) && !anchorCenterInViewport(target)) continue
     const alpha = Math.min(source.renderAlpha, target.renderAlpha)
     if (alpha < 0.01) continue
 
@@ -737,12 +731,6 @@ export function drawVisibleDirectProxyBadges(
     })
     const label = `+${badge.count}`
     const badgeMetrics = measureProxyBadge(ctx, label, zoom)
-    if (!connectorLabelFitsEndpoints(
-      { width: badgeMetrics.badgeCssW, height: badgeMetrics.badgeCssH },
-      { width: source.worldW * zoom, height: source.worldH * zoom },
-      { width: target.worldW * zoom, height: target.worldH * zoom },
-    )) continue
-
     ctx.save()
     ctx.globalAlpha = alpha
     const labelPos = pickEdgeLabelPosition(

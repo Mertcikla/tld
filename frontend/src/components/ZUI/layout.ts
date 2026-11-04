@@ -11,8 +11,7 @@ import type {
   ViewConnector,
 } from '../../types'
 import { elementTechnologyText, resolveElementIconUrl } from '../../utils/elementIcon'
-import { readSourcePreviewSize } from '../../utils/sourcePreviewSize'
-import { subElementKind, subSize } from '../../utils/subElements'
+import { subElementKind } from '../../utils/subElements'
 import { connectorChangeFromTags } from './edgeChange'
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -22,8 +21,6 @@ export const NODE_H = 85
 const GROUP_PAD = 80         // padding inside a diagram group box
 const GROUP_SPACING = 400    // horizontal gap between root diagrams
 const CHILD_PAD = 4         // padding inside a node when rendering children
-
-const displaySize = (element: PlacedElement) => subSize(subElementKind(element) ?? element.kind, readSourcePreviewSize(element.view_id, element.element_id))
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -48,8 +45,8 @@ function calcBBox(elements: PlacedElement[]): {
     const py = getPos(o, 'y')
     minX = Math.min(minX, px)
     minY = Math.min(minY, py)
-    maxX = Math.max(maxX, px + displaySize(o).width)
-    maxY = Math.max(maxY, py + displaySize(o).height)
+    maxX = Math.max(maxX, px + NODE_W)
+    maxY = Math.max(maxY, py + NODE_H)
   }
   if (!isFinite(minX)) return { minX: 0, minY: 0, width: NODE_W, height: NODE_H }
   return { minX, minY, width: maxX - minX, height: maxY - minY }
@@ -100,7 +97,7 @@ function buildNodes(
   const treeMap = new Map(tree.map((d) => [d.id, d]))
 
   const realNodes: LayoutNode[] = elements.map((obj) => {
-    const { width: nodeW, height: nodeH } = displaySize(obj)
+    const nodeW = NODE_W, nodeH = NODE_H
     const localX = getPos(obj, 'x') - bboxMinX + pad
     const localY = getPos(obj, 'y') - bboxMinY + pad
 
@@ -185,8 +182,8 @@ function buildNodes(
       diagramId,
       worldX: worldOffsetX + diagramX + localX,
       worldY: worldOffsetY + localY,
-      worldW: displaySize(obj).width,
-      worldH: displaySize(obj).height,
+      worldW: NODE_W,
+      worldH: NODE_H,
       subConnectedHandles: (views[String(diagramId)]?.connectors ?? []).flatMap(edge => [
         ...(edge.source_element_id === obj.element_id && edge.source_handle ? [edge.source_handle] : []),
         ...(edge.target_element_id === obj.element_id && edge.target_handle ? [edge.target_handle] : []),

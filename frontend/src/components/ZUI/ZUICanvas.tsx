@@ -1,7 +1,6 @@
 import { sourcePreviewAppearanceRevision, subscribeSourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
-import { sourcePreviewSizeRevision, subscribeSourcePreviewSizes } from '../../utils/sourcePreviewSize'
 import { useBreakpointValue } from '@chakra-ui/react'
 import type { FlowFocus } from '../../flows/model'
 import { presentZUIFlow } from '../../flows/presentation'
@@ -120,7 +119,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
   const appearanceRevision = useSyncExternalStore(subscribeSourcePreviewAppearance, sourcePreviewAppearanceRevision, () => 0)
-  const previewRevision = useSyncExternalStore(subscribeSourcePreviewSizes, sourcePreviewSizeRevision, () => 0)
   const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
     const setCodeFilter = (nodes: LayoutNode[]) => nodes.forEach(node => {
@@ -131,9 +129,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     })
     base.groups.forEach(group => setCodeFilter(group.nodes))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
-  // Preview sizes are stored outside the workspace graph and invalidate its layout.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, changeOverlays, previewRevision, appearanceRevision, connectedCodeOnly, codeSources, codeSourceLinks])
+  }, [data, changeOverlays, appearanceRevision, connectedCodeOnly, codeSources, codeSourceLinks])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ExploreData, PlacedElement } from '../../types'
-import { isDetailedSubElement } from '../../utils/subElements'
-import { writeSourcePreviewSize } from '../../utils/sourcePreviewSize'
+import { nodeDetail } from './subElements'
+import { leafScreenWidthLimit } from './layoutEngine'
+import { readSourcePreviewSize, writeSourcePreviewSize } from '../../utils/sourcePreviewSize'
 import { computeLayout } from './layout'
 
 function layoutElement(source: Partial<PlacedElement>) {
@@ -23,17 +24,34 @@ describe('Explore linked source layout', () => {
     const node = layoutElement({ kind, repository_id: 'repo-1', file_path: 'ai/api.py' })
     expect(node.subKind).toBe('code')
     expect(node.type).toBe(kind ?? 'system')
-    expect([node.worldW, node.worldH]).toEqual([520, 360])
-    expect(isDetailedSubElement(node.subKind, node.subDetail, node.worldW, node.worldH, 1)).toBe(true)
-    expect(isDetailedSubElement(node.subKind, node.subDetail, node.worldW, node.worldH, 0.1)).toBe(false)
+    expect([node.worldW, node.worldH]).toEqual([180, 85])
+    expect(nodeDetail(node, 1)).toBe('overview')
+    expect(nodeDetail(node, 0.1)).toBe('overview')
+    const maxZoom = leafScreenWidthLimit(node, 400) / node.worldW
+    expect(nodeDetail(node, maxZoom)).toBe('code')
   })
 
-  it('supports repository paths and anchored files while preserving saved preview dimensions', () => {
+  it('delays symbol names until detail level 40 while retaining later stage boundaries', () => {
+    const node = layoutElement({ repository_id: 'repo-1', file_path: 'ai/api.py' })
+    const start = 0.1 + 39 / 99 * (281 / 85 - 0.1)
+    expect(nodeDetail(node, start - 0.000001)).toBe('overview')
+    expect(nodeDetail(node, start)).toBe('summary')
+    expect(nodeDetail(node, start + 0.000001)).toBe('summary')
+    expect(nodeDetail(node, 36 / 17 - 0.000001)).toBe('summary')
+    expect(nodeDetail(node, 36 / 17)).toBe('outline')
+    expect(nodeDetail(node, 56 / 17 - 0.000001)).toBe('outline')
+    expect(nodeDetail(node, 56 / 17)).toBe('code')
+    expect(nodeDetail({ ...node, subDetail: 'outline' }, 1)).toBe('outline')
+  })
+
+  it('keeps anchored files compact despite a saved editor preview size', () => {
     writeSourcePreviewSize(1, 17, { width: 640, height: 480 })
     const node = layoutElement({ repo: '/workspace/backend', file_path: 'ai/api.py#L10-L20' })
     expect(node.subKind).toBe('code')
     expect(node.sourceLink?.file_path).toBe('ai/api.py#L10-L20')
-    expect([node.worldW, node.worldH]).toEqual([640, 480])
+    expect([node.worldW, node.worldH]).toEqual([180, 85])
+    expect(nodeDetail(node, 1)).toBe('overview')
+    expect(readSourcePreviewSize(1, 17)).toEqual({ width: 640, height: 480 })
   })
 
   it.each([

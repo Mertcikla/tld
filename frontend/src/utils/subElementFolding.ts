@@ -1,5 +1,5 @@
 import type { SubSource } from './subElementSource'
-import { displaySymbols, symbolForHandle, type SubSymbol } from './subElements'
+import { displaySymbols, symbolForHandle, expandLineHandles, firstHandleLine, type SubSymbol } from './subElements'
 
 export interface SourceDisplayRow { diff?: import('../api/client').RepositorySourceDiffLine; sourceIndex: number; symbol?: SubSymbol; collapsed?: number }
 
@@ -26,11 +26,11 @@ export function connectedSourceRows(source: SubSource, connected: readonly strin
   const symbols = [...displaySymbols(source.symbols)]
   const used = new Set<SubSymbol>()
   const looseLines = new Set<number>()
-  for (const id of connected) {
+  for (const id of connected.flatMap(expandLineHandles)) {
     const named = symbolForHandle(id, source.symbols)
     let member = id.match(/-member-(.*)$/)?.[1]
     try { if (member) member = decodeURIComponent(member) } catch { /* Stale handles keep their fallback port. */ }
-    const line = Number(id.match(/-line-(\d+)$/)?.[1])
+    const line = firstHandleLine(id)
     const selected = named
       ? symbols.find(symbol => symbol === named) ?? symbols.find(symbol => symbol.startLine >= named.startLine && symbol.endLine <= named.endLine)
       : member ? symbols.find(symbol => symbol.name === member || symbol.qualifiedName === member)

@@ -310,3 +310,14 @@ it('keeps added and removed Git rows visible and maps Head anchors past deletion
   expect(ordinary.rows).toHaveLength(3)
   expect(ordinary.rows.every(row => !row.diff)).toBe(true)
 })
+
+it.each(['summary', 'outline', 'code'] as const)('keeps every symbol of one merged file connector visible in %s', detail => {
+  const handle = 'right-line-8,19'
+  const model = buildSymbolPresentation({ ...base, detail, connectedOnly: true, connected: [handle], height: 600 })
+  expect(model.areas.filter(area => area.connected).map(area => area.symbol.name)).toEqual(['save', 'find'])
+  expect(model.endpoints.has(handle)).toBe(true)
+  expect(model.endpoints.get(handle)?.y).toBe(model.endpoints.get('right-line-8')?.y)
+  expect(model.endpoints.get('right-line-19')?.connected).toBe(true)
+  const hidden = buildSymbolPresentation({ ...base, detail, connectedOnly: true, connected: [handle], connectionCounts: { [handle]: 0 } })
+  expect(hidden.areas.filter(area => area.connected)).toHaveLength(0)
+})

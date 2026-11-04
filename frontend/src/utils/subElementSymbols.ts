@@ -2,7 +2,7 @@ import { connectedSourceRows, sourceCodeRows, sourceDiffRows, type SourceDisplay
 import type { SubSource } from './subElementSource'
 import { symbolSignature, type SymbolSignature } from './subElementSignatures'
 import { expandCodeTabs, measureSubText, subCodeLineHeight, SUB_CODE_TEXT_X, SUB_SYMBOL_CONNECTOR_GAP, SUB_SYMBOL_PADDING } from './subElementText'
-import { isSymbolDetail, collapsedSymbols, displaySymbols, isSubHandle, SUB_CONTENT_TOP, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
+import { isSymbolDetail, expandLineHandles, firstHandleLine, collapsedSymbols, displaySymbols, isSubHandle, SUB_CONTENT_TOP, SUB_ELLIPSIS, SUB_HEADER, symbolForHandle, symbolHandle, type SubDetail, type SubSymbol } from './subElements'
 
 
 export interface SymbolArea {
@@ -122,14 +122,20 @@ function buildSymbolGeometry({ kind, source, path = '', detail, width, height, c
   for (const area of areas) { byHandle.set(area.leftId, area); byHandle.set(area.rightId, area) }
   const counts = new Map<string, number>()
   for (const id of connected) counts.set(id, (counts.get(id) ?? 0) + 1)
-  const connections = [...counts.keys()].filter(isSubHandle).map(id => {
+  // Expand merged endpoints for visibility/stems, while retaining the original
+  // bundle ID as a hidden routing alias to the first declaration.
+  const activeCounts = new Map<string, number>()
+  for (const [id, count] of counts) for (const handle of expandLineHandles(id)) {
+    activeCounts.set(handle, (activeCounts.get(handle) ?? 0) + (connectionCounts?.[id] ?? count))
+  }
+  const connections = [...new Set([...activeCounts.keys(), ...counts.keys()])].filter(isSubHandle).map(id => {
     let area = byHandle.get(id)
     const named = source ? symbolForHandle(id, source.symbols) : undefined
-    const line = named?.startLine ?? Number(id.match(/-line-(\d+)$/)?.[1])
+    const line = named?.startLine ?? firstHandleLine(id)
     if (!area && Number.isFinite(line)) area = [...areas].reverse().find(candidate => line >= candidate.symbol.startLine && line <= candidate.symbol.endLine)
     if (!area && named) area = areas.find(candidate => candidate.symbol.startLine >= named.startLine && candidate.symbol.endLine <= named.endLine)
     const index = symbolDetail || (named && area) ? area?.start ?? 0 : Number.isFinite(line) ? displayIndex(line) : area?.start ?? 0
-    return { id, area, index, count: connectionCounts?.[id] ?? counts.get(id) ?? 1 }
+    return { id, area, index, count: activeCounts.get(id) ?? 0 }
   })
   const symbolContentWidth = kind === 'code' ? areas.reduce((end, area) => Math.max(end, area.x + area.width + SUB_SYMBOL_CONNECTOR_GAP), 0) : 0
   // Include long member labels and signatures in the horizontal scroll extent.

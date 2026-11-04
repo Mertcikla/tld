@@ -1,3 +1,4 @@
+import { sourceDetailCapScale } from './sourceDetailScale'
 import type { LayoutNode } from './types'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUIViewState } from './types'
@@ -20,10 +21,10 @@ export function transitionT(screenW: number, start: number, end: number): number
   return clamp((screenW - start) / (end - start), 0, 1)
 }
 
-/** Code leaves must reach the full-code detail stage before their size is capped. */
+/** Code leaves retain zoom headroom beyond full-code activation to reveal more rows. */
 export function leafScreenWidthLimit(node: Pick<LayoutNode, 'worldW' | 'worldH' | 'type' | 'subKind'>, overviewLimit: number): number {
   if ((node.subKind ?? node.type) !== 'code') return overviewLimit
-  return Math.max(overviewLimit, 520, 281 * node.worldW / node.worldH)
+  return Math.max(overviewLimit, 520 * sourceDetailCapScale, 281 * node.worldW / node.worldH * sourceDetailCapScale)
 }
 
 export function getExpandThresholds(canvasW: number) {

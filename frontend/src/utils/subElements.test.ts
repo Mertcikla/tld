@@ -93,3 +93,16 @@ it('adds a summary zoom band without moving the existing outline and full-code t
   expect(subDetail(440, 280)).toBe('code')
   expect(subEditorSize('code', null, 'summary')).toEqual({ width: 320, height: 180 })
 })
+
+it('preserves merged declaration handles and anchors their route at the first declaration', async () => {
+  const { expandLineHandles, linesForHandle, outlineHandleY } = await import('./subElements')
+  const handle = 'right-line-12,27,12'
+  expect(linesForHandle(handle)).toEqual([12, 27])
+  expect(expandLineHandles(handle)).toEqual(['right-line-12', 'right-line-27'])
+  expect(linesForHandle('right-line-0,foo')).toEqual([])
+  expect(isSubHandle(handle)).toBe(true)
+  expect(ensureVisualHandleId(handle, 'left')).toBe(handle)
+  expect(subHandleY(handle, null, 12)).toBe(93)
+  const symbols = [{ name: 'run', startLine: 12, endLine: 15 }, { name: 'save', startLine: 27, endLine: 30 }]
+  expect(outlineHandleY(handle, symbols, symbols, 360)).toBe(outlineHandleY('right-line-12', symbols, symbols, 360))
+})

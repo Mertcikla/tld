@@ -196,7 +196,7 @@ it('renders file leaves as spaced code cards without mutating the frozen scene',
   expect(rendered.overlays[1].symbolDetails).toEqual(details)
   expect(rendered.codeSources[1]).toMatchObject({ status: 'ready', lines: [], symbols: [{ name: 'Run', startLine: 3, endLine: 5 }] })
   const node = computeLayout(rendered.data).groups[0].nodes[0]
-  expect(node.worldW).toBe(520)
+  expect(node.worldW).toBe(180)
   expect(node.subDetail).toBeUndefined()
 })
 
