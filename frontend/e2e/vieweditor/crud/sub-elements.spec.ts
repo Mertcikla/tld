@@ -623,7 +623,7 @@ test('source previews share regular zoom navigation in collapsed and full header
 })
 
 
-test('preview gestures wait for a two-second hover and display a pointer hint', async ({ page }) => {
+test('preview gestures wait for the hover delay and display a pointer hint', async ({ page }) => {
   await page.route('**/GetWorktreeSource', route => route.fulfill({ json: { content: Array.from({ length: 80 }, (_, i) => `message M${i} { string id = 1; }`).join('\n') } }))
   const view = await createApiView(page, 'Preview hover gate')
   const element = await createPlacedElement(page, view.id, { name: 'Hover preview', kind: 'class', repo: '/test/repo', filePath: 'hover.proto' }, 100, 100)
@@ -637,7 +637,9 @@ test('preview gestures wait for a two-second hover and display a pointer hint', 
   await expect(page.getByRole('progressbar', { name: 'Activating preview interaction' })).toBeVisible()
   await expect(page.getByText('Keep hovering to interact', { exact: true })).toBeVisible()
   const before = await viewport.getAttribute('style')
-  await page.mouse.wheel(0, 120)
+  // Start by zooming in: this single-card view may already be at its minimum
+  // zoom, where zooming out (and panning at the extent) correctly does nothing.
+  await page.mouse.wheel(0, -120)
   await expect(viewport).not.toHaveAttribute('style', before!)
   await expect(scroller).toHaveJSProperty('scrollTop', 0)
   await scroller.hover({ position: { x: 100, y: 50 } })

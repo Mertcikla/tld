@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useIsPresent } from 'framer-motion'
 import {
   Badge,
   Box,
@@ -27,6 +28,7 @@ export default function ConnectorPanelCollaboration({
   liveCommentCreate,
 }: Props) {
   const { viewId, selectedConnector } = useViewEditorContext()
+  const isPresent = useIsPresent()
   const connector = propsConnector ?? selectedConnector
   const connectorId = connector?.id
   const [threads, setThreads] = useState<ViewThread[]>([])
@@ -35,16 +37,16 @@ export default function ConnectorPanelCollaboration({
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(async () => {
-    if (connectorId == null || viewId == null) return
+    if (!isPresent || connectorId == null || viewId == null) return
     const list = await api.workspace.views.threads.listForConnector(viewId, connectorId).catch(() => [])
     setThreads(list)
-  }, [connectorId, viewId])
+  }, [connectorId, isPresent, viewId])
 
   useEffect(() => {
-    if (connectorId == null || viewId == null) return
+    if (!isPresent || connectorId == null || viewId == null) return
     setLoading(true)
     refresh().finally(() => setLoading(false))
-  }, [connectorId, refresh, viewId])
+  }, [connectorId, isPresent, refresh, viewId])
 
   useEffect(() => {
     if (!connector || !liveThreadUpsert || liveThreadUpsert.connector_id !== connector.id) return

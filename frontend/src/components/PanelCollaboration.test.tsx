@@ -8,10 +8,12 @@ import ConnectorPanelCollaboration from './ConnectorPanelCollaboration'
 
 const mocks = vi.hoisted(() => ({
   viewId: 1,
+  isPresent: true,
   listElementThreads: vi.fn(),
   listConnectorThreads: vi.fn(),
   listReactions: vi.fn(),
 }))
+vi.mock('framer-motion', () => ({ useIsPresent: () => mocks.isPresent }))
 vi.mock('../api/client', () => ({ api: { workspace: { views: {
   threads: { listForElement: mocks.listElementThreads, listForConnector: mocks.listConnectorThreads },
   reactions: { list: mocks.listReactions },
@@ -44,6 +46,7 @@ let queryClient: QueryClient
 beforeEach(() => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   mocks.viewId = 1
+  mocks.isPresent = true
   mocks.listElementThreads.mockReset().mockResolvedValue([])
   mocks.listConnectorThreads.mockReset().mockResolvedValue([])
   mocks.listReactions.mockReset().mockResolvedValue([])
@@ -92,5 +95,15 @@ describe.each(['element', 'connector'] as const)('%s collaboration panel', (kind
     await act(async () => { renderer.update(panel()) })
     expect(listThreads).toHaveBeenCalledTimes(2)
     expect(listThreads).toHaveBeenLastCalledWith(2, 10)
+  })
+
+  it('does not request the old item in the new view during the panel exit animation', async () => {
+    await act(async () => { renderer = create(panel()) })
+    mocks.isPresent = false
+    mocks.viewId = 2
+    await act(async () => { renderer.update(panel()) })
+    expect(listThreads).toHaveBeenCalledOnce()
+    expect(listThreads).toHaveBeenLastCalledWith(1, 10)
+    if (kind === 'element') expect(mocks.listReactions).toHaveBeenCalledOnce()
   })
 })

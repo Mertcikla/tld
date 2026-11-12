@@ -58,6 +58,9 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
   const sourceIdentity = JSON.stringify([data.repo, data.repository_id, data.branch, data.file_path, data.language])
   const sourceLink = useMemo(() => ({ repo: data.repo, repository_id: data.repository_id, branch: data.branch, file_path: data.file_path, language: data.language }), [data.repo, data.repository_id, data.branch, data.file_path, data.language])
   const source = kind === 'code' ? peekSubSource(data) : undefined
+  // Highlighting arrives after the source text and replaces the token array in
+  // the cached source object. Track it separately so memoized rows repaint.
+  const sourceTokens = source?.tokens
   useEffect(() => kind === 'code' && detail !== 'overview' ? subscribeSubSources(refresh) : undefined, [kind, detail])
   useEffect(() => { if (kind === 'code' && detail !== 'overview') requestSubSource(sourceLink) }, [kind, sourceLink, detail])
   useEffect(() => { setScrollTop(0); setScrollLeft(0); if (scrollRef.current) { scrollRef.current.scrollTop = 0; scrollRef.current.scrollLeft = 0 } }, [sourceIdentity, detail, appearance.connectedOnly])
@@ -243,11 +246,11 @@ export default function SubElementNode({ data, selected, renderCard }: { data: N
       return <Box key={index} position="absolute" top={`${index * rowHeight + presentation.contentInset}px`} left={0} minW={`${width - 2}px`} h={`${rowHeight}px`} px="14px" fontFamily={SUB_CODE_FONT_FAMILY} fontWeight="400" style={{ fontVariantLigatures: 'none' }} fontSize={`${appearance.fontSize}px`} lineHeight={`${rowHeight}px`} whiteSpace="pre" pointerEvents="none" zIndex={1}>
         {kind === 'code' && lineNumbers && !displayRow.collapsed && <Text data-testid="source-code-line-number" as="span" display="inline-block" w={`${presentation.textX - 14}px`} color="gray.500">{reading ? line : area?.symbol.startLine}</Text>}
         <span data-symbol-handle={area?.leftId} data-symbol-key={area?.key} className="sub-symbol-text" style={{ pointerEvents: 'auto', display: 'inline-block', minWidth: area && !(kind === 'code' && reading) ? Math.max(0, area.width - 12) : undefined }} onMouseEnter={() => stableInteractions.onHover(area?.key ?? null)} onMouseLeave={() => stableInteractions.onHover(null)} onClick={event => area && stableInteractions.onActivate(area, event)}>
-          {reading ? <>{source?.tokens[sourceIndex]?.length ? expandCodeTokens(source.tokens[sourceIndex]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[sourceIndex] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
+          {reading ? <>{sourceTokens?.[sourceIndex]?.length ? expandCodeTokens(sourceTokens[sourceIndex]).map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>) : expandCodeTabs(source?.lines[sourceIndex] ?? '')}</> : area?.signature?.tokens.map((token, i) => <span key={i} style={{ color: token.color }}>{token.text}</span>)}
         </span>
       </Box>
     })
-  }, [detail, first, last, presentation.rows, presentation.contentInset, presentation.textX, rowHeight, width, kind, lineNumbers, reading, source, appearance.fontSize, foldScrollLeft, viewportWidth, stableInteractions])
+  }, [detail, first, last, presentation.rows, presentation.contentInset, presentation.textX, rowHeight, width, kind, lineNumbers, reading, source, sourceTokens, appearance.fontSize, foldScrollLeft, viewportWidth, stableInteractions])
   const bodySlotHandles = useMemo(() => (['top', 'bottom', 'left', 'right'] as const).flatMap(side => [0, 1, 2, 3, 4].map(slot => {
     const id = `${side}-${slot}`, position = { top: Position.Top, bottom: Position.Bottom, left: Position.Left, right: Position.Right }[side]
     const anchorStyle = getVisualHandleStyle(position, slot)
