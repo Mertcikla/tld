@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { foldBannerBounds } from '../../utils/subElementSymbols'
-import { drawSubElement, subNodeSymbols, scrollSubElement, subNodeHandleAnchor, subSymbolAtPoint, revealSubOverflow } from './subElements'
+import { drawSubElement, subNodeSymbols, scrollSubElement, subNodeHandleAnchor, subSymbolAtPoint, revealSubOverflow, panSubElement } from './subElements'
 import * as subSources from '../../utils/subElementSource'
 import { symbolHandle } from '../../utils/subElements'
 import type { LayoutNode } from './types'
@@ -19,6 +19,30 @@ const node: LayoutNode = {
 }
 
 describe('Explore source cards', () => {
+  it.each(['code', 'outline'] as const)('draws highlighted tokens revealed by horizontal scrolling in %s layout', detail => {
+    const prefix = `function ${'a'.repeat(100)}`
+    const card: LayoutNode = {
+      ...node, id: `horizontal-scroll-${detail}`, subDetail: detail,
+      subSource: {
+        status: 'ready', lines: [`${prefix}TAIL() {}`],
+        tokens: [[{ text: prefix, color: '#fff' }, { text: 'TAIL', color: '#61afef' }, { text: '() {}', color: '#fff' }]],
+        symbols: [{ name: 'longFunction', type: 'function', startLine: 1, endLine: 1 }], startLine: 1, endLine: 1,
+      },
+    }
+    const drawn: string[] = []
+    const context = {
+      font: '12px sans-serif', fillText(value: string) { drawn.push(value) },
+      measureText(value: string) { return { width: value.length * 6 } },
+      save() {}, restore() {}, beginPath() {}, roundRect() {}, fill() {}, stroke() {}, clip() {}, fillRect() {}, rect() {}, translate() {},
+    }
+    drawSubElement(context as unknown as CanvasRenderingContext2D, card, 1, 1, '#63b3ed', false)
+    expect(drawn).not.toContain('TAIL')
+    drawn.length = 0
+    expect(panSubElement(card, 500, 0, 1)).toBe(true)
+    drawSubElement(context as unknown as CanvasRenderingContext2D, card, 1, 1, '#63b3ed', false)
+    expect(drawn).toContain('TAIL')
+  })
+
   it.each([1, 2, 8])('caps header and body text at zoom %s', zoom => {
     const text: { value: string; screenFont: number }[] = []
     // Capture actual canvas font assignments to cover both the header and code rows.

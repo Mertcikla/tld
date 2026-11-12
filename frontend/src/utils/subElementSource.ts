@@ -77,7 +77,7 @@ export function requestSubSource(link: Link, retry = false): SubSource {
   const result: SubSource = { status: 'loading', lines: [], tokens: [], symbols: [], startLine: 1, endLine: 1 }
   cache.set(key, result)
   // Bound retained documents; no source text is written to the element or database.
-  if (cache.size > 64) cache.delete(cache.keys().next().value!)
+  if (cache.size > 512) cache.delete(cache.keys().next().value!)
   void (async () => {
     try {
       const { basePath, anchor } = parseSourceLink(link.file_path)

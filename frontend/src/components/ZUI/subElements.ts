@@ -254,7 +254,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
         for (const token of area.signature.tokens) {
           ctx.fillStyle = token.color; ctx.fillText(token.text, x, cy)
           x += ctx.measureText(token.text).width
-          if (x > w) break
+          if (x > scrollLeft + w) break
         }
       }
     } else {
@@ -262,7 +262,7 @@ function drawSubElementNative(ctx: CanvasRenderingContext2D, node: LayoutNode, z
       if (source?.tokens[sourceIndex]?.length) for (const token of expandCodeTokens(source.tokens[sourceIndex])) {
         ctx.fillStyle = token.color; ctx.fillText(token.text, tx, cy)
         tx += ctx.measureText(token.text).width
-        if (tx > w) break
+        if (tx > scrollLeft + w) break
       } else { ctx.fillStyle = '#abb2bf'; ctx.fillText(expandCodeTabs(source?.lines[sourceIndex] ?? ''), tx, cy) }
     }
   }
