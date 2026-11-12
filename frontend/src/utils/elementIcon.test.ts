@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { resolveElementIconUrl } from './elementIcon'
+import { elementTechnologyText, resolveElementIconUrl } from './elementIcon'
+
+it('shares the regular element technology label behavior with detailed headers', () => {
+  const links = [{ type: 'catalog' as const, slug: 'go', label: 'Go', is_primary_icon: true }]
+  expect(elementTechnologyText('Go', links, true)).toBeUndefined()
+  expect(elementTechnologyText('Go', links, false)).toBe('Go')
+  expect(elementTechnologyText(null, [...links, { type: 'catalog', slug: 'postgresql', label: 'PostgreSQL' }], true)).toBe('Go, PostgreSQL')
+  expect(elementTechnologyText('Go, PostgreSQL', [], true)).toBe('Go, PostgreSQL')
+})
 
 describe('resolveElementIconUrl', () => {
   it('uses an explicit logo url before derived technology icons', () => {

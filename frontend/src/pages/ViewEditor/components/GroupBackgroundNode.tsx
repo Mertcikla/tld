@@ -1,3 +1,4 @@
+import { groupHighlightColors } from '../../../utils/elementGroups'
 import React, { useRef } from 'react'
 import { Box, HStack, IconButton, Text } from '@chakra-ui/react'
 import { useStoreApi, type NodeProps } from 'reactflow'
@@ -54,9 +55,9 @@ const GroupBackgroundNode: React.FC<NodeProps<GroupBackgroundNodeData>> = React.
       w="100%"
       h="100%"
       border="1px solid"
-      borderColor={`color-mix(in srgb, ${data.color} ${data.hidden ? 20 : 52}%, transparent)`}
+      borderColor={groupHighlightColors(data.color, false, data.hidden).borderColor}
       borderRadius="14px"
-      bg={`color-mix(in srgb, ${data.color} ${data.hidden ? 3 : 10}%, transparent)`}
+      bg={groupHighlightColors(data.color, false, data.hidden).bg}
       pointerEvents="none"
       overflow="visible"
     >

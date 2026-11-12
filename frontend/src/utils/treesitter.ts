@@ -63,12 +63,23 @@ export interface ParsedSymbol {
   type: string
   qualifiedName?: string
   startLine: number
+  attachmentStartLine?: number
   endLine: number
 }
 
 // Extract main symbols using tree-sitter cursor to avoid complex queries across languages.
 export function extractSymbols(tree: Parser.Tree, language: SupportedLanguage): ParsedSymbol[] {
   const symbols: ParsedSymbol[] = []
+  const lines = tree.rootNode.text.split('\n')
+
+  // Match codeindex/indexer.attachedComments: fact anchors include contiguous
+  // leading comments. Keep this range separate from the AST signature line.
+  const attachmentStart = (node: Parser.SyntaxNode) => {
+    const declaration = language === 'python' && node.parent?.type === 'decorated_definition' ? node.parent : node
+    let row = declaration.startPosition.row
+    while (row > 0 && /^(?:\/\/|\/\*|\*|#)/.test(lines[row - 1]?.trim() ?? '')) row--
+    return row + 1
+  }
 
   const isTargetNode = (nodeType: string) => {
     switch (language) {
@@ -197,10 +208,12 @@ export function extractSymbols(tree: Parser.Tree, language: SupportedLanguage): 
     if (shouldIncludeNode(node)) {
       const name = getNameField(node)
       const qualifiedName = qualifiedNameForNode(node, name, parentName)
+      const attachmentStartLine = attachmentStart(node)
       symbols.push({
         name,
         qualifiedName,
         type: node.type,
+        ...(attachmentStartLine < node.startPosition.row + 1 ? { attachmentStartLine } : {}),
         startLine: node.startPosition.row + 1,
         endLine: node.endPosition.row + 1
       })

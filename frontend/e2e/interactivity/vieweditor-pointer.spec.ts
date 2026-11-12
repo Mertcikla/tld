@@ -195,15 +195,15 @@ test('opens canvas and connector context menus without leaking right-clicks into
   await expect(page.getByTestId('connector-panel')).toBeVisible()
 })
 
-test('opens source links in code preview without selecting the node', async ({ page }) => {
-  await page.route('https://api.github.com/repos/diag', async (route) => {
+test('opens source links inline without selecting the node', async ({ page }) => {
+  await page.route('https://api.github.com/repos/owner/diag', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ private: false }),
     })
   })
-  await page.route('https://raw.githubusercontent.com/diag/refs/heads/main/frontend/src/App.tsx', async (route) => {
+  await page.route('https://raw.githubusercontent.com/owner/diag/refs/heads/main/frontend/src/App.tsx', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'text/plain',
@@ -215,7 +215,7 @@ test('opens source links in code preview without selecting the node', async ({ p
   const codeElement = await createPlacedElement(page, root.id, {
     name: uniqueName('Pointer Code Link'),
     kind: 'service',
-    repo: 'diag',
+    repo: 'owner/diag',
     branch: 'main',
     filePath: 'frontend/src/App.tsx',
     language: 'typescript',
@@ -224,10 +224,12 @@ test('opens source links in code preview without selecting the node', async ({ p
   await closeViewEditorPanels(page)
   const codeNode = nodeByName(page, codeElement.name)
   await codeNode.getByTestId('vieweditor-node-source-link').click()
-  await expect(page.getByTestId('code-preview-panel')).toBeVisible()
+  await expect(codeNode).toHaveAttribute('data-detail-level', 'code')
+  await expect(codeNode.getByTestId('sub-element-header')).toBeVisible()
+  await expect(page.getByTestId('code-preview-panel')).toHaveCount(0)
   await expect(page.getByTestId('element-panel')).toHaveCount(0)
-  await page.getByTestId('code-preview-close').click()
-  await expect(page.getByTestId('code-preview-panel')).toBeHidden()
+  await codeNode.getByRole('button', { name: 'Card layout', exact: true }).click()
+  await expect(codeNode).toHaveAttribute('data-detail-level', 'overview')
 })
 
 test('navigates with node zoom buttons', async ({ page }) => {

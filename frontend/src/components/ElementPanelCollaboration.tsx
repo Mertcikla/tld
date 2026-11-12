@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useIsPresent } from 'framer-motion'
 import {
   Badge,
   Box,
@@ -44,6 +45,7 @@ export default function ElementPanelCollaboration({
   liveReactions,
 }: Props) {
   const { viewId, selectedElement } = useViewEditorContext()
+  const isPresent = useIsPresent()
   const element = propsElement ?? selectedElement
   const elementId = element?.id
   const [threads, setThreads] = useState<ViewThread[]>([])
@@ -56,7 +58,8 @@ export default function ElementPanelCollaboration({
 
   const { data, isFetching, refetch } = useQuery({
     queryKey: ['workspace', 'views', viewId, 'elements', elementId, 'collaboration'],
-    enabled: viewId != null && elementId != null,
+    // Exiting panels retain their old element while navigation updates context.
+    enabled: isPresent && viewId != null && elementId != null,
     queryFn: async () => {
       const [threads, reactions] = await Promise.all([
         api.workspace.views.threads.listForElement(viewId!, elementId!).catch(() => []),

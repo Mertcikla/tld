@@ -199,3 +199,35 @@ describe('ZUI edge hover index', () => {
   })
 
 })
+
+it('routes source line handles on previews without stored element detail', async () => {
+  const { scrollSubElement } = await import('./subElements')
+  const source = node('source-scroll', 200, 0, 0, {
+    type: 'service', subKind: 'code', subDetail: 'code', worldW: 520, worldH: 180,
+  })
+  const target = node('target', 201, 800, 0)
+  const edge = { id: 2, sourceId: source.id, targetId: target.id, sourceHandle: 'right-line-3', targetHandle: 'left-2', type: 'straight', label: '', direction: 'forward' }
+  expect(buildEdgeRoutePoints(source, target, edge).points[0]).toMatchObject({ x: 520, y: 123.5 })
+  expect(scrollSubElement(source, 24, 0.2)).toBe(false)
+})
+
+
+it.each(['overview', 'outline', 'code'] as const)('uses regular curves for source-linked %s nodes', detail => {
+  const source = node('source', 1, 0, 0, { worldW: 180, worldH: 85 })
+  const target = node('target', 2, 0, 500, { worldW: 180, worldH: 85 })
+  const edge = { id: 1, sourceId: source.id, targetId: target.id, label: '', direction: 'forward', sourceHandle: 'left-2', targetHandle: 'left-2', type: 'bezier' }
+  const regular = buildEdgeRoutePoints(source, target, edge)
+  expect(buildEdgeRoutePoints({ ...source, worldW: 720, worldH: 360, worldY: source.worldY - 137.5, subKind: 'code', subDetail: detail }, { ...target, worldW: 720, worldH: 360, worldY: target.worldY - 137.5, subKind: 'code', subDetail: detail }, edge)).toEqual(regular)
+})
+
+it('keeps capped source line anchors on the visible card at deep zoom', () => {
+  const source = node('capped-source', 300, 0, 0, {
+    type: 'class', subKind: 'code', subDetail: 'code', worldW: 520, worldH: 360,
+  })
+  const target = node('capped-target', 301, 800, 0)
+  const edge = { id: 3, sourceId: source.id, targetId: target.id, sourceHandle: 'right-line-3', targetHandle: 'left-2', type: 'straight', label: '', direction: 'forward' }
+  const cap = 0.1
+  const visualSource = { ...source, worldX: 234, worldY: 162, worldW: 52, worldH: 36 }
+  const route = buildEdgeRoutePoints(visualSource, target, edge, cap, 1, 10)
+  expect(route.points[0]).toEqual({ x: 286, y: 174.35 })
+})

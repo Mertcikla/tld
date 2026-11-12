@@ -22,3 +22,11 @@ export function elementGroupTagForLayer(layer: Pick<ViewLayer, 'tags'>): string 
 export function isElementGroupLayer(layer: Pick<ViewLayer, 'tags'>): boolean {
   return elementGroupTagForLayer(layer) !== null
 }
+
+/** Shared surfaces for element groups and symbol selection areas. */
+export function groupHighlightColors(color: string, active = false, hidden = false) {
+  return {
+    borderColor: `color-mix(in srgb, ${color} ${hidden ? 20 : active ? 90 : 52}%, transparent)`,
+    bg: `color-mix(in srgb, ${color} ${hidden ? 3 : active ? 18 : 10}%, transparent)`,
+  }
+}

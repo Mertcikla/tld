@@ -3,8 +3,8 @@ import {
   buildProxyConnectorRenderState,
   buildProxyConnectorSpatialIndex,
   collectVisibleNodeAnchors,
-  drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
+  drawVisibleDirectProxyBadges,
   findHoveredProxyConnector,
   getProxyBezierBadgeGeometry,
   type VisibleNodeAnchor,
@@ -213,18 +213,13 @@ describe('buildProxyConnectorRenderState', () => {
 
 
 describe('off-view connector badge visibility', () => {
-  it.each(['proxy', 'direct'] as const)('hides oversized %s badges without reserving label space, and restores them on zoom in', (kind) => {
+  it('hides oversized proxy badges without reserving label space, and restores them on zoom in', () => {
     const details = proxyDetails('proxy')
     const anchors = new Map([
       ['source', anchor({ nodeId: 'source', elementId: 1, worldW: 180, worldH: 85 })],
       ['target', anchor({ nodeId: 'target', elementId: 2, worldX: 400, worldW: 180, worldH: 85 })],
     ])
     const connector = proxyConnector({ key: 'proxy', details })
-    const badge: ZUIHiddenProxyBadge = {
-      key: 'badge', sourceAnchorElementId: 1, targetAnchorElementId: 2,
-      sourceNodeId: 'source', targetNodeId: 'target', sourceHandle: null, targetHandle: null,
-      count: details.count, details,
-    }
     for (const zoom of [0.25, 1]) {
       const ctx = {
         save() {}, restore() {}, beginPath() {}, setTransform() {},
@@ -234,17 +229,12 @@ describe('off-view connector badge visibility', () => {
         getTransform: () => ({ a: zoom, b: 0, c: 0, d: zoom, e: 0, f: 0 }),
       }
       const occupiedRects: Parameters<typeof drawVisibleProxyConnectors>[7] = []
-      if (kind === 'proxy') {
-        drawVisibleProxyConnectors(ctx as unknown as CanvasRenderingContext2D,
-          buildProxyConnectorRenderState([connector]), anchors, zoom, '#000', '#fff', occupiedRects)
-      } else {
-        drawVisibleDirectProxyBadges(ctx as unknown as CanvasRenderingContext2D,
-          [badge], anchors, zoom, '#000', occupiedRects)
-      }
+      drawVisibleProxyConnectors(ctx as unknown as CanvasRenderingContext2D,
+        buildProxyConnectorRenderState([connector]), anchors, zoom, '#000', '#fff', occupiedRects)
       expect(ctx.fillText).toHaveBeenCalledTimes(zoom === 1 ? 1 : 0)
       expect(occupiedRects).toHaveLength(zoom === 1 ? 1 : 0)
       // Standalone proxy routes remain visible even when their badge is hidden.
-      if (kind === 'proxy') expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(1)
+      expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(1)
     }
   })
 })
@@ -281,5 +271,35 @@ describe('off-view connector hover rendering', () => {
     )
     expect(strokes).toEqual([{ width, dash }])
     expect(points).toEqual([[100, 50], [300, 50]])
+  })
+})
+
+
+describe('direct bundle badges on hover', () => {
+  it.each([undefined, [1, 2], [2, 1], [1, 3]] as const)('shows +N only for the hovered pair %s', pair => {
+    const details = proxyDetails('bundle')
+    const badge = {
+      key: 'badge', sourceAnchorElementId: 1, targetAnchorElementId: 2,
+      sourceNodeId: 'source', targetNodeId: 'target', sourceHandle: null, targetHandle: null,
+      count: 7, details,
+    } satisfies ZUIHiddenProxyBadge
+    const anchors = new Map([
+      ['source', anchor({ nodeId: 'source', elementId: 1 })],
+      ['target', anchor({ nodeId: 'target', elementId: 2, worldX: 400 })],
+    ])
+    const ctx = {
+      save() {}, restore() {}, beginPath() {}, setTransform() {}, setLineDash() {},
+      roundRect() {}, fill() {}, stroke() {}, fillText: vi.fn(),
+      measureText: (text: string) => ({ width: text.length * 7 }),
+      getTransform: () => ({ a: 0.25, b: 0, c: 0, d: 0.25, e: 0, f: 0 }),
+    }
+    drawVisibleDirectProxyBadges(ctx as unknown as CanvasRenderingContext2D,
+      [badge], anchors, 0.25, '#000', [], pair ? {
+        type: 'edge', absX: 100, absY: 50,
+        data: { sourceId: 'source', targetId: 'target', sourceObjId: pair[0], targetObjId: pair[1], label: '', diagramId: 1 },
+      } : null)
+    const matches = pair?.includes(2) ?? false
+    expect(ctx.fillText).toHaveBeenCalledTimes(matches ? 1 : 0)
+    if (matches) expect(ctx.fillText.mock.calls[0][0]).toBe('+7')
   })
 })

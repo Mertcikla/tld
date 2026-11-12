@@ -1,6 +1,8 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY } from './layoutEngine'
 
+export const MIN_ZUI_ZOOM = 0.1
+
 export interface PathItem {
   id: string
   label: string
@@ -125,12 +127,13 @@ export function fitWorldRect(
 ): ZUIViewState | null {
   const bboxW = Math.max(1, rect.w)
   const bboxH = Math.max(1, rect.h)
-  const zoom = Math.min(
+  const fitZoom = Math.min(
     (canvasW * (1 - padding * 2)) / bboxW,
     (canvasH * (1 - padding * 2)) / bboxH,
     maxZoom,
   )
-  if (!Number.isFinite(zoom) || zoom <= 0) return null
+  if (!Number.isFinite(fitZoom) || fitZoom <= 0) return null
+  const zoom = Math.max(MIN_ZUI_ZOOM, fitZoom)
 
   return {
     x: (canvasW - bboxW * zoom) / 2 - rect.x * zoom,

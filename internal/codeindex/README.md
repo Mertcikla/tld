@@ -78,7 +78,43 @@ have no independent status, and a current group can contain older placements.
 Snapshots and completed-map records are history, not isolated copies of views.
 An interrupted run can leave additive changes; retry reuses committed resources.
 
-This release has one policy: conservative upsert. Reconciliation is centralized
+Community maps use conservative upsert. Reconciliation is centralized
 in `materialize/upsert.go`; manual/sync policies and workspace/view preference
-persistence are deferred. There are no new RPCs or schema changes. Cleanup is an
-explicit user action, and map size can grow across snapshots.
+persistence are deferred. There are no new RPCs or schema changes. Community-map cleanup is an
+explicit user action, and retained library resources can grow across snapshots.
+
+### Complete source hierarchy
+
+`tld index . --full-map` preserves the complete directory/file hierarchy and
+stops at files. Files use short names in their containing folder; source links
+retain the full path. Only directories get child views. Functions, methods,
+classes, configuration facts, and external symbols remain in the index and are
+not materialized as workspace elements.
+
+Symbol relationships are rolled up into directed file-to-file connectors.
+When files in separate folder branches are connected, the map also creates one
+unlabeled directed connector between their containing folders. This rule repeats
+up the hierarchy until the branches meet, so dependencies remain visible when
+folders are collapsed. For unequal folder depths, the deeper branch is lifted
+first. Dependencies within one branch do not create self-connectors or links
+between a folder and its own descendants. File connectors retain symbol anchors;
+folder summaries use folder borders and merge all underlying relationship kinds.
+Calls and references share one unlabeled connector per ordered file pair.
+Repeated observations are merged; opposite directions remain separate. The
+merged connector retains every participating symbol's declaration line on both
+endpoints. Code previews can show all connected symbols without creating symbol
+nodes. Source handles use one-based `right-line-12,27` / `left-line-5,18` lists;
+existing single-line handles remain supported.
+Implementations and type definitions retain their distinct relationship labels.
+Upgrading reuses an existing calls/references connector where possible, removes
+its generated label, and removes duplicate generated calls/references connectors.
+Intra-file relationships and unresolved/external targets are omitted from the map. Connector budgets and community grouping do not apply.
+
+Use `--watch --full-map` to refresh after scans, and add `--detach` to run in the
+background. `--full-map` and `--map` are mutually exclusive. Full maps manage
+placements inside their generated hierarchy. Upgrading an older symbol map
+removes its generated symbol connectors and placements in generated views, and
+removes empty child views with their default presentation. Library elements and additional placements
+in authored views are retained; superseded resources receive a stale tag.
+Indexed facts and relationships remain unchanged. The full-map cache version
+forces an upgrade even when the snapshot is unchanged.

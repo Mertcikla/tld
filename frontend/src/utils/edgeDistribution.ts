@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { isSubHandle } from './subElements'
 import { Position } from 'reactflow'
 
 export const HANDLE_SLOT_COUNT = 5
@@ -45,7 +46,7 @@ export function getVisualHandleSlot(groupIndex: number, groupCount: number) {
 }
 
 export function getVisualHandleSlotFromId(handleId: string | null | undefined) {
-  if (!handleId) return null
+  if (!handleId || isSubHandle(handleId)) return null
   const parts = handleId.split('-')
   if (parts.length < 2) return null
   const slot = Number(parts[1])
@@ -72,6 +73,7 @@ export function ensureVisualHandleId(
   handleId: string | null | undefined,
   fallback: LogicalHandleSide,
 ) {
+  if (isSubHandle(handleId)) return handleId!
   const side = getLogicalHandleId(handleId, fallback)
   if (!side) return null
   const slot = getVisualHandleSlotFromId(handleId) ?? HANDLE_SLOT_CENTER_INDEX

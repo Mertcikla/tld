@@ -16,8 +16,10 @@ import (
 const StaleTag = "codeindex:stale"
 
 // reconcileMapStatus is the conservative upsert reconciliation boundary. It
-// never removes resources, placements or ownership. Future mapping policies
-// must retain this safety guarantee for authored data and shared resources.
+// never removes resources, placements or ownership. Full hierarchy maps have
+// a separate cleanup of generated symbol connectors, generated placements and
+// empty views with their default presentation;
+// authored data and shared resources remain protected.
 // Status changes happen after materialization; interrupted runs keep ownership
 // and can be retried. Layers retain their original membership (tags there are
 // selectors, not status labels).
@@ -55,7 +57,7 @@ func (m *mapMaterializer) setResourceStale(mapping cstore.ResourceMapping, stale
 		}
 		tags := staleTags(item.Tags, stale)
 		if !slices.Equal(item.Tags, tags) {
-			_, err = m.ws.UpdateView(m.ctx, item.ID, nil, nil, nil, tags)
+			_, err = m.ws.UpdateView(m.ctx, item.ID, nil, nil, item.LevelLabel, tags)
 		}
 		return err
 	case cstore.MappingConnector:

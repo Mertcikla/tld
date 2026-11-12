@@ -1,6 +1,6 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { getExpandThresholds } from './layoutEngine'
-import { fitWorldRect } from './camera'
+import { fitWorldRect, MIN_ZUI_ZOOM } from './camera'
 
 interface Rect {
   x: number
@@ -247,6 +247,7 @@ export function viewportForFocusTarget(
   }
 
   if (!Number.isFinite(zoom) || zoom <= 0) return null
+  zoom = Math.max(MIN_ZUI_ZOOM, zoom)
 
   return {
     x: (canvasW - bboxW * zoom) / 2 - rect.x * zoom,

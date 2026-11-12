@@ -1,3 +1,4 @@
+import { alignCodeBundleHandles } from './connectorBundles'
 // src/components/ZUI/layout.ts
 
 import type {
@@ -10,7 +11,8 @@ import type {
   ExploreData,
   ViewConnector,
 } from '../../types'
-import { resolveElementIconUrl } from '../../utils/elementIcon'
+import { elementTechnologyText, resolveElementIconUrl } from '../../utils/elementIcon'
+import { subElementKind } from '../../utils/subElements'
 import { connectorChangeFromTags } from './edgeChange'
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -96,6 +98,7 @@ function buildNodes(
   const treeMap = new Map(tree.map((d) => [d.id, d]))
 
   const realNodes: LayoutNode[] = elements.map((obj) => {
+    const nodeW = NODE_W, nodeH = NODE_H
     const localX = getPos(obj, 'x') - bboxMinX + pad
     const localY = getPos(obj, 'y') - bboxMinY + pad
 
@@ -127,14 +130,14 @@ function buildNodes(
           const contentH = cBBox.height + CHILD_PAD * 2
           const fittedH = Math.min(contentH, contentW)
           childScale = Math.min(
-            (NODE_W - CHILD_PAD * 2) / contentW,
-            (Math.min(NODE_H, fittedH) - CHILD_PAD * 2) / Math.max(contentH, 1),
+            (nodeW - CHILD_PAD * 2) / contentW,
+            (Math.min(nodeH, fittedH) - CHILD_PAD * 2) / Math.max(contentH, 1),
             0.45,
           )
           const scaledW = cBBox.width * childScale
           const scaledH = cBBox.height * childScale
-          const marginX = (NODE_W - scaledW) / 2
-          const marginY = (NODE_H - scaledH) / 2
+          const marginX = (nodeW - scaledW) / 2
+          const marginY = (nodeH - scaledH) / 2
           childOffsetX = cBBox.minX - marginX / childScale
           childOffsetY = cBBox.minY - marginY / childScale
 
@@ -173,6 +176,7 @@ function buildNodes(
         tags: e.tags,
       }))
 
+    const logoUrl = resolveElementIconUrl(obj.logo_url, obj.technology_connectors)
     return {
       id: nodeId(diagramId, obj.element_id),
       elementId: obj.element_id,
@@ -181,12 +185,23 @@ function buildNodes(
       worldY: worldOffsetY + localY,
       worldW: NODE_W,
       worldH: NODE_H,
+      subConnectedHandles: (views[String(diagramId)]?.connectors ?? []).flatMap(edge => [
+        ...(edge.source_element_id === obj.element_id && edge.source_handle ? [edge.source_handle] : []),
+        ...(edge.target_element_id === obj.element_id && edge.target_handle ? [edge.target_handle] : []),
+      ]),
+      subConnections: (views[String(diagramId)]?.connectors ?? []).flatMap(edge => [
+        ...(edge.source_element_id === obj.element_id && edge.source_handle ? [{ id: edge.id, handleId: edge.source_handle }] : []),
+        ...(edge.target_element_id === obj.element_id && edge.target_handle ? [{ id: edge.id, handleId: edge.target_handle }] : []),
+      ]),
+      subKind: subElementKind(obj),
+      sourceLink: { repo: obj.repo, repository_id: obj.repository_id, branch: obj.branch, file_path: obj.file_path, language: obj.language },
       label: obj.name,
       type: obj.kind ?? 'system',
       kind: obj.kind?.trim() || null,
-      logoUrl: resolveElementIconUrl(obj.logo_url, obj.technology_connectors),
+      logoUrl,
       description: obj.description ?? null,
       technology: obj.technology ?? null,
+      technologyText: elementTechnologyText(obj.technology, obj.technology_connectors, !!logoUrl) ?? null,
       tags: obj.tags ?? [],
       ancestorElementIds,
       pathElementIds: [...ancestorElementIds, obj.element_id],
@@ -268,6 +283,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
       tags: e.tags,
     }))
 
+    alignCodeBundleHandles(nodes, edges)
     groups.push({
       diagramId: diag.id,
       label: diag.name,

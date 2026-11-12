@@ -1,5 +1,7 @@
+import PreviewInteractionHint from '../PreviewInteractionHint'
+import { sourcePreviewAppearanceRevision, subscribeSourcePreviewAppearance } from '../../utils/sourcePreviewAppearance'
 import { deriveSnapshotTagState, filterSnapshotConnectorsByTags } from '../../crossBranch/tagFilters'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { useBreakpointValue } from '@chakra-ui/react'
 import type { FlowFocus } from '../../flows/model'
 import { presentZUIFlow } from '../../flows/presentation'
@@ -16,7 +18,7 @@ import { viewportForElements } from './focus'
 import { filterLayoutByTags } from './tagVisibility'
 import { getCameraRebase, screenToWorldX, screenToWorldY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
-import type { DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
+import type { LayoutNode, DiagramGroupLayout, HoveredItem, ZUIObjectSelection, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
 import type { ZUIHitTestNodeResult } from './hitTest'
 import { useZUICamera } from './useZUICamera'
@@ -55,6 +57,9 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  codeSourceLinks?: Record<number, import('../../utils/subElementSource').SubSourceLink>
+  codeSources?: Record<number, import('../../utils/subElementSource').SubSource>
+  connectedCodeOnly?: boolean
   editorLinksEnabled?: boolean
   /** Optional story presentation controlled by the Explore page. */
   flowFocus?: FlowFocus | null
@@ -79,6 +84,9 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  codeSourceLinks,
+  codeSources,
+  connectedCodeOnly,
   editorLinksEnabled = true,
   flowFocus = null,
   breadcrumbBoundaryRef,
@@ -111,10 +119,19 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
+  const appearanceRevision = useSyncExternalStore(subscribeSourcePreviewAppearance, sourcePreviewAppearanceRevision, () => 0)
   const targetLayout = useMemo(() => {
     const base = computeLayout(withUnplacedElements(data))
+    const setCodeFilter = (nodes: LayoutNode[]) => nodes.forEach(node => {
+      node.subConnectedOnly = connectedCodeOnly
+      node.subSource = codeSources?.[node.elementId]
+      node.sourceLink = codeSourceLinks?.[node.elementId] ?? node.sourceLink
+      setCodeFilter(node.children)
+    })
+    base.groups.forEach(group => setCodeFilter(group.nodes))
     return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
-  }, [data, changeOverlays])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, changeOverlays, appearanceRevision, connectedCodeOnly, codeSources, codeSourceLinks])
   const layout = useAnimatedLayout(targetLayout, animateUpdates)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
   const filteredWorkspaceSnapshot = useMemo(() => filterSnapshotConnectorsByTags(workspaceSnapshot, selectedTags, hiddenTags), [workspaceSnapshot, selectedTags, hiddenTags])
@@ -145,7 +162,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     onPan?.()
   }, [onPan])
 
-  const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
+  const { viewState, viewStateRef, setViewState, fitView, maxZoom, previewInteraction, hoveredItem, setHoveredItem, setHoverLocked, setHoverPopoverElement } = useZUIInteraction(
     canvasRef,
     undefined,
     visibleLayout.groups,
@@ -406,6 +423,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
           touchAction: 'none',
         }}
       />
+
+      <PreviewInteractionHint interaction={previewInteraction} />
 
       <ZUIBreadcrumb
         breadcrumbBoundaryRef={breadcrumbBoundaryRef}

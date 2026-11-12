@@ -84,3 +84,11 @@ describe('ZUI camera helpers', () => {
     expect(easeOutQuart(0.5)).toBeGreaterThan(0.5)
   })
 })
+
+
+it('keeps large-map fits at the minimum zoom and centers their bounds', () => {
+  const view = fitWorldRect({ x: 100, y: 50, w: 10000, h: 10000 }, 1000, 600, 3, 0.1)!
+  expect(view.zoom).toBe(0.1)
+  expect(view.x + 5100 * view.zoom).toBe(500)
+  expect(view.y + 5050 * view.zoom).toBe(300)
+})

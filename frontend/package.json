@@ -41,10 +41,11 @@
     "test:e2e:debug": "playwright test -c playwright.config.ts --debug"
   },
   "dependencies": {
-    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.16.0-20261028025618-4bbf173df6fa.1",
+    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.17.0-20261112131651-a240179b25df.1",
     "@bufbuild/protobuf": "^2.11.0",
     "@fortawesome/free-brands-svg-icons": "7.2.0",
     "@fortawesome/free-solid-svg-icons": "^7.2.0",
+    "@lezer/highlight": "^1.2.5",
     "@tanstack/react-table": "^8.21.3",
     "libbzip2-wasm": "^0.0.4",
     "mermaid": "^11.16.1",

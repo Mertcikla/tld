@@ -24,6 +24,7 @@ export interface Tag {
   description: string | null
 }
 
+
 export interface LibraryElement {
   id: number
   name: string
@@ -301,6 +302,8 @@ export const ELEMENT_TYPES = [
   'api',
   'service',
   'external',
+  'code',
+  'class',
 ] as const
 
 export type ElementType = (typeof ELEMENT_TYPES)[number]
@@ -315,4 +318,6 @@ export const TYPE_COLORS: Record<string, string> = {
   api: 'green',
   service: 'pink',
   external: 'gray',
+  code: 'cyan',
+  class: 'teal',
 }

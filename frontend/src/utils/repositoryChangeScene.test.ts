@@ -183,3 +183,27 @@ it('uses recorded provenance rather than IDs or map-generated tags', () => {
   ])
   expect(canonical.views[1].placements[0].tags).toEqual(['map-generated'])
 })
+
+it('renders file leaves as spaced code cards without mutating the frozen scene', () => {
+  const details = [{ change: 'modified' as const, name: 'Run', kind: 1, anchor: { path: 'a.go', startLine: 2, endLine: 4 } }]
+  const input = { ...scene, overlays: { ...scene.overlays, 1: overlay('modified', 'a.go', 0, { symbolDetails: details }) } }
+  const rendered = repositoryChangeScene(input)
+  const file = rendered.data.views[1].placements[0]
+  expect(file.kind).toBe('code')
+  expect(file.position_x).toBe(126)
+  expect(input.views[1].placements[0].kind).toBe('component')
+  expect(input.views[1].placements[0].position_x).toBe(42)
+  expect(rendered.overlays[1].symbolDetails).toEqual(details)
+  expect(rendered.codeSources[1]).toMatchObject({ status: 'ready', lines: [], symbols: [{ name: 'Run', startLine: 3, endLine: 5 }] })
+  const node = computeLayout(rendered.data).groups[0].nodes[0]
+  expect(node.worldW).toBe(180)
+  expect(node.subDetail).toBeUndefined()
+})
+
+
+it('pins comparison code to Head, using Base for removed files', () => {
+  const input = { ...scene, overlays: { ...scene.overlays, 1: overlay('removed', 'a.go', 0) } }
+  const result = repositoryChangeScene(input)
+  expect(result.codeSourceLinks[1]).toMatchObject({ repository_id: scene.repositoryId, comparisonKey: scene.comparisonKey, comparisonSide: 'base', file_path: 'a.go' })
+  expect(result.codeSourceLinks[2].comparisonSide).toBe('head')
+})

@@ -1,11 +1,13 @@
+import { subscribeSubScroll } from './subElements'
+import { subscribeSubSources } from '../../utils/subElementSource'
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { ViewLayer } from '../../types'
 import type { ZUIViewportBounds } from '../../crossBranch/resolve'
 import {
-  drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
+  drawVisibleDirectProxyBadges,
   type VisibleNodeAnchor,
 } from './proxy'
 import {
@@ -16,6 +18,7 @@ import {
 } from './layoutEngine'
 import {
   renderFrame,
+  edgePairKey,
   setHighlightColor as setRendererHighlightColor,
   setHighlightedTags as setRendererHighlightedTags,
   setHiddenTags as setRendererHiddenTags,
@@ -156,8 +159,10 @@ export function useZUIRenderLoop({
   }, [invalidate])
 
   useEffect(() => {
+    const unsubscribeScroll = subscribeSubScroll(invalidate)
+    const unsubscribeSources = subscribeSubSources(invalidate)
     setOnImageLoadCallback(invalidate)
-    return () => setOnImageLoadCallback(null)
+    return () => { unsubscribeScroll(); unsubscribeSources(); setOnImageLoadCallback(null) }
   }, [invalidate])
 
   useEffect(() => subscribeElementNameFontsChanged(invalidate), [invalidate])
@@ -287,6 +292,7 @@ export function useZUIRenderLoop({
       }
       const renderCtx: RenderContext = {
         canvasBg: theme.canvasBg,
+        sourcePreviewBg: theme.sourcePreviewBg,
         nodeBg: theme.nodeBg,
         accent: theme.accent,
         labelBg: theme.labelBg,
@@ -296,6 +302,9 @@ export function useZUIRenderLoop({
         lowDetail,
         groupLayersByDiagram,
         hoveredItem: hoveredItemRef.current,
+        underlyingEdgePairs: new Set(proxyStateRef.current.hiddenProxyBadges
+          .filter(badge => badge.count > 0)
+          .map(badge => edgePairKey(badge.sourceNodeId, badge.targetNodeId))),
       }
 
       const occupiedLabelRects = renderFrame(ctx, graph, renderCtx, currentView, transitionRebaseRef.current)
@@ -330,21 +339,21 @@ export function useZUIRenderLoop({
         rebasedViewport,
         hoveredItemRef.current,
       )
-      if (!lowDetail) {
-        drawVisibleDirectProxyBadges(
-          ctx,
-          proxyStateRef.current.hiddenProxyBadges,
-          rebasedProxyAnchors,
-          cameraRebase.view.zoom,
-          labelBgRef.current,
-          occupiedLabelRects,
-          rebasedViewport,
-        )
-      }
+      drawVisibleDirectProxyBadges(
+        ctx,
+        proxyStateRef.current.hiddenProxyBadges,
+        rebasedProxyAnchors,
+        cameraRebase.view.zoom,
+        labelBgRef.current,
+        occupiedLabelRects,
+        hoveredItemRef.current,
+      )
       ctx.restore()
       ctx.restore()
       lastViewRef.current = currentView
-      needsRedrawRef.current = false
+      const hover = hoveredItemRef.current
+      const animateSymbol = ((hover?.type === 'node' && !!hover.symbolHandle) || (hover?.type === 'edge' && !hover.data.isProxy)) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      needsRedrawRef.current = panLowDetailFramesRef.current > 0 || animateSymbol
 
       if (needsRedrawRef.current) {
         requestFrame()

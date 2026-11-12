@@ -7,7 +7,8 @@ import {
 } from '../../crossBranch/resolve'
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
-import { getExpandThresholds } from './layoutEngine'
+import { subDetail } from '../../utils/subElements'
+import { getExpandThresholds, nodeVisualGeometry } from './layoutEngine'
 import { connectorLabelFitsEndpoints, connectorTagHighlightColor, pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
@@ -29,6 +30,7 @@ export interface VisibleNodeAnchor {
   pathDepth: number
   renderAlpha: number
   nativeRendered: boolean
+  diffReading?: boolean
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -45,35 +47,6 @@ function transitionT(screenW: number, start: number, end: number): number {
 
 function zoomableNodeConnectorAlpha(inheritedAlpha: number, bodyAlpha: number): number {
   return Math.max(bodyAlpha, Math.min(inheritedAlpha, DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA))
-}
-
-function visualRectForNode(
-  absX: number,
-  absY: number,
-  absW: number,
-  absH: number,
-  hasChildren: boolean,
-  screenW: number,
-  thresholds: { start: number; end: number },
-) {
-  if (!hasChildren && screenW > thresholds.end) {
-    const scale = thresholds.end / screenW
-    const visualW = absW * scale
-    const visualH = absH * scale
-    return {
-      worldX: absX + (absW - visualW) / 2,
-      worldY: absY + (absH - visualH) / 2,
-      worldW: visualW,
-      worldH: visualH,
-    }
-  }
-
-  return {
-    worldX: absX,
-    worldY: absY,
-    worldW: absW,
-    worldH: absH,
-  }
 }
 
 function registerVisibleAnchor(
@@ -111,7 +84,6 @@ function collectVisibleAnchorForNode(
   const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
   const absScale = parentAbsScale
   const absW = node.worldW * absScale
-  const absH = node.worldH * absScale
   const screenW = absW * view.zoom
   if (screenW < 2) return { selfDrawn: false, descendantDrawn: false }
 
@@ -120,7 +92,11 @@ function collectVisibleAnchorForNode(
   const parentAlpha = inheritedAlpha * (1 - t)
   const childAlpha = inheritedAlpha * t
   const selfDrawn = !hasChildren || t <= 0.95
-  const visualRect = visualRectForNode(absX, absY, absW, absH, hasChildren, screenW, thresholds)
+  const geometry = nodeVisualGeometry(node, view.zoom * absScale, thresholds.end)
+  const visualRect = {
+    worldX: absX + geometry.offsetX * absScale, worldY: absY + geometry.offsetY * absScale,
+    worldW: geometry.width * absScale, worldH: geometry.height * absScale,
+  }
 
   if (selfDrawn) {
     registerVisibleAnchor(node, visibleAnchors, byNodeId, {
@@ -134,6 +110,7 @@ function collectVisibleAnchorForNode(
       pathDepth: node.pathElementIds.length,
       renderAlpha: hasChildren ? zoomableNodeConnectorAlpha(inheritedAlpha, parentAlpha) : inheritedAlpha,
       nativeRendered: true,
+      diffReading: !!node.sourceLink?.comparisonDiff && subDetail(visualRect.worldW * view.zoom, visualRect.worldH * view.zoom) === 'code',
     })
   }
 
@@ -658,6 +635,7 @@ export function drawVisibleProxyConnectors(
     const highlightColor = connectorTagHighlightColor(connector.details.connectors.flatMap((leaf) => leaf.connector.tags ?? []), accent)
     ctx.strokeStyle = highlightColor ?? accent
     const isHovered = hoveredItem?.type === 'edge' && hoveredItem.data.isProxy && hoveredItem.data.details?.key === connector.key
+    const diffReading = source.diffReading || target.diffReading
     ctx.lineWidth = (isHovered || highlightColor ? 3 : 1) / zoom
     ctx.lineCap = 'round'
     ctx.setLineDash(isHovered ? [] : [1 / zoom, 4 / zoom])
@@ -666,7 +644,7 @@ export function drawVisibleProxyConnectors(
     ctx.lineTo(targetPoint.x, targetPoint.y)
     ctx.stroke()
     ctx.setLineDash([])
-    if (showBadges) {
+    if (showBadges && (!diffReading || isHovered)) {
       const badge = measureProxyBadge(ctx, label, zoom)
       if (!connectorLabelFitsEndpoints(
         { width: badge.badgeCssW, height: badge.badgeCssH },
@@ -700,22 +678,16 @@ export function drawVisibleDirectProxyBadges(
   zoom: number,
   labelBg: string,
   occupiedLabelRects: ScreenRect[],
-  viewport?: ZUIViewportBounds,
+  hoveredItem?: HoveredItem | null,
 ) {
-  const pointInViewport = (x: number, y: number): boolean => {
-    if (!viewport) return true
-    return x >= viewport.minX && x <= viewport.maxX && y >= viewport.minY && y <= viewport.maxY
-  }
-
-  const anchorCenterInViewport = (anchor: VisibleNodeAnchor): boolean => {
-    return pointInViewport(anchor.worldX + anchor.worldW / 2, anchor.worldY + anchor.worldH / 2)
-  }
-
   for (const badge of badges) {
+    if (hoveredItem?.type !== 'edge' || hoveredItem.data.isProxy || hoveredItem.data.isPortalConn) continue
+    const { sourceObjId, targetObjId } = hoveredItem.data
+    if (!((badge.sourceAnchorElementId === sourceObjId && badge.targetAnchorElementId === targetObjId) ||
+      (badge.targetAnchorElementId === sourceObjId && badge.sourceAnchorElementId === targetObjId))) continue
     const source = visibleAnchorsByNodeId.get(badge.sourceNodeId)
     const target = visibleAnchorsByNodeId.get(badge.targetNodeId)
     if (!source || !target) continue
-    if (viewport && !anchorCenterInViewport(source) && !anchorCenterInViewport(target)) continue
     const alpha = Math.min(source.renderAlpha, target.renderAlpha)
     if (alpha < 0.01) continue
 
@@ -733,12 +705,6 @@ export function drawVisibleDirectProxyBadges(
     })
     const label = `+${badge.count}`
     const badgeMetrics = measureProxyBadge(ctx, label, zoom)
-    if (!connectorLabelFitsEndpoints(
-      { width: badgeMetrics.badgeCssW, height: badgeMetrics.badgeCssH },
-      { width: source.worldW * zoom, height: source.worldH * zoom },
-      { width: target.worldW * zoom, height: target.worldH * zoom },
-    )) continue
-
     ctx.save()
     ctx.globalAlpha = alpha
     const labelPos = pickEdgeLabelPosition(

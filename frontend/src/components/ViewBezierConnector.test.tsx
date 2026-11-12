@@ -3,9 +3,11 @@ import { act, create } from 'react-test-renderer'
 import { ConnectionLineType, Position, type Node, type ConnectingHandle, type EdgeProps } from 'reactflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ViewBezierConnector, { ViewConnectorConnectionLine } from './ViewBezierConnector'
+import { bundleFans } from '../utils/bundledConnector'
+import * as subElementDom from '../utils/subElementDom'
 import { buildViewConnectorPath } from '../utils/connectorRoute'
 
-const state = vi.hoisted(() => ({ canEdit: true, endHandle: null as ConnectingHandle | null, nodes: new Map<string, Node>(), drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null, edges: [] as Array<{ id: string; data: Record<string, unknown> }> }))
+const state = vi.hoisted(() => ({ canEdit: true, endHandle: null as ConnectingHandle | null, nodes: new Map<string, Node>(), drag: { kind: 'tag', name: 'critical', color: '#f00' } as { kind: string; name: string; color: string } | null, edges: [] as Array<{ id: string; sourceHandle?: string; targetHandle?: string; data: Record<string, unknown> }> }))
 vi.mock('reactflow', async () => {
   const actual = await vi.importActual<typeof import('reactflow')>('reactflow')
   return { ...actual,
@@ -208,4 +210,68 @@ it.each(['bezier', 'straight', 'step', 'smoothstep'])('keeps %s endpoints fixed 
     expect(path).toMatch(new RegExp(`${end},42\\.5$`))
     act(() => renderer.unmount())
   }
+})
+
+
+it.each(['code', 'class', 'service'].flatMap(kind => [180, 400, 720].map(width => ({ kind, width }))))('routes $kind elements at width $width exactly like regular elements', ({ kind, width }) => {
+  const source = { id: '1', position: { x: 0, y: 0 }, width: 180, height: 85, data: { kind: 'service' } } as Node
+  const target = { ...source, id: '2', position: { x: 0, y: 500 } }
+  state.nodes.set('1', source); state.nodes.set('2', target)
+  const props = { sourceX: 0, sourceY: 42.5, targetX: 0, targetY: 542.5, sourcePosition: Position.Left, targetPosition: Position.Left }
+  const regular = render(props)
+  const path = regular.root.findAllByType('path')[0].props.path
+  state.nodes.set('1', { ...source, width, height: 360, data: { kind, repo: '/repo', file_path: 'file.proto' } })
+  state.nodes.set('2', { ...target, width, height: 360, data: { kind, repo: '/repo', file_path: 'file.proto' } })
+  const linked = render(props)
+  expect(linked.root.findAllByType('path')[0].props.path).toBe(path)
+  expect(path).toContain('C -90,')
+  act(() => { regular.unmount(); linked.unmount() })
+})
+
+
+it('draws one selectable trunk and branches with endpoint arrows at both file previews', () => {
+  const positions = vi.spyOn(subElementDom, 'nodeBundleFans').mockImplementation(node => {
+    if (!node) return new Map()
+    return bundleFans(node.id === '1'
+      ? [{ key: '12:source', ports: [{ x: 100, y: 20, side: 'right' }, { x: 100, y: 60, side: 'right' }] }]
+      : [{ key: '12:target', target: true, ports: [{ x: 300, y: 80, side: 'left' }, { x: 300, y: 120, side: 'left' }] }])
+  })
+  state.nodes.set('1', { id: '1', position: { x: 0, y: 0 }, data: {} })
+  state.nodes.set('2', { id: '2', position: { x: 300, y: 0 }, data: {} })
+  state.edges = [{ id: '12', sourceHandle: 'right-line-1,2', targetHandle: 'left-line-3,4', data: {} }]
+  const renderer = render({ markerStart: 'start-arrow', markerEnd: 'end-arrow', selected: true })
+  const paths = renderer.root.findAllByType('path')
+  expect(paths).toHaveLength(8)
+  expect(paths[1].props.id).toBe('12')
+  for (const path of [paths[0], ...paths.slice(2)]) expect(path.props.id).toBeUndefined()
+  expect(paths[0].props.markerStart).toBeUndefined()
+  expect(paths[0].props.markerEnd).toBeUndefined()
+  expect(paths[0].props.path).toMatch(/^M\s*132[ ,]40/)
+  for (const path of paths.slice(2, 4)) expect(path.props.markerStart).toBe('start-arrow')
+  for (const path of paths.slice(4, 6)) expect(path.props.markerEnd).toBe('end-arrow')
+  for (const path of paths.slice(2)) {
+    expect(paths[1].props.path).toContain(path.props.path)
+    expect(path.props.style.strokeWidth).toBe(4)
+  }
+  act(() => renderer.unmount())
+  positions.mockRestore()
+})
+
+it('keeps arrows on symbol endpoints when crossing bridges split a branch into subpaths', () => {
+  const fans = bundleFans([
+    { key: '12:target', target: true, ports: [{ x: 100, y: 0, side: 'right' }, { x: 100, y: 100, side: 'right' }] },
+    { key: '20:source', ports: [{ x: 100, y: 20, side: 'right' }, { x: 100, y: 140, side: 'right' }] },
+  ])
+  const positions = vi.spyOn(subElementDom, 'nodeBundleFans').mockImplementation(node => node?.id === '2' ? fans : new Map())
+  state.nodes.set('2', { id: '2', position: { x: 0, y: 0 }, data: {} })
+  const renderer = render({ markerEnd: 'end-arrow' })
+  const paths = renderer.root.findAllByType('path')
+  const branches = paths.slice(2)
+  expect(branches.length).toBeGreaterThan(2)
+  const arrows = branches.filter(path => path.props.markerEnd)
+  expect(arrows).toHaveLength(2)
+  expect(arrows[0].props.path).toMatch(/100,0$/)
+  expect(arrows[1].props.path).toMatch(/100,100$/)
+  act(() => renderer.unmount())
+  positions.mockRestore()
 })

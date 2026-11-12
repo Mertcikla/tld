@@ -1,7 +1,11 @@
+import { bundlePathPolylines, type BundlePort } from '../../utils/bundledConnector'
+import { buildZUIBundleFans } from './connectorBundles'
+import { isSubHandle } from '../../utils/subElements'
+import { subNodeHandleAnchor } from './subElements'
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
 import type { ZUIEdgeChange } from './edgeChange'
-import { getExpandThresholds, transitionT } from './layoutEngine'
-import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
+import { getExpandThresholds, transitionT, nodeVisualGeometry, nodeVisualLayout } from './layoutEngine'
+import { connectorBezierGeometry, connectorRouteSize, positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -115,6 +119,8 @@ export function buildEdgeRoutePoints(
   edge: DiagramGroupLayout['edges'][number],
   sourceSlotScale = 1,
   targetSlotScale = 1,
+  detailZoom = 1,
+  bundleEndpoints?: { source?: BundlePort; target?: BundlePort },
 ): { points: EdgeRoutePoint[]; midX: number; midY: number } {
   const sourcePoint = getHandleFlowPosition(
     source.worldX,
@@ -132,6 +138,10 @@ export function buildEdgeRoutePoints(
     edge.targetHandle,
     DEFAULT_TARGET_HANDLE_SIDE,
   )
+  const sourceAnchor = subNodeHandleAnchor({ ...source, worldW: source.worldW / sourceSlotScale, worldH: source.worldH / sourceSlotScale, subHeaderHeight: source.subHeaderHeight === undefined ? undefined : source.subHeaderHeight / sourceSlotScale }, edge.sourceHandle, detailZoom * sourceSlotScale)
+  const targetAnchor = subNodeHandleAnchor({ ...target, worldW: target.worldW / targetSlotScale, worldH: target.worldH / targetSlotScale, subHeaderHeight: target.subHeaderHeight === undefined ? undefined : target.subHeaderHeight / targetSlotScale }, edge.targetHandle, detailZoom * targetSlotScale)
+  if (sourceAnchor) { sourcePoint.x = source.worldX + sourceAnchor.x * sourceSlotScale; sourcePoint.y = source.worldY + sourceAnchor.y * sourceSlotScale; sourcePoint.side = sourceAnchor.side }
+  if (targetAnchor) { targetPoint.x = target.worldX + targetAnchor.x * targetSlotScale; targetPoint.y = target.worldY + targetAnchor.y * targetSlotScale; targetPoint.side = targetAnchor.side }
   for (const [point, handle, slotScale] of [
     [sourcePoint, edge.sourceHandle, sourceSlotScale],
     [targetPoint, edge.targetHandle, targetSlotScale],
@@ -140,31 +150,16 @@ export function buildEdgeRoutePoints(
     if (point.side === 'left' || point.side === 'right') point.y += delta
     else point.x += delta
   }
+  if (bundleEndpoints?.source) Object.assign(sourcePoint, bundleEndpoints.source)
+  if (bundleEndpoints?.target) Object.assign(targetPoint, bundleEndpoints.target)
   const type = normalizeEdgeRouteType(edge.type)
 
   if (type === 'bezier') {
-    const dx = Math.abs(targetPoint.x - sourcePoint.x)
-    const dy = Math.abs(targetPoint.y - sourcePoint.y)
-    const sourceStem = Math.max(
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? dx : dy) * 0.5,
-      (sourcePoint.side === 'left' || sourcePoint.side === 'right' ? source.worldW : source.worldH) * 0.5,
-    )
-    const targetStem = Math.max(
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? dx : dy) * 0.5,
-      (targetPoint.side === 'left' || targetPoint.side === 'right' ? target.worldW : target.worldH) * 0.5,
-    )
-    const cp1 = {
-      x: sourcePoint.x + (sourcePoint.side === 'left' ? -sourceStem : sourcePoint.side === 'right' ? sourceStem : 0),
-      y: sourcePoint.y + (sourcePoint.side === 'top' ? -sourceStem : sourcePoint.side === 'bottom' ? sourceStem : 0),
-    }
-    const cp2 = {
-      x: targetPoint.x + (targetPoint.side === 'left' ? -targetStem : targetPoint.side === 'right' ? targetStem : 0),
-      y: targetPoint.y + (targetPoint.side === 'top' ? -targetStem : targetPoint.side === 'bottom' ? targetStem : 0),
-    }
-    const p0 = { x: sourcePoint.x, y: sourcePoint.y }
-    const p3 = { x: targetPoint.x, y: targetPoint.y }
-    const points = Array.from({ length: 17 }, (_, index) => cubicBezierPoint(p0, cp1, cp2, p3, index / 16))
-    const mid = cubicBezierPoint(p0, cp1, cp2, p3, 0.5)
+    const sourceSize = connectorRouteSize(source.worldW, source.worldH, (source.subKind ?? source.type) === 'code')
+    const targetSize = connectorRouteSize(target.worldW, target.worldH, (target.subKind ?? target.type) === 'code')
+    const { control1, control2 } = connectorBezierGeometry(sourcePoint, targetPoint, sourceSize, targetSize)
+    const points = Array.from({ length: 17 }, (_, index) => cubicBezierPoint(sourcePoint, control1, control2, targetPoint, index / 16))
+    const mid = cubicBezierPoint(sourcePoint, control1, control2, targetPoint, 0.5)
     return { points, midX: mid.x, midY: mid.y }
   }
 
@@ -268,6 +263,7 @@ export function buildEdgeSpatialIndex(
         [source, target, edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE, 'source'],
         [target, source, edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE, 'target'],
       ] as const) {
+        if (isSubHandle(handle)) continue
         const side = getLogicalHandleId(handle, fallback) ?? fallback
         const key = `${node.id}:${side}`
         const bucket = usages.get(key) ?? []
@@ -285,32 +281,49 @@ export function buildEdgeSpatialIndex(
       }
     }
 
+    const visualNodes = new Map<LayoutNode, LayoutNode>()
     function visualNode(node: LayoutNode): LayoutNode {
-      const cap = node.children.length === 0 ? Math.min(1, thresholds.end / (node.worldW * scale * zoom)) : 1
-      return {
+      const cached = visualNodes.get(node)
+      if (cached) return cached
+      const geometry = nodeVisualGeometry(node, scale * zoom, thresholds.end)
+      const visual = {
         ...node,
-        worldX: node.worldX + node.worldW * (1 - cap) / 2,
-        worldY: node.worldY + node.worldH * (1 - cap) / 2,
-        worldW: node.worldW * cap,
-        worldH: node.worldH * cap,
+        worldX: node.worldX + geometry.offsetX,
+        worldY: node.worldY + geometry.offsetY,
+        worldW: geometry.width,
+        worldH: geometry.height,
+        subHeaderHeight: geometry.headerHeight * geometry.scale,
       }
+      visualNodes.set(node, visual)
+      return visual
     }
 
+    const visibleEdges = edges.filter(edge => {
+      const source = nodeMap.get(edge.sourceId)
+      const target = nodeMap.get(edge.targetId)
+      return !!source && !!target && !hidden(source) && !hidden(target)
+    })
+    const fans = buildZUIBundleFans(nodes.filter(node => !hidden(node)).map(node => {
+      const geometry = nodeVisualGeometry(node, scale * zoom, thresholds.end)
+      return { node: nodeVisualLayout(node, geometry), x: node.worldX + geometry.offsetX,
+        y: node.worldY + geometry.offsetY, scale: geometry.scale }
+    }), visibleEdges, zoom * scale)
     for (const [i, edge] of edges.entries()) {
       const source = nodeMap.get(edge.sourceId)
       const target = nodeMap.get(edge.targetId)
       if (!source || !target || hidden(source) || hidden(target)) continue
+      const sourceFan = fans.get(`${edge.id}:source`), targetFan = fans.get(`${edge.id}:target`)
       const visualSource = visualNode(source)
       const visualTarget = visualNode(target)
       const route = buildEdgeRoutePoints(visualSource, visualTarget, {
         ...edge,
         sourceHandle: handles.get(`${i}:source`) ?? edge.sourceHandle,
         targetHandle: handles.get(`${i}:target`) ?? edge.targetHandle,
-      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW)
+      }, visualSource.worldW / source.worldW, visualTarget.worldW / target.worldW, zoom * scale, { source: sourceFan, target: targetFan })
       const points = route.points.map((point) => ({ x: offsetX + point.x * scale, y: offsetY + point.y * scale }))
       const first = points[0]
       const last = points[points.length - 1]
-      addEdgeToSpatialIndex(index, {
+      const indexed: IndexedEdge = {
         kind: 'edge', x1: first.x, y1: first.y, x2: last.x, y2: last.y,
         midX: offsetX + route.midX * scale, midY: offsetY + route.midY * scale,
         points, sourceLabel: source.label, targetLabel: target.label,
@@ -320,7 +333,15 @@ export function buildEdgeSpatialIndex(
         relationship: edge.relationship ?? null,
         id: edge.id, diagramId: source.diagramId,
         sourceObjId: source.elementId, targetObjId: target.elementId, change: edge.change, clip,
-      })
+      }
+      addEdgeToSpatialIndex(index, indexed)
+      for (const fan of [sourceFan, targetFan]) if (fan) for (const branch of [...fan.branches, ...fan.stems]) {
+        for (const route of bundlePathPolylines(branch)) {
+          const branchPoints = route.map(point => ({ x: offsetX + (fan.originX + point.x * fan.scale) * scale,
+            y: offsetY + (fan.originY + point.y * fan.scale) * scale }))
+          addEdgeToSpatialIndex(index, { ...indexed, points: branchPoints })
+        }
+      }
     }
 
     for (const node of nodes) {

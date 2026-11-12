@@ -66,6 +66,36 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 		}
 	}
 
+	for _, side := range []string{"base", "head"} {
+		source, err := client.GetImpactSource(ctx, connect.NewRequest(&pb.GetImpactSourceRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key, FilePath: "a.go", Side: side}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if source.Msg.Content != "func A() { return "+side+" }" || source.Msg.Path != "a.go" {
+			t.Fatalf("wrong captured source: %v", source.Msg)
+		}
+	}
+	diffSource, err := client.GetImpactSource(ctx, connect.NewRequest(&pb.GetImpactSourceRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key, FilePath: "a.go", IncludeDiff: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diffSource.Msg.BaseContent != "func A() { return base }" || diffSource.Msg.HeadContent != "func A() { return head }" {
+		t.Fatalf("diff used incorrect revisions: %v", diffSource.Msg)
+	}
+	if len(diffSource.Msg.DiffLines) != 4 || diffSource.Msg.DiffLines[0].Change != "removed" || diffSource.Msg.DiffLines[2].Change != "added" {
+		t.Fatalf("diff missing deleted or added lines: %v", diffSource.Msg)
+	}
+	for _, path := range []string{"../a.go", "other.go"} {
+		_, err := client.GetImpactSource(ctx, connect.NewRequest(&pb.GetImpactSourceRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key, FilePath: path}))
+		if connect.CodeOf(err) != connect.CodeNotFound {
+			t.Fatalf("source %q: %v", path, err)
+		}
+	}
+	_, err = client.GetImpactSource(ctx, connect.NewRequest(&pb.GetImpactSourceRequest{RepositoryId: repoID, ComparisonKey: result.Comparison.Key, FilePath: "a.go", Side: "checkout"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("invalid source side: %v", err)
+	}
+
 	mermaid, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{
 		RepositoryId: repoID, ComparisonKey: result.Comparison.Key, Markdown: true,
 	}))

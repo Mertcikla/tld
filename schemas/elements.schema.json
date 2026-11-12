@@ -15,19 +15,32 @@
       "description": "Element reference. Must start with a lowercase letter or digit and may contain lowercase letters, digits, dots, underscores, and hyphens. `root` is reserved for the synthetic workspace root and cannot be used as an element ref.",
       "type": "string",
       "pattern": "^(?!(?:root)$)[a-z0-9][a-z0-9._-]*$",
-      "examples": ["api-service", "postgres", "web_app", "svc.orders"]
+      "examples": [
+        "api-service",
+        "postgres",
+        "web_app",
+        "svc.orders"
+      ]
     },
     "parentRef": {
       "description": "Parent/view reference. Same character rules as an element ref, plus the reserved value `root` for the synthetic workspace root.",
       "type": "string",
       "pattern": "^(?:root|[a-z0-9][a-z0-9._-]*)$",
-      "examples": ["root", "platform", "api-service"]
+      "examples": [
+        "root",
+        "platform",
+        "api-service"
+      ]
     },
     "tag": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "examples": ["backend", "data", "external"]
+      "examples": [
+        "backend",
+        "data",
+        "external"
+      ]
     },
     "viewPlacement": {
       "type": "object",
@@ -49,7 +62,9 @@
           "description": "Density/noise-gate adjustment applied to this placement relative to the parent view."
         }
       },
-      "required": ["parent"],
+      "required": [
+        "parent"
+      ],
       "additionalProperties": false
     },
     "element": {
@@ -60,17 +75,30 @@
           "type": "string",
           "minLength": 1,
           "description": "Human-readable element name shown on the diagram.",
-          "examples": ["API Service", "Postgres"]
+          "examples": [
+            "API Service",
+            "Postgres"
+          ]
         },
         "kind": {
           "type": "string",
           "description": "Element kind/category. Free-form lowercase token used for icon and default styling (e.g. service, database, queue, cache). Defaults to `service` when created through the CLI.",
-          "examples": ["service", "database", "queue", "cache", "client", "external"]
+          "examples": [
+            "service",
+            "database",
+            "queue",
+            "cache",
+            "client",
+            "external"
+          ]
         },
         "owner": {
           "type": "string",
           "description": "Registered repository key from `repositories` in .tld.yaml. When set, the CLI validates that the owner is a known repository.",
-          "examples": ["backend", "frontend"]
+          "examples": [
+            "backend",
+            "frontend"
+          ]
         },
         "description": {
           "type": "string",
@@ -79,7 +107,11 @@
         "technology": {
           "type": "string",
           "description": "Primary technology label (e.g. Go, React, Postgres).",
-          "examples": ["Go", "React", "Postgres"]
+          "examples": [
+            "Go",
+            "React",
+            "Postgres"
+          ]
         },
         "url": {
           "type": "string",
@@ -89,7 +121,10 @@
         "logo_url": {
           "type": "string",
           "description": "Override logo/icon URL or catalog slug. May be a relative path or a technology slug.",
-          "examples": ["/icons/go.svg", "go"]
+          "examples": [
+            "/icons/go.svg",
+            "go"
+          ]
         },
         "repo": {
           "type": "string",
@@ -110,7 +145,10 @@
         "symbol": {
           "type": "string",
           "description": "Named code symbol within `file_path` (e.g. a function or type name). Verified by `tld validate` when the file is accessible.",
-          "examples": ["HandleCheckout", "PaymentService"]
+          "examples": [
+            "HandleCheckout",
+            "PaymentService"
+          ]
         },
         "tags": {
           "type": "array",
@@ -149,7 +187,9 @@
           }
         }
       },
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "examples": [
         {
@@ -157,7 +197,9 @@
           "kind": "service",
           "description": "Handles checkout requests",
           "technology": "Go",
-          "tags": ["backend"],
+          "tags": [
+            "backend"
+          ],
           "has_view": true,
           "view_label": "Component",
           "placements": [

@@ -1,0 +1,111 @@
+import { subCodeLineHeight } from './subElementText'
+import type { SourcePreviewSize } from './sourcePreviewSize'
+import { sourceLinkKind } from './sourceLinks'
+
+export const SUB_HEADER = 84
+export const SUB_ROW = subCodeLineHeight()
+export const SUB_ELLIPSIS = 16
+export const SUB_CONTENT_TOP = SUB_HEADER
+export type SubDetail = 'overview' | 'structure' | 'summary' | 'outline' | 'code'
+export const isSymbolDetail = (detail: SubDetail) => detail === 'structure' || detail === 'summary' || detail === 'outline'
+export const isSubElement = (kind?: string | null) => kind === 'code'
+export function subElementKind(element?: { kind?: string | null; repo?: string | null; repository_id?: string | null; file_path?: string | null } | null) {
+  return (element?.repo || element?.repository_id) && sourceLinkKind(element.file_path) === 'file' ? 'code' : null
+}
+export const subDetail = (width: number, height: number): SubDetail => width < 100 || height < 60 ? 'overview' : width < 180 || height < 100 ? 'structure' : width < 320 || height < 180 ? 'summary' : width < 440 || height < 280 ? 'outline' : 'code'
+export function subSize(kind?: string | null, value?: SourcePreviewSize | null) {
+  if (!isSubElement(kind)) return { width: 180, height: 85 }
+  return {
+    width: Math.max(280, Math.min(2400, Number.isFinite(value?.width) && value!.width > 0 ? value!.width : 520)),
+    height: Math.max(160, Math.min(2400, Number.isFinite(value?.height) && value!.height > 0 ? value!.height : 360)),
+  }
+}
+export function subEditorSize(kind: string | null | undefined, value: SourcePreviewSize | null | undefined, detail: SubDetail) {
+  if (detail === 'overview') return { width: 180, height: 85 }
+  if (detail === 'structure' && !value) return { width: 280, height: 160 }
+  if (detail === 'summary' && !value) return { width: 320, height: 180 }
+  if (detail === 'outline' && !value) return { width: 400, height: 240 }
+  return subSize(kind, value)
+}
+
+export function subRowHeight() { return SUB_ROW }
+export const memberHandle = (side: 'left' | 'right', id: string) => `${side}-member-${encodeURIComponent(id)}`
+export const lineHandle = (side: 'left' | 'right', line: number) => `${side}-line-${line}`
+/** A merged file connector retains every participating declaration line. */
+export function linesForHandle(id: string): number[] {
+  const match = id.match(/^(?:left|right)-line-(\d+(?:,\d+)*)$/)
+  return match ? [...new Set(match[1].split(',').map(Number).filter(line => Number.isSafeInteger(line) && line > 0))] : []
+}
+export const firstHandleLine = (id: string) => linesForHandle(id)[0] ?? NaN
+export function expandLineHandles(id: string): string[] {
+  const lines = linesForHandle(id)
+  return lines.length > 1 ? lines.map(line => lineHandle(id.startsWith('left') ? 'left' : 'right', line)) : [id]
+}
+
+export interface SubSymbol { name: string; type?: string; qualifiedName?: string; startLine: number; attachmentStartLine?: number; endLine: number }
+/** Attachments use the full indexed declaration, including leading comments and decorators. */
+export const symbolContainsLine = (symbol: SubSymbol, line: number) => line >= (symbol.attachmentStartLine ?? symbol.startLine) && line <= symbol.endLine
+const symbolKey = (symbol: SubSymbol) => `${symbol.type ?? ''}:${symbol.qualifiedName || symbol.name}`
+export const symbolHandle = (side: 'left' | 'right', symbol: SubSymbol) => `${side}-symbol-${encodeURIComponent(symbolKey(symbol))}`
+export function symbolForHandle(id: string, symbols: SubSymbol[]) {
+  if (!id.includes('-symbol-')) return undefined
+  return symbols.find(s => symbolHandle(id.startsWith('left') ? 'left' : 'right', s) === id)
+}
+export const isSubHandle = (id?: string | null) => /^(left|right)-(member|line|symbol)-/.test(id ?? '')
+export function subHandleY(id: string, _value: SourcePreviewSize | null | undefined, startLine = 1, height = 360, symbols: SubSymbol[] = [], scrollTop = 0) {
+  let index = -1
+  const symbol = symbolForHandle(id, symbols)
+  if (symbol) index = symbol.startLine - startLine
+  const line = firstHandleLine(id)
+  if (Number.isFinite(line)) index = line - startLine
+  // Deleted members and out-of-range lines keep a visible fallback endpoint.
+  const rowHeight = SUB_ROW
+  return Math.max(SUB_HEADER + SUB_ELLIPSIS / 2, Math.min(height - SUB_ELLIPSIS / 2, SUB_CONTENT_TOP + (Math.max(0, index) + 0.5) * rowHeight - scrollTop))
+}
+export const isDetailedSubElement = (kind: string | null | undefined, detail?: SubDetail, width = 520, height = 360, zoom = 1) => isSubElement(kind) && (detail ?? subDetail(width * zoom, height * zoom)) !== 'overview'
+
+const collapsedSymbolCache = new WeakMap<SubSymbol[], SubSymbol[]>()
+const displaySymbolCache = new WeakMap<SubSymbol[], SubSymbol[]>()
+
+// Go exposes both a declaration wrapper and its named type specifications.
+// Render the named symbols once; retain the original symbols for saved handle lookup.
+export function displaySymbols(symbols: SubSymbol[]): SubSymbol[] {
+  const cached = displaySymbolCache.get(symbols)
+  if (cached) return cached
+  const specifications = symbols.filter(symbol => symbol.type === 'type_spec' || symbol.type === 'type_alias')
+  const seen = new Set<string>()
+  const result = symbols.filter(symbol => {
+    if (symbol.type === 'type_declaration' && specifications.some(spec => spec.startLine >= symbol.startLine && spec.endLine <= symbol.endLine)) return false
+    const key = `${symbol.qualifiedName || symbol.name}:${symbol.startLine}:${symbol.endLine}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).sort((a, b) => a.startLine - b.startLine || b.endLine - a.endLine)
+  displaySymbolCache.set(symbols, result)
+  return result
+}
+
+// Source snapshots replace their symbol arrays, so folding is cached between canvas frames.
+// Keep one row per outer symbol; nested bodies remain folded into their owner.
+export function collapsedSymbols(source: { symbols: SubSymbol[]; startLine: number; endLine: number; status: string } | undefined, path = ''): SubSymbol[] {
+  if (!source || source.status !== 'ready') return []
+  let rows = collapsedSymbolCache.get(source.symbols)
+  if (!rows) {
+    const sorted = displaySymbols(source.symbols)
+    rows = []
+    for (const symbol of sorted) {
+      const previous = rows[rows.length - 1]
+      if (previous && symbol.startLine >= previous.startLine && symbol.endLine <= previous.endLine) continue
+      rows.push(symbol)
+    }
+    collapsedSymbolCache.set(source.symbols, rows)
+  }
+  return rows.length ? rows : [{ name: path.split('#')[0].split(/[\\/]/).pop() || 'Source', startLine: source.startLine, endLine: source.endLine }]
+}
+
+export function outlineHandleY(id: string, rows: SubSymbol[], allSymbols: SubSymbol[], height: number, scrollTop = 0) {
+  const symbol = symbolForHandle(id, allSymbols) ?? symbolForHandle(id, rows)
+  const line = symbol ? symbol.startLine : firstHandleLine(id)
+  const index = rows.findIndex(row => line >= row.startLine && line <= row.endLine)
+  return Math.max(SUB_HEADER + SUB_ELLIPSIS / 2, Math.min(height - SUB_ELLIPSIS / 2, SUB_CONTENT_TOP + (Math.max(0, index) + 0.5) * SUB_ROW - scrollTop))
+}

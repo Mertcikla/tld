@@ -1,5 +1,6 @@
 // src/components/ZUI/types.ts
 
+import type { SubDetail } from '../../utils/subElements'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import type { ZUIEdgeChange } from './edgeChange'
 
@@ -41,6 +42,8 @@ export interface ZUITestInteraction {
  * local coords into the node's own NODE_W × NODE_H world footprint.
  */
 export interface LayoutNode {
+  /** Explore presentation header height in node coordinates. */
+  subHeaderHeight?: number
   /** Transient scene reconciliation state; absent outside animated updates. */
   transitionOpacity?: number
   transitionLeaving?: boolean
@@ -69,9 +72,17 @@ export interface LayoutNode {
   type: string
   /** Explicit authored element kind; null/empty when unspecified. */
   kind?: string | null
+  subConnectedHandles?: string[]
+  subConnections?: Array<{ id: number; handleId: string }>
+  subConnectedOnly?: boolean
+  subDetail?: SubDetail
+  subSource?: import('../../utils/subElementSource').SubSource
+  subKind?: 'code' | null
+  sourceLink?: import('../../utils/subElementSource').SubSourceLink
   logoUrl: string | null
   description: string | null
   technology: string | null
+  technologyText?: string | null
   tags: string[]
   isCircular?: boolean
   ancestorElementIds: number[]
@@ -133,6 +144,7 @@ export interface ZUIChangeOverlay {
   linesAdded?: number
   linesRemoved?: number
   symbols: string[]
+  symbolDetails?: Array<{ change: 'added' | 'removed' | 'modified' | 'unchanged'; name: string; anchor?: { path: string; startLine: number; endLine: number } }>
   /** Why the element carries an overlay; roll-ups render softer. */
   reason: 'direct' | 'contained'
 }
@@ -193,7 +205,7 @@ export interface ZUILayout {
 }
 
 export type HoveredItem =
-  | { type: 'node'; data: LayoutNode; absX: number; absY: number; absW: number; absH: number }
+  | { type: 'node'; data: LayoutNode; symbolHandle?: string; absX: number; absY: number; absW: number; absH: number }
   | {
     type: 'edge';
     /** Hit-tested route in world coordinates. */

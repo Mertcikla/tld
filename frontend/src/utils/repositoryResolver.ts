@@ -13,9 +13,16 @@ export function isLocalRepoPath(value: string | null | undefined): boolean {
   return /^[A-Za-z]:[\\/]/.test(cleaned)
 }
 
+// Scan once from the end to avoid regex backtracking on long slash sequences.
+function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value[end - 1] === '/') end--
+  return value.slice(0, end)
+}
+
 function stripRemoteSuffixes(value: string): string {
   let cleaned = value.trim()
-  cleaned = cleaned.replace(/\/+$/, '')
+  cleaned = stripTrailingSlashes(cleaned)
   cleaned = cleaned.replace(/\.git$/, '')
   return cleaned
 }
@@ -51,7 +58,7 @@ function splitRemote(value: string): { host: string; path: string } | null {
     path = cleaned.slice(slash + 1)
   }
   host = host.trim().toLowerCase()
-  path = path.replace(/^\/+/, '').replace(/\/+$/, '')
+  path = stripTrailingSlashes(path.replace(/^\/+/, ''))
   if (!host || !path) return null
   if (!host.includes('.')) {
     // GitHub-style owner/repo shorthand.
@@ -96,7 +103,7 @@ export function resolveElementRepository(
   const filePath = ((element.file_path ?? '').split('#')[0] ?? '').trim()
   if (filePath.startsWith('/') && !filePath.includes('..')) {
     const byFile = repos.find((repo) => {
-      const root = repo.root.replace(/\/+$/, '')
+      const root = stripTrailingSlashes(repo.root)
       return root !== '' && (filePath === root || filePath.startsWith(`${root}/`))
     })
     if (byFile) return byFile

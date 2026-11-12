@@ -44,3 +44,14 @@ func handleAnchors(p Placement) []handleAnchor {
 		{HandleRight, p.X + NodeWidth, p.Y + NodeHeight/2},
 	}
 }
+
+// ChooseCodeConnectorHandles uses horizontal ports for code/symbol endpoints.
+// Facing sides win when the target is left of the source; otherwise prefer
+// outgoing on the right and incoming on the left, including vertically aligned
+// nodes where horizontal geometry provides no direction.
+func ChooseCodeConnectorHandles(source, target Placement) (string, string) {
+	if target.X < source.X {
+		return HandleLeft, HandleRight
+	}
+	return HandleRight, HandleLeft
+}

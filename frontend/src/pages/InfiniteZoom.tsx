@@ -141,6 +141,7 @@ function ExplorePage({ sharedToken, shareSlot, dataState, initialOffViewConnecto
       {data && (
         <>
           <ZUICanvas
+            connectedCodeOnly
             flowFocus={!sharedToken && flowsOpen ? flowFocus : null}
             breadcrumbBoundaryRef={breadcrumbBoundaryRef}
             ref={zuiRef}

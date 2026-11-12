@@ -1,3 +1,6 @@
+import { closestBundleHandle } from '../../../utils/bundledConnector'
+import { readSourcePreviewSize } from '../../../utils/sourcePreviewSize'
+import { subElementKind, isSubHandle, linesForHandle } from '../../../utils/subElements'
 import { connectorAlreadyHasDraggedTags } from '../connectorTagDrop'
 import type { WorkspaceGraphSnapshot } from '../../../crossBranch/types'
 import type { CSSProperties } from 'react'
@@ -47,8 +50,8 @@ interface ViewDataOptions {
   stableOnZoomIn: (elementId: number) => Promise<void>
   stableOnZoomOut: (elementId: number) => Promise<void>
   stableOnNavigateToView: (id: number) => void
+  stableOnResizeElement?: (elementId: number, width: number, height: number) => Promise<void>
   stableOnSelect: (obj: PlacedElement) => void
-  stableOnOpenCodePreview: (elementId: number) => void
   stableOnInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   stableOnConnectTo: (targetElementId: number) => Promise<void>
   stableOnStartHandleReconnect: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => void
@@ -116,14 +119,43 @@ function findViewInTree(nodes: ViewTreeNode[], viewId: number): ViewTreeNode | n
   return null
 }
 
-function buildConnectorLayouts(connectors: Connector[], elementMap: Map<number, PlacedElement>): ConnectorLayout[] {
+function elementCenterX(element: PlacedElement, boxes: ReadonlyMap<string, [number, number | null]>) {
+  const box = boxes.get(String(element.element_id))
+  const width = box?.[1] ?? (subElementKind(element) ? readSourcePreviewSize(element.view_id, element.element_id)?.width ?? 520 : 180)
+  return (box?.[0] ?? element.position_x ?? 0) + width / 2
+}
+
+function resolveConnectorEndpoints(
+  connector: Connector,
+  elementMap: ReadonlyMap<number, PlacedElement>,
+  boxes: ReadonlyMap<string, [number, number | null]>,
+) {
+  let sourceHandle = ensureVisualHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)!
+  let targetHandle = ensureVisualHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE)!
+  if (isSubHandle(sourceHandle) && !subElementKind(elementMap.get(connector.source_element_id))) sourceHandle = `${getLogicalHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)}-2`
+  if (isSubHandle(targetHandle) && !subElementKind(elementMap.get(connector.target_element_id))) targetHandle = `${getLogicalHandleId(targetHandle, DEFAULT_TARGET_HANDLE_SIDE)}-2`
+  const source = elementMap.get(connector.source_element_id)!
+  const target = elementMap.get(connector.target_element_id)!
+  if (source.element_id !== target.element_id) {
+    const sx = elementCenterX(source, boxes)
+    const tx = elementCenterX(target, boxes)
+    const bundled = linesForHandle(sourceHandle).length > 1 || linesForHandle(targetHandle).length > 1
+    sourceHandle = closestBundleHandle(sourceHandle, sx, tx, bundled)
+    targetHandle = closestBundleHandle(targetHandle, tx, sx, bundled)
+  }
+  return { sourceHandle, targetHandle }
+}
+
+function buildConnectorLayouts(connectors: Connector[], elementMap: Map<number, PlacedElement>, resolvedHandles: string): ConnectorLayout[] {
+  const handlesById = new Map<number, [string, string]>(JSON.parse(resolvedHandles))
   const filtered = connectors.filter((connector) =>
     elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id),
   )
 
   return filtered.map((connector) => {
-    const sourceHandle = ensureVisualHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)!
-    const targetHandle = ensureVisualHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE)!
+    const resolved = handlesById.get(connector.id)
+    const sourceHandle = resolved?.[0] ?? ensureVisualHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)!
+    const targetHandle = resolved?.[1] ?? ensureVisualHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE)!
     return {
       connector,
       sourceHandle,
@@ -157,8 +189,8 @@ export function useViewData({
   stableOnZoomIn,
   stableOnZoomOut,
   stableOnNavigateToView,
+  stableOnResizeElement,
   stableOnSelect,
-  stableOnOpenCodePreview,
   stableOnInteractionStart,
   stableOnConnectTo,
   stableOnStartHandleReconnect,
@@ -336,9 +368,21 @@ export function useViewData({
     return next
   }, [viewElements])
 
+  // Only side flips should recompute connector layouts, not every pixel of node drag or selection changes.
+  const resolvedConnectorHandles = useMemo(() => {
+    const boxes = new Map<string, [number, number | null]>(rfNodes.map(node => [node.id, [node.position.x, node.width ?? null]]))
+    return JSON.stringify(
+      connectors
+        .filter(connector => elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id))
+        .map(connector => {
+          const { sourceHandle, targetHandle } = resolveConnectorEndpoints(connector, elementMap, boxes)
+          return [connector.id, [sourceHandle, targetHandle]] as const
+        }),
+    )
+  }, [connectors, elementMap, rfNodes])
   const connectorLayouts = useMemo(
-    () => buildConnectorLayouts(connectors, elementMap),
-    [connectors, elementMap],
+    () => buildConnectorLayouts(connectors, elementMap, resolvedConnectorHandles),
+    [connectors, elementMap, resolvedConnectorHandles],
   )
 
   const tagGraph = useMemo(() => {
@@ -469,6 +513,7 @@ export function useViewData({
             : isContext ? CONTEXT_STYLE : undefined
         const layerHighlightColor = isLayerHighlighted ? (hoveredLayerColor ?? undefined) : undefined
         const position = existing?.dragging ? existing.position : { x: obj.position_x ?? 0, y: obj.position_y ?? 0 }
+        const interactionSourceHandleId = clickConnectMode?.sourceNodeId === nodeId ? clickConnectMode.sourceHandle : null
         const isZoomHovered = hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null
         const links = linksMap[obj.element_id] || EMPTY_ARRAY
         const parentLinks = parentLinksMap[obj.element_id] || viewParentLinks
@@ -490,6 +535,7 @@ export function useViewData({
           existing.data.position_y === obj.position_y &&
           existing.data.description === obj.description &&
           existing.data.kind === obj.kind &&
+          existing.data.onResize === stableOnResizeElement &&
           existing.data.technology === obj.technology &&
           existing.data.url === obj.url &&
           existing.data.logo_url === obj.logo_url &&
@@ -501,6 +547,7 @@ export function useViewData({
           existing.data.parentLinks === parentLinks &&
           existing.data.parentViewId === parentViewId &&
           existing.data.interactionSourceId === interactionSourceId &&
+          existing.data.interactionSourceHandleId === interactionSourceHandleId &&
           existing.data.isClickConnectMode === isClickConnectMode &&
           existing.data.isCreateConnectMode === isCreateConnectMode &&
           existing.data.tagColors === tagColors &&
@@ -534,8 +581,8 @@ export function useViewData({
             onZoomIn: stableOnZoomIn,
             onZoomOut: stableOnZoomOut,
             onNavigateToDiagram: stableOnNavigateToView,
+            onResize: stableOnResizeElement,
             onSelect: stableOnSelect,
-            onOpenCodePreview: stableOnOpenCodePreview,
             onInteractionStart: stableOnInteractionStart,
             onConnectTo: stableOnConnectTo,
             onStartHandleReconnect: stableOnStartHandleReconnect,
@@ -543,6 +590,7 @@ export function useViewData({
             onHoverZoom: stableOnHoverZoom,
             isZoomHovered,
             interactionSourceId,
+            interactionSourceHandleId,
             isClickConnectMode,
             isCreateConnectMode,
             tagColors,
@@ -560,9 +608,9 @@ export function useViewData({
   }, [
     viewElements, linksMap, parentLinksMap, viewParentLinks, parentViewId,
     interactionSourceId, clickConnectMode, isConnectorCreatePreviewActive,
-    stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
+    stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect, stableOnResizeElement,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
-    stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
+    hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
     nodeConnectionMetaByElementId, setRfNodes, tagState, hoverTagState,
   ])
 
@@ -582,7 +630,7 @@ export function useViewData({
         const isTagHighlighted = !isInactive && hoveredLayerTags !== null && hoverTagState.matchedConnectorIds.has(e.id)
         const stroke = isTagHighlighted ? (hoveredLayerColor || 'var(--accent)') : 'var(--accent)'
         const strokeWidth = isTagHighlighted ? 3 : 2
-        const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.8
+        const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
         const markerOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
         const newZIndex = Z_CONNECTOR
         const pointerEvents = (isInactive || isSoftFocused) ? 'none' : 'auto'

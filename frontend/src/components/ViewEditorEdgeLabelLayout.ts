@@ -114,6 +114,18 @@ function recomputeLayout() {
 
 function upsertEntry(entry: Omit<LabelEntry, 'position'>) {
   const existing = entries.get(entry.id)
+  if (
+    existing &&
+    existing.preferredX === entry.preferredX &&
+    existing.preferredY === entry.preferredY &&
+    existing.width === entry.width &&
+    existing.height === entry.height &&
+    existing.dx === entry.dx &&
+    existing.dy === entry.dy &&
+    existing.alongLineOnly === entry.alongLineOnly
+  ) {
+    return
+  }
   entries.set(entry.id, {
     ...entry,
     position: existing?.position ?? { x: entry.preferredX, y: entry.preferredY },
@@ -166,7 +178,12 @@ export function useEdgeLabelLayout({
   dy,
   alongLineOnly,
 }: UseEdgeLabelLayoutArgs) {
+  const active = width > 0 && height > 0
   useLayoutEffect(() => {
+    if (!active) {
+      removeEntry(id)
+      return
+    }
     upsertEntry({
       id,
       preferredX,
@@ -177,13 +194,13 @@ export function useEdgeLabelLayout({
       dy,
       alongLineOnly,
     })
+  }, [active, id, preferredX, preferredY, width, height, dx, dy, alongLineOnly])
 
-    return () => removeEntry(id)
-  }, [id, preferredX, preferredY, width, height, dx, dy, alongLineOnly])
+  useLayoutEffect(() => () => removeEntry(id), [id])
 
   return useSyncExternalStore(
-    subscribe,
-    () => getPosition(id, preferredX, preferredY),
+    active ? subscribe : () => () => {},
+    () => (active ? getPosition(id, preferredX, preferredY) : getPosition(id, preferredX, preferredY)),
     () => ({ x: preferredX, y: preferredY }),
   )
 }

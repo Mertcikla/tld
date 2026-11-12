@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ViewLayer } from '../../types'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { connectorLabelFitsEndpoints, edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
+import { drawNodeTags, type RenderContext, drawArrowHead, connectorDetailScreenWidth, connectorLabelFitsEndpoints, edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
 import { ELEMENT_NAME_INSET_RATIO } from '../../utils/elementName'
 import type { LayoutNode } from './types'
 import { connectorTagHighlightColor, setHighlightColor, setHighlightedTags, setTagColors } from './renderer'
@@ -137,6 +137,11 @@ describe('computeNodeNameLayout', () => {
     expect(layout.truncated).toBe(false)
   })
 
+  it.each([2, 8, 40])('caps names at 24 screen pixels at zoom %s', drawZoom => {
+    const layout = computeNodeNameLayout({ ...base, label: 'Payments', worldHeight: 360, worldWidth: 520, drawZoom })
+    expect(layout.fontSize * drawZoom).toBeLessThanOrEqual(24)
+  })
+
   it('wraps long names into two balanced lines', () => {
     const layout = computeNodeNameLayout({ ...base, label: 'PaymentProcessingService' })
     expect(layout.lines).toHaveLength(2)
@@ -249,5 +254,126 @@ describe('edgeLayerStyle', () => {
     const context = layoutNode('context', 3)
     context.changeOverlay = overlay('unchanged')
     expect(edgeLayerStyle(container, context, accent)).toEqual({ color: accent, alphaFactor: 0.5 })
+  })
+})
+
+describe('code card connector detail visibility', () => {
+  it.each(['code', 'class', 'service'])('uses ordinary-card scale for a large %s source preview', type => {
+    const card = { worldW: 2400, type, subKind: 'code' as const }
+    // Both cards are at 50% zoom, even though the preview occupies 1,200 pixels.
+    const equivalentWidth = connectorDetailScreenWidth(card, 1200)
+    expect(equivalentWidth).toBe(90)
+    expect(shouldDrawConnectorDetailLabel('forward', 500, equivalentWidth)).toBe(false)
+    expect(shouldDrawConnectorDetailLabel('backward', equivalentWidth, 500)).toBe(false)
+  })
+
+  it('normalizes explicit class cards without a source preview marker', () => {
+    expect(connectorDetailScreenWidth({ worldW: 520, type: 'class' }, 260)).toBe(90)
+  })
+
+  it('accounts for the visible card cap before evaluating detail visibility', () => {
+    const card = { worldW: 520, type: 'code' }
+    // At zoom 2, a 520-world-unit card has been capped to 600 screen pixels.
+    expect(connectorDetailScreenWidth(card, 600)).toBeCloseTo(180 * (600 / 1040) * 2)
+  })
+
+  it('shows details at the same effective zoom as an ordinary card', () => {
+    const previewWidth = connectorDetailScreenWidth({ worldW: 520, type: 'code' }, 520)
+    const ordinaryWidth = connectorDetailScreenWidth({ worldW: 180, type: 'service' }, 180)
+    expect(previewWidth).toBe(ordinaryWidth)
+    expect(shouldDrawConnectorDetailLabel('forward', 0, previewWidth)).toBe(true)
+  })
+})
+
+describe('Explore arrowhead shape', () => {
+  it('draws the editor closed-arrow proportions with rounded, matching-color joins', () => {
+    const context = { save: vi.fn(), restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(), beginPath: vi.fn(),
+      moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn(), stroke: vi.fn(),
+      fillStyle: '', strokeStyle: '', lineWidth: 0, lineJoin: '', lineCap: '' }
+    drawArrowHead(context as unknown as CanvasRenderingContext2D, 100, 200, Math.PI / 2, 10, '#facc15')
+    expect(context.translate).toHaveBeenCalledWith(100, 200)
+    expect(context.rotate).toHaveBeenCalledWith(Math.PI / 2)
+    expect(context.moveTo).toHaveBeenCalledWith(-7.5, -6)
+    expect(context.lineTo.mock.calls).toEqual([[0, 0], [-7.5, 6]])
+    expect(context.lineJoin).toBe('round')
+    expect(context.lineCap).toBe('round')
+    expect(context.lineWidth).toBe(1.5)
+    expect(context.fillStyle).toBe('#facc15')
+    expect(context.strokeStyle).toBe('#facc15')
+    expect(context.fill).toHaveBeenCalledOnce()
+    expect(context.stroke).toHaveBeenCalledOnce()
+    expect(context.restore).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Explore tag alignment with the editor', () => {
+  const renderContext: RenderContext = {
+    canvasBg: '#000', nodeBg: '#222', accent: '#facc15', labelBg: '#111', canvasW: 1200, canvasH: 800,
+    thresholds: { start: 300, end: 600 }, lowDetail: false, groupLayersByDiagram: new Map(),
+  }
+  const context = () => ({ save() {}, restore() {}, beginPath() {}, fill() {}, stroke() {},
+    measureText: (value: string) => ({ width: value.length * 6 }), arc: vi.fn(), roundRect: vi.fn(), fillText: vi.fn() })
+
+  it.each([180, 520, 2400])('keeps tag dots at the editor offsets on a %s-wide card', width => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...layoutNode('tags', 1), tags: ['a', 'b'] }, renderContext,
+      { x: 0, y: 0, w: width, h: 84, drawZoom: 1, drawScreenW: width, parentAlpha: 1, isHovered: false, accent: '#facc15' })
+    expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 73, 3])
+    expect(ctx.arc.mock.calls[1].slice(0, 3)).toEqual([23, 73, 3])
+  })
+
+  it.each([180, 520, 2400])('anchors expanded tags at the editor popup offset on a %s-wide card', width => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...layoutNode('tags', 1), tags: ['a'] }, renderContext,
+      { x: 0, y: 0, w: width, h: 84, drawZoom: 1, drawScreenW: width, parentAlpha: 1, isHovered: true, accent: '#facc15' })
+    const [x, y, , height] = ctx.roundRect.mock.calls[0]
+    expect(x).toBe(6)
+    expect(y + height).toBe(80)
+  })
+})
+
+describe('code preview tags across zoom stages', () => {
+  const renderContext: RenderContext = {
+    canvasBg: '#000', nodeBg: '#222', accent: '#facc15', labelBg: '#111', canvasW: 1200, canvasH: 800,
+    thresholds: { start: 300, end: 600 }, lowDetail: false, groupLayersByDiagram: new Map(),
+  }
+  const context = () => ({ save() {}, restore() {}, beginPath() {}, fill() {}, stroke() {},
+    measureText: (value: string) => ({ width: value.length * 6 }), arc: vi.fn(), roundRect: vi.fn(), fillText: vi.fn() })
+  const card = { ...layoutNode('code-tags', 1), type: 'code', worldW: 520, worldH: 360, tags: ['a'] }
+  const bounds = { x: 0, y: 0, w: 520, h: 84, drawZoom: 1, drawScreenW: 520, parentAlpha: 1, isHovered: false, accent: '#facc15' }
+
+  it('places summary tag dots at the bottom left of the body', () => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail: 'summary' }, renderContext, bounds)
+    expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 349, 3])
+  })
+
+  it('anchors expanded summary tags at the bottom left of the body', () => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail: 'summary' }, renderContext, { ...bounds, isHovered: true })
+    const [x, y, , height] = ctx.roundRect.mock.calls[0]
+    expect(x).toBe(6)
+    expect(y + height).toBe(356)
+  })
+
+  it.each(['overview', 'structure'] as const)('hides tags in %s even on hover', subDetail => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail }, renderContext, { ...bounds, isHovered: true })
+    expect(ctx.arc).not.toHaveBeenCalled()
+    expect(ctx.roundRect).not.toHaveBeenCalled()
+    expect(ctx.fillText).not.toHaveBeenCalled()
+  })
+
+  it.each(['outline', 'code'] as const)('keeps header tags in %s', subDetail => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, { ...card, subDetail }, renderContext, bounds)
+    expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 73, 3])
+  })
+
+  it.each([0.1, 0.25, 0.4])('uses the actual zoom stage for tag placement at zoom %s', drawZoom => {
+    const ctx = context()
+    drawNodeTags(ctx as unknown as CanvasRenderingContext2D, card, renderContext, { ...bounds, drawZoom, drawScreenW: card.worldW * drawZoom })
+    if (drawZoom < 0.4) expect(ctx.arc).not.toHaveBeenCalled()
+    else expect(ctx.arc.mock.calls[0].slice(0, 3)).toEqual([13, 349, 3])
   })
 })

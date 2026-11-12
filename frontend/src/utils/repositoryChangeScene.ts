@@ -2,6 +2,8 @@ import type { RepositoryImpactScene } from '../api/client'
 import type { ExploreData } from '../types'
 import type { ZUIChangeOverlay } from '../components/ZUI/types'
 import { CHANGE_RING_COLORS } from '../components/ZUI/changeOverlay'
+import type { SubSource, SubSourceLink } from './subElementSource'
+import { subElementKind } from './subElements'
 import { PROVENANCE_META } from '../components/ZUI/provenance'
 
 export const CHANGE_STATE_TAGS = ['added', 'removed', 'unchanged'] as const
@@ -16,8 +18,10 @@ export const REPOSITORY_TAG_COLORS: Record<string, string> = {
 }
 
 // The backend selects membership and display mode before freezing the scene.
-// This adapter only supplies renderer colors and annotations.
+// This adapter supplies code-card presentation, spacing, and annotations.
 export function repositoryChangeScene(scene: RepositoryImpactScene) {
+  const codeSourceLinks: Record<number, SubSourceLink> = {}
+  const codeSources: Record<number, SubSource> = {}
   const overlays: Record<number, ZUIChangeOverlay> = {}
   const data: ExploreData = { tree: scene.tree, views: {}, navigations: scene.navigations }
   for (const [viewId, content] of Object.entries(scene.views)) {
@@ -27,12 +31,34 @@ export function repositoryChangeScene(scene: RepositoryImpactScene) {
       const provenanceTag = origin === 'raw' ? 'augmented' : origin === 'mapped' ? 'generated' : 'authored'
       const tags = [...(element.tags ?? []).filter((tag) => tag !== 'map-generated'), provenanceTag]
       const overlay = scene.overlays[element.element_id]
+      // Historical scenes contain captured symbol changes, not worktree text.
+      // Never substitute today's checkout for a historical or imported file.
+      const symbols = (overlay?.symbolDetails ?? []).filter(symbol => symbol.anchor).map(symbol => ({
+        name: symbol.name, startLine: symbol.anchor!.startLine + 1, endLine: symbol.anchor!.endLine + 1,
+      }))
+      codeSources[element.element_id] = { status: 'ready', lines: [], tokens: [], symbols, startLine: 1,
+        endLine: symbols.reduce((end, symbol) => Math.max(end, symbol.endLine), 1) }
       if (overlay) {
-        overlays[element.element_id] = { change: overlay.change, path: overlay.path, linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols, reason: overlay.reason }
+        overlays[element.element_id] = { change: overlay.change, path: overlay.path, linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols, symbolDetails: overlay.symbolDetails, reason: overlay.reason }
         if (overlay.change !== 'modified') tags.push(overlay.change)
       }
-      return { ...element, tags }
+      // File leaves use the same code cards as the editor. Containers retain
+      // their hierarchy and authored appearance. This is a presentation copy.
+      const code = !element.has_view && subElementKind(element) === 'code'
+      if (code) codeSourceLinks[element.element_id] = {
+        repo: element.repo, repository_id: scene.repositoryId, file_path: element.file_path, language: element.language,
+        comparisonKey: scene.comparisonKey, comparisonDiff: true, comparisonSide: overlay?.change === 'removed' ? 'base' : 'head',
+      }
+      return { ...element, kind: code ? 'code' : element.kind, tags }
     }) }
   }
-  return { data, overlays }
+  // The scene is laid out for 180×85 overview cards; reserve room for 520×360
+  // code cards without changing any saved workspace or frozen scene positions.
+  for (const content of Object.values(data.views)) {
+    if (!content.placements.some(element => element.kind === 'code')) continue
+    content.placements = content.placements.map(element => ({
+      ...element, position_x: element.position_x * 3, position_y: element.position_y * 4.5,
+    }))
+  }
+  return { data, overlays, codeSources, codeSourceLinks }
 }

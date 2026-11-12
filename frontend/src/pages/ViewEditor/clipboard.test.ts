@@ -199,3 +199,4 @@ describe('ViewEditor clipboard helpers', () => {
     expect(parseViewSelectionClipboardPayload(JSON.stringify({ ...payload, connectors: [{ source_element_id: 1, target_element_id: 99, direction: 'forward', style: 'bezier' }] }))).toBeNull()
   })
 })
+

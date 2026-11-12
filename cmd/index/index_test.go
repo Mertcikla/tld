@@ -27,13 +27,24 @@ import (
 )
 
 func TestMapFlagDefaultsOff(t *testing.T) {
-	flag := NewIndexCmd().Flags().Lookup("map")
-	if flag == nil || flag.DefValue != "false" {
-		t.Fatal("map must default off")
+	for _, name := range []string{"map", "full-map"} {
+		flag := NewIndexCmd().Flags().Lookup(name)
+		if flag == nil || flag.DefValue != "false" {
+			t.Fatalf("%s must default off", name)
+		}
 	}
 }
 
 func TestIndexMapFlagMaterializesGraphMap(t *testing.T) {
+	testIndexMaterializes(t, options{mapGraph: true})
+}
+
+func TestIndexFullMapFlagMaterializesHierarchy(t *testing.T) {
+	testIndexMaterializes(t, options{fullMap: true})
+}
+
+func testIndexMaterializes(t *testing.T, opts options) {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	testGit(t, dir, "init", "-b", "main")
@@ -52,7 +63,7 @@ func TestIndexMapFlagMaterializesGraphMap(t *testing.T) {
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	eng := &engine{
 		store: idx, ws: sq, cfg: config.Default(), global: workspace.DefaultConfig(),
-		opts: options{mapGraph: true}, out: &bytes.Buffer{},
+		opts: opts, out: &bytes.Buffer{},
 	}
 	snap, _, mapRes, reused, err := eng.buildAndPublish(ctx, dir, nil)
 	if err != nil {

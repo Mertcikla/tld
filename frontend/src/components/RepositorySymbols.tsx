@@ -6,8 +6,8 @@ import OpenInEditorButton from './OpenInEditorButton'
 const colors = { added: 'green.300', removed: 'red.300', modified: 'yellow.300' }
 
 
-export default function RepositorySymbols({ repositoryRoot, path, diagram, inline = false }: {
-  repositoryRoot: string; path: string; diagram: RepositoryImpact | null; inline?: boolean
+export default function RepositorySymbols({ repositoryRoot, path, diagram, onSelectPath, inline = false }: {
+  repositoryRoot: string; path: string; diagram: RepositoryImpact | null; inline?: boolean; onSelectPath?: (path: string) => void
 }) {
   const symbols = useMemo(() => {
     const changes = diagram?.diff.factDetails ?? {
@@ -38,7 +38,7 @@ export default function RepositorySymbols({ repositoryRoot, path, diagram, inlin
           {fileSymbols.map(({ fact, kind }) => <Box key={`${kind}:${fact.id}`} mb={inline ? 0 : 3} py={inline ? 1 : 0} position="relative" data-symbol-change={kind} tabIndex={0}
           _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '2px' }}
           sx={{ '&:hover .symbol-editor-action, &:focus-within .symbol-editor-action': { display: 'block' } }}>
-          <Text fontSize="xs" color={colors[kind]} overflowWrap="anywhere">{fact.name || fact.qualifiedName}{fact.anchor && <Text as="span" color="gray.500"> · L{fact.anchor.startLine + 1}</Text>}</Text>
+          <Text as={onSelectPath ? 'button' : 'span'} textAlign="left" onClick={onSelectPath ? () => onSelectPath(filePath) : undefined} fontSize="xs" color={colors[kind]} overflowWrap="anywhere">{fact.name || fact.qualifiedName}{fact.anchor && <Text as="span" color="gray.500"> · L{fact.anchor.startLine + 1}</Text>}</Text>
           <Box className="symbol-editor-action" display="none" position="absolute" right={0} top="-3px" textAlign="right" bg="var(--bg-canvas)"><OpenInEditorButton borderless repo={repositoryRoot} filePath={filePath} line={fact.anchor ? fact.anchor.startLine + 1 : null} /></Box>
           </Box>)}
         </Box>)}

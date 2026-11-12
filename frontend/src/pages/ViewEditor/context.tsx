@@ -13,6 +13,8 @@ export interface ViewEditorContextValue {
   setAutoLayoutMode: (enabled: boolean) => void
   selectedElement: LibraryElement | null
   selectedConnector: Connector | null
+  isConnectingConnector?: boolean
+  connectorDragSource?: { nodeId: string; handleId: string }
   isMarkdownOpen?: boolean
   markdownPaneWidth?: number
   leftPanelOffset?: number

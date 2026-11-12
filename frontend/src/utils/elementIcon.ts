@@ -3,6 +3,13 @@ import { fontAwesomeIconUrlForTechnologyLabel, parseFontAwesomeTechnologyIconNam
 import { canonicalTechnologySlug, catalogIconUrlForSlug, normalizeCatalogIconPath } from './technologyIcon'
 import { resolveIconPath } from './url'
 
+export function elementTechnologyText(technology: string | null | undefined, links: TechnologyConnector[] | null | undefined, hasIcon: boolean): string | undefined {
+  const connectors = links ?? []
+  const linkCount = connectors.filter(link => !!link.label).length
+  const count = linkCount || (technology ?? '').split(',').map(part => part.trim()).filter(Boolean).length
+  return !hasIcon || count > 1 ? technology || (linkCount > 1 ? connectors.map(link => link.label).join(', ') : undefined) : undefined
+}
+
 export function technologyConnectorIconKey(link: TechnologyConnector): string | null {
   if (link.type === 'catalog' && link.slug) {
     return `catalog:${canonicalTechnologySlug(link.slug)}`
