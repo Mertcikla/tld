@@ -1,6 +1,6 @@
 import { connectorRouteSize } from './connectorRoute'
 import type { Edge, Node } from 'reactflow'
-import { bundleFans, type BundleFan, type BundleInput } from './bundledConnector'
+import { bundleFans, type BundleFan, type BundleInput, type BundlePort } from './bundledConnector'
 import { expandLineHandles, isSubHandle, subElementKind } from './subElements'
 import { getHandleFlowPosition, type LogicalHandleSide } from './edgeDistribution'
 
@@ -16,9 +16,9 @@ function readPortPosition(
   node: Node,
   element: HTMLElement,
   port: HTMLElement,
-  side: LogicalHandleSide,
+  side: BundlePort['side'],
   cachedNodeBounds?: DOMRect | null,
-): { x: number; y: number; side: LogicalHandleSide; bounds: DOMRect | null } {
+): BundlePort & { bounds: DOMRect | null } {
   const origin = node.positionAbsolute ?? node.position
   const width = node.width ?? (element.offsetWidth || 180)
   // Fast path: SubElementSymbolLayer sets style.top = `${endpoint.y}px` in node-local coordinates.
