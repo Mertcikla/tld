@@ -36,6 +36,25 @@ describe('normalizeRemoteKey', () => {
     expect(normalizeRemoteKey('~/repo')).toBe('')
     expect(normalizeRemoteKey('')).toBe('')
   })
+
+  it.each([
+    [' https://github.com/Owner/Repo.git/// ', 'github.com/owner/repo'],
+    ['git@github.com:/Owner/Repo.git///', 'github.com/owner/repo'],
+    ['Owner/Repo///', 'github.com/owner/repo'],
+    ['https://github.com///Owner/Repo///?ref=main', 'github.com/owner/repo'],
+    ['https://github.com////?ref=main', ''],
+  ])('normalizes slash boundaries in %s', (input, expected) => {
+    expect(normalizeRemoteKey(input)).toBe(expected)
+  })
+
+  it('handles long slash sequences with and without a trailing suffix', () => {
+    const slashes = '/'.repeat(100_000)
+    const path = `owner${slashes}repo`
+    expect(normalizeRemoteKey(`github.com/${path}.git`)).toBe(`github.com/${path}`)
+    expect(normalizeRemoteKey(`github.com/owner/repo.git${slashes}`)).toBe('github.com/owner/repo')
+    expect(normalizeRemoteKey(`https://github.com/${path}?ref=main`)).toBe(`github.com/${path}`)
+    expect(normalizeRemoteKey(`https://github.com/owner/repo${slashes}?ref=main`)).toBe('github.com/owner/repo')
+  })
 })
 
 describe('resolveElementRepository', () => {
@@ -61,6 +80,17 @@ describe('resolveElementRepository', () => {
   it('returns null when nothing matches', () => {
     expect(resolveElementRepository({ repo: 'owner/missing' }, repos)).toBeNull()
     expect(resolveElementRepository({ repository_id: 'missing' }, repos)).toBeNull()
+  })
+
+  it('matches roots with trailing slashes while preserving path boundaries', () => {
+    const slashes = '/'.repeat(100_000)
+    const repositories = [repo({ id: 'alpha', root: `/work/alpha${slashes}` })]
+    expect(resolveElementRepository({ file_path: '/work/alpha/src/main.go' }, repositories)?.id).toBe('alpha')
+    expect(resolveElementRepository({ file_path: '/work/alphabet/src/main.go' }, repositories)).toBeNull()
+    expect(resolveElementRepository({ file_path: '/work/file' }, [repo({ id: 'empty', root: slashes })])).toBeNull()
+
+    const root = `/work${slashes}alpha`
+    expect(resolveElementRepository({ file_path: `${root}/main.go` }, [repo({ id: 'nested', root })])?.id).toBe('nested')
   })
 })
 
